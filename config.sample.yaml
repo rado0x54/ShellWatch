@@ -1,5 +1,8 @@
 # ShellWatch SSH endpoint configuration
 # Copy this file to config.yaml and update with your SSH targets.
+#
+# Generate a key:  ssh-keygen -t ed25519 -f ./keys/my-server.pem -C "shellwatch"
+# Add public key:  ssh-copy-id -i ./keys/my-server.pem.pub user@host
 
 servers:
   - id: dev-box
