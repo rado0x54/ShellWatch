@@ -133,6 +133,9 @@ Each MCP client session gets its own stateful transport. All sessions share the 
 | `pnpm typecheck` | Type check without emitting |
 | `pnpm lint` | Check with Biome |
 | `pnpm lint:fix` | Auto-fix lint issues |
+| `pnpm test` | Run all tests (unit + integration) |
+| `pnpm test:watch` | Run tests in watch mode |
+| `pnpm test:coverage` | Run tests with coverage report |
 
 ## Architecture
 
@@ -164,9 +167,48 @@ The TerminalManager is the shared core. It emits events on session state changes
 
 **Port already in use** — Kill the existing process: `lsof -ti:3000 | xargs kill`
 
+## Testing
+
+104 tests covering unit and integration scenarios. No external services needed — everything runs in-process.
+
+```bash
+pnpm test           # run all tests
+pnpm test:coverage  # run with coverage report
+```
+
+### Unit tests (66)
+Tests for individual components with mocked dependencies:
+- **OutputBuffer** — append, incremental reads, eviction, clear
+- **TerminalManager** — session lifecycle, events, idle cleanup
+- **Config loader** — valid/invalid configs, validation errors
+- **MCP tools** — all 6 tools via InMemoryTransport
+- **API client** — REST calls with mocked fetch
+- **WS client** — message dispatch, reconnect, unsubscribe
+
+### Integration tests (38)
+End-to-end tests across all four actors, using real infrastructure:
+- **In-process ssh2 Server** — ed25519 auth, PTY, echo shell
+- **ShellWatch Fastify app** — on a random port
+- **MCP client** — via `StreamableHTTPClientTransport`
+- **WebSocket client** — via `ws` library
+
+| Category | Tests | What it verifies |
+|----------|-------|-----------------|
+| MCP Client Flow | 7 | Full MCP tool lifecycle against real SSH |
+| REST API Flow | 6 | HTTP CRUD + error codes |
+| WebSocket Flow | 6 | Attach, I/O, close, disconnect survivability |
+| Cross-Actor (MCP↔WS) | 3 | MCP actions trigger real-time WS events |
+| Cross-Actor (HTTP↔MCP) | 3 | Sessions shared across interfaces |
+| SSH Server Events | 4 | Server push propagation, disconnect handling |
+| Error Scenarios | 6 | Error handling across all actors |
+| Concurrent Sessions | 3 | Independent I/O, mixed actor sessions |
+
+On test failure, diagnostic logs from all actors (SSH server, app, MCP client, WS client) are dumped automatically.
+
 ## Tech stack
 
 - **Backend:** Fastify, ssh2, @modelcontextprotocol/sdk
 - **Frontend:** Vanilla TypeScript, Vite (middleware mode), xterm.js
+- **Testing:** Vitest, ssh2 Server (in-process), MCP client SDK
 - **Config:** YAML + zod validation
 - **Linting:** Biome
