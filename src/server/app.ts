@@ -8,8 +8,18 @@ import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerWebSocket } from "./ws-handler.js";
 
-export async function buildApp(config: Config, terminalManager: TerminalManager) {
-  const app = Fastify({ logger: true });
+export interface AppOptions {
+  logger?: boolean;
+  /** Skip Vite dev server setup (for tests) */
+  skipVite?: boolean;
+}
+
+export async function buildApp(
+  config: Config,
+  terminalManager: TerminalManager,
+  options: AppOptions = {},
+) {
+  const app = Fastify({ logger: options.logger ?? true });
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
@@ -64,21 +74,23 @@ export async function buildApp(config: Config, terminalManager: TerminalManager)
   await registerMcpHttpTransport(app, config, terminalManager);
 
   // Vite dev server — catches all routes not handled by Fastify
-  const clientRoot = resolve(import.meta.dirname, "../../client");
-  const vite = await createViteServer({
-    root: clientRoot,
-    server: {
-      middlewareMode: true,
-      hmr: { port: 24679 },
-    },
-    appType: "spa",
-  });
-
-  app.setNotFoundHandler((request, reply) => {
-    vite.middlewares.handle(request.raw, reply.raw, () => {
-      reply.status(404).send({ error: "Not found" });
+  if (!options.skipVite) {
+    const clientRoot = resolve(import.meta.dirname, "../../client");
+    const vite = await createViteServer({
+      root: clientRoot,
+      server: {
+        middlewareMode: true,
+        hmr: { port: 24679 },
+      },
+      appType: "spa",
     });
-  });
+
+    app.setNotFoundHandler((request, reply) => {
+      vite.middlewares.handle(request.raw, reply.raw, () => {
+        reply.status(404).send({ error: "Not found" });
+      });
+    });
+  }
 
   return app;
 }
