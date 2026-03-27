@@ -7,7 +7,7 @@ This is the canonical project instructions file. All coding agents (Claude Code,
 ShellWatch is an SSH session broker that provides:
 - A browser-based terminal UI for interactive SSH sessions
 - An MCP (Model Context Protocol) interface for programmatic session control
-- A shared SessionManager that both UI and MCP operate on
+- A shared TerminalManager that both UI and MCP operate on
 
 The goal is to act as a thin session broker between configured SSH targets, human users (via web UI), and AI agents (via MCP).
 
@@ -36,10 +36,10 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 src/
   index.ts            # Entry point — starts Fastify, loads config
   config/             # Config schema (zod) and YAML loader
-  server/             # Fastify app, plugins, HTTP routes
-  session/            # SessionManager abstraction
-  mcp/                # MCP tool handlers
-  transport/          # WebSocket bridge for terminal I/O
+  server/             # Fastify app, HTTP routes, WebSocket handler
+  terminal/           # TerminalManager, OutputBuffer, transport interface
+  mcp/                # MCP server and streamable HTTP transport
+  transport/          # SSH transport implementation (ssh2)
 client/               # Vite frontend app
   src/
     main.ts           # Client entry point
@@ -63,22 +63,22 @@ pnpm lint:fix         # Auto-fix linting issues
 ## Architecture
 
 ```
-[Static config file]
-        |
-        v
-[SessionManager]
+[config.yaml]
+      |
+      v
+[TerminalManager] ←── [MCP tools @ /mcp (streamable HTTP)]
    |          \
    |           \
    v            v
-[SSH/ssh2]    [MCP tools]
-   |
-   v
-[Remote host]
-
-[Web UI] <-> [WebSocket] <-> [SessionManager]
+[SSH/ssh2]    [WebSocket @ /ws]
+   |               |
+   v               v
+[Remote host]  [Web UI (xterm.js)]
 ```
 
-The SessionManager is the central abstraction. Both the WebSocket transport (for UI) and MCP tool handlers call into the same SessionManager instance. This ensures sessions are shared across interfaces.
+The TerminalManager is the central abstraction. Both the WebSocket transport (for UI) and MCP tool handlers call into the same TerminalManager instance. This ensures terminal sessions are shared across interfaces.
+
+MCP is served over streamable HTTP at `/mcp` (stateless, no auth). Everything runs in a single process via `pnpm dev`.
 
 ## Config
 
@@ -99,6 +99,6 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 ## Design Principles
 
 - **Local-first:** No external database or auth for the POC
-- **Shared core:** UI and MCP must use the same SessionManager — no parallel implementations
+- **Shared core:** UI and MCP must use the same TerminalManager — no parallel implementations
 - **Extensible:** Structure code so observer mode, audit logs, and policy enforcement can be added later
 - **Simple:** Prefer straightforward code over abstractions. This is a POC.
