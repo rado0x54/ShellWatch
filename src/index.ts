@@ -13,7 +13,7 @@ try {
   const transportFactory = createSshTransportFactory(config);
   const terminalManager = new TerminalManager(config, transportFactory);
 
-  const app = buildApp(config, terminalManager);
+  const app = await buildApp(config, terminalManager);
 
   const shutdown = async () => {
     terminalManager.destroy();

@@ -1,17 +1,30 @@
+import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
+import middie from "@fastify/middie";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
+import { createServer as createViteServer } from "vite";
 import type { Config } from "../config/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import { createMcpServer } from "../mcp/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerWebSocket } from "./ws-handler.js";
 
-export function buildApp(config: Config, terminalManager: TerminalManager) {
+export async function buildApp(config: Config, terminalManager: TerminalManager) {
   const app = Fastify({ logger: true });
 
-  app.register(fastifyCors, { origin: true });
-  app.register(fastifyWebsocket);
+  await app.register(fastifyCors, { origin: true });
+  await app.register(fastifyWebsocket);
+  await app.register(middie);
+
+  // Vite dev server for client UI (middleware mode, same port)
+  const clientRoot = resolve(import.meta.dirname, "../../client");
+  const vite = await createViteServer({
+    root: clientRoot,
+    server: { middlewareMode: true, hmr: { server: app.server } },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
 
   // Health check
   app.get("/health", async () => ({ status: "ok" }));
@@ -57,15 +70,11 @@ export function buildApp(config: Config, terminalManager: TerminalManager) {
   );
 
   // WebSocket for terminal I/O
-  app.after(() => {
-    registerWebSocket(app, terminalManager);
-  });
+  registerWebSocket(app, terminalManager);
 
   // MCP server over streamable HTTP at /mcp
   const mcpServer = createMcpServer(config, terminalManager);
-  app.after(async () => {
-    await registerMcpHttpTransport(app, mcpServer);
-  });
+  await registerMcpHttpTransport(app, mcpServer);
 
   return app;
 }
