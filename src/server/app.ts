@@ -2,23 +2,13 @@ import fastifyCors from "@fastify/cors";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type { Config } from "../config/index.js";
+import { registerMcpHttpTransport } from "../mcp/http-transport.js";
+import { createMcpServer } from "../mcp/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerWebSocket } from "./ws-handler.js";
 
-export interface AppOptions {
-  logToStderr?: boolean;
-}
-
-export function buildApp(
-  config: Config,
-  terminalManager: TerminalManager,
-  options: AppOptions = {},
-) {
-  const app = Fastify({
-    logger: options.logToStderr
-      ? { transport: { target: "pino/file", options: { destination: 2 } } }
-      : true,
-  });
+export function buildApp(config: Config, terminalManager: TerminalManager) {
+  const app = Fastify({ logger: true });
 
   app.register(fastifyCors, { origin: true });
   app.register(fastifyWebsocket);
@@ -69,6 +59,12 @@ export function buildApp(
   // WebSocket for terminal I/O
   app.after(() => {
     registerWebSocket(app, terminalManager);
+  });
+
+  // MCP server over streamable HTTP at /mcp
+  const mcpServer = createMcpServer(config, terminalManager);
+  app.after(async () => {
+    await registerMcpHttpTransport(app, mcpServer);
   });
 
   return app;

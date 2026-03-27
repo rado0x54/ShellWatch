@@ -26,6 +26,7 @@ try {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`ShellWatch server listening on http://${HOST}:${PORT}`);
+  console.log(`MCP endpoint available at http://${HOST}:${PORT}/mcp`);
 } catch (err) {
   console.error("Failed to start ShellWatch:", (err as Error).message);
   process.exit(1);
