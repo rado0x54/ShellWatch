@@ -7,6 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:client": "vite client",
     "mcp": "tsx src/mcp/stdio.ts",
+    "start": "tsx src/combined.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
