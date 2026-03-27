@@ -1,12 +1,10 @@
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
-import middie from "@fastify/middie";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createServer as createViteServer } from "vite";
 import type { Config } from "../config/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
-import { createMcpServer } from "../mcp/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerWebSocket } from "./ws-handler.js";
 
@@ -15,16 +13,6 @@ export async function buildApp(config: Config, terminalManager: TerminalManager)
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
-  await app.register(middie);
-
-  // Vite dev server for client UI (middleware mode, same port)
-  const clientRoot = resolve(import.meta.dirname, "../../client");
-  const vite = await createViteServer({
-    root: clientRoot,
-    server: { middlewareMode: true, hmr: { server: app.server } },
-    appType: "spa",
-  });
-  app.use(vite.middlewares);
 
   // Health check
   app.get("/health", async () => ({ status: "ok" }));
@@ -73,8 +61,24 @@ export async function buildApp(config: Config, terminalManager: TerminalManager)
   registerWebSocket(app, terminalManager);
 
   // MCP server over streamable HTTP at /mcp
-  const mcpServer = createMcpServer(config, terminalManager);
-  await registerMcpHttpTransport(app, mcpServer);
+  await registerMcpHttpTransport(app, config, terminalManager);
+
+  // Vite dev server — catches all routes not handled by Fastify
+  const clientRoot = resolve(import.meta.dirname, "../../client");
+  const vite = await createViteServer({
+    root: clientRoot,
+    server: {
+      middlewareMode: true,
+      hmr: { port: 24679 },
+    },
+    appType: "spa",
+  });
+
+  app.setNotFoundHandler((request, reply) => {
+    vite.middlewares.handle(request.raw, reply.raw, () => {
+      reply.status(404).send({ error: "Not found" });
+    });
+  });
 
   return app;
 }

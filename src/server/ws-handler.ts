@@ -1,10 +1,40 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import type { TerminalManager, TerminalStatus } from "../terminal/index.js";
+import type { TerminalManager } from "../terminal/index.js";
 import { parseClientMessage, type ServerMessage } from "./ws-protocol.js";
 
 export function registerWebSocket(app: FastifyInstance, terminalManager: TerminalManager) {
+  const clients = new Set<WebSocket>();
+
+  function broadcast(msg: ServerMessage) {
+    const data = JSON.stringify(msg);
+    for (const client of clients) {
+      if (client.readyState === client.OPEN) {
+        client.send(data);
+      }
+    }
+  }
+
+  function buildSessionList(): ServerMessage {
+    return {
+      type: "sessions:changed",
+      sessions: terminalManager.listSessions().map((s) => ({
+        sessionId: s.sessionId,
+        endpointId: s.endpointId,
+        status: s.status,
+        createdAt: s.createdAt.toISOString(),
+        source: s.source,
+      })),
+    };
+  }
+
+  // Broadcast session list changes to ALL connected clients
+  terminalManager.on("status-change", () => {
+    broadcast(buildSessionList());
+  });
+
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
+    clients.add(socket);
     const attachedSessions = new Set<string>();
 
     function send(msg: ServerMessage) {
@@ -17,16 +47,13 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
       send({ type: "error", message });
     }
 
+    // Send current session list on connect
+    send(buildSessionList());
+
     // Listeners for terminal events — scoped per attached session
     function onOutput({ sessionId, data }: { sessionId: string; data: string }) {
       if (attachedSessions.has(sessionId)) {
         send({ type: "terminal:output", sessionId, data });
-      }
-    }
-
-    function onStatusChange({ sessionId, status }: { sessionId: string; status: TerminalStatus }) {
-      if (attachedSessions.has(sessionId)) {
-        send({ type: "terminal:status", sessionId, status });
       }
     }
 
@@ -38,7 +65,6 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
     }
 
     terminalManager.on("output", onOutput);
-    terminalManager.on("status-change", onStatusChange);
     terminalManager.on("close", onClose);
 
     socket.on("message", (raw: Buffer | string) => {
@@ -58,6 +84,12 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
             }
             attachedSessions.add(msg.sessionId);
             send({ type: "terminal:status", sessionId: msg.sessionId, status: session.status });
+
+            // Send any buffered output so the client catches up
+            const buffered = terminalManager.readOutput(msg.sessionId);
+            if (buffered.data.length > 0) {
+              send({ type: "terminal:output", sessionId: msg.sessionId, data: buffered.data });
+            }
             break;
           }
 
@@ -82,9 +114,8 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
     });
 
     socket.on("close", () => {
-      // Clean up listeners — don't kill terminal sessions on WS disconnect
+      clients.delete(socket);
       terminalManager.off("output", onOutput);
-      terminalManager.off("status-change", onStatusChange);
       terminalManager.off("close", onClose);
       attachedSessions.clear();
     });

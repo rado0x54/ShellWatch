@@ -1,28 +1,65 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
+import type { Config } from "../config/index.js";
+import type { TerminalManager } from "../terminal/index.js";
+import { createMcpServer } from "./server.js";
 
-export async function registerMcpHttpTransport(app: FastifyInstance, mcpServer: McpServer) {
-  // Stateless mode — no MCP session management
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
+export async function registerMcpHttpTransport(
+  app: FastifyInstance,
+  config: Config,
+  terminalManager: TerminalManager,
+) {
+  const transports = new Map<string, StreamableHTTPServerTransport>();
 
-  await mcpServer.connect(transport);
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.url !== "/mcp") return;
 
-  // Route all MCP traffic through /mcp using raw Node.js req/res
-  app.all("/mcp", async (request, reply) => {
-    const { raw: req, raw: _reqForBody } = request;
-    const res = reply.raw;
+    const sessionId = request.headers["mcp-session-id"] as string | undefined;
+    let transport = sessionId ? transports.get(sessionId) : undefined;
 
-    // Fastify already parsed the body for POST requests
-    const parsedBody = request.method === "POST" ? request.body : undefined;
+    if (!transport) {
+      const newTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+      });
 
-    await transport.handleRequest(req, res, parsedBody);
+      newTransport.onclose = () => {
+        if (newTransport.sessionId) {
+          transports.delete(newTransport.sessionId);
+        }
+      };
 
-    // Tell Fastify we already handled the response
+      newTransport.onerror = (err) => {
+        app.log.error(err, "MCP transport error");
+      };
+
+      const mcpServer = createMcpServer(config, terminalManager);
+      await mcpServer.connect(newTransport);
+
+      transport = newTransport;
+    }
+
+    try {
+      await transport.handleRequest(request.raw, reply.raw);
+    } catch (err) {
+      app.log.error(err, "MCP handleRequest error");
+      if (!reply.raw.headersSent) {
+        reply.raw.writeHead(500, { "Content-Type": "application/json" });
+        reply.raw.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: (err as Error).message },
+            id: null,
+          }),
+        );
+      }
+    }
+
+    // Store transport by session ID after first request
+    if (transport.sessionId && !transports.has(transport.sessionId)) {
+      transports.set(transport.sessionId, transport);
+    }
+
     reply.hijack();
   });
-
-  return transport;
 }

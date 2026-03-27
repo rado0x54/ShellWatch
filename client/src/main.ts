@@ -1,13 +1,6 @@
-import {
-  closeSession,
-  createSession,
-  type Endpoint,
-  fetchEndpoints,
-  fetchSessions,
-  type TerminalSession,
-} from "./api.js";
+import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
 import { TerminalView } from "./terminal-view.js";
-import { WsClient } from "./ws-client.js";
+import { type SessionListEntry, WsClient } from "./ws-client.js";
 
 const wsClient = new WsClient();
 wsClient.connect();
@@ -20,7 +13,7 @@ const terminalContainer = document.getElementById("terminal-container") as HTMLE
 
 // Track state
 let endpoints: Endpoint[] = [];
-let sessions: TerminalSession[] = [];
+let sessions: SessionListEntry[] = [];
 
 // --- Render functions ---
 
@@ -62,7 +55,7 @@ function renderSessions() {
           <span class="session-label">
             <span class="status-dot ${sess.status}"></span>${label}
           </span>
-          <span class="session-detail">${sess.sessionId}</span>
+          <span class="session-detail">${sess.sessionId} (${sess.source})</span>
         </div>
         <button class="btn btn-close" data-session-id="${sess.sessionId}">Close</button>
       </div>
@@ -82,8 +75,7 @@ function renderSessions() {
 async function onConnect(endpointId: string) {
   try {
     const session = await createSession(endpointId);
-    sessions.push(session);
-    renderSessions();
+    // Session list will update via sessions:changed event
     onAttach(session.sessionId);
   } catch (err) {
     console.error("Failed to create session:", err);
@@ -98,10 +90,9 @@ function onAttach(sessionId: string) {
 async function onClose(sessionId: string) {
   try {
     await closeSession(sessionId);
-    sessions = sessions.filter((s) => s.sessionId !== sessionId);
-    renderSessions();
-    if (terminalView.getActiveSessionId() === sessionId) {
-      terminalView.detach();
+    terminalView.removeSession(sessionId);
+    // Session list will update via sessions:changed event
+    if (sessions.length === 0) {
       terminalContainer.innerHTML =
         '<div id="terminal-placeholder">Select an endpoint to connect</div>';
     }
@@ -110,12 +101,38 @@ async function onClose(sessionId: string) {
   }
 }
 
-// --- Listen for server-side session closes ---
+// --- Listen for real-time session updates ---
 
 wsClient.onMessage((msg) => {
-  if (msg.type === "terminal:closed") {
-    sessions = sessions.filter((s) => s.sessionId !== msg.sessionId);
+  if (msg.type === "sessions:changed") {
+    const oldIds = new Set(sessions.map((s) => s.sessionId));
+    sessions = msg.sessions;
     renderSessions();
+
+    // Clean up terminals for sessions that no longer exist
+    for (const oldId of oldIds) {
+      if (!sessions.some((s) => s.sessionId === oldId)) {
+        terminalView.removeSession(oldId);
+      }
+    }
+
+    // Auto-attach to a new session if none is active
+    if (!terminalView.getActiveSessionId() && sessions.length > 0) {
+      const newSession = sessions.find((s) => !oldIds.has(s.sessionId));
+      if (newSession) {
+        onAttach(newSession.sessionId);
+      }
+    }
+
+    // Show placeholder if no sessions left
+    if (sessions.length === 0 && !terminalView.getActiveSessionId()) {
+      terminalContainer.innerHTML =
+        '<div id="terminal-placeholder">Select an endpoint to connect</div>';
+    }
+  }
+
+  if (msg.type === "terminal:closed") {
+    terminalView.removeSession(msg.sessionId);
   }
 });
 
@@ -124,9 +141,7 @@ wsClient.onMessage((msg) => {
 async function init() {
   endpoints = await fetchEndpoints();
   renderEndpoints();
-
-  sessions = await fetchSessions();
-  renderSessions();
+  // Session list comes via WebSocket sessions:changed on connect
 }
 
 init();

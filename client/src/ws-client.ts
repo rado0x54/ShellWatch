@@ -1,7 +1,16 @@
+export interface SessionListEntry {
+  sessionId: string;
+  endpointId: string;
+  status: string;
+  createdAt: string;
+  source: string;
+}
+
 type ServerMessage =
   | { type: "terminal:output"; sessionId: string; data: string }
   | { type: "terminal:status"; sessionId: string; status: string }
   | { type: "terminal:closed"; sessionId: string }
+  | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;

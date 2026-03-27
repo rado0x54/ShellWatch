@@ -3,74 +3,105 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import type { WsClient } from "./ws-client.js";
 
+interface ManagedTerminal {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  element: HTMLDivElement;
+}
+
 export class TerminalView {
-  private terminal: Terminal;
-  private fitAddon: FitAddon;
-  private sessionId: string | null = null;
+  private terminals = new Map<string, ManagedTerminal>();
+  private activeSessionId: string | null = null;
   private resizeObserver: ResizeObserver | null = null;
-  private unsubscribe: (() => void) | null = null;
 
   constructor(private wsClient: WsClient) {
-    this.terminal = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      theme: {
-        background: "#1a1a2e",
-        foreground: "#e0e0e0",
-        cursor: "#4a9eff",
-        selectionBackground: "#4a9eff44",
-      },
+    // Single message handler — routes output to the correct terminal
+    this.wsClient.onMessage((msg) => {
+      if (msg.type === "terminal:output") {
+        const managed = this.terminals.get(msg.sessionId);
+        if (managed) managed.terminal.write(msg.data);
+      }
+      if (msg.type === "terminal:closed") {
+        const managed = this.terminals.get(msg.sessionId);
+        if (managed) {
+          managed.terminal.write("\r\n\x1b[31m[Session closed]\x1b[0m\r\n");
+        }
+      }
     });
-
-    this.fitAddon = new FitAddon();
-    this.terminal.loadAddon(this.fitAddon);
-    this.terminal.loadAddon(new WebLinksAddon());
   }
 
   attach(sessionId: string, container: HTMLElement): void {
-    this.detach();
-    this.sessionId = sessionId;
+    // Hide all existing terminal elements
+    for (const managed of this.terminals.values()) {
+      managed.element.style.display = "none";
+    }
 
-    // Clear container and mount terminal
-    container.innerHTML = "";
+    // Hide placeholder
     const placeholder = document.getElementById("terminal-placeholder");
     if (placeholder) placeholder.style.display = "none";
 
-    this.terminal.open(container);
-    this.fitAddon.fit();
+    let managed = this.terminals.get(sessionId);
 
-    // Wire input
-    this.terminal.onData((data) => {
-      this.wsClient.sendInput(sessionId, data);
-    });
+    if (!managed) {
+      // Create a new terminal for this session
+      const terminal = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: {
+          background: "#1a1a2e",
+          foreground: "#e0e0e0",
+          cursor: "#4a9eff",
+          selectionBackground: "#4a9eff44",
+        },
+      });
 
-    // Wire resize
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.loadAddon(new WebLinksAddon());
+
+      const element = document.createElement("div");
+      element.style.height = "100%";
+      container.appendChild(element);
+
+      terminal.open(element);
+      fitAddon.fit();
+
+      // Wire input for this terminal
+      terminal.onData((data) => {
+        this.wsClient.sendInput(sessionId, data);
+      });
+
+      managed = { terminal, fitAddon, element };
+      this.terminals.set(sessionId, managed);
+
+      // Attach to WS and send initial resize
+      this.wsClient.attach(sessionId);
+      this.wsClient.sendResize(sessionId, terminal.cols, terminal.rows);
+    }
+
+    // Show this terminal
+    managed.element.style.display = "block";
+    managed.fitAddon.fit();
+    managed.terminal.focus();
+    this.activeSessionId = sessionId;
+
+    // Resize observer — refit the active terminal
+    if (this.resizeObserver) this.resizeObserver.disconnect();
     this.resizeObserver = new ResizeObserver(() => {
-      this.fitAddon.fit();
-      const { cols, rows } = this.terminal;
-      this.wsClient.sendResize(sessionId, cols, rows);
+      if (this.activeSessionId) {
+        const active = this.terminals.get(this.activeSessionId);
+        if (active) {
+          active.fitAddon.fit();
+          this.wsClient.sendResize(
+            this.activeSessionId,
+            active.terminal.cols,
+            active.terminal.rows,
+          );
+        }
+      }
     });
     this.resizeObserver.observe(container);
-
-    // Wire output from server
-    this.unsubscribe = this.wsClient.onMessage((msg) => {
-      if (msg.type === "terminal:output" && msg.sessionId === sessionId) {
-        this.terminal.write(msg.data);
-      }
-      if (msg.type === "terminal:closed" && msg.sessionId === sessionId) {
-        this.terminal.write("\r\n\x1b[31m[Session closed]\x1b[0m\r\n");
-      }
-    });
-
-    // Attach to WS
-    this.wsClient.attach(sessionId);
-
-    // Send initial resize
-    const { cols, rows } = this.terminal;
-    this.wsClient.sendResize(sessionId, cols, rows);
-
-    this.terminal.focus();
   }
 
   detach(): void {
@@ -78,14 +109,22 @@ export class TerminalView {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
     }
-    if (this.unsubscribe) {
-      this.unsubscribe();
-      this.unsubscribe = null;
+    this.activeSessionId = null;
+  }
+
+  removeSession(sessionId: string): void {
+    const managed = this.terminals.get(sessionId);
+    if (managed) {
+      managed.terminal.dispose();
+      managed.element.remove();
+      this.terminals.delete(sessionId);
     }
-    this.sessionId = null;
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = null;
+    }
   }
 
   getActiveSessionId(): string | null {
-    return this.sessionId;
+    return this.activeSessionId;
   }
 }
