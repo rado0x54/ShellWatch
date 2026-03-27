@@ -1,3 +1,5 @@
+@import "@xterm/xterm/css/xterm.css";
+
 *,
 *::before,
 *::after {
@@ -10,13 +12,186 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   background: #1a1a2e;
   color: #e0e0e0;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 #app {
-  padding: 2rem;
+  display: flex;
+  height: 100vh;
 }
 
-h1 {
-  margin-bottom: 1rem;
+/* Sidebar */
+#sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: #16213e;
+  border-right: 1px solid #2a2a4a;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  padding: 1rem;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.sidebar-section h2 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8888aa;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-section ul {
+  list-style: none;
+}
+
+.sidebar-section li {
+  margin-bottom: 0.5rem;
+}
+
+/* Endpoint items */
+.endpoint-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: #1a1a2e;
+  border-radius: 6px;
+  border: 1px solid #2a2a4a;
+}
+
+.endpoint-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.endpoint-label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.endpoint-detail {
+  font-size: 0.75rem;
+  color: #8888aa;
+}
+
+/* Session items */
+.session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: #1a1a2e;
+  border-radius: 6px;
+  border: 1px solid #2a2a4a;
+  cursor: pointer;
+}
+
+.session-item.active {
+  border-color: #4a9eff;
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.session-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-detail {
+  font-size: 0.7rem;
+  color: #8888aa;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+}
+
+.status-dot.open {
+  background: #4ade80;
+}
+.status-dot.opening {
+  background: #fbbf24;
+}
+.status-dot.closed {
+  background: #888;
+}
+.status-dot.error {
+  background: #f87171;
+}
+
+/* Buttons */
+.btn {
+  padding: 0.35rem 0.65rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-connect {
+  background: #4a9eff;
+  color: #fff;
+}
+
+.btn-connect:hover {
+  background: #3b8de6;
+}
+
+.btn-close {
+  background: #3a3a5a;
+  color: #ccc;
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.btn-close:hover {
+  background: #f87171;
+  color: #fff;
+}
+
+/* Main / Terminal */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#terminal-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#terminal-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #555;
+  font-size: 1.1rem;
+}
+
+.xterm {
+  height: 100%;
+  padding: 4px;
 }

@@ -8,8 +8,21 @@
   </head>
   <body>
     <div id="app">
-      <h1>ShellWatch</h1>
-      <p>Terminal session broker — UI coming in issue #5.</p>
+      <aside id="sidebar">
+        <div class="sidebar-section">
+          <h2>Endpoints</h2>
+          <ul id="endpoint-list"></ul>
+        </div>
+        <div class="sidebar-section">
+          <h2>Sessions</h2>
+          <ul id="session-list"></ul>
+        </div>
+      </aside>
+      <main id="main">
+        <div id="terminal-container">
+          <div id="terminal-placeholder">Select an endpoint to connect</div>
+        </div>
+      </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
