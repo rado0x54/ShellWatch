@@ -8,7 +8,10 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "lint:fix": "biome check --write ."
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": "",
@@ -20,9 +23,11 @@
     "@types/node": "^25.5.0",
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.1.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
