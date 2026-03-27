@@ -1,0 +1,17 @@
+# ShellWatch SSH endpoint configuration
+# Copy this file to config.yaml and update with your SSH targets.
+
+servers:
+  - id: dev-box
+    label: Dev Box
+    host: dev.example.com
+    port: 22
+    username: ubuntu
+    privateKeyPath: ./keys/dev-box.pem
+
+  - id: staging
+    label: Staging
+    host: staging.example.com
+    port: 22
+    username: deploy
+    privateKeyPath: ./keys/staging.pem
