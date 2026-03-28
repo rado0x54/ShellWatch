@@ -11,11 +11,11 @@ const endpointList = document.getElementById("endpoint-list") as HTMLElement;
 const sessionList = document.getElementById("session-list") as HTMLElement;
 const terminalContainer = document.getElementById("terminal-container") as HTMLElement;
 
-// Track state
 let endpoints: Endpoint[] = [];
 let sessions: SessionListEntry[] = [];
 
-// --- Render functions ---
+// Re-render sessions when a terminal's mode changes
+terminalView.setModeChangeCallback(() => renderSessions());
 
 function renderEndpoints() {
   endpointList.innerHTML = "";
@@ -47,6 +47,8 @@ function renderSessions() {
     const ep = endpoints.find((e) => e.id === sess.endpointId);
     const label = ep?.label ?? sess.endpointId;
     const isActive = sess.sessionId === activeId;
+    const mode = terminalView.getMode(sess.sessionId) ?? sess.mode;
+    const isObserver = mode === "observer";
 
     const li = document.createElement("li");
     li.innerHTML = `
@@ -54,36 +56,41 @@ function renderSessions() {
         <div class="session-info">
           <span class="session-label">
             <span class="status-dot ${sess.status}"></span>${label}
+            ${isObserver ? '<span class="badge badge-observer">observer</span>' : ""}
           </span>
           <span class="session-detail">${sess.sessionId} (${sess.source})</span>
         </div>
-        <button class="btn btn-close" data-session-id="${sess.sessionId}">Close</button>
+        <div class="session-actions">
+          ${isObserver ? `<button class="btn btn-take-control" data-session-id="${sess.sessionId}">Take Control</button>` : ""}
+          <button class="btn btn-close" data-session-id="${sess.sessionId}">Close</button>
+        </div>
       </div>
     `;
     li.querySelector(".session-item")?.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).tagName !== "BUTTON") {
-        onAttach(sess.sessionId);
+      const target = e.target as HTMLElement;
+      if (target.tagName !== "BUTTON") {
+        onAttach(sess.sessionId, mode);
       }
+    });
+    li.querySelector(".btn-take-control")?.addEventListener("click", () => {
+      wsClient.takeControl(sess.sessionId);
     });
     li.querySelector(".btn-close")?.addEventListener("click", () => onClose(sess.sessionId));
     sessionList.appendChild(li);
   }
 }
 
-// --- Actions ---
-
 async function onConnect(endpointId: string) {
   try {
     const session = await createSession(endpointId);
-    // Session list will update via sessions:changed event
-    onAttach(session.sessionId);
+    onAttach(session.sessionId, "control");
   } catch (err) {
     console.error("Failed to create session:", err);
   }
 }
 
-function onAttach(sessionId: string) {
-  terminalView.attach(sessionId, terminalContainer);
+function onAttach(sessionId: string, mode: "control" | "observer" = "control") {
+  terminalView.attach(sessionId, terminalContainer, mode);
   renderSessions();
 }
 
@@ -91,7 +98,6 @@ async function onClose(sessionId: string) {
   try {
     await closeSession(sessionId);
     terminalView.removeSession(sessionId);
-    // Session list will update via sessions:changed event
     if (sessions.length === 0) {
       terminalContainer.innerHTML =
         '<div id="terminal-placeholder">Select an endpoint to connect</div>';
@@ -101,30 +107,26 @@ async function onClose(sessionId: string) {
   }
 }
 
-// --- Listen for real-time session updates ---
-
 wsClient.onMessage((msg) => {
   if (msg.type === "sessions:changed") {
     const oldIds = new Set(sessions.map((s) => s.sessionId));
     sessions = msg.sessions;
     renderSessions();
 
-    // Clean up terminals for sessions that no longer exist
     for (const oldId of oldIds) {
       if (!sessions.some((s) => s.sessionId === oldId)) {
         terminalView.removeSession(oldId);
       }
     }
 
-    // Auto-attach to a new session if none is active
+    // Auto-attach new sessions as observer if none is active
     if (!terminalView.getActiveSessionId() && sessions.length > 0) {
       const newSession = sessions.find((s) => !oldIds.has(s.sessionId));
       if (newSession) {
-        onAttach(newSession.sessionId);
+        onAttach(newSession.sessionId, newSession.mode);
       }
     }
 
-    // Show placeholder if no sessions left
     if (sessions.length === 0 && !terminalView.getActiveSessionId()) {
       terminalContainer.innerHTML =
         '<div id="terminal-placeholder">Select an endpoint to connect</div>';
@@ -136,12 +138,9 @@ wsClient.onMessage((msg) => {
   }
 });
 
-// --- Init ---
-
 async function init() {
   endpoints = await fetchEndpoints();
   renderEndpoints();
-  // Session list comes via WebSocket sessions:changed on connect
 }
 
 init();

@@ -1,15 +1,19 @@
+export type SessionMode = "control" | "observer";
+
 export interface SessionListEntry {
   sessionId: string;
   endpointId: string;
   status: string;
   createdAt: string;
   source: string;
+  mode: SessionMode;
 }
 
 type ServerMessage =
   | { type: "terminal:output"; sessionId: string; data: string }
   | { type: "terminal:status"; sessionId: string; status: string }
   | { type: "terminal:closed"; sessionId: string }
+  | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | { type: "error"; message: string };
 
@@ -40,7 +44,6 @@ export class WsClient {
     };
 
     this.ws.onclose = () => {
-      // Reconnect after a short delay
       setTimeout(() => this.connect(), 2000);
     };
   }
@@ -70,5 +73,9 @@ export class WsClient {
 
   closeSession(sessionId: string): void {
     this.send({ type: "terminal:close", sessionId });
+  }
+
+  takeControl(sessionId: string): void {
+    this.send({ type: "terminal:take-control", sessionId });
   }
 }

@@ -47,6 +47,7 @@ export async function buildApp(
     try {
       const { endpointId } = request.body;
       const session = await terminalManager.create(endpointId, "ui");
+      uiCreatedSessions.add(session.sessionId);
       return session;
     } catch (err) {
       reply.status(400);
@@ -72,7 +73,7 @@ export async function buildApp(
   );
 
   // WebSocket for terminal I/O
-  registerWebSocket(app, terminalManager);
+  const { uiCreatedSessions } = registerWebSocket(app, terminalManager);
 
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport(app, config, terminalManager);

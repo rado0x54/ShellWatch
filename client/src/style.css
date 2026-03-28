@@ -168,6 +168,43 @@ body {
   color: #fff;
 }
 
+.btn-take-control {
+  background: #f59e0b;
+  color: #1a1a2e;
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.btn-take-control:hover {
+  background: #d97706;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  vertical-align: middle;
+  margin-left: 0.4rem;
+}
+
+.badge-observer {
+  background: #f59e0b33;
+  color: #f59e0b;
+  border: 1px solid #f59e0b55;
+}
+
+/* Session actions */
+.session-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
 /* Main / Terminal */
 #main {
   flex: 1;

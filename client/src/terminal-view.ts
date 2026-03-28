@@ -1,21 +1,23 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
-import type { WsClient } from "./ws-client.js";
+import type { SessionMode, WsClient } from "./ws-client.js";
 
 interface ManagedTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   element: HTMLDivElement;
+  mode: SessionMode;
+  inputDisposable: { dispose: () => void } | null;
 }
 
 export class TerminalView {
   private terminals = new Map<string, ManagedTerminal>();
   private activeSessionId: string | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private onModeChange: ((sessionId: string, mode: SessionMode) => void) | null = null;
 
   constructor(private wsClient: WsClient) {
-    // Single message handler — routes output to the correct terminal
     this.wsClient.onMessage((msg) => {
       if (msg.type === "terminal:output") {
         const managed = this.terminals.get(msg.sessionId);
@@ -27,23 +29,30 @@ export class TerminalView {
           managed.terminal.write("\r\n\x1b[31m[Session closed]\x1b[0m\r\n");
         }
       }
+      if (msg.type === "terminal:mode") {
+        const managed = this.terminals.get(msg.sessionId);
+        if (managed) {
+          this.setMode(msg.sessionId, managed, msg.mode);
+        }
+      }
     });
   }
 
-  attach(sessionId: string, container: HTMLElement): void {
-    // Hide all existing terminal elements
+  setModeChangeCallback(cb: (sessionId: string, mode: SessionMode) => void): void {
+    this.onModeChange = cb;
+  }
+
+  attach(sessionId: string, container: HTMLElement, initialMode: SessionMode = "control"): void {
     for (const managed of this.terminals.values()) {
       managed.element.style.display = "none";
     }
 
-    // Hide placeholder
     const placeholder = document.getElementById("terminal-placeholder");
     if (placeholder) placeholder.style.display = "none";
 
     let managed = this.terminals.get(sessionId);
 
     if (!managed) {
-      // Create a new terminal for this session
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
@@ -54,6 +63,7 @@ export class TerminalView {
           cursor: "#4a9eff",
           selectionBackground: "#4a9eff44",
         },
+        disableStdin: initialMode === "observer",
       });
 
       const fitAddon = new FitAddon();
@@ -67,26 +77,23 @@ export class TerminalView {
       terminal.open(element);
       fitAddon.fit();
 
-      // Wire input for this terminal
-      terminal.onData((data) => {
+      // Wire input — only sends if mode is control (checked server-side too)
+      const inputDisposable = terminal.onData((data) => {
         this.wsClient.sendInput(sessionId, data);
       });
 
-      managed = { terminal, fitAddon, element };
+      managed = { terminal, fitAddon, element, mode: initialMode, inputDisposable };
       this.terminals.set(sessionId, managed);
 
-      // Attach to WS and send initial resize
       this.wsClient.attach(sessionId);
       this.wsClient.sendResize(sessionId, terminal.cols, terminal.rows);
     }
 
-    // Show this terminal
     managed.element.style.display = "block";
     managed.fitAddon.fit();
     managed.terminal.focus();
     this.activeSessionId = sessionId;
 
-    // Resize observer — refit the active terminal
     if (this.resizeObserver) this.resizeObserver.disconnect();
     this.resizeObserver = new ResizeObserver(() => {
       if (this.activeSessionId) {
@@ -104,6 +111,22 @@ export class TerminalView {
     this.resizeObserver.observe(container);
   }
 
+  getMode(sessionId: string): SessionMode | null {
+    return this.terminals.get(sessionId)?.mode ?? null;
+  }
+
+  private setMode(sessionId: string, managed: ManagedTerminal, mode: SessionMode): void {
+    managed.mode = mode;
+    // Enable/disable terminal input
+    managed.terminal.options.disableStdin = mode === "observer";
+    if (mode === "observer") {
+      managed.terminal.write("\r\n\x1b[33m[Observer mode — read only]\x1b[0m\r\n");
+    } else {
+      managed.terminal.write("\r\n\x1b[32m[Control mode — input enabled]\x1b[0m\r\n");
+    }
+    this.onModeChange?.(sessionId, mode);
+  }
+
   detach(): void {
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -115,6 +138,7 @@ export class TerminalView {
   removeSession(sessionId: string): void {
     const managed = this.terminals.get(sessionId);
     if (managed) {
+      managed.inputDisposable?.dispose();
       managed.terminal.dispose();
       managed.element.remove();
       this.terminals.delete(sessionId);
