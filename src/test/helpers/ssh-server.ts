@@ -28,6 +28,43 @@ function generateSshKeypair(): { privateKey: string; publicKey: string } {
   };
 }
 
+/**
+ * Simple shell command processor for the test SSH server.
+ * Handles semicolon-separated commands, echo, and basic variable expansion.
+ */
+function processLine(stream: ServerChannel, line: string, log: TestLog): void {
+  log.add("ssh-server", "executing line", line);
+  let lastExitCode = 0;
+
+  // Split on semicolons for chained commands
+  const commands = line.split(";").map((c) => c.trim());
+
+  for (const cmd of commands) {
+    if (!cmd) continue;
+
+    // Handle echo with variable substitution
+    if (cmd.startsWith("echo ")) {
+      let arg = cmd.slice(5).trim();
+      // Remove surrounding quotes
+      if (
+        (arg.startsWith('"') && arg.endsWith('"')) ||
+        (arg.startsWith("'") && arg.endsWith("'"))
+      ) {
+        arg = arg.slice(1, -1);
+      }
+      // Replace $? with last exit code
+      arg = arg.replace(/\$\?/g, String(lastExitCode));
+      stream.write(`${arg}\n`);
+    } else if (cmd.startsWith("echo")) {
+      stream.write("\n");
+    } else {
+      // Unknown command — write error and set exit code
+      stream.write(`-bash: ${cmd.split(" ")[0]}: command not found\n`);
+      lastExitCode = 127;
+    }
+  }
+}
+
 export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
   const hostKeyPair = generateSshKeypair();
   const clientKeyPair = generateSshKeypair();
@@ -65,11 +102,26 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
           const stream = accept();
           activeStreams.add(stream);
 
-          // Echo back input
+          // Simple shell: accumulate a line buffer and execute on newline
+          let lineBuffer = "";
+
           stream.on("data", (data: Buffer) => {
             const text = data.toString();
             log.add("ssh-server", "received input", text);
+
+            // Echo raw input back (terminal echo)
             stream.write(data);
+
+            for (const char of text) {
+              if (char === "\r" || char === "\n") {
+                if (lineBuffer.length > 0) {
+                  processLine(stream, lineBuffer.trim(), log);
+                  lineBuffer = "";
+                }
+              } else {
+                lineBuffer += char;
+              }
+            }
           });
 
           stream.on("close", () => {

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "shellwatch-local": {
-      "type": "url",
+      "type": "http",
       "url": "http://localhost:3000/mcp"
     }
   }

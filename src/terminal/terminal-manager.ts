@@ -122,17 +122,20 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       throw new Error(`Terminal ${sessionId} is not open (status: ${managed.session.status})`);
     }
 
-    const marker = `__SW_DONE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}__`;
-    const wrappedCommand = `${command}; echo "${marker}_EXIT_$?"`;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const startMarker = `__SW_START_${id}__`;
+    const endMarker = `__SW_END_${id}__`;
+
+    // Use echo with start/end markers so we capture only the command output,
+    // not the echoed command line or PTY control characters
+    const wrappedCommand = `echo "${startMarker}"; ${command}; echo "${endMarker}_EXIT_$?"`;
 
     const startOffset = managed.output.currentOffset;
     const startTime = Date.now();
 
-    // Send the wrapped command
     managed.transport.write(`${wrappedCommand}\n`);
     managed.session.lastActivityAt = new Date();
 
-    // Wait for the marker to appear in output
     return new Promise<ExecResult>((resolve) => {
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -151,26 +154,29 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
         if (sid !== sessionId || timedOut) return;
 
         const result = managed.output.read(startOffset);
-        const markerPrefix = `${marker}_EXIT_`;
-        const markerIdx = result.data.indexOf(markerPrefix);
-        if (markerIdx === -1) return;
 
-        // Found the marker — parse exit code
+        // Both markers appear twice in the buffer: once in the echoed command line,
+        // once as actual shell output. We need the OUTPUT versions.
+        // The output start marker appears at the beginning of a line: \n<marker>\n
+        const startPattern = `\n${startMarker}\n`;
+        const startIdx = result.data.indexOf(startPattern);
+        if (startIdx === -1) return;
+
+        const outputStart = startIdx + startPattern.length;
+
+        // Find the end marker AFTER the start marker output
+        const endPrefix = `${endMarker}_EXIT_`;
+        const endIdx = result.data.indexOf(endPrefix, outputStart);
+        if (endIdx === -1) return;
+
         cleanup();
-        const afterMarker = result.data.slice(markerIdx + markerPrefix.length);
-        const exitCodeStr = afterMarker.split(/\s/)[0];
+
+        // Parse exit code from end marker
+        const afterEnd = result.data.slice(endIdx + endPrefix.length);
+        const exitCodeStr = afterEnd.split(/\s/)[0];
         const exitCode = parseInt(exitCodeStr, 10) || 0;
 
-        // Extract output: everything between command echo and marker
-        // The shell echoes the wrapped command, so skip past it
-        let output = result.data.slice(0, markerIdx);
-        // Remove the echoed command line (first line)
-        const firstNewline = output.indexOf("\n");
-        if (firstNewline !== -1) {
-          output = output.slice(firstNewline + 1);
-        }
-        // Trim trailing whitespace
-        output = output.trimEnd();
+        const output = result.data.slice(outputStart, endIdx).trimEnd();
 
         resolve({
           output,
