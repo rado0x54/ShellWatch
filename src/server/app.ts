@@ -35,6 +35,15 @@ export async function buildApp(
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // --- SSH Keys API ---
+
+  app.get("/api/keys", async () => {
+    const all = await keyRepo.findAll();
+    return {
+      keys: all.map(({ id, label, type, fingerprint }) => ({ id, label, type, fingerprint })),
+    };
+  });
+
   // --- Endpoint API ---
 
   app.get("/api/endpoints", async () => {

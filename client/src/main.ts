@@ -1,4 +1,5 @@
 import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
+import { SettingsPage } from "./settings.js";
 import { TerminalView } from "./terminal-view.js";
 import { type SessionListEntry, WsClient } from "./ws-client.js";
 
@@ -10,11 +11,24 @@ const terminalView = new TerminalView(wsClient);
 const endpointList = document.getElementById("endpoint-list") as HTMLElement;
 const sessionList = document.getElementById("session-list") as HTMLElement;
 const terminalContainer = document.getElementById("terminal-container") as HTMLElement;
+const settingsContainer = document.getElementById("settings-page") as HTMLElement;
+const settingsBtn = document.getElementById("settings-btn") as HTMLElement;
 
 let endpoints: Endpoint[] = [];
 let sessions: SessionListEntry[] = [];
 
-// Re-render sessions when a terminal's mode changes
+// Settings page
+const settingsPage = new SettingsPage(settingsContainer, () => {
+  // On close: show terminal, refresh endpoints
+  terminalContainer.style.display = "block";
+  refreshEndpoints();
+});
+
+settingsBtn.addEventListener("click", () => {
+  terminalContainer.style.display = "none";
+  settingsPage.show();
+});
+
 terminalView.setModeChangeCallback(() => renderSessions());
 
 function renderEndpoints() {
@@ -82,6 +96,9 @@ function renderSessions() {
 
 async function onConnect(endpointId: string) {
   try {
+    // Hide settings if open
+    settingsPage.hide();
+    terminalContainer.style.display = "block";
     const session = await createSession(endpointId);
     onAttach(session.sessionId, "control");
   } catch (err) {
@@ -90,6 +107,8 @@ async function onConnect(endpointId: string) {
 }
 
 function onAttach(sessionId: string, mode: "control" | "observer" = "control") {
+  settingsPage.hide();
+  terminalContainer.style.display = "block";
   terminalView.attach(sessionId, terminalContainer, mode);
   renderSessions();
 }
@@ -119,7 +138,6 @@ wsClient.onMessage((msg) => {
       }
     }
 
-    // Auto-attach new sessions as observer if none is active
     if (!terminalView.getActiveSessionId() && sessions.length > 0) {
       const newSession = sessions.find((s) => !oldIds.has(s.sessionId));
       if (newSession) {
@@ -138,99 +156,13 @@ wsClient.onMessage((msg) => {
   }
 });
 
-// --- Passkey management ---
-
-import {
-  deleteCredential,
-  listCredentials,
-  registerPasskey,
-  type WebAuthnCredential,
-} from "./webauthn.js";
-
-const passkeyList = document.getElementById("passkey-list") as HTMLElement;
-const registerBtn = document.getElementById("register-passkey-btn") as HTMLElement;
-
-let passkeys: WebAuthnCredential[] = [];
-
-function renderPasskeys() {
-  passkeyList.innerHTML = "";
-  if (passkeys.length === 0) {
-    passkeyList.innerHTML =
-      '<li style="color:#555;font-size:0.8rem;padding:0.25rem">No passkeys registered</li>';
-    return;
-  }
-  for (const pk of passkeys) {
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div class="endpoint-item" style="flex-direction:column;align-items:stretch;gap:0.4rem">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div class="endpoint-info">
-            <span class="endpoint-label">${pk.label}</span>
-            <span class="endpoint-detail">${pk.algorithm} &middot; ${pk.fingerprint.slice(0, 20)}...</span>
-          </div>
-          <button type="button" class="btn btn-close" data-id="${pk.id}">Remove</button>
-        </div>
-        ${
-          pk.authorizedKeysEntry
-            ? `<div style="display:flex;gap:0.25rem">
-            <button type="button" class="btn btn-copy-key" style="font-size:0.65rem;padding:0.2rem 0.4rem;background:#2a2a4a;color:#8888aa">Copy SSH Key</button>
-            <button type="button" class="btn btn-copy-config" style="font-size:0.65rem;padding:0.2rem 0.4rem;background:#2a2a4a;color:#8888aa">Copy sshd_config</button>
-          </div>`
-            : ""
-        }
-      </div>
-    `;
-    li.querySelector(".btn-close")?.addEventListener("click", async () => {
-      await deleteCredential(pk.id);
-      await refreshPasskeys();
-    });
-    li.querySelector(".btn-copy-key")?.addEventListener("click", () => {
-      if (pk.authorizedKeysEntry) {
-        navigator.clipboard.writeText(pk.authorizedKeysEntry);
-        const btn = li.querySelector(".btn-copy-key") as HTMLElement;
-        btn.textContent = "Copied!";
-        setTimeout(() => {
-          btn.textContent = "Copy SSH Key";
-        }, 1500);
-      }
-    });
-    li.querySelector(".btn-copy-config")?.addEventListener("click", () => {
-      navigator.clipboard.writeText(
-        "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
-      );
-      const btn = li.querySelector(".btn-copy-config") as HTMLElement;
-      btn.textContent = "Copied!";
-      setTimeout(() => {
-        btn.textContent = "Copy sshd_config";
-      }, 1500);
-    });
-    passkeyList.appendChild(li);
-  }
-}
-
-async function refreshPasskeys() {
-  passkeys = await listCredentials();
-  renderPasskeys();
-}
-
-registerBtn.addEventListener("click", async () => {
-  const label = prompt("Passkey label (e.g., YubiKey 5 NFC):");
-  if (!label) return;
-  try {
-    await registerPasskey(label);
-    await refreshPasskeys();
-  } catch (err) {
-    console.error("Passkey registration failed:", err);
-    alert(`Registration failed: ${(err as Error).message}`);
-  }
-});
-
-// --- Init ---
-
-async function init() {
+async function refreshEndpoints() {
   endpoints = await fetchEndpoints();
   renderEndpoints();
-  await refreshPasskeys();
+}
+
+async function init() {
+  await refreshEndpoints();
 }
 
 init();

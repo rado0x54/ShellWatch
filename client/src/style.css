@@ -232,3 +232,166 @@ body {
   height: 100%;
   padding: 4px;
 }
+
+/* Settings button */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 1rem;
+  border-top: 1px solid #2a2a4a;
+}
+
+.btn-settings {
+  width: 100%;
+  background: #2a2a4a;
+  color: #8888aa;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-settings:hover {
+  background: #3a3a5a;
+  color: #e0e0e0;
+}
+
+/* Settings page */
+.settings {
+  padding: 2rem;
+  overflow-y: auto;
+  height: 100%;
+}
+
+#settings-page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.settings-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.settings-section {
+  margin-bottom: 2rem;
+}
+
+.settings-section h2 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: #8888aa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.settings-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #2a2a4a;
+  color: #8888aa;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+.settings-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #1a1a3a;
+}
+
+.settings-table tr:hover td {
+  background: #1a1a3a;
+}
+
+.settings-form {
+  background: #16213e;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.settings-form h3 {
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.form-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.form-row input {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  color: #e0e0e0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  min-width: 80px;
+}
+
+.form-row input:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+
+.form-row input[type="number"] {
+  width: 70px;
+}
+
+.settings-info {
+  background: #16213e;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.settings-info h3 {
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.settings-info p {
+  font-size: 0.8rem;
+  color: #8888aa;
+  margin-bottom: 0.5rem;
+}
+
+.settings-info code {
+  background: #1a1a2e;
+  padding: 0.15rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.code-block {
+  background: #1a1a2e;
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  cursor: pointer;
+  border: 1px solid #2a2a4a;
+}
+
+.code-block:hover {
+  border-color: #4a9eff;
+}

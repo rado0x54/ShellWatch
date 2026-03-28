@@ -17,18 +17,15 @@
           <h2>Sessions</h2>
           <ul id="session-list"></ul>
         </div>
-        <div class="sidebar-section">
-          <h2>Passkeys</h2>
-          <ul id="passkey-list"></ul>
-          <div style="padding: 0.5rem 0">
-            <button type="button" class="btn btn-connect" id="register-passkey-btn">Register Passkey</button>
-          </div>
+        <div class="sidebar-section sidebar-footer">
+          <button type="button" class="btn btn-settings" id="settings-btn">Settings</button>
         </div>
       </aside>
       <main id="main">
         <div id="terminal-container">
           <div id="terminal-placeholder">Select an endpoint to connect</div>
         </div>
+        <div id="settings-page" style="display:none"></div>
       </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
