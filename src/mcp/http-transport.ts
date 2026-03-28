@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../config/index.js";
 import type { TerminalManager } from "../terminal/index.js";
+import { attachMcpNotifications } from "./notifications.js";
 import { createMcpServer } from "./server.js";
 
 export async function registerMcpHttpTransport(
@@ -23,18 +24,31 @@ export async function registerMcpHttpTransport(
         sessionIdGenerator: () => randomUUID(),
       });
 
+      // Create MCP server with a session tracking callback (wired below)
+      let trackSession: (id: string) => void = () => {};
+      const mcpServer = createMcpServer(config, terminalManager, {
+        onSessionCreated: (terminalSessionId) => trackSession(terminalSessionId),
+      });
+
+      // Connect before attaching notifications (server needs transport for sending)
+      await mcpServer.connect(newTransport);
+
+      // Attach notification dispatcher — now the server can send notifications
+      const notifications = attachMcpNotifications(mcpServer, terminalManager, {
+        debounceMs: config.notifications.mcp.debounceMs,
+      });
+      trackSession = (id) => notifications.trackSession(id);
+
       newTransport.onclose = () => {
         if (newTransport.sessionId) {
           transports.delete(newTransport.sessionId);
         }
+        notifications.destroy();
       };
 
       newTransport.onerror = (err) => {
         app.log.error(err, "MCP transport error");
       };
-
-      const mcpServer = createMcpServer(config, terminalManager);
-      await mcpServer.connect(newTransport);
 
       transport = newTransport;
     }
@@ -55,7 +69,6 @@ export async function registerMcpHttpTransport(
       }
     }
 
-    // Store transport by session ID after first request
     if (transport.sessionId && !transports.has(transport.sessionId)) {
       transports.set(transport.sessionId, transport);
     }

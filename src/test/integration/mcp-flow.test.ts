@@ -211,4 +211,54 @@ describe("MCP Client Flow", () => {
       await mcp.close();
     }
   });
+
+  it("receives output_available notification after sending input", async () => {
+    const mcp = await createTestMcpClient(appServer.url, log);
+    try {
+      const session = JSON.parse(
+        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+      );
+
+      await mcp.callTool("shellwatch_send_keys", {
+        sessionId: session.sessionId,
+        keys: ["text:notification-test", "enter"],
+      });
+
+      const notification = await mcp.waitForNotification(
+        "notifications/shellwatch/output_available",
+        2000,
+      );
+      expect(notification.params?.sessionId).toBe(session.sessionId);
+      expect(typeof notification.params?.offset).toBe("number");
+      expect(notification.params?.offset as number).toBeGreaterThan(0);
+
+      await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("receives session_status notification on session close", async () => {
+    const mcp = await createTestMcpClient(appServer.url, log);
+    try {
+      const session = JSON.parse(
+        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+      );
+
+      // Drain the "open" status notification from session creation
+      await mcp.waitForNotification("notifications/shellwatch/session_status", 2000);
+
+      // Close the session — should trigger a closing/closed status notification
+      await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
+
+      const notification = await mcp.waitForNotification(
+        "notifications/shellwatch/session_status",
+        2000,
+      );
+      expect(notification.params?.sessionId).toBe(session.sessionId);
+      expect(["closed", "closing"]).toContain(notification.params?.status);
+    } finally {
+      await mcp.close();
+    }
+  });
 });

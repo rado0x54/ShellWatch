@@ -25,6 +25,7 @@ const testConfig: Config = {
     },
   ],
   security: { allowedNetworks: ["127.0.0.1/32"] },
+  notifications: { mcp: { debounceMs: 100 } },
 };
 
 describe("TerminalManager", () => {

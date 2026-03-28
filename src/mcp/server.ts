@@ -3,7 +3,15 @@ import { z } from "zod";
 import type { Config } from "../config/index.js";
 import { SUPPORTED_KEYS, type TerminalManager } from "../terminal/index.js";
 
-export function createMcpServer(config: Config, terminalManager: TerminalManager): McpServer {
+export interface McpServerCallbacks {
+  onSessionCreated?: (sessionId: string) => void;
+}
+
+export function createMcpServer(
+  config: Config,
+  terminalManager: TerminalManager,
+  callbacks: McpServerCallbacks = {},
+): McpServer {
   const server = new McpServer({
     name: "shellwatch",
     version: "0.3.0",
@@ -31,6 +39,7 @@ export function createMcpServer(config: Config, terminalManager: TerminalManager
     async ({ endpointId }) => {
       try {
         const session = await terminalManager.create(endpointId, "mcp");
+        callbacks.onSessionCreated?.(session.sessionId);
         return {
           content: [
             {
