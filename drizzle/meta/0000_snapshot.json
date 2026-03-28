@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "353ee7a8-9227-479e-a258-affc5a03da02",
+  "id": "9c027e5f-3a29-44fa-9e12-ff827d98afb0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "api_keys": {
@@ -453,18 +453,18 @@
           "autoincrement": false,
           "default": "'file'"
         },
-        "private_key_path": {
-          "name": "private_key_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "public_key": {
           "name": "public_key",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
           "autoincrement": false
         },
         "enabled": {
@@ -490,7 +490,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "ssh_keys_fingerprint_unique": {
+          "name": "ssh_keys_fingerprint_unique",
+          "columns": [
+            "fingerprint"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

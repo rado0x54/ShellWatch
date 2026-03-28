@@ -68,9 +68,11 @@ CREATE TABLE `ssh_keys` (
 	`id` text PRIMARY KEY NOT NULL,
 	`label` text NOT NULL,
 	`type` text DEFAULT 'file' NOT NULL,
-	`private_key_path` text,
-	`public_key` text,
+	`public_key` text NOT NULL,
+	`fingerprint` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL
 );
+--> statement-breakpoint
+CREATE UNIQUE INDEX `ssh_keys_fingerprint_unique` ON `ssh_keys` (`fingerprint`);

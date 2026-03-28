@@ -1,4 +1,4 @@
-import { accessSync, constants, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { type Config, ConfigSchema } from "./schema.js";
@@ -31,24 +31,8 @@ export function loadConfig(configPath?: string): Config {
   const config = result.data;
   const configDir = dirname(resolvedPath);
 
-  // Validate and normalize key paths
-  for (const key of config.keys) {
-    const keyPath = resolve(configDir, key.privateKeyPath);
-    try {
-      accessSync(keyPath, constants.R_OK);
-    } catch {
-      throw new Error(`Private key "${key.id}" not readable at ${keyPath}`);
-    }
-    key.privateKeyPath = keyPath;
-  }
-
-  // Validate that all endpoints reference existing keys
-  const keyIds = new Set(config.keys.map((k) => k.id));
-  for (const server of config.servers) {
-    if (!keyIds.has(server.keyId)) {
-      throw new Error(`Endpoint "${server.id}" references unknown key "${server.keyId}"`);
-    }
-  }
+  // Normalize keyDirectory to absolute path
+  config.keyDirectory = resolve(configDir, config.keyDirectory);
 
   return config;
 }

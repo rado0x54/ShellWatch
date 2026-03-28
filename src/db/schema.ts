@@ -6,8 +6,8 @@ export const sshKeys = sqliteTable("ssh_keys", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
   type: text("type").notNull().default("file"), // "file" | "fido" (future)
-  privateKeyPath: text("private_key_path"),
-  publicKey: text("public_key"),
+  publicKey: text("public_key").notNull(), // OpenSSH format (e.g., "ssh-ed25519 AAAA...")
+  fingerprint: text("fingerprint").notNull().unique(), // SHA256:... — used to match runtime key files
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

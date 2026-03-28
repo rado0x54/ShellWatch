@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
-import { endpoints, sshKeys } from "../schema.js";
+import { endpoints } from "../schema.js";
 
 export interface EndpointInfo {
   id: string;
@@ -9,7 +9,6 @@ export interface EndpointInfo {
   port: number;
   username: string;
   keyId: string | null;
-  privateKeyPath: string | null;
 }
 
 export interface EndpointRepository {
@@ -42,10 +41,8 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
-        privateKeyPath: sshKeys.privateKeyPath,
       })
       .from(endpoints)
-      .leftJoin(sshKeys, eq(endpoints.keyId, sshKeys.id))
       .where(eq(endpoints.enabled, true))
       .all();
   }
@@ -59,10 +56,8 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
-        privateKeyPath: sshKeys.privateKeyPath,
       })
       .from(endpoints)
-      .leftJoin(sshKeys, eq(endpoints.keyId, sshKeys.id))
       .where(eq(endpoints.id, id))
       .get();
     return row ?? null;
@@ -79,13 +74,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     const now = new Date().toISOString();
     this.db
       .insert(endpoints)
-      .values({
-        ...data,
-        keyId: data.keyId ?? null,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      })
+      .values({ ...data, keyId: data.keyId ?? null, enabled: true, createdAt: now, updatedAt: now })
       .run();
   }
 
@@ -112,22 +101,8 @@ export class DrizzleEndpointRepository implements EndpointRepository {
 export class InMemoryEndpointRepository implements EndpointRepository {
   private store: EndpointInfo[];
 
-  constructor(
-    initialEndpoints: Array<{
-      id: string;
-      label: string;
-      host: string;
-      port: number;
-      username: string;
-      keyId?: string;
-      privateKeyPath?: string;
-    }> = [],
-  ) {
-    this.store = initialEndpoints.map((e) => ({
-      ...e,
-      keyId: e.keyId ?? null,
-      privateKeyPath: e.privateKeyPath ?? null,
-    }));
+  constructor(initialEndpoints: Array<Omit<EndpointInfo, "keyId"> & { keyId?: string }> = []) {
+    this.store = initialEndpoints.map((e) => ({ ...e, keyId: e.keyId ?? null }));
   }
 
   async findAll(): Promise<EndpointInfo[]> {
@@ -146,7 +121,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     username: string;
     keyId?: string;
   }): Promise<void> {
-    this.store.push({ ...data, keyId: data.keyId ?? null, privateKeyPath: null });
+    this.store.push({ ...data, keyId: data.keyId ?? null });
   }
 
   async update(
@@ -154,9 +129,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
   ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id);
-    if (idx >= 0) {
-      this.store[idx] = { ...this.store[idx], ...data };
-    }
+    if (idx >= 0) this.store[idx] = { ...this.store[idx], ...data };
   }
 
   async delete(id: string): Promise<void> {

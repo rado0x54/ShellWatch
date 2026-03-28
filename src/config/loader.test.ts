@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,14 +8,9 @@ function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "shellwatch-test-"));
 }
 
-function writeConfig(dir: string, yaml: string, keyFiles: string[] = []): string {
+function writeConfig(dir: string, yaml: string): string {
   const configPath = join(dir, "config.yaml");
   writeFileSync(configPath, yaml);
-  const keysDir = join(dir, "keys");
-  mkdirSync(keysDir, { recursive: true });
-  for (const keyFile of keyFiles) {
-    writeFileSync(join(keysDir, keyFile), "fake-key-content");
-  }
   return configPath;
 }
 
@@ -25,10 +20,7 @@ describe("loadConfig", () => {
     const configPath = writeConfig(
       dir,
       `
-keys:
-  - id: test-key
-    label: Test Key
-    privateKeyPath: ./keys/test.pem
+keyDirectory: ./keys
 servers:
   - id: test
     label: Test
@@ -37,16 +29,13 @@ servers:
     username: user
     keyId: test-key
 `,
-      ["test.pem"],
     );
 
     const config = loadConfig(configPath);
     expect(config.servers).toHaveLength(1);
     expect(config.servers[0].id).toBe("test");
-    expect(config.servers[0].host).toBe("localhost");
     expect(config.servers[0].keyId).toBe("test-key");
-    expect(config.keys).toHaveLength(1);
-    expect(config.keys[0].privateKeyPath).toBe(join(dir, "keys", "test.pem"));
+    expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
   it("defaults port to 22", () => {
@@ -54,10 +43,6 @@ servers:
     const configPath = writeConfig(
       dir,
       `
-keys:
-  - id: k1
-    label: Key
-    privateKeyPath: ./keys/test.pem
 servers:
   - id: test
     label: Test
@@ -65,11 +50,28 @@ servers:
     username: user
     keyId: k1
 `,
-      ["test.pem"],
     );
 
     const config = loadConfig(configPath);
     expect(config.servers[0].port).toBe(22);
+  });
+
+  it("defaults keyDirectory to ./keys", () => {
+    const dir = createTempDir();
+    const configPath = writeConfig(
+      dir,
+      `
+servers:
+  - id: test
+    label: Test
+    host: localhost
+    username: user
+    keyId: k1
+`,
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
   it("throws on missing config file", () => {
@@ -88,7 +90,6 @@ servers:
     const configPath = writeConfig(
       dir,
       `
-keys: []
 servers:
   - id: test
 `,
@@ -98,72 +99,15 @@ servers:
 
   it("throws on empty servers list", () => {
     const dir = createTempDir();
-    const configPath = writeConfig(
-      dir,
-      `
-keys:
-  - id: k1
-    label: Key
-    privateKeyPath: ./keys/test.pem
-servers: []
-`,
-      ["test.pem"],
-    );
+    const configPath = writeConfig(dir, "servers: []");
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
-  it("throws on missing private key file", () => {
+  it("loads multiple servers", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
-keys:
-  - id: k1
-    label: Key
-    privateKeyPath: ./keys/nonexistent.pem
-servers:
-  - id: test
-    label: Test
-    host: localhost
-    port: 22
-    username: user
-    keyId: k1
-`,
-    );
-    expect(() => loadConfig(configPath)).toThrow("not readable");
-  });
-
-  it("throws when endpoint references unknown key", () => {
-    const dir = createTempDir();
-    const configPath = writeConfig(
-      dir,
-      `
-keys:
-  - id: k1
-    label: Key
-    privateKeyPath: ./keys/test.pem
-servers:
-  - id: test
-    label: Test
-    host: localhost
-    port: 22
-    username: user
-    keyId: unknown-key
-`,
-      ["test.pem"],
-    );
-    expect(() => loadConfig(configPath)).toThrow('references unknown key "unknown-key"');
-  });
-
-  it("loads multiple servers sharing a key", () => {
-    const dir = createTempDir();
-    const configPath = writeConfig(
-      dir,
-      `
-keys:
-  - id: shared-key
-    label: Shared Key
-    privateKeyPath: ./keys/shared.pem
 servers:
   - id: server1
     label: Server 1
@@ -178,13 +122,11 @@ servers:
     username: user2
     keyId: shared-key
 `,
-      ["shared.pem"],
     );
 
     const config = loadConfig(configPath);
     expect(config.servers).toHaveLength(2);
-    expect(config.keys).toHaveLength(1);
     expect(config.servers[0].keyId).toBe("shared-key");
-    expect(config.servers[1].keyId).toBe("shared-key");
+    expect(config.servers[1].port).toBe(2222);
   });
 });

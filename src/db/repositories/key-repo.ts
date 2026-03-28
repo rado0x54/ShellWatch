@@ -6,14 +6,20 @@ export interface SshKeyInfo {
   id: string;
   label: string;
   type: string;
-  privateKeyPath: string | null;
-  publicKey: string | null;
+  publicKey: string;
+  fingerprint: string;
 }
 
 export interface SshKeyRepository {
   findAll(): Promise<SshKeyInfo[]>;
   findById(id: string): Promise<SshKeyInfo | null>;
-  create(data: { id: string; label: string; privateKeyPath: string }): Promise<void>;
+  create(data: {
+    id: string;
+    label: string;
+    type?: string;
+    publicKey: string;
+    fingerprint: string;
+  }): Promise<void>;
   delete(id: string): Promise<void>;
 }
 
@@ -26,8 +32,8 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         id: sshKeys.id,
         label: sshKeys.label,
         type: sshKeys.type,
-        privateKeyPath: sshKeys.privateKeyPath,
         publicKey: sshKeys.publicKey,
+        fingerprint: sshKeys.fingerprint,
       })
       .from(sshKeys)
       .where(eq(sshKeys.enabled, true))
@@ -40,8 +46,8 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         id: sshKeys.id,
         label: sshKeys.label,
         type: sshKeys.type,
-        privateKeyPath: sshKeys.privateKeyPath,
         publicKey: sshKeys.publicKey,
+        fingerprint: sshKeys.fingerprint,
       })
       .from(sshKeys)
       .where(eq(sshKeys.id, id))
@@ -49,15 +55,22 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
     return row ?? null;
   }
 
-  async create(data: { id: string; label: string; privateKeyPath: string }): Promise<void> {
+  async create(data: {
+    id: string;
+    label: string;
+    type?: string;
+    publicKey: string;
+    fingerprint: string;
+  }): Promise<void> {
     const now = new Date().toISOString();
     this.db
       .insert(sshKeys)
       .values({
         id: data.id,
         label: data.label,
-        type: "file",
-        privateKeyPath: data.privateKeyPath,
+        type: data.type ?? "file",
+        publicKey: data.publicKey,
+        fingerprint: data.fingerprint,
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -77,14 +90,8 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
 export class InMemorySshKeyRepository implements SshKeyRepository {
   private store: SshKeyInfo[];
 
-  constructor(initialKeys: Array<{ id: string; label: string; privateKeyPath: string }> = []) {
-    this.store = initialKeys.map((k) => ({
-      id: k.id,
-      label: k.label,
-      type: "file",
-      privateKeyPath: k.privateKeyPath,
-      publicKey: null,
-    }));
+  constructor(initialKeys: SshKeyInfo[] = []) {
+    this.store = [...initialKeys];
   }
 
   async findAll(): Promise<SshKeyInfo[]> {
@@ -95,8 +102,20 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
     return this.store.find((k) => k.id === id) ?? null;
   }
 
-  async create(data: { id: string; label: string; privateKeyPath: string }): Promise<void> {
-    this.store.push({ ...data, type: "file", publicKey: null });
+  async create(data: {
+    id: string;
+    label: string;
+    type?: string;
+    publicKey: string;
+    fingerprint: string;
+  }): Promise<void> {
+    this.store.push({
+      id: data.id,
+      label: data.label,
+      type: data.type ?? "file",
+      publicKey: data.publicKey,
+      fingerprint: data.fingerprint,
+    });
   }
 
   async delete(id: string): Promise<void> {

@@ -17,11 +17,18 @@ const testEndpoints = [
     port: 22,
     username: "ubuntu",
     keyId: "key-1",
-    privateKeyPath: "/tmp/fake.pem",
   },
 ];
 
-const testKeys = [{ id: "key-1", label: "Test Key", privateKeyPath: "/tmp/fake.pem" }];
+const testKeys = [
+  {
+    id: "key-1",
+    label: "Test Key",
+    type: "file",
+    publicKey: "ssh-ed25519 AAAA...",
+    fingerprint: "SHA256:test123",
+  },
+];
 
 function createMockTerminalManager() {
   const emitter = new EventEmitter();

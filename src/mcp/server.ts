@@ -179,7 +179,7 @@ export async function createMcpServer(
                 isError: true,
                 content: [{ type: "text", text: `Endpoint not found: ${id}` }],
               };
-            const { privateKeyPath: _, ...safe } = ep;
+            const safe = ep;
             return { content: [{ type: "text", text: JSON.stringify(safe, null, 2) }] };
           }
           case "create": {
@@ -226,24 +226,22 @@ export async function createMcpServer(
 
   mcpServer.tool(
     "shellwatch_manage_keys",
-    "Manage SSH keys. Actions: list, read, create, delete. Keys can be shared across endpoints.",
+    "Manage SSH keys. Keys are auto-discovered from the key directory. Actions: list, read.",
     {
-      action: z.enum(["list", "read", "create", "delete"]).describe("Action to perform"),
-      id: z.string().optional().describe("Key ID (required for read, delete)"),
-      data: z
-        .object({
-          label: z.string().optional(),
-          privateKeyPath: z.string().optional(),
-        })
-        .optional()
-        .describe("Key data (for create)"),
+      action: z.enum(["list", "read"]).describe("Action to perform"),
+      id: z.string().optional().describe("Key ID (required for read)"),
     },
-    async ({ action, id, data }) => {
+    async ({ action, id }) => {
       try {
         switch (action) {
           case "list": {
             const all = await keyRepo.findAll();
-            const result = all.map(({ id, label, type }) => ({ id, label, type }));
+            const result = all.map(({ id, label, type, fingerprint }) => ({
+              id,
+              label,
+              type,
+              fingerprint,
+            }));
             return { content: [{ type: "text", text: JSON.stringify({ keys: result }, null, 2) }] };
           }
           case "read": {
@@ -251,32 +249,24 @@ export async function createMcpServer(
             const key = await keyRepo.findById(id);
             if (!key)
               return { isError: true, content: [{ type: "text", text: `Key not found: ${id}` }] };
-            // Don't expose privateKeyPath to agents
             return {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify({ id: key.id, label: key.label, type: key.type }, null, 2),
+                  text: JSON.stringify(
+                    {
+                      id: key.id,
+                      label: key.label,
+                      type: key.type,
+                      fingerprint: key.fingerprint,
+                      publicKey: key.publicKey,
+                    },
+                    null,
+                    2,
+                  ),
                 },
               ],
             };
-          }
-          case "create": {
-            if (!id || !data?.label || !data?.privateKeyPath) {
-              return {
-                isError: true,
-                content: [
-                  { type: "text", text: "id, data.label, data.privateKeyPath are required" },
-                ],
-              };
-            }
-            await keyRepo.create({ id, label: data.label, privateKeyPath: data.privateKeyPath });
-            return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
-          }
-          case "delete": {
-            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
-            await keyRepo.delete(id);
-            return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
           }
         }
       } catch (err) {

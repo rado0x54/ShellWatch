@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
 import { Client, type ClientChannel } from "ssh2";
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
+import type { KeyStore } from "./key-scanner.js";
 
-const CONNECTION_TIMEOUT = 10_000; // 10 seconds
+const CONNECTION_TIMEOUT = 10_000;
 
 const DEFAULT_PTY = {
   term: "xterm-256color",
@@ -48,16 +49,12 @@ class SshTransport extends EventEmitter implements TerminalTransport {
   }
 
   write(data: string): void {
-    if (!this.stream) {
-      throw new Error("SSH stream is not open");
-    }
+    if (!this.stream) throw new Error("SSH stream is not open");
     this.stream.write(data);
   }
 
   resize(cols: number, rows: number): void {
-    if (!this.stream) {
-      throw new Error("SSH stream is not open");
-    }
+    if (!this.stream) throw new Error("SSH stream is not open");
     this.stream.setWindow(rows, cols, rows * 16, cols * 8);
   }
 
@@ -70,14 +67,9 @@ class SshTransport extends EventEmitter implements TerminalTransport {
   }
 }
 
-function connectSsh(endpoint: EndpointInfo): Promise<TerminalTransport> {
+function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
-    if (!endpoint.privateKeyPath) {
-      reject(new Error(`No SSH key configured for endpoint ${endpoint.id}`));
-      return;
-    }
-    const privateKey = readFileSync(endpoint.privateKeyPath, "utf-8");
 
     const timeout = setTimeout(() => {
       client.end();
@@ -121,12 +113,35 @@ function connectSsh(endpoint: EndpointInfo): Promise<TerminalTransport> {
   });
 }
 
-export function createSshTransportFactory(endpointRepo: EndpointRepository): TransportFactory {
+export function createSshTransportFactory(
+  endpointRepo: EndpointRepository,
+  keyRepo: SshKeyRepository,
+  keyStore: KeyStore,
+): TransportFactory {
   return async (endpointId: string) => {
     const endpoint = await endpointRepo.findById(endpointId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
     }
-    return connectSsh(endpoint);
+    if (!endpoint.keyId) {
+      throw new Error(`No SSH key configured for endpoint ${endpointId}`);
+    }
+
+    // Look up the key's fingerprint from the DB
+    const keyInfo = await keyRepo.findById(endpoint.keyId);
+    if (!keyInfo) {
+      throw new Error(`SSH key "${endpoint.keyId}" not found`);
+    }
+
+    // Find the matching private key file from the scanned key directory
+    const scannedKey = keyStore.findByFingerprint(keyInfo.fingerprint);
+    if (!scannedKey) {
+      throw new Error(
+        `No private key file found for key "${endpoint.keyId}" (fingerprint: ${keyInfo.fingerprint}). ` +
+          "Ensure the corresponding .pem file is in the key directory.",
+      );
+    }
+
+    return connectSsh(endpoint, scannedKey.privateKeyContent);
   };
 }

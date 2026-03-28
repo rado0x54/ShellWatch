@@ -8,24 +8,31 @@ import {
 } from "./db/index.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
-import { createSshTransportFactory } from "./transport/index.js";
+import { createSshTransportFactory, KeyStore, scanKeyDirectory } from "./transport/index.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 try {
   const config = loadConfig();
-  console.log(
-    `Loaded ${config.keys.length} key(s) and ${config.servers.length} endpoint(s) from config`,
-  );
 
+  // Scan key directory for available SSH keys
+  const scannedKeys = scanKeyDirectory(config.keyDirectory);
+  console.log(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
+  for (const key of scannedKeys) {
+    console.log(`  ${key.filename}: ${key.type} (${key.fingerprint})`);
+  }
+
+  const keyStore = new KeyStore(scannedKeys);
+
+  // Initialize database
   const { db, close: closeDb } = createDatabase();
   runMigrations(db);
-  seedFromConfig(db, config);
+  seedFromConfig(db, config, scannedKeys);
 
   const endpointRepo = new DrizzleEndpointRepository(db);
   const keyRepo = new DrizzleSshKeyRepository(db);
-  const transportFactory = createSshTransportFactory(endpointRepo);
+  const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore);
   const terminalManager = new TerminalManager(endpointRepo, transportFactory);
 
   const app = await buildApp(config, terminalManager, endpointRepo, keyRepo);
