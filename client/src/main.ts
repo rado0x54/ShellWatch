@@ -162,17 +162,47 @@ function renderPasskeys() {
   for (const pk of passkeys) {
     const li = document.createElement("li");
     li.innerHTML = `
-      <div class="endpoint-item">
-        <div class="endpoint-info">
-          <span class="endpoint-label">${pk.label}</span>
-          <span class="endpoint-detail">${pk.createdAt.slice(0, 10)}</span>
+      <div class="endpoint-item" style="flex-direction:column;align-items:stretch;gap:0.4rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="endpoint-info">
+            <span class="endpoint-label">${pk.label}</span>
+            <span class="endpoint-detail">${pk.algorithm} &middot; ${pk.fingerprint.slice(0, 20)}...</span>
+          </div>
+          <button type="button" class="btn btn-close" data-id="${pk.id}">Remove</button>
         </div>
-        <button class="btn btn-close" data-id="${pk.id}">Remove</button>
+        ${
+          pk.authorizedKeysEntry
+            ? `<div style="display:flex;gap:0.25rem">
+            <button type="button" class="btn btn-copy-key" style="font-size:0.65rem;padding:0.2rem 0.4rem;background:#2a2a4a;color:#8888aa">Copy SSH Key</button>
+            <button type="button" class="btn btn-copy-config" style="font-size:0.65rem;padding:0.2rem 0.4rem;background:#2a2a4a;color:#8888aa">Copy sshd_config</button>
+          </div>`
+            : ""
+        }
       </div>
     `;
     li.querySelector(".btn-close")?.addEventListener("click", async () => {
       await deleteCredential(pk.id);
       await refreshPasskeys();
+    });
+    li.querySelector(".btn-copy-key")?.addEventListener("click", () => {
+      if (pk.authorizedKeysEntry) {
+        navigator.clipboard.writeText(pk.authorizedKeysEntry);
+        const btn = li.querySelector(".btn-copy-key") as HTMLElement;
+        btn.textContent = "Copied!";
+        setTimeout(() => {
+          btn.textContent = "Copy SSH Key";
+        }, 1500);
+      }
+    });
+    li.querySelector(".btn-copy-config")?.addEventListener("click", () => {
+      navigator.clipboard.writeText(
+        "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
+      );
+      const btn = li.querySelector(".btn-copy-config") as HTMLElement;
+      btn.textContent = "Copied!";
+      setTimeout(() => {
+        btn.textContent = "Copy sshd_config";
+      }, 1500);
     });
     passkeyList.appendChild(li);
   }

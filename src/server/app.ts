@@ -9,8 +9,8 @@ import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
+import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
-import { registerWebAuthnRoutes } from "./webauthn.js";
 import { registerWebSocket } from "./ws-handler.js";
 
 export interface AppOptions {

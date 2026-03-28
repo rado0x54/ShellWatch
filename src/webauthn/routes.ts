@@ -1,12 +1,26 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
+import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
 
 // In-memory challenge store (keyed by challenge ID, expires after 5 minutes)
 const pendingChallenges = new Map<string, { challenge: string; expires: number }>();
+
+/** Detect algorithm from COSE key (first bytes of the map) */
+function detectAlgorithm(coseKey: Buffer): string {
+  // COSE alg field (label 3): -7 = ES256 (P-256), -8 = EdDSA (Ed25519)
+  if (coseKey.includes(Buffer.from([0x03, 0x26]))) return "ES256 (P-256)";
+  if (coseKey.includes(Buffer.from([0x03, 0x27]))) return "EdDSA (Ed25519)";
+  return "unknown";
+}
+
+/** Compute SHA-256 fingerprint of the COSE public key */
+function computeFingerprint(coseKey: Buffer): string {
+  return `SHA256:${createHash("sha256").update(coseKey).digest("base64url")}`;
+}
 
 function getOriginAndRpId(host: string, protocol: string) {
   const rpId = host.split(":")[0];
@@ -95,15 +109,25 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
 
         const id = randomUUID();
         const now = new Date().toISOString();
+        const pubKeyBuf = Buffer.from(cred.publicKey);
+
+        // Convert to OpenSSH authorized_keys format
+        let authorizedKeysEntry: string | null = null;
+        try {
+          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+        } catch {
+          // Non-P256 keys can't be converted yet
+        }
 
         db.insert(webauthnCredentials)
           .values({
             id,
             credentialId: cred.id,
-            publicKey: Buffer.from(cred.publicKey),
+            publicKey: pubKeyBuf,
             counter: cred.counter,
             transports: JSON.stringify(cred.transports ?? []),
             label: label || "Passkey",
+            publicKeyOpenSsh: authorizedKeysEntry,
             createdAt: now,
           })
           .run();
@@ -112,6 +136,8 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
           verified: true,
           credentialId: cred.id,
           id,
+          authorizedKeysEntry,
+          sshdConfig: authorizedKeysEntry ? getSshdConfigLine() : null,
         };
       } catch (err) {
         reply.status(400);
@@ -126,6 +152,8 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
       .select({
         id: webauthnCredentials.id,
         credentialId: webauthnCredentials.credentialId,
+        publicKey: webauthnCredentials.publicKey,
+        publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
         label: webauthnCredentials.label,
         createdAt: webauthnCredentials.createdAt,
         lastUsedAt: webauthnCredentials.lastUsedAt,
@@ -133,7 +161,19 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
       .from(webauthnCredentials)
       .all();
 
-    return { credentials: creds };
+    return {
+      credentials: creds.map((c) => ({
+        id: c.id,
+        credentialId: c.credentialId,
+        label: c.label,
+        algorithm: detectAlgorithm(c.publicKey),
+        fingerprint: computeFingerprint(c.publicKey),
+        authorizedKeysEntry: c.publicKeyOpenSsh ?? null,
+        createdAt: c.createdAt,
+        lastUsedAt: c.lastUsedAt,
+      })),
+      sshdConfig: getSshdConfigLine(),
+    };
   });
 
   // --- Delete Credential ---

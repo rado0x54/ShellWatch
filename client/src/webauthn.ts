@@ -37,6 +37,9 @@ export interface WebAuthnCredential {
   id: string;
   credentialId: string;
   label: string;
+  algorithm: string;
+  fingerprint: string;
+  authorizedKeysEntry: string | null;
   createdAt: string;
   lastUsedAt: string | null;
 }
