@@ -158,7 +158,7 @@ function connectSshWithAgent(
       host: endpoint.host,
       port: endpoint.port,
       username: endpoint.username,
-      agent: agent as unknown as string, // ssh2 accepts agent objects via this parameter
+      agent: agent as unknown as string, // BaseAgent instance — ssh2's isAgent() will accept this
       readyTimeout: CONNECTION_TIMEOUT,
     });
   });

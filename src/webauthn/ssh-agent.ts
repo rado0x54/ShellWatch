@@ -10,10 +10,13 @@
  * 6. Return to ssh2 via the callback
  */
 
-import { EventEmitter } from "node:events";
+import ssh2 from "ssh2";
 import type { SshKeyInfo } from "../db/repositories/key-repo.js";
 import { buildSshSignatureBlob, parseWebAuthnSignature } from "./signature-format.js";
 import { buildPublicKeyBlob } from "./ssh-key-format.js";
+
+// BaseAgent is exported by ssh2 but not in the type definitions
+const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Record<string, unknown>;
 
 export interface SignRequest {
   requestId: string;
@@ -35,7 +38,7 @@ type SignRequestCallback = (request: SignRequest) => void;
  * A custom ssh2 agent backed by WebAuthn credentials.
  * The actual signing happens in the browser — this agent bridges the gap.
  */
-export class WebAuthnSshAgent extends EventEmitter {
+export class WebAuthnSshAgent extends BaseAgent {
   private pendingSign: Map<
     string,
     { cb: (err: Error | null, signature?: Buffer) => void; timeout: ReturnType<typeof setTimeout> }
