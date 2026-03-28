@@ -24,7 +24,7 @@
  * Based on the ssheasy project (github.com/hullarb/ssheasy).
  */
 
-const ALGORITHM = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+const _ALGORITHM = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
 
 /** Encode a string/bytes as SSH wire string (uint32 length + data) */
 function sshString(data: string | Buffer): Buffer {
@@ -147,7 +147,11 @@ export function buildSshSignatureBlob(
   //   string origin
   //   string clientData
   //   string extensions
-  const sigData = Buffer.concat([
+  // Return the raw signature data — NO algorithm prefix.
+  // Our BaseAgent.sign() is called directly by AgentContext (not through the agent protocol),
+  // so the return value goes straight to Protocol.js's cbSign callback.
+  // Protocol.js adds its own: string algo + string <our return value>
+  return Buffer.concat([
     sshString(ecdsaSig),
     flagsBuf,
     counterBuf,
@@ -155,9 +159,4 @@ export function buildSshSignatureBlob(
     sshString(clientDataJSON),
     sshString(""),
   ]);
-
-  // Agent response format: string algorithm + string sigData
-  // ssh2 agent.js reads: readString() → algorithm (discarded)
-  //                      readString() → sigData (returned to Protocol.js)
-  return Buffer.concat([sshString(ALGORITHM), sshString(sigData)]);
 }

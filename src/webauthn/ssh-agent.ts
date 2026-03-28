@@ -141,6 +141,10 @@ export class WebAuthnSshAgent extends BaseAgent {
       console.log(
         `[WebAuthn Agent] Signature built: ${signatureBlob.length} bytes, flags=${flags}, counter=${counter}`,
       );
+      console.log(`[WebAuthn Agent] Signature hex: ${signatureBlob.toString("hex")}`);
+      console.log(`[WebAuthn Agent] R (${r.length} bytes): ${r.toString("hex")}`);
+      console.log(`[WebAuthn Agent] S (${s.length} bytes): ${s.toString("hex")}`);
+      console.log(`[WebAuthn Agent] clientDataJSON: ${response.clientDataJSON.slice(0, 200)}`);
       pending.cb(null, signatureBlob);
     } catch (err) {
       console.error("[WebAuthn Agent] Signature build error:", (err as Error).message);
