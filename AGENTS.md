@@ -71,23 +71,27 @@ pnpm test:coverage    # Run tests with coverage report
 
 ## Architecture
 
-```
-[config.yaml]
-      |
-      v
-[TerminalManager] ←── [MCP tools @ /mcp (streamable HTTP)]
-   |          \
-   |           \
-   v            v
-[SSH/ssh2]    [WebSocket @ /ws]
-   |               |
-   v               v
-[Remote host]  [Web UI (xterm.js)]
-```
+For detailed architecture documentation including data flows, component responsibilities, and planned extensions, see [docs/architecture.md](./docs/architecture.md).
 
-The TerminalManager is the central abstraction. Both the WebSocket transport (for UI) and MCP tool handlers call into the same TerminalManager instance. This ensures terminal sessions are shared across interfaces.
+**Key concepts:**
+- **TerminalManager** — central session registry, source-agnostic. All paths converge here.
+- **AgentSession** (`src/agent/`) — session isolation per agent connection. Each agent (MCP or future SSH) only sees its own sessions.
+- **Web UI** — admin view, sees all sessions regardless of source via REST API + WebSocket.
+- **MCP** — streamable HTTP at `/mcp`. Per-client stateful transport with debounced notifications.
 
-MCP is served over streamable HTTP at `/mcp` (stateful per MCP client session, no auth). Everything runs in a single process via `pnpm dev`.
+```
+[Web UI]  [MCP Agent]  [SSH Agent (planned)]
+   |          |              |
+   |     [AgentSession] [AgentSession]
+   |          |              |
+   └──────────┼──────────────┘
+              |
+      [TerminalManager]
+              |
+       [SSH Transport]
+              |
+       [Remote host]
+```
 
 ## Testing
 
