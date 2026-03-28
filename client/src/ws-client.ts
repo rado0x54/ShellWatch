@@ -42,11 +42,14 @@ export class WsClient {
     this.ws.onmessage = (event) => {
       try {
         const msg: ServerMessage = JSON.parse(event.data);
+        if (msg.type?.startsWith("fido:")) {
+          console.log("[WsClient] Received FIDO message:", msg.type, msg);
+        }
         for (const handler of this.handlers) {
           handler(msg);
         }
-      } catch {
-        // ignore malformed messages
+      } catch (err) {
+        console.error("[WsClient] Failed to parse message:", err, event.data?.toString().slice(0, 100));
       }
     };
 

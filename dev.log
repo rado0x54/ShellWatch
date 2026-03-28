@@ -5,232 +5,104 @@
 Found 1 SSH key(s) in /Users/mriedel/dev-priv/ShellWatch/keys
   dev-local.pem: ssh-ed25519 (SHA256:yz2v_HIYSSoZMmB5Ji4XlF1Ukz21V-gT8Ve4pYdxkDk)
 2 endpoint(s) in database
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
 ShellWatch server listening on http://0.0.0.0:3000
 MCP endpoint available at http://0.0.0.0:3000/mcp
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
-{"level":30,"time":1774739331366,"pid":1221,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
-{"level":30,"time":1774739331857,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739331879,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-1","res":{"statusCode":304},"responseTime":21.812541007995605,"msg":"request completed"}
-{"level":30,"time":1774739331897,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739331898,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50699},"msg":"incoming request"}
-{"level":30,"time":1774739331901,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50702},"msg":"incoming request"}
-{"level":30,"time":1774739331901,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":0.23179197311401367,"msg":"request completed"}
-{"level":30,"time":1774739331903,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50703},"msg":"incoming request"}
-{"level":30,"time":1774739331906,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50702},"msg":"incoming request"}
-{"level":30,"time":1774739331906,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":0.31016600131988525,"msg":"request completed"}
-{"level":30,"time":1774739331907,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50702},"msg":"incoming request"}
-{"level":30,"time":1774739331908,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":0.5068329572677612,"msg":"request completed"}
-{"level":30,"time":1774739331909,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50706},"msg":"incoming request"}
-{"level":30,"time":1774739331909,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":0.4381669759750366,"msg":"request completed"}
-{"level":30,"time":1774739331911,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":304},"responseTime":8.520500004291534,"msg":"request completed"}
-{"level":30,"time":1774739331913,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50707},"msg":"incoming request"}
-{"level":30,"time":1774739331913,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":0.4709169864654541,"msg":"request completed"}
-{"level":30,"time":1774739331934,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-2","res":{"statusCode":200},"responseTime":37.51587504148483,"msg":"request completed"}
-{"level":30,"time":1774739331940,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739331941,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":0.2946249842643738,"msg":"request completed"}
-{"level":30,"time":1774739331962,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739331963,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":0.1780419945716858,"msg":"request completed"}
-{"level":30,"time":1774739331966,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":67.35525000095367,"msg":"request completed"}
-{"level":30,"time":1774739331968,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50699},"msg":"incoming request"}
-{"level":30,"time":1774739331971,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":200},"responseTime":2.668750047683716,"msg":"request completed"}
-{"level":30,"time":1774739332001,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50710},"msg":"incoming request"}
-{"level":30,"time":1774739333853,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50724},"msg":"incoming request"}
-{"level":30,"time":1774739333865,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50726},"msg":"incoming request"}
-{"level":30,"time":1774739335124,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-g","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50699},"msg":"incoming request"}
-{"level":30,"time":1774739335128,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-g","res":{"statusCode":304},"responseTime":3.8184579610824585,"msg":"request completed"}
-{"level":30,"time":1774739335142,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-h","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50699},"msg":"incoming request"}
-{"level":30,"time":1774739335143,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-i","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739335143,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-i","res":{"statusCode":304},"responseTime":0.327625036239624,"msg":"request completed"}
-{"level":30,"time":1774739335143,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-j","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50707},"msg":"incoming request"}
-{"level":30,"time":1774739335144,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-j","res":{"statusCode":304},"responseTime":0.16341698169708252,"msg":"request completed"}
-{"level":30,"time":1774739335144,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-k","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50703},"msg":"incoming request"}
-{"level":30,"time":1774739335144,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-k","res":{"statusCode":304},"responseTime":0.29966598749160767,"msg":"request completed"}
-{"level":30,"time":1774739335146,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-h","res":{"statusCode":304},"responseTime":4.197041034698486,"msg":"request completed"}
-{"level":30,"time":1774739335150,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-l","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50699},"msg":"incoming request"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-l","res":{"statusCode":304},"responseTime":0.25145798921585083,"msg":"request completed"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-m","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50703},"msg":"incoming request"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-m","res":{"statusCode":304},"responseTime":0.14800000190734863,"msg":"request completed"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-n","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50707},"msg":"incoming request"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-n","res":{"statusCode":304},"responseTime":0.08054101467132568,"msg":"request completed"}
-{"level":30,"time":1774739335151,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-o","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50698},"msg":"incoming request"}
-{"level":30,"time":1774739335152,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-o","res":{"statusCode":304},"responseTime":0.1307920217514038,"msg":"request completed"}
-{"level":30,"time":1774739335152,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-p","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50706},"msg":"incoming request"}
-{"level":30,"time":1774739335152,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-p","res":{"statusCode":304},"responseTime":0.21712499856948853,"msg":"request completed"}
-{"level":30,"time":1774739335189,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-q","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50706},"msg":"incoming request"}
-{"level":30,"time":1774739335189,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-q","res":{"statusCode":304},"responseTime":0.31370800733566284,"msg":"request completed"}
-{"level":30,"time":1774739335201,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-r","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50706},"msg":"incoming request"}
-{"level":30,"time":1774739335203,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-r","res":{"statusCode":200},"responseTime":1.8160420060157776,"msg":"request completed"}
-{"level":30,"time":1774739335235,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-s","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50734},"msg":"incoming request"}
-{"level":30,"time":1774739338546,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-t","req":{"method":"POST","url":"/api/sessions","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":50706},"msg":"incoming request"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
+{"level":30,"time":1774739540607,"pid":1825,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
+{"level":30,"time":1774739540856,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52204},"msg":"incoming request"}
+{"level":30,"time":1774739540872,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52207},"msg":"incoming request"}
+{"level":30,"time":1774739541589,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739541603,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":14.297749996185303,"msg":"request completed"}
+{"level":30,"time":1774739541615,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739541616,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739541618,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739541621,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52220},"msg":"incoming request"}
+{"level":30,"time":1774739541621,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":0.2155829668045044,"msg":"request completed"}
+{"level":30,"time":1774739541624,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":8.06912499666214,"msg":"request completed"}
+{"level":30,"time":1774739541624,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52220},"msg":"incoming request"}
+{"level":30,"time":1774739541626,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739541628,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52223},"msg":"incoming request"}
+{"level":30,"time":1774739541629,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739541630,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":5.96812504529953,"msg":"request completed"}
+{"level":30,"time":1774739541630,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":1.2921670079231262,"msg":"request completed"}
+{"level":30,"time":1774739541632,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":3.1072919964790344,"msg":"request completed"}
+{"level":30,"time":1774739541633,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":6.577207982540131,"msg":"request completed"}
+{"level":30,"time":1774739541642,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":200},"responseTime":26.01179200410843,"msg":"request completed"}
+{"level":30,"time":1774739541676,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739541677,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":304},"responseTime":0.2553749680519104,"msg":"request completed"}
+{"level":30,"time":1774739541677,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739541677,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-d","res":{"statusCode":304},"responseTime":0.08170902729034424,"msg":"request completed"}
+{"level":30,"time":1774739541681,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":63.10883295536041,"msg":"request completed"}
+{"level":30,"time":1774739541685,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52227},"msg":"incoming request"}
+{"level":30,"time":1774739541685,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739541687,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-f","res":{"statusCode":200},"responseTime":1.7467920184135437,"msg":"request completed"}
+{"level":30,"time":1774739548925,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-g","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739548929,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-g","res":{"statusCode":304},"responseTime":3.801582992076874,"msg":"request completed"}
+{"level":30,"time":1774739548943,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-h","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739548945,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-i","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739548946,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-i","res":{"statusCode":304},"responseTime":0.38887500762939453,"msg":"request completed"}
+{"level":30,"time":1774739548946,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-j","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739548946,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-j","res":{"statusCode":304},"responseTime":0.17316699028015137,"msg":"request completed"}
+{"level":30,"time":1774739548946,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-k","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52223},"msg":"incoming request"}
+{"level":30,"time":1774739548946,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-k","res":{"statusCode":304},"responseTime":0.12674999237060547,"msg":"request completed"}
+{"level":30,"time":1774739548948,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-h","res":{"statusCode":304},"responseTime":4.143875002861023,"msg":"request completed"}
+{"level":30,"time":1774739548954,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-l","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739548955,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-l","res":{"statusCode":304},"responseTime":0.29454201459884644,"msg":"request completed"}
+{"level":30,"time":1774739548955,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-m","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52223},"msg":"incoming request"}
+{"level":30,"time":1774739548955,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-m","res":{"statusCode":304},"responseTime":0.15883302688598633,"msg":"request completed"}
+{"level":30,"time":1774739548955,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-n","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739548955,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-n","res":{"statusCode":304},"responseTime":0.1687909960746765,"msg":"request completed"}
+{"level":30,"time":1774739548956,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-o","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739548956,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-o","res":{"statusCode":304},"responseTime":0.28508299589157104,"msg":"request completed"}
+{"level":30,"time":1774739548957,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-p","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739548957,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-p","res":{"statusCode":304},"responseTime":0.26683300733566284,"msg":"request completed"}
+{"level":30,"time":1774739548990,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-q","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739548991,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-q","res":{"statusCode":304},"responseTime":0.2984159588813782,"msg":"request completed"}
+{"level":30,"time":1774739549000,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-r","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739549002,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-r","res":{"statusCode":200},"responseTime":1.8409579992294312,"msg":"request completed"}
+{"level":30,"time":1774739549003,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-s","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52268},"msg":"incoming request"}
+{"level":30,"time":1774739551832,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-t","req":{"method":"POST","url":"/api/sessions","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
 [SSH Transport] Key "d7c55303-61b8-464b-925b-dcc2d889dc45" type: webauthn
 [WebAuthn Agent] getIdentities: 1 key(s)
 [WebAuthn Agent]   key: d7c55303-61b8-464b-925b-dcc2d889dc45 (SHA256:Z9o_vQjTofcE0t0HpGjc7y_zTgbHzYr3VFTIHER09rs)
 [WebAuthn Agent] sign() called, data length: 272
 [WebAuthn Agent] Matched key: d7c55303-61b8-464b-925b-dcc2d889dc45, sending to browser...
-{"level":30,"time":1774739348556,"pid":1221,"hostname":"C-FJFYHCFV06","reqId":"req-t","res":{"statusCode":400},"responseTime":10010.306415975094,"msg":"request completed"}
-[WebAuthn Agent] Signing timed out for sign_1774739338921_ubb0uj
-12:10:56 AM [tsx] change in ./src/transport/ssh-transport.ts Restarting...
-cFound 1 SSH key(s) in /Users/mriedel/dev-priv/ShellWatch/keys
-  dev-local.pem: ssh-ed25519 (SHA256:yz2v_HIYSSoZMmB5Ji4XlF1Ukz21V-gT8Ve4pYdxkDk)
-2 endpoint(s) in database
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
-ShellWatch server listening on http://0.0.0.0:3000
-MCP endpoint available at http://0.0.0.0:3000/mcp
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
-{"level":30,"time":1774739457375,"pid":1431,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
-{"level":30,"time":1774739457647,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51436},"msg":"incoming request"}
-{"level":30,"time":1774739457664,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-1","res":{"statusCode":304},"responseTime":17.06245905160904,"msg":"request completed"}
-{"level":30,"time":1774739457676,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51436},"msg":"incoming request"}
-{"level":30,"time":1774739457676,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51438},"msg":"incoming request"}
-{"level":30,"time":1774739457677,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51440},"msg":"incoming request"}
-{"level":30,"time":1774739457677,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":0.14141696691513062,"msg":"request completed"}
-{"level":30,"time":1774739457682,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51440},"msg":"incoming request"}
-{"level":30,"time":1774739457684,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51444},"msg":"incoming request"}
-{"level":30,"time":1774739457684,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":0.25683295726776123,"msg":"request completed"}
-{"level":30,"time":1774739457684,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51445},"msg":"incoming request"}
-{"level":30,"time":1774739457685,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51444},"msg":"incoming request"}
-{"level":30,"time":1774739457685,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":0.21387499570846558,"msg":"request completed"}
-{"level":30,"time":1774739457685,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51446},"msg":"incoming request"}
-{"level":30,"time":1774739457687,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":1.4524579644203186,"msg":"request completed"}
-{"level":30,"time":1774739457687,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":3.101709008216858,"msg":"request completed"}
-{"level":30,"time":1774739457689,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":304},"responseTime":6.756750047206879,"msg":"request completed"}
-{"level":30,"time":1774739457702,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-2","res":{"statusCode":200},"responseTime":26.51970797777176,"msg":"request completed"}
-{"level":30,"time":1774739457732,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51436},"msg":"incoming request"}
-{"level":30,"time":1774739457732,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":0.23100000619888306,"msg":"request completed"}
-{"level":30,"time":1774739457732,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51440},"msg":"incoming request"}
-{"level":30,"time":1774739457732,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":0.06941604614257812,"msg":"request completed"}
-{"level":30,"time":1774739457735,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":59.15962499380112,"msg":"request completed"}
-{"level":30,"time":1774739457741,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51438},"msg":"incoming request"}
-{"level":30,"time":1774739457742,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":200},"responseTime":1.2394160032272339,"msg":"request completed"}
-{"level":30,"time":1774739457742,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51449},"msg":"incoming request"}
-{"level":30,"time":1774739458849,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51455},"msg":"incoming request"}
-{"level":30,"time":1774739458861,"pid":1431,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51458},"msg":"incoming request"}
-12:11:13 AM [tsx] change in ./src/transport/ssh-transport.ts Restarting...
-cFound 1 SSH key(s) in /Users/mriedel/dev-priv/ShellWatch/keys
-  dev-local.pem: ssh-ed25519 (SHA256:yz2v_HIYSSoZMmB5Ji4XlF1Ukz21V-gT8Ve4pYdxkDk)
-2 endpoint(s) in database
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
-ShellWatch server listening on http://0.0.0.0:3000
-MCP endpoint available at http://0.0.0.0:3000/mcp
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
-{"level":30,"time":1774739473908,"pid":1467,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
-{"level":30,"time":1774739474203,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51547},"msg":"incoming request"}
-{"level":30,"time":1774739474224,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-1","res":{"statusCode":304},"responseTime":20.713541984558105,"msg":"request completed"}
-{"level":30,"time":1774739474235,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51547},"msg":"incoming request"}
-{"level":30,"time":1774739474236,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51549},"msg":"incoming request"}
-{"level":30,"time":1774739474237,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51552},"msg":"incoming request"}
-{"level":30,"time":1774739474237,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51553},"msg":"incoming request"}
-{"level":30,"time":1774739474238,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":304},"responseTime":0.4088749885559082,"msg":"request completed"}
-{"level":30,"time":1774739474243,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":7.313125014305115,"msg":"request completed"}
-{"level":30,"time":1774739474244,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51553},"msg":"incoming request"}
-{"level":30,"time":1774739474244,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51549},"msg":"incoming request"}
-{"level":30,"time":1774739474246,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51556},"msg":"incoming request"}
-{"level":30,"time":1774739474246,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51557},"msg":"incoming request"}
-{"level":30,"time":1774739474247,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":3.33883398771286,"msg":"request completed"}
-{"level":30,"time":1774739474250,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":5.466458022594452,"msg":"request completed"}
-{"level":30,"time":1774739474251,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":4.662041008472443,"msg":"request completed"}
-{"level":30,"time":1774739474252,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":6.192166030406952,"msg":"request completed"}
-{"level":30,"time":1774739474268,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-2","res":{"statusCode":200},"responseTime":33.48495805263519,"msg":"request completed"}
-{"level":30,"time":1774739474289,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51547},"msg":"incoming request"}
-{"level":30,"time":1774739474289,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":0.2492079734802246,"msg":"request completed"}
-{"level":30,"time":1774739474289,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51556},"msg":"incoming request"}
-{"level":30,"time":1774739474290,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":0.5834579467773438,"msg":"request completed"}
-{"level":30,"time":1774739474293,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":56.14200001955032,"msg":"request completed"}
-{"level":30,"time":1774739474298,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51552},"msg":"incoming request"}
-{"level":30,"time":1774739474299,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":200},"responseTime":1.2900420427322388,"msg":"request completed"}
-{"level":30,"time":1774739474299,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51560},"msg":"incoming request"}
-{"level":30,"time":1774739475853,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51568},"msg":"incoming request"}
-{"level":30,"time":1774739475866,"pid":1467,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51570},"msg":"incoming request"}
-12:11:32 AM [tsx] change in ./src/webauthn/signing-bridge.ts Restarting...
-cFound 1 SSH key(s) in /Users/mriedel/dev-priv/ShellWatch/keys
-  dev-local.pem: ssh-ed25519 (SHA256:yz2v_HIYSSoZMmB5Ji4XlF1Ukz21V-gT8Ve4pYdxkDk)
-2 endpoint(s) in database
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
-ShellWatch server listening on http://0.0.0.0:3000
-MCP endpoint available at http://0.0.0.0:3000/mcp
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
-{"level":30,"time":1774739493567,"pid":1500,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
-{"level":30,"time":1774739493942,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51706},"msg":"incoming request"}
-{"level":30,"time":1774739493960,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-1","res":{"statusCode":304},"responseTime":18.287375032901764,"msg":"request completed"}
-{"level":30,"time":1774739493969,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51706},"msg":"incoming request"}
-{"level":30,"time":1774739493970,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51707},"msg":"incoming request"}
-{"level":30,"time":1774739493970,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51710},"msg":"incoming request"}
-{"level":30,"time":1774739493972,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":1.12295800447464,"msg":"request completed"}
-{"level":30,"time":1774739493972,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51711},"msg":"incoming request"}
-{"level":30,"time":1774739493975,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":304},"responseTime":2.854084014892578,"msg":"request completed"}
-{"level":30,"time":1774739493977,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51711},"msg":"incoming request"}
-{"level":30,"time":1774739493978,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51710},"msg":"incoming request"}
-{"level":30,"time":1774739493978,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":0.9132080078125,"msg":"request completed"}
-{"level":30,"time":1774739493979,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51714},"msg":"incoming request"}
-{"level":30,"time":1774739493980,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51715},"msg":"incoming request"}
-{"level":30,"time":1774739493981,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":1.0519579648971558,"msg":"request completed"}
-{"level":30,"time":1774739493982,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":3.383791983127594,"msg":"request completed"}
-{"level":30,"time":1774739493984,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":5.779166996479034,"msg":"request completed"}
-{"level":30,"time":1774739494002,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-2","res":{"statusCode":200},"responseTime":32.40754199028015,"msg":"request completed"}
-{"level":30,"time":1774739494022,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51706},"msg":"incoming request"}
-{"level":30,"time":1774739494022,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":0.2672079801559448,"msg":"request completed"}
-{"level":30,"time":1774739494022,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51710},"msg":"incoming request"}
-{"level":30,"time":1774739494023,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":0.5445830225944519,"msg":"request completed"}
-{"level":30,"time":1774739494026,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":55.85691601037979,"msg":"request completed"}
-{"level":30,"time":1774739494032,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51707},"msg":"incoming request"}
-{"level":30,"time":1774739494033,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":200},"responseTime":1.3760420083999634,"msg":"request completed"}
-{"level":30,"time":1774739494033,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51718},"msg":"incoming request"}
-{"level":30,"time":1774739495849,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51733},"msg":"incoming request"}
-{"level":30,"time":1774739495860,"pid":1500,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51735},"msg":"incoming request"}
-12:11:47 AM [tsx] change in ./src/webauthn/signing-bridge.ts Restarting...
-cFound 1 SSH key(s) in /Users/mriedel/dev-priv/ShellWatch/keys
-  dev-local.pem: ssh-ed25519 (SHA256:yz2v_HIYSSoZMmB5Ji4XlF1Ukz21V-gT8Ve4pYdxkDk)
-2 endpoint(s) in database
-{"level":30,"time":1774739508661,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://127.0.0.1:3000"}
-ShellWatch server listening on http://0.0.0.0:3000
-MCP endpoint available at http://0.0.0.0:3000/mcp
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://172.28.1.15:3000"}
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.139.3:3000"}
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.194.0:3000"}
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.215.0:3000"}
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.117.0:3000"}
-{"level":30,"time":1774739508662,"pid":1676,"hostname":"C-FJFYHCFV06","msg":"Server listening at http://192.168.97.0:3000"}
-{"level":30,"time":1774739509019,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51940},"msg":"incoming request"}
-{"level":30,"time":1774739509037,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-1","res":{"statusCode":304},"responseTime":17.703999996185303,"msg":"request completed"}
-{"level":30,"time":1774739509048,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-2","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51940},"msg":"incoming request"}
-{"level":30,"time":1774739509049,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-3","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51941},"msg":"incoming request"}
-{"level":30,"time":1774739509050,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-4","req":{"method":"GET","url":"/src/main.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51943},"msg":"incoming request"}
-{"level":30,"time":1774739509050,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-4","res":{"statusCode":304},"responseTime":0.14387500286102295,"msg":"request completed"}
-{"level":30,"time":1774739509051,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-5","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51945},"msg":"incoming request"}
-{"level":30,"time":1774739509056,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-5","res":{"statusCode":304},"responseTime":4.681209027767181,"msg":"request completed"}
-{"level":30,"time":1774739509057,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-6","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51945},"msg":"incoming request"}
-{"level":30,"time":1774739509058,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-6","res":{"statusCode":304},"responseTime":0.2586669921875,"msg":"request completed"}
-{"level":30,"time":1774739509058,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-7","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51943},"msg":"incoming request"}
-{"level":30,"time":1774739509058,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-7","res":{"statusCode":304},"responseTime":0.1366249918937683,"msg":"request completed"}
-{"level":30,"time":1774739509065,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-8","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51947},"msg":"incoming request"}
-{"level":30,"time":1774739509066,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-8","res":{"statusCode":304},"responseTime":0.41316699981689453,"msg":"request completed"}
-{"level":30,"time":1774739509067,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-9","req":{"method":"GET","url":"/src/ws-client.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51949},"msg":"incoming request"}
-{"level":30,"time":1774739509067,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-9","res":{"statusCode":304},"responseTime":0.5342910289764404,"msg":"request completed"}
-{"level":30,"time":1774739509081,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-2","res":{"statusCode":200},"responseTime":33.26800000667572,"msg":"request completed"}
-{"level":30,"time":1774739509098,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-a","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51940},"msg":"incoming request"}
-{"level":30,"time":1774739509098,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-a","res":{"statusCode":304},"responseTime":0.2647079825401306,"msg":"request completed"}
-{"level":30,"time":1774739509099,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-b","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51949},"msg":"incoming request"}
-{"level":30,"time":1774739509099,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-b","res":{"statusCode":304},"responseTime":0.1532920002937317,"msg":"request completed"}
-{"level":30,"time":1774739509102,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-3","res":{"statusCode":304},"responseTime":52.99345797300339,"msg":"request completed"}
-{"level":30,"time":1774739509106,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-c","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51941},"msg":"incoming request"}
-{"level":30,"time":1774739509107,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-c","res":{"statusCode":200},"responseTime":1.0316669940948486,"msg":"request completed"}
-{"level":30,"time":1774739509108,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-d","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51952},"msg":"incoming request"}
-{"level":30,"time":1774739510848,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-e","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51962},"msg":"incoming request"}
-{"level":30,"time":1774739510860,"pid":1676,"hostname":"C-FJFYHCFV06","reqId":"req-f","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":51966},"msg":"incoming request"}
+[SigningBridge] Sending fido:sign-request to browser (3 client(s) registered)
+[SigningBridge]   client readyState: 1 (OPEN=1)
+[SigningBridge]   → message sent to browser
+{"level":30,"time":1774739573163,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-u","req":{"method":"POST","url":"/api/sessions","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+[SSH Transport] Key "dev-local" type: file
+{"level":30,"time":1774739574965,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-u","res":{"statusCode":200},"responseTime":1801.5319579839706,"msg":"request completed"}
+[WebAuthn Agent] Signing timed out for sign_1774739552195_xmw8xt
+{"level":30,"time":1774739612197,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-t","res":{"statusCode":400},"responseTime":60364.94400000572,"msg":"request completed"}
+12:13:33 AM [vite] (client) page reload src/ws-client.ts
+{"level":30,"time":1774739613411,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-v","req":{"method":"GET","url":"/","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739613414,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-v","res":{"statusCode":200},"responseTime":2.934458017349243,"msg":"request completed"}
+{"level":30,"time":1774739613425,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-w","req":{"method":"GET","url":"/.well-known/appspecific/com.chrome.devtools.json","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739613425,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-x","req":{"method":"GET","url":"/@vite/client","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739613425,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-x","res":{"statusCode":304},"responseTime":0.15312498807907104,"msg":"request completed"}
+{"level":30,"time":1774739613426,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-y","req":{"method":"GET","url":"/src/main.ts?t=1774739613383","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739613427,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-y","res":{"statusCode":200},"responseTime":0.5142080187797546,"msg":"request completed"}
+{"level":30,"time":1774739613427,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-z","req":{"method":"GET","url":"/src/style.css","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739613428,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-z","res":{"statusCode":304},"responseTime":0.5019999742507935,"msg":"request completed"}
+{"level":30,"time":1774739613429,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-w","res":{"statusCode":200},"responseTime":4.006124973297119,"msg":"request completed"}
+{"level":30,"time":1774739613438,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-10","req":{"method":"GET","url":"/@fs/Users/mriedel/dev-priv/ShellWatch/node_modules/.pnpm/vite@8.0.3_@types+node@25.5.0_esbuild@0.27.4_tsx@4.21.0_yaml@2.8.3/node_modules/vite/dist/client/env.mjs","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52224},"msg":"incoming request"}
+{"level":30,"time":1774739613438,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-10","res":{"statusCode":304},"responseTime":0.18645799160003662,"msg":"request completed"}
+{"level":30,"time":1774739613438,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-11","req":{"method":"GET","url":"/src/api.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52216},"msg":"incoming request"}
+{"level":30,"time":1774739613440,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-11","res":{"statusCode":304},"responseTime":1.084500014781952,"msg":"request completed"}
+{"level":30,"time":1774739613440,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-12","req":{"method":"GET","url":"/src/ws-client.ts?t=1774739613383","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52215},"msg":"incoming request"}
+{"level":30,"time":1774739613440,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-12","res":{"statusCode":200},"responseTime":0.38454198837280273,"msg":"request completed"}
+{"level":30,"time":1774739613440,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-13","req":{"method":"GET","url":"/src/settings.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52223},"msg":"incoming request"}
+{"level":30,"time":1774739613440,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-13","res":{"statusCode":304},"responseTime":0.06708395481109619,"msg":"request completed"}
+{"level":30,"time":1774739613441,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-14","req":{"method":"GET","url":"/src/terminal-view.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739613441,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-14","res":{"statusCode":304},"responseTime":0.2957090139389038,"msg":"request completed"}
+{"level":30,"time":1774739613472,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-15","req":{"method":"GET","url":"/src/webauthn.ts","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739613472,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-15","res":{"statusCode":304},"responseTime":0.1710829734802246,"msg":"request completed"}
+{"level":30,"time":1774739613483,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-16","req":{"method":"GET","url":"/api/endpoints","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52219},"msg":"incoming request"}
+{"level":30,"time":1774739613484,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-16","res":{"statusCode":200},"responseTime":0.46024996042251587,"msg":"request completed"}
+{"level":30,"time":1774739613484,"pid":1825,"hostname":"C-FJFYHCFV06","reqId":"req-17","req":{"method":"GET","url":"/ws","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":52633},"msg":"incoming request"}
