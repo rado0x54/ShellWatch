@@ -8,9 +8,9 @@ import { webauthnCredentials } from "../db/schema.js";
 // In-memory challenge store (keyed by challenge ID, expires after 5 minutes)
 const pendingChallenges = new Map<string, { challenge: string; expires: number }>();
 
-function getOriginAndRpId(request: { hostname: string; protocol: string }) {
-  const rpId = request.hostname.split(":")[0]; // strip port
-  const origin = `${request.protocol}://${request.hostname}`;
+function getOriginAndRpId(host: string, protocol: string) {
+  const rpId = host.split(":")[0];
+  const origin = `${protocol}://${host}`;
   return { rpId, origin };
 }
 
@@ -18,7 +18,10 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>("/api/webauthn/register/options", async (request) => {
     const { label } = request.body;
-    const { rpId } = getOriginAndRpId(request);
+    const { rpId } = getOriginAndRpId(
+      String(request.headers.host ?? "localhost"),
+      request.protocol,
+    );
 
     // Get existing credentials to exclude (prevent re-registration)
     const existing = db
@@ -62,7 +65,10 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
     "/api/webauthn/register/verify",
     async (request, reply) => {
       const { challengeId, label, credential } = request.body;
-      const { rpId, origin } = getOriginAndRpId(request);
+      const { rpId, origin } = getOriginAndRpId(
+        String(request.headers.host ?? "localhost"),
+        request.protocol,
+      );
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
