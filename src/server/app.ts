@@ -9,7 +9,7 @@ import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
-import { registerWebAuthnRoutes } from "../webauthn/index.js";
+import { registerWebAuthnRoutes, type SigningBridge } from "../webauthn/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
 import { registerWebSocket } from "./ws-handler.js";
 
@@ -24,6 +24,7 @@ export async function buildApp(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
   db: ShellWatchDB | null = null,
+  signingBridge: SigningBridge | null = null,
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -179,7 +180,7 @@ export async function buildApp(
   );
 
   // WebSocket for terminal I/O
-  const { uiCreatedSessions } = registerWebSocket(app, terminalManager);
+  const { uiCreatedSessions } = registerWebSocket(app, terminalManager, signingBridge ?? undefined);
 
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo);

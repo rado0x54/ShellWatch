@@ -74,7 +74,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     cleanupIntervalMs: 60_000,
   });
 
-  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, {
+  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, null, {
     logger: false,
     skipVite: true,
   });
