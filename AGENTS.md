@@ -146,5 +146,45 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 - **Local-first:** No external database or auth for the POC
 - **Shared core:** UI and MCP must use the same TerminalManager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately
-- **Extensible:** Structure code so observer mode, audit logs, and policy enforcement can be added later
-- **Simple:** Prefer straightforward code over abstractions. This is a POC.
+- **Passkey-first:** No passwords. WebAuthn passkeys for human auth, API keys for agents.
+- **Human-in-the-loop:** Agent actions can require human approval via second channel (Slack, webhook)
+- **Simple:** Prefer straightforward code over abstractions. Ship function first, polish later.
+
+## Roadmap
+
+Open tickets in implementation order. High priority items focus on core function: MCP interface quality, persistence, security with passkeys, guardrails with human approval.
+
+### High Priority (core function)
+
+| Phase | Ticket | Description |
+|-------|--------|-------------|
+| 1 | #10 | Enhanced MCP interface — `shellwatch_exec`, `send_keys`, notifications |
+| 2 | #14 | Persistence layer — Drizzle ORM, SQLite/PostgreSQL, dynamic config |
+| 3 | #13 | Guardrails — input filtering with warn/block/terminate/approve actions |
+| 4 | #15 | Security — IP allowlist, API keys for agents, passkey for admin |
+| 5 | #18 | FIDO/hardware key — ssh2 fork, WebAuthn browser bridge for SSH signing |
+| 6 | #20 | Passkey-first auth — unified WebAuthn for UI login, SSH signing, approvals |
+| 7 | #19 | Human-in-the-loop — second channel notifications, interactive approvals |
+
+### Lower Priority (extend later)
+
+| Ticket | Description | Why deferred |
+|--------|-------------|-------------|
+| #11 | Google Stitch UI design | Function before polish |
+| #12 | SSH server interface (bastion) | Needs auth foundation first |
+| #16 | Audit log (full I/O recording) | Needs persistence, not critical for function |
+| #17 | Multi-tenant (identities, scoped access) | Single-admin is sufficient for stage one |
+
+### Dependency Graph
+```
+#10 Enhanced MCP ←── no deps, start immediately
+#14 Persistence ←── no deps, foundational
+  ↓
+#13 Guardrails ←── needs #14
+#15 Security ←── needs #14
+  ↓
+#18 FIDO/ssh2 fork ←── needs #15, can research in parallel
+#20 Passkey-first ←── needs #18, #15
+  ↓
+#19 Human-in-the-loop ←── needs #13, #15, #20
+```
