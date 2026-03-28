@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { AgentSession } from "../agent/index.js";
 import { SUPPORTED_KEYS } from "../terminal/index.js";
 
-export function createMcpServer(agentSession: AgentSession): McpServer {
-  const endpoints = agentSession.listEndpoints();
+export async function createMcpServer(agentSession: AgentSession): Promise<McpServer> {
+  const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
     .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
     .join("\n");
@@ -34,9 +34,12 @@ export function createMcpServer(agentSession: AgentSession): McpServer {
 
   const mcpServer = new McpServer({ name: "shellwatch", version: "0.4.0" }, { instructions });
 
-  mcpServer.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => ({
-    content: [{ type: "text", text: JSON.stringify({ endpoints }, null, 2) }],
-  }));
+  mcpServer.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
+    const currentEndpoints = await agentSession.listEndpoints();
+    return {
+      content: [{ type: "text", text: JSON.stringify({ endpoints: currentEndpoints }, null, 2) }],
+    };
+  });
 
   mcpServer.tool(
     "shellwatch_create_session",

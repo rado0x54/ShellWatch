@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { attachMcpNotifications } from "./notifications.js";
 import { createMcpServer } from "./server.js";
@@ -11,6 +12,7 @@ export async function registerMcpHttpTransport(
   app: FastifyInstance,
   config: Config,
   terminalManager: TerminalManager,
+  endpointRepo: EndpointRepository,
 ) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -25,8 +27,8 @@ export async function registerMcpHttpTransport(
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const agentSession = new AgentSession(config, terminalManager, "mcp");
-      const mcpServer = createMcpServer(agentSession);
+      const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
+      const mcpServer = await createMcpServer(agentSession);
 
       await mcpServer.connect(newTransport);
 

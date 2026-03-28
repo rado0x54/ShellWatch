@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { Config } from "../config/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
@@ -34,7 +34,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
   private maxOutputBufferSize: number | undefined;
 
   constructor(
-    private config: Config,
+    private endpointRepo: EndpointRepository,
     private transportFactory: TransportFactory,
     options: TerminalManagerOptions = {},
   ) {
@@ -48,7 +48,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
   }
 
   async create(endpointId: string, source: TerminalSource): Promise<TerminalSession> {
-    const endpoint = this.config.servers.find((s) => s.id === endpointId);
+    const endpoint = await this.endpointRepo.findById(endpointId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
     }

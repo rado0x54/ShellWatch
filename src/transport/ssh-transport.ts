@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { Client, type ClientChannel } from "ssh2";
-import type { Config, Endpoint } from "../config/index.js";
+import type { Endpoint } from "../config/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
 
 const CONNECTION_TIMEOUT = 10_000; // 10 seconds
@@ -117,9 +118,9 @@ function connectSsh(endpoint: Endpoint): Promise<TerminalTransport> {
   });
 }
 
-export function createSshTransportFactory(config: Config): TransportFactory {
+export function createSshTransportFactory(endpointRepo: EndpointRepository): TransportFactory {
   return async (endpointId: string) => {
-    const endpoint = config.servers.find((s) => s.id === endpointId);
+    const endpoint = await endpointRepo.findById(endpointId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
     }

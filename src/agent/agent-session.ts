@@ -1,4 +1,4 @@
-import type { Config } from "../config/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { OutputReadResult, TerminalManager, TerminalSession } from "../terminal/index.js";
 import { resolveKeys } from "../terminal/keys.js";
 
@@ -15,7 +15,7 @@ export class AgentSession {
   private ownedSessions = new Set<string>();
 
   constructor(
-    private config: Config,
+    private endpointRepo: EndpointRepository,
     private terminalManager: TerminalManager,
     private source: AgentSource,
   ) {}
@@ -25,8 +25,9 @@ export class AgentSession {
     return this.ownedSessions;
   }
 
-  listEndpoints() {
-    return this.config.servers.map(({ id, label, host, port, username }) => ({
+  async listEndpoints() {
+    const endpoints = await this.endpointRepo.findAll();
+    return endpoints.map(({ id, label, host, port, username }) => ({
       id,
       label,
       host,

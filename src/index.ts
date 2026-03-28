@@ -1,4 +1,10 @@
 import { loadConfig } from "./config/index.js";
+import {
+  createDatabase,
+  DrizzleEndpointRepository,
+  runMigrations,
+  seedEndpoints,
+} from "./db/index.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
 import { createSshTransportFactory } from "./transport/index.js";
@@ -10,14 +16,24 @@ try {
   const config = loadConfig();
   console.log(`Loaded ${config.servers.length} endpoint(s) from config`);
 
-  const transportFactory = createSshTransportFactory(config);
-  const terminalManager = new TerminalManager(config, transportFactory);
+  // Initialize database
+  const { db, close: closeDb } = createDatabase();
+  runMigrations(db);
+  seedEndpoints(db, config);
 
-  const app = await buildApp(config, terminalManager);
+  const endpointRepo = new DrizzleEndpointRepository(db);
+  const transportFactory = createSshTransportFactory(endpointRepo);
+  const terminalManager = new TerminalManager(endpointRepo, transportFactory);
+
+  const app = await buildApp(config, terminalManager, endpointRepo);
+
+  const endpoints = await endpointRepo.findAll();
+  console.log(`${endpoints.length} endpoint(s) in database`);
 
   const shutdown = async () => {
     terminalManager.destroy();
     await app.close();
+    closeDb();
     process.exit(0);
   };
 

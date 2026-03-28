@@ -3,25 +3,21 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../agent/index.js";
-import type { Config } from "../config/index.js";
+import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/types.js";
 import { createMcpServer } from "./server.js";
 
-const testConfig: Config = {
-  servers: [
-    {
-      id: "dev-box",
-      label: "Dev Box",
-      host: "dev.example.com",
-      port: 22,
-      username: "ubuntu",
-      privateKeyPath: "/tmp/fake.pem",
-    },
-  ],
-  security: { allowedNetworks: ["127.0.0.1/32"] },
-  notifications: { mcp: { debounceMs: 100 } },
-};
+const testEndpoints = [
+  {
+    id: "dev-box",
+    label: "Dev Box",
+    host: "dev.example.com",
+    port: 22,
+    username: "ubuntu",
+    privateKeyPath: "/tmp/fake.pem",
+  },
+];
 
 function createMockTerminalManager() {
   const emitter = new EventEmitter();
@@ -47,9 +43,10 @@ const mockSession: TerminalSession = {
   source: "mcp",
 };
 
-async function setupClient(config: Config, terminalManager: TerminalManager) {
-  const agentSession = new AgentSession(config, terminalManager, "mcp");
-  const mcpServer = createMcpServer(agentSession);
+async function setupClient(terminalManager: TerminalManager) {
+  const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
+  const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
+  const mcpServer = await createMcpServer(agentSession);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "1.0.0" });
@@ -66,7 +63,7 @@ describe("MCP Server Tools", () => {
 
   describe("shellwatch_list_endpoints", () => {
     it("returns configured endpoints", async () => {
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({ name: "shellwatch_list_endpoints", arguments: {} });
       const content = (result.content as { type: string; text: string }[])[0].text;
       const parsed = JSON.parse(content);
@@ -80,7 +77,7 @@ describe("MCP Server Tools", () => {
     it("creates a session", async () => {
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
@@ -97,7 +94,7 @@ describe("MCP Server Tools", () => {
         new Error("Unknown endpoint: bad-id"),
       );
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "bad-id" },
@@ -111,7 +108,7 @@ describe("MCP Server Tools", () => {
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
       (mockManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([mockSession]);
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
@@ -127,7 +124,7 @@ describe("MCP Server Tools", () => {
     it("excludes sessions created by others", async () => {
       (mockManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([mockSession]);
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({ name: "shellwatch_list_sessions", arguments: {} });
       const content = (result.content as { type: string; text: string }[])[0].text;
       const parsed = JSON.parse(content);
@@ -139,7 +136,7 @@ describe("MCP Server Tools", () => {
     it("sends keys to owned session", async () => {
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
@@ -154,7 +151,7 @@ describe("MCP Server Tools", () => {
     });
 
     it("rejects send to unowned session", async () => {
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_send_keys",
         arguments: { sessionId: "sess_other", keys: ["enter"] },
@@ -172,7 +169,7 @@ describe("MCP Server Tools", () => {
         hasMore: false,
       });
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
@@ -188,7 +185,7 @@ describe("MCP Server Tools", () => {
     });
 
     it("rejects read from unowned session", async () => {
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_read_output",
         arguments: { sessionId: "sess_other" },
@@ -201,7 +198,7 @@ describe("MCP Server Tools", () => {
     it("closes an owned session", async () => {
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
 
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
@@ -217,7 +214,7 @@ describe("MCP Server Tools", () => {
     });
 
     it("rejects close of unowned session", async () => {
-      const client = await setupClient(testConfig, mockManager);
+      const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_close_session",
         arguments: { sessionId: "sess_other" },

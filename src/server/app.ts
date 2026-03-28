@@ -3,7 +3,8 @@ import fastifyCors from "@fastify/cors";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createServer as createViteServer } from "vite";
-import type { Config } from "../config/index.js";
+import type { Config, Endpoint } from "../config/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
@@ -11,13 +12,13 @@ import { registerWebSocket } from "./ws-handler.js";
 
 export interface AppOptions {
   logger?: boolean;
-  /** Skip Vite dev server setup (for tests) */
   skipVite?: boolean;
 }
 
 export async function buildApp(
   config: Config,
   terminalManager: TerminalManager,
+  endpointRepo: EndpointRepository,
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -25,24 +26,68 @@ export async function buildApp(
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
 
-  // IP allowlist — protect MCP endpoint (default: localhost only)
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
 
-  // Health check
   app.get("/health", async () => ({ status: "ok" }));
 
-  // Endpoint listing API
-  app.get("/api/endpoints", async () => ({
-    endpoints: config.servers.map(({ id, label, host, port, username }) => ({
-      id,
-      label,
-      host,
-      port,
-      username,
-    })),
-  }));
+  // --- Endpoint API (backed by EndpointRepository) ---
 
-  // Session management API
+  app.get("/api/endpoints", async () => {
+    const all = await endpointRepo.findAll();
+    return {
+      endpoints: all.map(({ id, label, host, port, username }) => ({
+        id,
+        label,
+        host,
+        port,
+        username,
+      })),
+    };
+  });
+
+  app.post<{ Body: Endpoint }>("/api/endpoints", async (request, reply) => {
+    try {
+      await endpointRepo.create(request.body);
+      return { status: "created", id: request.body.id };
+    } catch (err) {
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
+
+  app.put<{ Params: { id: string }; Body: Partial<Endpoint> }>(
+    "/api/endpoints/:id",
+    async (request, reply) => {
+      try {
+        await endpointRepo.update(request.params.id, request.body);
+        return { status: "updated" };
+      } catch (err) {
+        reply.status(400);
+        return { error: (err as Error).message };
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
+    try {
+      // Reject if active sessions exist for this endpoint
+      const activeSessions = terminalManager
+        .listSessions()
+        .filter((s) => s.endpointId === request.params.id);
+      if (activeSessions.length > 0) {
+        reply.status(409);
+        return { error: "Cannot delete endpoint with active sessions" };
+      }
+      await endpointRepo.delete(request.params.id);
+      return { status: "deleted" };
+    } catch (err) {
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
+
+  // --- Session API ---
+
   app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
     try {
       const { endpointId } = request.body;
@@ -76,9 +121,9 @@ export async function buildApp(
   const { uiCreatedSessions } = registerWebSocket(app, terminalManager);
 
   // MCP server over streamable HTTP at /mcp
-  await registerMcpHttpTransport(app, config, terminalManager);
+  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo);
 
-  // Vite dev server — catches all routes not handled by Fastify
+  // Vite dev server
   if (!options.skipVite) {
     const clientRoot = resolve(import.meta.dirname, "../../client");
     const vite = await createViteServer({

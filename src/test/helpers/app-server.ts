@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../../config/index.js";
+import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";
 import { createSshTransportFactory } from "../../transport/index.js";
@@ -18,7 +19,6 @@ export interface TestAppServer {
 }
 
 export async function startTestApp(sshServer: TestSshServer, log: TestLog): Promise<TestAppServer> {
-  // Write the client private key to a temp file
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -38,15 +38,18 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     notifications: { mcp: { debounceMs: 50 } },
   };
 
-  const transportFactory = createSshTransportFactory(config);
-  const terminalManager = new TerminalManager(config, transportFactory, {
+  const endpointRepo = new InMemoryEndpointRepository(config.servers);
+  const transportFactory = createSshTransportFactory(endpointRepo);
+  const terminalManager = new TerminalManager(endpointRepo, transportFactory, {
     idleTimeoutMs: 60_000,
     cleanupIntervalMs: 60_000,
   });
 
-  const app = await buildApp(config, terminalManager, { logger: false, skipVite: true });
+  const app = await buildApp(config, terminalManager, endpointRepo, {
+    logger: false,
+    skipVite: true,
+  });
 
-  // Listen on a random port
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;

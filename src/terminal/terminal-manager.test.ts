@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import type { Config } from "../config/index.js";
+import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
 
@@ -13,20 +13,16 @@ function createMockTransport(): TerminalTransport {
   }) as unknown as TerminalTransport;
 }
 
-const testConfig: Config = {
-  servers: [
-    {
-      id: "test-server",
-      label: "Test Server",
-      host: "localhost",
-      port: 22,
-      username: "testuser",
-      privateKeyPath: "/tmp/fake.pem",
-    },
-  ],
-  security: { allowedNetworks: ["127.0.0.1/32"] },
-  notifications: { mcp: { debounceMs: 100 } },
-};
+const testEndpoints = [
+  {
+    id: "test-server",
+    label: "Test Server",
+    host: "localhost",
+    port: 22,
+    username: "testuser",
+    privateKeyPath: "/tmp/fake.pem",
+  },
+];
 
 describe("TerminalManager", () => {
   let mockTransport: TerminalTransport;
@@ -36,7 +32,8 @@ describe("TerminalManager", () => {
   beforeEach(() => {
     mockTransport = createMockTransport();
     transportFactory = vi.fn().mockResolvedValue(mockTransport);
-    manager = new TerminalManager(testConfig, transportFactory, {
+    const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
+    manager = new TerminalManager(endpointRepo, transportFactory, {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
@@ -188,10 +185,14 @@ describe("TerminalManager", () => {
 
   describe("idle cleanup", () => {
     it("closes idle sessions", async () => {
-      const mgr = new TerminalManager(testConfig, transportFactory, {
-        idleTimeoutMs: 50,
-        cleanupIntervalMs: 25,
-      });
+      const mgr = new TerminalManager(
+        new InMemoryEndpointRepository(testEndpoints),
+        transportFactory,
+        {
+          idleTimeoutMs: 50,
+          cleanupIntervalMs: 25,
+        },
+      );
       const session = await mgr.create("test-server", "ui");
 
       await new Promise((r) => setTimeout(r, 100));
