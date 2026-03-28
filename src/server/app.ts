@@ -38,10 +38,45 @@ export async function buildApp(
   // --- SSH Keys API ---
 
   app.get("/api/keys", async () => {
-    const all = await keyRepo.findAll();
-    return {
-      keys: all.map(({ id, label, type, fingerprint }) => ({ id, label, type, fingerprint })),
-    };
+    const fileKeys = await keyRepo.findAll();
+    const fileKeyEntries = fileKeys.map((k) => ({
+      id: k.id,
+      label: k.label,
+      type: k.type,
+      fingerprint: k.fingerprint,
+      authorizedKeysEntry: `${k.publicKey} ${k.label}`,
+    }));
+
+    // Include passkeys if DB is available
+    let passkeyEntries: Array<{
+      id: string;
+      label: string;
+      type: string;
+      fingerprint: string;
+      authorizedKeysEntry: string | null;
+    }> = [];
+    if (db) {
+      const { webauthnCredentials } = await import("../db/schema.js");
+      const { createHash } = await import("node:crypto");
+      const passkeys = db
+        .select({
+          id: webauthnCredentials.id,
+          label: webauthnCredentials.label,
+          publicKey: webauthnCredentials.publicKey,
+          publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
+        })
+        .from(webauthnCredentials)
+        .all();
+      passkeyEntries = passkeys.map((pk) => ({
+        id: `passkey:${pk.id}`,
+        label: `${pk.label} (passkey)`,
+        type: "webauthn",
+        fingerprint: `SHA256:${createHash("sha256").update(pk.publicKey).digest("base64url")}`,
+        authorizedKeysEntry: pk.publicKeyOpenSsh ?? null,
+      }));
+    }
+
+    return { keys: [...fileKeyEntries, ...passkeyEntries] };
   });
 
   // --- Endpoint API ---

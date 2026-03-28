@@ -19,6 +19,7 @@ interface SshKeyData {
   label: string;
   type: string;
   fingerprint: string;
+  authorizedKeysEntry: string | null;
 }
 
 export class SettingsPage {
@@ -93,10 +94,10 @@ export class SettingsPage {
         </section>
 
         <section class="settings-section">
-          <h2>SSH Keys (auto-discovered from key directory)</h2>
+          <h2>SSH Keys</h2>
           <table class="settings-table">
             <thead>
-              <tr><th>ID</th><th>Label</th><th>Type</th><th>Fingerprint</th></tr>
+              <tr><th>ID</th><th>Label</th><th>Type</th><th>Fingerprint</th><th></th></tr>
             </thead>
             <tbody>
               ${keys
@@ -107,11 +108,12 @@ export class SettingsPage {
                   <td>${k.label}</td>
                   <td>${k.type}</td>
                   <td style="font-family:monospace;font-size:0.75rem">${k.fingerprint}</td>
+                  <td>${k.authorizedKeysEntry ? `<button type="button" class="btn btn-copy-authkey" data-key="${encodeURIComponent(k.authorizedKeysEntry)}" style="font-size:0.65rem">Copy authorized_keys</button>` : ""}</td>
                 </tr>
               `,
                 )
                 .join("")}
-              ${keys.length === 0 ? '<tr><td colspan="4" style="color:#555">No keys found in key directory</td></tr>' : ""}
+              ${keys.length === 0 ? '<tr><td colspan="5" style="color:#555">No keys found</td></tr>' : ""}
             </tbody>
           </table>
         </section>
@@ -210,14 +212,15 @@ export class SettingsPage {
       await this.render();
     });
 
-    // Copy SSH key
-    for (const btn of this.container.querySelectorAll(".btn-copy-key")) {
+    // Copy authorized_keys (SSH keys table + passkey table)
+    for (const btn of this.container.querySelectorAll(".btn-copy-key, .btn-copy-authkey")) {
       btn.addEventListener("click", () => {
         const key = decodeURIComponent((btn as HTMLElement).dataset.key ?? "");
         navigator.clipboard.writeText(key);
+        const originalText = (btn as HTMLElement).textContent;
         (btn as HTMLElement).textContent = "Copied!";
         setTimeout(() => {
-          (btn as HTMLElement).textContent = "Copy SSH Key";
+          (btn as HTMLElement).textContent = originalText ?? "Copy";
         }, 1500);
       });
     }
