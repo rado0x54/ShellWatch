@@ -12,10 +12,29 @@ export function createMcpServer(
   terminalManager: TerminalManager,
   callbacks: McpServerCallbacks = {},
 ): McpServer {
-  const server = new McpServer({
-    name: "shellwatch",
-    version: "0.3.0",
-  });
+  const endpointList = config.servers
+    .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
+    .join("\n");
+
+  const instructions = [
+    "ShellWatch is an SSH session broker. You can create terminal sessions to remote servers, send commands, and read output.",
+    "",
+    "Available endpoints:",
+    endpointList,
+    "",
+    "Workflow:",
+    "1. Create a session with shellwatch_create_session (pick an endpoint ID from above)",
+    '2. Send commands with shellwatch_send_keys (e.g., keys: ["text:ls -la", "enter"])',
+    "3. Read the result with shellwatch_read_output (use afterOffset for incremental reads)",
+    "4. Close the session with shellwatch_close_session when done",
+    "",
+    "Notifications:",
+    "- You will receive notifications/shellwatch/output_available when new output is ready (no need to poll)",
+    "- You will receive notifications/shellwatch/session_status when any session's status changes",
+    "- Interact with a session (send_keys, read_output, create) to subscribe to its output notifications",
+  ].join("\n");
+
+  const server = new McpServer({ name: "shellwatch", version: "0.3.0" }, { instructions });
 
   server.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
     const endpoints = config.servers.map(({ id, label, host, port, username }) => ({
