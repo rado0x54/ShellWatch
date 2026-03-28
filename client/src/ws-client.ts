@@ -37,19 +37,26 @@ export class WsClient {
   }
 
   connect(): void {
+    console.log("[WsClient] Connecting to", this.url);
     this.ws = new WebSocket(this.url);
+
+    this.ws.onopen = () => {
+      console.log("[WsClient] Connected");
+    };
 
     this.ws.onmessage = (event) => {
       try {
         const msg: ServerMessage = JSON.parse(event.data);
-        if (msg.type?.startsWith("fido:")) {
-          console.log("[WsClient] Received FIDO message:", msg.type, msg);
-        }
+        console.log("[WsClient] Message:", msg.type);
         for (const handler of this.handlers) {
           handler(msg);
         }
       } catch (err) {
-        console.error("[WsClient] Failed to parse message:", err, event.data?.toString().slice(0, 100));
+        console.error(
+          "[WsClient] Failed to parse message:",
+          err,
+          event.data?.toString().slice(0, 100),
+        );
       }
     };
 

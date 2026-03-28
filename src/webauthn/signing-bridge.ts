@@ -40,18 +40,17 @@ export class SigningBridge {
       `[SigningBridge] Sending fido:sign-request to browser (${this.clients.size} client(s) registered)`,
     );
 
+    // Send to ALL open clients — the most recent browser tab will handle it.
+    // Stale connections from HMR/reload may still appear open briefly.
     let sent = false;
     for (const client of this.clients) {
-      console.log(
-        `[SigningBridge]   client readyState: ${client.readyState} (OPEN=${client.OPEN})`,
-      );
       if (client.readyState === client.OPEN) {
         client.send(msg);
         sent = true;
-        console.log("[SigningBridge]   → message sent to browser");
-        break;
+        console.log("[SigningBridge]   → message sent to a client");
       }
     }
+    console.log(`[SigningBridge]   sent to ${sent ? "client(s)" : "nobody"}`);
 
     if (!sent) {
       // No browser clients — find the agent and report error

@@ -1,3 +1,5 @@
+console.log("[ShellWatch] main.ts loaded");
+
 import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
 import { SettingsPage } from "./settings.js";
 import { TerminalView } from "./terminal-view.js";

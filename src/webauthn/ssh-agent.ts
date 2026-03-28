@@ -38,16 +38,21 @@ type SignRequestCallback = (request: SignRequest) => void;
  * A custom ssh2 agent backed by WebAuthn credentials.
  * The actual signing happens in the browser — this agent bridges the gap.
  */
+export interface WebAuthnKeyWithCredential extends SshKeyInfo {
+  /** The actual WebAuthn credential ID (base64url) — needed for navigator.credentials.get() */
+  webauthnCredentialId: string;
+}
+
 export class WebAuthnSshAgent extends BaseAgent {
   private pendingSign: Map<
     string,
     { cb: (err: Error | null, signature?: Buffer) => void; timeout: ReturnType<typeof setTimeout> }
   > = new Map();
   private onSignRequest: SignRequestCallback;
-  private keys: SshKeyInfo[];
+  private keys: WebAuthnKeyWithCredential[];
   private rpId: string;
 
-  constructor(keys: SshKeyInfo[], rpId: string, onSignRequest: SignRequestCallback) {
+  constructor(keys: WebAuthnKeyWithCredential[], rpId: string, onSignRequest: SignRequestCallback) {
     super();
     this.keys = keys;
     this.rpId = rpId;
@@ -90,7 +95,9 @@ export class WebAuthnSshAgent extends BaseAgent {
       return;
     }
 
-    console.log(`[WebAuthn Agent] Matched key: ${matchingKey.credentialId}, sending to browser...`);
+    console.log(
+      `[WebAuthn Agent] Matched key: ${matchingKey.webauthnCredentialId}, sending to browser...`,
+    );
 
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -104,7 +111,7 @@ export class WebAuthnSshAgent extends BaseAgent {
 
     this.onSignRequest({
       requestId,
-      credentialId: matchingKey.credentialId,
+      credentialId: matchingKey.webauthnCredentialId,
       dataToSign: data,
       rpId: this.rpId,
     });
@@ -153,13 +160,12 @@ export class WebAuthnSshAgent extends BaseAgent {
     pending.cb(new Error(`WebAuthn signing failed: ${error}`));
   }
 
-  private findKeyForPubKey(_pubKey: Buffer): (SshKeyInfo & { credentialId: string }) | null {
+  private findKeyForPubKey(_pubKey: Buffer): WebAuthnKeyWithCredential | null {
     // For now, return the first key — in practice we'd match by comparing
     // the public key blob. With a single passkey this works fine.
     // TODO: proper matching when multiple passkeys are registered
     if (this.keys.length === 0) return null;
-    const key = this.keys[0];
-    return { ...key, credentialId: key.id };
+    return this.keys[0];
   }
 
   destroy(): void {
