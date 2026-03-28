@@ -115,8 +115,11 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
         let authorizedKeysEntry: string | null = null;
         try {
           authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
-        } catch {
-          // Non-P256 keys can't be converted yet
+        } catch (convErr) {
+          console.error(
+            "Failed to convert COSE key to OpenSSH format:",
+            (convErr as Error).message,
+          );
         }
 
         db.insert(webauthnCredentials)

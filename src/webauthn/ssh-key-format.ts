@@ -37,8 +37,9 @@ function extractP256FromCose(coseKey: Buffer): { x: Buffer; y: Buffer } {
   const map = cborDecode(coseKey);
 
   // COSE labels: -2 = x coordinate, -3 = y coordinate
-  const x = map.get(-2) ?? map[-2];
-  const y = map.get(-3) ?? map[-3];
+  // cbor-x may decode as Map (integer keys) or Object (string keys)
+  const x = map instanceof Map ? map.get(-2) : (map[-2] ?? map["-2"]);
+  const y = map instanceof Map ? map.get(-3) : (map[-3] ?? map["-3"]);
 
   if (!x || !y) {
     throw new Error("Not an ECDSA P-256 key: missing x or y coordinates");
