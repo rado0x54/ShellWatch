@@ -26,8 +26,6 @@ export class SigningBridge {
 
   /** Register an agent's sign request handler */
   handleSignRequest(request: SignRequest): void {
-    // Send to the first available browser client
-    // The challenge is the base64url-encoded data-to-sign
     const challenge = request.dataToSign.toString("base64url");
 
     const msg = JSON.stringify({
@@ -38,12 +36,20 @@ export class SigningBridge {
       rpId: request.rpId,
     });
 
+    console.log(
+      `[SigningBridge] Sending fido:sign-request to browser (${this.clients.size} client(s) registered)`,
+    );
+
     let sent = false;
     for (const client of this.clients) {
+      console.log(
+        `[SigningBridge]   client readyState: ${client.readyState} (OPEN=${client.OPEN})`,
+      );
       if (client.readyState === client.OPEN) {
         client.send(msg);
         sent = true;
-        break; // Send to first available client only
+        console.log("[SigningBridge]   → message sent to browser");
+        break;
       }
     }
 

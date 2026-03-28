@@ -119,6 +119,8 @@ function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<Termina
   });
 }
 
+const WEBAUTHN_CONNECTION_TIMEOUT = 90_000; // 90s — allows time for user to touch the key
+
 function connectSshWithAgent(
   endpoint: EndpointInfo,
   agent: WebAuthnSshAgent,
@@ -128,8 +130,12 @@ function connectSshWithAgent(
 
     const timeout = setTimeout(() => {
       client.end();
-      reject(new Error(`Connection to ${endpoint.host}:${endpoint.port} timed out`));
-    }, CONNECTION_TIMEOUT);
+      reject(
+        new Error(
+          `Connection to ${endpoint.host}:${endpoint.port} timed out (waiting for WebAuthn)`,
+        ),
+      );
+    }, WEBAUTHN_CONNECTION_TIMEOUT);
 
     client.on("ready", () => {
       clearTimeout(timeout);
@@ -159,7 +165,7 @@ function connectSshWithAgent(
       port: endpoint.port,
       username: endpoint.username,
       agent: agent as unknown as string, // BaseAgent instance — ssh2's isAgent() will accept this
-      readyTimeout: CONNECTION_TIMEOUT,
+      readyTimeout: WEBAUTHN_CONNECTION_TIMEOUT,
     });
   });
 }
