@@ -66,25 +66,60 @@ string  application                              (rp.id, e.g., "localhost")
 - Implements `getPublicPEM()` (can throw "not supported" — we don't need PEM export)
 - Has `[SYM_DECRYPTED] = true` so `isParsedKey()` returns true
 
-**Concrete approach:** In the binary key parsing section at line ~1456:
+**Concrete approach:** Hook into the existing binary parsing flow at line ~1456.
 
+The existing code already does:
 ```js
-// After existing binary format parsing, before the final error return
 if (origBuffer) {
   binaryKeyParser.init(origBuffer, 0);
   const type = binaryKeyParser.readString(true);
-  if (type === 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com') {
-    const curve = binaryKeyParser.readString(true);   // "nistp256"
-    const ecPoint = binaryKeyParser.readString();       // 0x04 || X || Y
-    const application = binaryKeyParser.readString(true); // rp.id
-    binaryKeyParser.clear();
-    if (curve === 'nistp256' && ecPoint && ecPoint.length === 65 && ecPoint[0] === 0x04) {
-      return new WebAuthnSKECDSAKey(ecPoint, application);
+  if (type !== undefined) {
+    data = binaryKeyParser.readRaw();
+    if (data !== undefined) {
+      ret = parseDER(data, type, '', type);
+      // ...
     }
   }
-  // ... existing binary parsing continues
+  binaryKeyParser.clear();
 }
 ```
+
+Insert our check **after** `type` is read but **before** `parseDER` is called:
+
+```js
+if (origBuffer) {
+  binaryKeyParser.init(origBuffer, 0);
+  const type = binaryKeyParser.readString(true);
+  if (type !== undefined) {
+    // --- ADD: WebAuthn SK key handling ---
+    if (type === 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com') {
+      const curve = binaryKeyParser.readString(true);   // "nistp256"
+      const ecPoint = binaryKeyParser.readString();       // 0x04 || X || Y (65 bytes)
+      const application = binaryKeyParser.readString(true); // rp.id
+      binaryKeyParser.clear();
+      if (curve === 'nistp256' && ecPoint && ecPoint.length === 65 && ecPoint[0] === 0x04) {
+        return new WebAuthnSKECDSAKey(ecPoint, application);
+      }
+      return new Error('Invalid WebAuthn SK ECDSA key format');
+    }
+    // --- END ADD ---
+
+    data = binaryKeyParser.readRaw();
+    if (data !== undefined) {
+      ret = parseDER(data, type, '', type);
+      // ...
+    }
+  }
+  binaryKeyParser.clear();
+}
+```
+
+This is clean because:
+- The existing `binaryKeyParser.init()` and `readString(true)` already happened
+- We intercept when `type` matches our algorithm name
+- We read the remaining fields using the same `binaryKeyParser`
+- We return early, so the existing `parseDER` path is never reached for our key type
+- No code duplication
 
 **New class `WebAuthnSKECDSAKey`:**
 
