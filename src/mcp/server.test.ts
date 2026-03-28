@@ -18,6 +18,7 @@ const testConfig: Config = {
       privateKeyPath: "/tmp/fake.pem",
     },
   ],
+  security: { allowedNetworks: ["127.0.0.1/32"] },
 };
 
 function createMockTerminalManager() {

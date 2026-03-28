@@ -18,3 +18,12 @@ servers:
     port: 22
     username: deploy
     privateKeyPath: ./keys/staging.pem
+
+# Security settings
+# MCP endpoint is protected by IP allowlist (default: localhost only)
+security:
+  allowedNetworks:
+    - 127.0.0.1/32      # IPv4 localhost
+    - "::1/128"          # IPv6 localhost
+    # - 172.28.0.0/16    # Docker/container network
+    # - 192.168.1.0/24   # LAN

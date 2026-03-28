@@ -34,6 +34,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
         privateKeyPath: keyPath,
       },
     ],
+    security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
   };
 
   const transportFactory = createSshTransportFactory(config);

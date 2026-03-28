@@ -6,6 +6,7 @@ import { createServer as createViteServer } from "vite";
 import type { Config } from "../config/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
+import { registerIpAllowlist } from "./ip-allowlist.js";
 import { registerWebSocket } from "./ws-handler.js";
 
 export interface AppOptions {
@@ -23,6 +24,9 @@ export async function buildApp(
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
+
+  // IP allowlist — protect MCP endpoint (default: localhost only)
+  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
 
   // Health check
   app.get("/health", async () => ({ status: "ok" }));
