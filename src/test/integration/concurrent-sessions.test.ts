@@ -40,17 +40,20 @@ describe("Concurrent Sessions", () => {
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
       );
 
-      // Send different input to each
-      await mcp.callTool("shellwatch_send_input", { sessionId: s1.sessionId, input: "AAA" });
-      await mcp.callTool("shellwatch_send_input", { sessionId: s2.sessionId, input: "BBB" });
+      // Send different input to each via send_keys
+      await mcp.callTool("shellwatch_send_keys", {
+        sessionId: s1.sessionId,
+        keys: ["text:AAA"],
+      });
+      await mcp.callTool("shellwatch_send_keys", {
+        sessionId: s2.sessionId,
+        keys: ["text:BBB"],
+      });
       await new Promise((r) => setTimeout(r, 200));
 
-      const o1 = JSON.parse(
-        (await mcp.callTool("shellwatch_get_output", { sessionId: s1.sessionId })).content,
-      );
-      const o2 = JSON.parse(
-        (await mcp.callTool("shellwatch_get_output", { sessionId: s2.sessionId })).content,
-      );
+      // Verify via TerminalManager directly
+      const o1 = appServer.terminalManager.readOutput(s1.sessionId);
+      const o2 = appServer.terminalManager.readOutput(s2.sessionId);
 
       expect(o1.data).toContain("AAA");
       expect(o1.data).not.toContain("BBB");
@@ -77,9 +80,9 @@ describe("Concurrent Sessions", () => {
       await mcp.callTool("shellwatch_close_session", { sessionId: s1.sessionId });
 
       // s2 should still be alive
-      const sendResult = await mcp.callTool("shellwatch_send_input", {
+      const sendResult = await mcp.callTool("shellwatch_send_keys", {
         sessionId: s2.sessionId,
-        input: "still-alive",
+        keys: ["text:still-alive"],
       });
       expect(sendResult.isError).toBeFalsy();
 

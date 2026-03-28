@@ -18,6 +18,13 @@ export interface OutputReadResult {
   hasMore: boolean;
 }
 
+export interface ExecResult {
+  output: string;
+  exitCode: number;
+  durationMs: number;
+  timedOut: boolean;
+}
+
 export type TerminalEventMap = {
   output: [{ sessionId: string; data: string }];
   "status-change": [{ sessionId: string; status: TerminalStatus; previousStatus: TerminalStatus }];

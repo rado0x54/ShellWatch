@@ -45,12 +45,12 @@ describe("Error Scenarios", () => {
       }
     });
 
-    it("send input to nonexistent session returns error", async () => {
+    it("send keys to nonexistent session returns error", async () => {
       const mcp = await createTestMcpClient(appServer.url, log);
       try {
-        const result = await mcp.callTool("shellwatch_send_input", {
+        const result = await mcp.callTool("shellwatch_send_keys", {
           sessionId: "sess_nonexistent",
-          input: "data",
+          keys: ["enter"],
         });
         expect(result.isError).toBe(true);
         expect(result.content).toContain("not found");
@@ -59,11 +59,12 @@ describe("Error Scenarios", () => {
       }
     });
 
-    it("get output from nonexistent session returns error", async () => {
+    it("exec on nonexistent session returns error", async () => {
       const mcp = await createTestMcpClient(appServer.url, log);
       try {
-        const result = await mcp.callTool("shellwatch_get_output", {
+        const result = await mcp.callTool("shellwatch_exec", {
           sessionId: "sess_nonexistent",
+          command: "ls",
         });
         expect(result.isError).toBe(true);
         expect(result.content).toContain("not found");

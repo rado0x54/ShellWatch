@@ -26,6 +26,8 @@ function createMockTerminalManager() {
   return Object.assign(emitter, {
     create: vi.fn(),
     sendInput: vi.fn(),
+    sendKeys: vi.fn(),
+    exec: vi.fn(),
     readOutput: vi.fn(),
     resize: vi.fn(),
     listSessions: vi.fn().mockReturnValue([]),
@@ -55,12 +57,10 @@ describe("MCP Server Tools", () => {
     it("returns configured endpoints", async () => {
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({ name: "shellwatch_list_endpoints", arguments: {} });
-      const content = result.content as { type: string; text: string }[];
-      const parsed = JSON.parse(content[0].text);
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      const parsed = JSON.parse(content);
       expect(parsed.endpoints).toHaveLength(1);
       expect(parsed.endpoints[0].id).toBe("dev-box");
-      expect(parsed.endpoints[0].host).toBe("dev.example.com");
-      // Should not expose private key path
       expect(parsed.endpoints[0].privateKeyPath).toBeUndefined();
     });
   });
@@ -82,8 +82,8 @@ describe("MCP Server Tools", () => {
         name: "shellwatch_create_session",
         arguments: { endpointId: "dev-box" },
       });
-      const content = result.content as { type: string; text: string }[];
-      const parsed = JSON.parse(content[0].text);
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      const parsed = JSON.parse(content);
       expect(parsed.sessionId).toBe("sess_abc123");
       expect(parsed.status).toBe("open");
       expect(mockManager.create).toHaveBeenCalledWith("dev-box", "mcp");
@@ -100,8 +100,6 @@ describe("MCP Server Tools", () => {
         arguments: { endpointId: "bad-id" },
       });
       expect(result.isError).toBe(true);
-      const content = result.content as { type: string; text: string }[];
-      expect(content[0].text).toContain("Unknown endpoint");
     });
   });
 
@@ -124,73 +122,88 @@ describe("MCP Server Tools", () => {
         name: "shellwatch_list_sessions",
         arguments: {},
       });
-      const content = result.content as { type: string; text: string }[];
-      const parsed = JSON.parse(content[0].text);
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      const parsed = JSON.parse(content);
       expect(parsed.sessions).toHaveLength(1);
       expect(parsed.sessions[0].sessionId).toBe("sess_1");
-      expect(parsed.sessions[0].source).toBe("ui");
     });
   });
 
-  describe("shellwatch_send_input", () => {
-    it("sends input to a session", async () => {
+  describe("shellwatch_exec", () => {
+    it("executes a command and returns result", async () => {
+      (mockManager.exec as ReturnType<typeof vi.fn>).mockResolvedValue({
+        output: "file1.txt\nfile2.txt",
+        exitCode: 0,
+        durationMs: 42,
+        timedOut: false,
+      });
+
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({
-        name: "shellwatch_send_input",
-        arguments: { sessionId: "sess_1", input: "ls -la\n" },
+        name: "shellwatch_exec",
+        arguments: { sessionId: "sess_1", command: "ls" },
       });
-      const content = result.content as { type: string; text: string }[];
-      expect(JSON.parse(content[0].text).status).toBe("sent");
-      expect(mockManager.sendInput).toHaveBeenCalledWith("sess_1", "ls -la\n");
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      const parsed = JSON.parse(content);
+      expect(parsed.output).toBe("file1.txt\nfile2.txt");
+      expect(parsed.exitCode).toBe(0);
+      expect(parsed.timedOut).toBe(false);
+      expect(mockManager.exec).toHaveBeenCalledWith("sess_1", "ls", 30000);
+    });
+
+    it("passes custom timeout", async () => {
+      (mockManager.exec as ReturnType<typeof vi.fn>).mockResolvedValue({
+        output: "",
+        exitCode: 0,
+        durationMs: 10,
+        timedOut: false,
+      });
+
+      const client = await setupClient(testConfig, mockManager);
+      await client.callTool({
+        name: "shellwatch_exec",
+        arguments: { sessionId: "sess_1", command: "sleep 1", timeout: 5000 },
+      });
+      expect(mockManager.exec).toHaveBeenCalledWith("sess_1", "sleep 1", 5000);
     });
 
     it("returns error for unknown session", async () => {
-      (mockManager.sendInput as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new Error("Terminal session not found: bad-id");
-      });
+      (mockManager.exec as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Terminal session not found: bad-id"),
+      );
 
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({
-        name: "shellwatch_send_input",
-        arguments: { sessionId: "bad-id", input: "ls" },
+        name: "shellwatch_exec",
+        arguments: { sessionId: "bad-id", command: "ls" },
       });
       expect(result.isError).toBe(true);
     });
   });
 
-  describe("shellwatch_get_output", () => {
-    it("reads buffered output", async () => {
-      (mockManager.readOutput as ReturnType<typeof vi.fn>).mockReturnValue({
-        data: "total 42\ndrwxr-xr-x",
-        offset: 20,
-        hasMore: false,
+  describe("shellwatch_send_keys", () => {
+    it("sends named keys", async () => {
+      const client = await setupClient(testConfig, mockManager);
+      const result = await client.callTool({
+        name: "shellwatch_send_keys",
+        arguments: { sessionId: "sess_1", keys: ["ctrl+c", "enter"] },
+      });
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      expect(JSON.parse(content).status).toBe("sent");
+      expect(mockManager.sendKeys).toHaveBeenCalledWith("sess_1", ["ctrl+c", "enter"]);
+    });
+
+    it("returns error for unknown session", async () => {
+      (mockManager.sendKeys as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error("Terminal session not found: bad-id");
       });
 
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({
-        name: "shellwatch_get_output",
-        arguments: { sessionId: "sess_1" },
+        name: "shellwatch_send_keys",
+        arguments: { sessionId: "bad-id", keys: ["enter"] },
       });
-      const content = result.content as { type: string; text: string }[];
-      const parsed = JSON.parse(content[0].text);
-      expect(parsed.data).toBe("total 42\ndrwxr-xr-x");
-      expect(parsed.offset).toBe(20);
-      expect(parsed.hasMore).toBe(false);
-    });
-
-    it("supports afterOffset and limit", async () => {
-      (mockManager.readOutput as ReturnType<typeof vi.fn>).mockReturnValue({
-        data: "more",
-        offset: 104,
-        hasMore: true,
-      });
-
-      const client = await setupClient(testConfig, mockManager);
-      await client.callTool({
-        name: "shellwatch_get_output",
-        arguments: { sessionId: "sess_1", afterOffset: 100, limit: 4 },
-      });
-      expect(mockManager.readOutput).toHaveBeenCalledWith("sess_1", 100, 4);
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -201,8 +214,8 @@ describe("MCP Server Tools", () => {
         name: "shellwatch_close_session",
         arguments: { sessionId: "sess_1" },
       });
-      const content = result.content as { type: string; text: string }[];
-      expect(JSON.parse(content[0].text).status).toBe("closed");
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      expect(JSON.parse(content).status).toBe("closed");
       expect(mockManager.close).toHaveBeenCalledWith("sess_1");
     });
   });

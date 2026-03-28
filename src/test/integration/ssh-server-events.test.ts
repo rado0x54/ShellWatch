@@ -31,7 +31,7 @@ describe("SSH Server Events", () => {
     log.clear();
   });
 
-  it("SSH server pushes output → MCP get_output returns it", async () => {
+  it("SSH server pushes output → output buffer contains it", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
@@ -43,9 +43,8 @@ describe("SSH Server Events", () => {
       sshServer.pushOutput("server-initiated-data\n");
       await new Promise((r) => setTimeout(r, 200));
 
-      const output = JSON.parse(
-        (await mcp.callTool("shellwatch_get_output", { sessionId: session.sessionId })).content,
-      );
+      // Verify via TerminalManager directly (get_output removed from MCP)
+      const output = appServer.terminalManager.readOutput(session.sessionId);
       expect(output.data).toContain("server-initiated-data");
 
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
@@ -83,7 +82,6 @@ describe("SSH Server Events", () => {
   });
 
   it("SSH server disconnects → session status changes to closed", async () => {
-    // Use a separate SSH server so we can disconnect it without affecting other tests
     const isolatedSshServer = await startTestSshServer(log);
     const isolatedApp = await startTestApp(isolatedSshServer, log);
 
@@ -94,17 +92,14 @@ describe("SSH Server Events", () => {
       });
       const session = JSON.parse(result.content);
 
-      // Disconnect all SSH clients
       isolatedSshServer.disconnectAll();
       await new Promise((r) => setTimeout(r, 200));
 
-      // Session should reflect closed status
       const listResult = await mcp.callTool("shellwatch_list_sessions");
       const parsed = JSON.parse(listResult.content);
       const found = parsed.sessions.find(
         (s: { sessionId: string }) => s.sessionId === session.sessionId,
       );
-      // Session should be gone (closed sessions are filtered from list)
       expect(found).toBeUndefined();
     } finally {
       await mcp.close();
@@ -125,21 +120,21 @@ describe("SSH Server Events", () => {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
       });
-      const session = JSON.parse(result.content);
+      JSON.parse(result.content);
       await ws.waitForMessage("sessions:changed");
 
-      // Disconnect SSH server
       isolatedSshServer.disconnectAll();
 
-      // Should receive sessions:changed reflecting the closed session
       const msg = await ws.waitForMessage<{
         type: string;
         sessions: { sessionId: string; status: string }[];
       }>("sessions:changed");
-      const found = msg.sessions.find((s) => s.sessionId === session.sessionId);
-      // Either the session is gone or status is closed/error
-      if (found) {
-        expect(["closed", "error"]).toContain(found.status);
+      // Session should be gone or show closed/error
+      for (const s of msg.sessions) {
+        if (s.status === "open") {
+          // If still open, it hasn't processed the disconnect yet — unexpected
+          expect(s.status).not.toBe("open");
+        }
       }
     } finally {
       ws.close();

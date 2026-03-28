@@ -74,9 +74,9 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
       await ws.waitForMessage("terminal:status");
 
       // Send input via MCP
-      await mcp.callTool("shellwatch_send_input", {
+      await mcp.callTool("shellwatch_send_keys", {
         sessionId: session.sessionId,
-        input: "cross-actor-test",
+        keys: ["text:cross-actor-test"],
       });
 
       // WebSocket should receive the echoed output

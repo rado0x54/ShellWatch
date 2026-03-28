@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
 import type { Config } from "../config/index.js";
+import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
 import {
+  type ExecResult,
   generateSessionId,
   type OutputReadResult,
   type TerminalEventMap,
@@ -102,6 +104,89 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     }
     managed.transport.write(input);
     managed.session.lastActivityAt = new Date();
+  }
+
+  sendKeys(sessionId: string, keys: string[]): void {
+    const managed = this.getManaged(sessionId);
+    if (managed.session.status !== "open") {
+      throw new Error(`Terminal ${sessionId} is not open (status: ${managed.session.status})`);
+    }
+    const data = resolveKeys(keys);
+    managed.transport.write(data);
+    managed.session.lastActivityAt = new Date();
+  }
+
+  async exec(sessionId: string, command: string, timeout = 30000): Promise<ExecResult> {
+    const managed = this.getManaged(sessionId);
+    if (managed.session.status !== "open") {
+      throw new Error(`Terminal ${sessionId} is not open (status: ${managed.session.status})`);
+    }
+
+    const marker = `__SW_DONE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}__`;
+    const wrappedCommand = `${command}; echo "${marker}_EXIT_$?"`;
+
+    const startOffset = managed.output.currentOffset;
+    const startTime = Date.now();
+
+    // Send the wrapped command
+    managed.transport.write(`${wrappedCommand}\n`);
+    managed.session.lastActivityAt = new Date();
+
+    // Wait for the marker to appear in output
+    return new Promise<ExecResult>((resolve) => {
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        cleanup();
+        const partial = managed.output.read(startOffset);
+        resolve({
+          output: partial.data,
+          exitCode: -1,
+          durationMs: Date.now() - startTime,
+          timedOut: true,
+        });
+      }, timeout);
+
+      const onOutput = ({ sessionId: sid }: { sessionId: string }) => {
+        if (sid !== sessionId || timedOut) return;
+
+        const result = managed.output.read(startOffset);
+        const markerPrefix = `${marker}_EXIT_`;
+        const markerIdx = result.data.indexOf(markerPrefix);
+        if (markerIdx === -1) return;
+
+        // Found the marker — parse exit code
+        cleanup();
+        const afterMarker = result.data.slice(markerIdx + markerPrefix.length);
+        const exitCodeStr = afterMarker.split(/\s/)[0];
+        const exitCode = parseInt(exitCodeStr, 10) || 0;
+
+        // Extract output: everything between command echo and marker
+        // The shell echoes the wrapped command, so skip past it
+        let output = result.data.slice(0, markerIdx);
+        // Remove the echoed command line (first line)
+        const firstNewline = output.indexOf("\n");
+        if (firstNewline !== -1) {
+          output = output.slice(firstNewline + 1);
+        }
+        // Trim trailing whitespace
+        output = output.trimEnd();
+
+        resolve({
+          output,
+          exitCode,
+          durationMs: Date.now() - startTime,
+          timedOut: false,
+        });
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("output", onOutput);
+      };
+
+      this.on("output", onOutput);
+    });
   }
 
   readOutput(sessionId: string, afterOffset?: number, limit?: number): OutputReadResult {

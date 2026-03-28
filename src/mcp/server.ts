@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
-import type { TerminalManager } from "../terminal/index.js";
+import { SUPPORTED_KEYS, type TerminalManager } from "../terminal/index.js";
 
 export function createMcpServer(config: Config, terminalManager: TerminalManager): McpServer {
   const server = new McpServer({
     name: "shellwatch",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   server.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
@@ -70,17 +70,40 @@ export function createMcpServer(config: Config, terminalManager: TerminalManager
   });
 
   server.tool(
-    "shellwatch_send_input",
-    "Send text input to a terminal session",
+    "shellwatch_exec",
+    [
+      "Execute a shell command and return the result when complete.",
+      "This is the primary tool for running commands. Returns output and exit code.",
+      "For interactive programs (vim, top), use shellwatch_send_keys instead.",
+    ].join(" "),
     {
       sessionId: z.string().describe("ID of the session"),
-      input: z.string().describe("Text to send to the terminal"),
+      command: z.string().describe("Shell command to execute"),
+      timeout: z
+        .number()
+        .optional()
+        .default(30000)
+        .describe("Timeout in milliseconds (default: 30000)"),
     },
-    async ({ sessionId, input }) => {
+    async ({ sessionId, command, timeout }) => {
       try {
-        terminalManager.sendInput(sessionId, input);
+        const result = await terminalManager.exec(sessionId, command, timeout);
         return {
-          content: [{ type: "text", text: JSON.stringify({ status: "sent" }) }],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  output: result.output,
+                  exitCode: result.exitCode,
+                  durationMs: result.durationMs,
+                  timedOut: result.timedOut,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
         };
       } catch (err) {
         return {
@@ -92,18 +115,22 @@ export function createMcpServer(config: Config, terminalManager: TerminalManager
   );
 
   server.tool(
-    "shellwatch_get_output",
-    "Read buffered output from a terminal session",
+    "shellwatch_send_keys",
+    [
+      "Send named keystrokes or control sequences to a terminal session.",
+      `Supported keys: ${SUPPORTED_KEYS.join(", ")}.`,
+      'Use "text:<raw>" for arbitrary text (e.g., "text:hello\\n").',
+      'Supports sequences: ["ctrl+c", "enter"] sends Ctrl+C then Enter.',
+    ].join(" "),
     {
       sessionId: z.string().describe("ID of the session"),
-      afterOffset: z.number().optional().describe("Read output after this byte offset"),
-      limit: z.number().optional().describe("Maximum characters to return (default: 4000)"),
+      keys: z.array(z.string()).describe("Array of key names to send"),
     },
-    async ({ sessionId, afterOffset, limit }) => {
+    async ({ sessionId, keys }) => {
       try {
-        const result = terminalManager.readOutput(sessionId, afterOffset, limit);
+        terminalManager.sendKeys(sessionId, keys);
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }],
         };
       } catch (err) {
         return {
