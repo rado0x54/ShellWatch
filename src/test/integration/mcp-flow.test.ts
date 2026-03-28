@@ -88,22 +88,28 @@ describe("MCP Client Flow", () => {
     }
   });
 
-  it("exec runs a command and returns output with exit code", async () => {
+  it("send_keys sends input and read_output returns echoed data", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
       );
 
-      const execResult = await mcp.callTool("shellwatch_exec", {
+      // Send a command
+      await mcp.callTool("shellwatch_send_keys", {
         sessionId: session.sessionId,
-        command: "echo hello-exec-test",
+        keys: ["text:hello-test", "enter"],
       });
-      const parsed = JSON.parse(execResult.content);
-      expect(parsed.output).toContain("hello-exec-test");
-      expect(parsed.exitCode).toBe(0);
-      expect(parsed.timedOut).toBe(false);
-      expect(parsed.durationMs).toBeGreaterThanOrEqual(0);
+
+      // Wait for the echo server to respond
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Read the output
+      const output = JSON.parse(
+        (await mcp.callTool("shellwatch_read_output", { sessionId: session.sessionId })).content,
+      );
+      expect(output.data).toContain("hello-test");
+      expect(output.offset).toBeGreaterThan(0);
 
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
     } finally {
@@ -111,19 +117,41 @@ describe("MCP Client Flow", () => {
     }
   });
 
-  it("send_keys sends control sequences", async () => {
+  it("read_output supports incremental reads via offset", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
       );
 
-      const result = await mcp.callTool("shellwatch_send_keys", {
+      await mcp.callTool("shellwatch_send_keys", {
         sessionId: session.sessionId,
-        keys: ["text:hello", "enter"],
+        keys: ["text:AAA", "enter"],
       });
-      const parsed = JSON.parse(result.content);
-      expect(parsed.status).toBe("sent");
+      await new Promise((r) => setTimeout(r, 100));
+
+      const r1 = JSON.parse(
+        (await mcp.callTool("shellwatch_read_output", { sessionId: session.sessionId })).content,
+      );
+      expect(r1.data).toContain("AAA");
+      const offset1 = r1.offset;
+
+      await mcp.callTool("shellwatch_send_keys", {
+        sessionId: session.sessionId,
+        keys: ["text:BBB", "enter"],
+      });
+      await new Promise((r) => setTimeout(r, 100));
+
+      const r2 = JSON.parse(
+        (
+          await mcp.callTool("shellwatch_read_output", {
+            sessionId: session.sessionId,
+            afterOffset: offset1,
+          })
+        ).content,
+      );
+      expect(r2.data).toContain("BBB");
+      expect(r2.data).not.toContain("AAA");
 
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
     } finally {
@@ -154,7 +182,7 @@ describe("MCP Client Flow", () => {
     }
   });
 
-  it("full lifecycle: create → exec → close", async () => {
+  it("full lifecycle: create → send_keys → read_output → close", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       const session = JSON.parse(
@@ -162,16 +190,16 @@ describe("MCP Client Flow", () => {
       );
       expect(session.status).toBe("open");
 
-      const exec = JSON.parse(
-        (
-          await mcp.callTool("shellwatch_exec", {
-            sessionId: session.sessionId,
-            command: "echo integration-test-complete",
-          })
-        ).content,
+      await mcp.callTool("shellwatch_send_keys", {
+        sessionId: session.sessionId,
+        keys: ["text:integration-test-complete", "enter"],
+      });
+      await new Promise((r) => setTimeout(r, 200));
+
+      const output = JSON.parse(
+        (await mcp.callTool("shellwatch_read_output", { sessionId: session.sessionId })).content,
       );
-      expect(exec.output).toContain("integration-test-complete");
-      expect(exec.exitCode).toBe(0);
+      expect(output.data).toContain("integration-test-complete");
 
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
 

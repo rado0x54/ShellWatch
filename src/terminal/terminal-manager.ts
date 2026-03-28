@@ -4,7 +4,6 @@ import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
 import {
-  type ExecResult,
   generateSessionId,
   type OutputReadResult,
   type TerminalEventMap,
@@ -114,88 +113,6 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     const data = resolveKeys(keys);
     managed.transport.write(data);
     managed.session.lastActivityAt = new Date();
-  }
-
-  async exec(sessionId: string, command: string, timeout = 30000): Promise<ExecResult> {
-    const managed = this.getManaged(sessionId);
-    if (managed.session.status !== "open") {
-      throw new Error(`Terminal ${sessionId} is not open (status: ${managed.session.status})`);
-    }
-
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const startMarker = `__SW_START_${id}__`;
-    const endMarker = `__SW_END_${id}__`;
-
-    // Use echo with start/end markers so we capture only the command output,
-    // not the echoed command line or PTY control characters
-    const wrappedCommand = `echo "${startMarker}"; ${command}; echo "${endMarker}_EXIT_$?"`;
-
-    const startOffset = managed.output.currentOffset;
-    const startTime = Date.now();
-
-    managed.transport.write(`${wrappedCommand}\n`);
-    managed.session.lastActivityAt = new Date();
-
-    return new Promise<ExecResult>((resolve) => {
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        cleanup();
-        const partial = managed.output.read(startOffset);
-        resolve({
-          output: partial.data,
-          exitCode: -1,
-          durationMs: Date.now() - startTime,
-          timedOut: true,
-        });
-      }, timeout);
-
-      const onOutput = ({ sessionId: sid }: { sessionId: string }) => {
-        if (sid !== sessionId || timedOut) return;
-
-        const result = managed.output.read(startOffset);
-
-        // Both markers appear twice in the buffer: once in the echoed command line,
-        // once as actual shell output. We need the OUTPUT versions.
-        // Use regex to handle \r\n, \n, or \r line endings from real terminals.
-        const startRegex = new RegExp(
-          `\\r?\\n${startMarker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?\\n`,
-        );
-        const startMatch = startRegex.exec(result.data);
-        if (!startMatch) return;
-
-        const outputStart = startMatch.index + startMatch[0].length;
-
-        // Find the end marker AFTER the start marker output
-        const endPrefix = `${endMarker}_EXIT_`;
-        const endIdx = result.data.indexOf(endPrefix, outputStart);
-        if (endIdx === -1) return;
-
-        cleanup();
-
-        // Parse exit code from end marker
-        const afterEnd = result.data.slice(endIdx + endPrefix.length);
-        const exitCodeStr = afterEnd.split(/\s/)[0];
-        const exitCode = parseInt(exitCodeStr, 10) || 0;
-
-        // Strip any trailing \r characters from output lines
-        const output = result.data.slice(outputStart, endIdx).replace(/\r/g, "").trimEnd();
-
-        resolve({
-          output,
-          exitCode,
-          durationMs: Date.now() - startTime,
-          timedOut: false,
-        });
-      };
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        this.off("output", onOutput);
-      };
-
-      this.on("output", onOutput);
-    });
   }
 
   readOutput(sessionId: string, afterOffset?: number, limit?: number): OutputReadResult {

@@ -59,12 +59,11 @@ describe("Error Scenarios", () => {
       }
     });
 
-    it("exec on nonexistent session returns error", async () => {
+    it("read_output on nonexistent session returns error", async () => {
       const mcp = await createTestMcpClient(appServer.url, log);
       try {
-        const result = await mcp.callTool("shellwatch_exec", {
+        const result = await mcp.callTool("shellwatch_read_output", {
           sessionId: "sess_nonexistent",
-          command: "ls",
         });
         expect(result.isError).toBe(true);
         expect(result.content).toContain("not found");

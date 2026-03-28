@@ -6,7 +6,7 @@ import { SUPPORTED_KEYS, type TerminalManager } from "../terminal/index.js";
 export function createMcpServer(config: Config, terminalManager: TerminalManager): McpServer {
   const server = new McpServer({
     name: "shellwatch",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   server.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
@@ -70,40 +70,24 @@ export function createMcpServer(config: Config, terminalManager: TerminalManager
   });
 
   server.tool(
-    "shellwatch_exec",
+    "shellwatch_send_keys",
     [
-      "Execute a shell command and return the result when complete.",
-      "This is the primary tool for running commands. Returns output and exit code.",
-      "For interactive programs (vim, top), use shellwatch_send_keys instead.",
+      "Send named keystrokes or text to a terminal session.",
+      "This is how you type commands and interact with the shell.",
+      'To run a command: send_keys(["text:ls -la", "enter"]), then read_output to see the result.',
+      `Supported keys: ${SUPPORTED_KEYS.join(", ")}.`,
+      'Use "text:<content>" for arbitrary text (e.g., "text:ls -la").',
+      'Supports sequences: ["text:ls -la", "enter"] types the command and presses Enter.',
     ].join(" "),
     {
       sessionId: z.string().describe("ID of the session"),
-      command: z.string().describe("Shell command to execute"),
-      timeout: z
-        .number()
-        .optional()
-        .default(30000)
-        .describe("Timeout in milliseconds (default: 30000)"),
+      keys: z.array(z.string()).describe("Array of key names to send in sequence"),
     },
-    async ({ sessionId, command, timeout }) => {
+    async ({ sessionId, keys }) => {
       try {
-        const result = await terminalManager.exec(sessionId, command, timeout);
+        terminalManager.sendKeys(sessionId, keys);
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  output: result.output,
-                  exitCode: result.exitCode,
-                  durationMs: result.durationMs,
-                  timedOut: result.timedOut,
-                },
-                null,
-                2,
-              ),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }],
         };
       } catch (err) {
         return {
@@ -115,22 +99,26 @@ export function createMcpServer(config: Config, terminalManager: TerminalManager
   );
 
   server.tool(
-    "shellwatch_send_keys",
+    "shellwatch_read_output",
     [
-      "Send named keystrokes or control sequences to a terminal session.",
-      `Supported keys: ${SUPPORTED_KEYS.join(", ")}.`,
-      'Use "text:<raw>" for arbitrary text (e.g., "text:hello\\n").',
-      'Supports sequences: ["ctrl+c", "enter"] sends Ctrl+C then Enter.',
+      "Read terminal output from a session.",
+      "Returns buffered output with an offset for incremental reads.",
+      "After sending a command with send_keys, wait briefly then call read_output to see the result.",
+      "Use afterOffset from the previous read to get only new output since your last read.",
     ].join(" "),
     {
       sessionId: z.string().describe("ID of the session"),
-      keys: z.array(z.string()).describe("Array of key names to send"),
+      afterOffset: z
+        .number()
+        .optional()
+        .describe("Read output after this offset (from a previous read)"),
+      limit: z.number().optional().describe("Maximum characters to return (default: 4000)"),
     },
-    async ({ sessionId, keys }) => {
+    async ({ sessionId, afterOffset, limit }) => {
       try {
-        terminalManager.sendKeys(sessionId, keys);
+        const result = terminalManager.readOutput(sessionId, afterOffset, limit);
         return {
-          content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       } catch (err) {
         return {
