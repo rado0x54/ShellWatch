@@ -157,12 +157,14 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
 
         // Both markers appear twice in the buffer: once in the echoed command line,
         // once as actual shell output. We need the OUTPUT versions.
-        // The output start marker appears at the beginning of a line: \n<marker>\n
-        const startPattern = `\n${startMarker}\n`;
-        const startIdx = result.data.indexOf(startPattern);
-        if (startIdx === -1) return;
+        // Use regex to handle \r\n, \n, or \r line endings from real terminals.
+        const startRegex = new RegExp(
+          `\\r?\\n${startMarker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?\\n`,
+        );
+        const startMatch = startRegex.exec(result.data);
+        if (!startMatch) return;
 
-        const outputStart = startIdx + startPattern.length;
+        const outputStart = startMatch.index + startMatch[0].length;
 
         // Find the end marker AFTER the start marker output
         const endPrefix = `${endMarker}_EXIT_`;
@@ -176,7 +178,8 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
         const exitCodeStr = afterEnd.split(/\s/)[0];
         const exitCode = parseInt(exitCodeStr, 10) || 0;
 
-        const output = result.data.slice(outputStart, endIdx).trimEnd();
+        // Strip any trailing \r characters from output lines
+        const output = result.data.slice(outputStart, endIdx).replace(/\r/g, "").trimEnd();
 
         resolve({
           output,
