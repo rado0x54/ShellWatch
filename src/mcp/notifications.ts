@@ -1,19 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AgentSession } from "../agent/index.js";
 import type { TerminalManager } from "../terminal/index.js";
-import type { McpSessionOwnership } from "./server.js";
 
 export interface McpNotificationOptions {
   debounceMs: number;
 }
 
 /**
- * Attaches MCP notification dispatching for a specific MCP server session.
- * Only sends notifications for sessions owned by this MCP client.
+ * Attaches MCP notification dispatching for an agent session.
+ * Only sends notifications for sessions owned by the agent.
  */
 export function attachMcpNotifications(
   mcpServer: McpServer,
   terminalManager: TerminalManager,
-  ownership: McpSessionOwnership,
+  agentSession: AgentSession,
   options: McpNotificationOptions,
 ) {
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -27,7 +27,7 @@ export function attachMcpNotifications(
   }
 
   function onOutput({ sessionId }: { sessionId: string }) {
-    if (!ownership.ownedSessions.has(sessionId)) return;
+    if (!agentSession.sessions.has(sessionId)) return;
 
     const existing = debounceTimers.get(sessionId);
     if (existing) clearTimeout(existing);
@@ -43,14 +43,14 @@ export function attachMcpNotifications(
             offset,
           });
         } catch {
-          // Session may have been closed between debounce schedule and fire
+          // Session may have been closed
         }
       }, options.debounceMs),
     );
   }
 
   function onStatusChange({ sessionId, status }: { sessionId: string; status: string }) {
-    if (!ownership.ownedSessions.has(sessionId)) return;
+    if (!agentSession.sessions.has(sessionId)) return;
 
     const session = terminalManager.getSession(sessionId);
     sendNotification("notifications/shellwatch/session_status", {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 export type TerminalStatus = "opening" | "open" | "closing" | "closed" | "error";
-export type TerminalSource = "ui" | "mcp";
+export type TerminalSource = "ui" | "mcp" | "ssh";
 
 export interface TerminalSession {
   sessionId: string;

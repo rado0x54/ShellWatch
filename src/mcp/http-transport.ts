@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
+import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { attachMcpNotifications } from "./notifications.js";
@@ -24,11 +25,12 @@ export async function registerMcpHttpTransport(
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const { server: mcpServer, ownership } = createMcpServer(config, terminalManager);
+      const agentSession = new AgentSession(config, terminalManager, "mcp");
+      const mcpServer = createMcpServer(agentSession);
 
       await mcpServer.connect(newTransport);
 
-      const notifications = attachMcpNotifications(mcpServer, terminalManager, ownership, {
+      const notifications = attachMcpNotifications(mcpServer, terminalManager, agentSession, {
         debounceMs: config.notifications.mcp.debounceMs,
       });
 
@@ -36,8 +38,7 @@ export async function registerMcpHttpTransport(
         if (newTransport.sessionId) {
           transports.delete(newTransport.sessionId);
         }
-        // Close all terminal sessions owned by this MCP client
-        ownership.closeAllSessions();
+        agentSession.destroy();
         notifications.destroy();
       };
 

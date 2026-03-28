@@ -1,22 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Config } from "../config/index.js";
-import { SUPPORTED_KEYS, type TerminalManager } from "../terminal/index.js";
+import type { AgentSession } from "../agent/index.js";
+import { SUPPORTED_KEYS } from "../terminal/index.js";
 
-export interface McpSessionOwnership {
-  /** Sessions owned by this MCP client */
-  readonly ownedSessions: ReadonlySet<string>;
-  /** Clean up all owned sessions (called on MCP disconnect) */
-  closeAllSessions(): void;
-}
-
-export function createMcpServer(
-  config: Config,
-  terminalManager: TerminalManager,
-): { server: McpServer; ownership: McpSessionOwnership } {
-  const ownedSessions = new Set<string>();
-
-  const endpointList = config.servers
+export function createMcpServer(agentSession: AgentSession): McpServer {
+  const endpoints = agentSession.listEndpoints();
+  const endpointList = endpoints
     .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
     .join("\n");
 
@@ -39,35 +28,17 @@ export function createMcpServer(
 
   const mcpServer = new McpServer({ name: "shellwatch", version: "0.4.0" }, { instructions });
 
-  function assertOwnership(sessionId: string): void {
-    if (!ownedSessions.has(sessionId)) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-  }
-
-  mcpServer.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
-    const endpoints = config.servers.map(({ id, label, host, port, username }) => ({
-      id,
-      label,
-      host,
-      port,
-      username,
-    }));
-    return {
-      content: [{ type: "text", text: JSON.stringify({ endpoints }, null, 2) }],
-    };
-  });
+  mcpServer.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => ({
+    content: [{ type: "text", text: JSON.stringify({ endpoints }, null, 2) }],
+  }));
 
   mcpServer.tool(
     "shellwatch_create_session",
     "Create a new terminal session for a configured endpoint",
-    {
-      endpointId: z.string().describe("ID of the endpoint to connect to"),
-    },
+    { endpointId: z.string().describe("ID of the endpoint to connect to") },
     async ({ endpointId }) => {
       try {
-        const session = await terminalManager.create(endpointId, "mcp");
-        ownedSessions.add(session.sessionId);
+        const session = await agentSession.createSession(endpointId);
         return {
           content: [
             {
@@ -85,24 +56,18 @@ export function createMcpServer(
           ],
         };
       } catch (err) {
-        return {
-          isError: true,
-          content: [{ type: "text", text: (err as Error).message }],
-        };
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
       }
     },
   );
 
   mcpServer.tool("shellwatch_list_sessions", "List your active terminal sessions", {}, async () => {
-    const sessions = terminalManager
-      .listSessions()
-      .filter((s) => ownedSessions.has(s.sessionId))
-      .map((s) => ({
-        sessionId: s.sessionId,
-        endpointId: s.endpointId,
-        status: s.status,
-        createdAt: s.createdAt.toISOString(),
-      }));
+    const sessions = agentSession.listSessions().map((s) => ({
+      sessionId: s.sessionId,
+      endpointId: s.endpointId,
+      status: s.status,
+      createdAt: s.createdAt.toISOString(),
+    }));
     return {
       content: [{ type: "text", text: JSON.stringify({ sessions }, null, 2) }],
     };
@@ -124,16 +89,10 @@ export function createMcpServer(
     },
     async ({ sessionId, keys }) => {
       try {
-        assertOwnership(sessionId);
-        terminalManager.sendKeys(sessionId, keys);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }],
-        };
+        agentSession.sendKeys(sessionId, keys);
+        return { content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }] };
       } catch (err) {
-        return {
-          isError: true,
-          content: [{ type: "text", text: (err as Error).message }],
-        };
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
       }
     },
   );
@@ -156,16 +115,10 @@ export function createMcpServer(
     },
     async ({ sessionId, afterOffset, limit }) => {
       try {
-        assertOwnership(sessionId);
-        const result = terminalManager.readOutput(sessionId, afterOffset, limit);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
+        const result = agentSession.readOutput(sessionId, afterOffset, limit);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return {
-          isError: true,
-          content: [{ type: "text", text: (err as Error).message }],
-        };
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
       }
     },
   );
@@ -173,39 +126,16 @@ export function createMcpServer(
   mcpServer.tool(
     "shellwatch_close_session",
     "Close a terminal session and release resources",
-    {
-      sessionId: z.string().describe("ID of the session to close"),
-    },
+    { sessionId: z.string().describe("ID of the session to close") },
     async ({ sessionId }) => {
       try {
-        assertOwnership(sessionId);
-        terminalManager.close(sessionId);
-        ownedSessions.delete(sessionId);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ status: "closed" }) }],
-        };
+        agentSession.closeSession(sessionId);
+        return { content: [{ type: "text", text: JSON.stringify({ status: "closed" }) }] };
       } catch (err) {
-        return {
-          isError: true,
-          content: [{ type: "text", text: (err as Error).message }],
-        };
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
       }
     },
   );
 
-  const ownership: McpSessionOwnership = {
-    ownedSessions,
-    closeAllSessions() {
-      for (const sessionId of ownedSessions) {
-        try {
-          terminalManager.close(sessionId);
-        } catch {
-          // Session may already be closed
-        }
-      }
-      ownedSessions.clear();
-    },
-  };
-
-  return { server: mcpServer, ownership };
+  return mcpServer;
 }
