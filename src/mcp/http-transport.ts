@@ -27,7 +27,7 @@ export async function registerMcpHttpTransport(
       // Create MCP server with a session tracking callback (wired below)
       let trackSession: (id: string) => void = () => {};
       const mcpServer = createMcpServer(config, terminalManager, {
-        onSessionCreated: (terminalSessionId) => trackSession(terminalSessionId),
+        onSessionInteracted: (terminalSessionId) => trackSession(terminalSessionId),
       });
 
       // Connect before attaching notifications (server needs transport for sending)

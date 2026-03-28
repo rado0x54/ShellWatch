@@ -4,7 +4,7 @@ import type { Config } from "../config/index.js";
 import { SUPPORTED_KEYS, type TerminalManager } from "../terminal/index.js";
 
 export interface McpServerCallbacks {
-  onSessionCreated?: (sessionId: string) => void;
+  onSessionInteracted?: (sessionId: string) => void;
 }
 
 export function createMcpServer(
@@ -39,7 +39,7 @@ export function createMcpServer(
     async ({ endpointId }) => {
       try {
         const session = await terminalManager.create(endpointId, "mcp");
-        callbacks.onSessionCreated?.(session.sessionId);
+        callbacks.onSessionInteracted?.(session.sessionId);
         return {
           content: [
             {
@@ -94,6 +94,7 @@ export function createMcpServer(
     },
     async ({ sessionId, keys }) => {
       try {
+        callbacks.onSessionInteracted?.(sessionId);
         terminalManager.sendKeys(sessionId, keys);
         return {
           content: [{ type: "text", text: JSON.stringify({ status: "sent", keys }) }],
@@ -125,6 +126,7 @@ export function createMcpServer(
     },
     async ({ sessionId, afterOffset, limit }) => {
       try {
+        callbacks.onSessionInteracted?.(sessionId);
         const result = terminalManager.readOutput(sessionId, afterOffset, limit);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
