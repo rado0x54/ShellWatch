@@ -1,30 +1,30 @@
 /**
  * WebAuthn to SSH signature format conversion.
  *
- * SSH signature wire format for webauthn-sk-ecdsa-sha2-nistp256@openssh.com:
+ * Wire format on the SSH packet (from OpenSSH PROTOCOL.u2f):
  *
- *   string  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"   (algorithm)
- *   string  signature_blob:
- *     string  ecdsa_signature  (SSH wire: uint32 R_len || R || uint32 S_len || S)
- *     byte    flags            (authenticator data flags)
- *     uint32  counter          (authenticator counter)
- *     string  origin           (e.g., "http://localhost:3000")
- *     string  clientDataJSON   (from WebAuthn assertion)
- *     string  extensions       (empty for now)
+ *   string  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+ *   string  ecdsa_signature    ← Blob: string R_mpint || string S_mpint
+ *   byte    flags              ← Rest: appended raw after the Blob string
+ *   uint32  counter
+ *   string  origin
+ *   string  clientData
+ *   string  extensions
  *
- * The ECDSA signature comes from the WebAuthn response as ASN.1 DER encoded.
- * It must be decoded and re-encoded in SSH wire format.
+ * ssh2's agent.js strips the algorithm name from the agent response and reads
+ * the remaining bytes as a single string. Protocol.js then writes that string
+ * into the SSH packet as: string algo + string <agent's returned bytes>.
+ *
+ * So the agent must return:
+ *   string algo + (string ecdsaSig + byte flags + uint32 counter + string origin + string clientData + string extensions)
+ *
+ * Where the part after algo is NOT wrapped in sshString — it's returned as the
+ * second readString() from the agent response, then written verbatim by Protocol.js.
  *
  * Based on the ssheasy project (github.com/hullarb/ssheasy).
  */
 
 const ALGORITHM = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
-
-/** Write a uint32 big-endian */
-function _writeU32(buf: Buffer, offset: number, value: number): number {
-  buf.writeUInt32BE(value, offset);
-  return offset + 4;
-}
 
 /** Encode a string/bytes as SSH wire string (uint32 length + data) */
 function sshString(data: string | Buffer): Buffer {
@@ -33,6 +33,24 @@ function sshString(data: string | Buffer): Buffer {
   buf.writeUInt32BE(payload.length, 0);
   payload.copy(buf, 4);
   return buf;
+}
+
+/**
+ * Encode a big integer as SSH mpint (length-prefixed, big-endian, with sign padding).
+ * If the MSB is set, prepend a 0x00 byte to indicate positive.
+ */
+function sshMpint(value: Buffer): Buffer {
+  // Strip leading zeros
+  let start = 0;
+  while (start < value.length - 1 && value[start] === 0) start++;
+  let trimmed = value.subarray(start);
+
+  // Add leading 0x00 if MSB is set (SSH mpint convention for positive numbers)
+  if (trimmed[0] & 0x80) {
+    trimmed = Buffer.concat([Buffer.from([0x00]), trimmed]);
+  }
+
+  return sshString(trimmed);
 }
 
 /**
@@ -61,7 +79,7 @@ export function parseAsn1Signature(derSig: Buffer): { r: Buffer; s: Buffer } {
     throw new Error("Invalid ASN.1 signature: expected INTEGER tag for R");
   }
   const rLen = derSig[offset++];
-  let r = derSig.subarray(offset, offset + rLen);
+  const r = derSig.subarray(offset, offset + rLen);
   offset += rLen;
 
   // Read S
@@ -69,24 +87,14 @@ export function parseAsn1Signature(derSig: Buffer): { r: Buffer; s: Buffer } {
     throw new Error("Invalid ASN.1 signature: expected INTEGER tag for S");
   }
   const sLen = derSig[offset++];
-  let s = derSig.subarray(offset, offset + sLen);
+  const s = derSig.subarray(offset, offset + sLen);
 
-  // Strip leading zero bytes (ASN.1 uses them for positive sign)
-  if (r.length > 32 && r[0] === 0x00) r = r.subarray(1);
-  if (s.length > 32 && s[0] === 0x00) s = s.subarray(1);
-
-  // Pad to 32 bytes if shorter
-  if (r.length < 32) r = Buffer.concat([Buffer.alloc(32 - r.length), r]);
-  if (s.length < 32) s = Buffer.concat([Buffer.alloc(32 - s.length), s]);
-
-  return { r, s };
+  // Return raw ASN.1 integer bytes (may include leading 0x00 for sign)
+  return { r: Buffer.from(r), s: Buffer.from(s) };
 }
 
 /**
  * Parse the WebAuthn assertion response to extract signature components.
- *
- * @param authenticatorData - Raw authenticator data from the assertion
- * @param signature - ASN.1 DER encoded ECDSA signature from the assertion
  */
 export function parseWebAuthnSignature(
   authenticatorData: Buffer,
@@ -104,8 +112,9 @@ export function parseWebAuthnSignature(
 /**
  * Build the SSH signature blob for webauthn-sk-ecdsa-sha2-nistp256@openssh.com.
  *
- * This is what gets returned from the agent's sign() callback.
- * Note: ssh2's agent protocol will strip the algorithm name and use only the blob.
+ * Returns the full agent response format: string algo + string sigData
+ * ssh2's agent.js will strip algo and return sigData to Protocol.js.
+ * Protocol.js writes it into the SSH packet.
  */
 export function buildSshSignatureBlob(
   r: Buffer,
@@ -114,39 +123,41 @@ export function buildSshSignatureBlob(
   counter: number,
   clientDataJSON: string,
 ): Buffer {
-  // Build the ECDSA signature in SSH wire format: string R || string S
-  const ecdsaSig = Buffer.concat([sshString(r), sshString(s)]);
+  // ECDSA signature in SSH wire format: mpint R || mpint S
+  // Go's ssh.Marshal on *big.Int produces mpint encoding
+  const ecdsaSig = Buffer.concat([sshMpint(r), sshMpint(s)]);
 
-  // Build the inner blob: ecdsa_sig || flags || counter || origin || clientData || extensions
   // Extract origin from clientDataJSON
   let origin = "";
   try {
     const clientData = JSON.parse(clientDataJSON);
     origin = clientData.origin || "";
   } catch {
-    // If we can't parse, leave origin empty
+    // leave empty
   }
 
-  const ecdsaSigStr = sshString(ecdsaSig);
   const flagsBuf = Buffer.from([flags]);
   const counterBuf = Buffer.alloc(4);
   counterBuf.writeUInt32BE(counter, 0);
-  const originStr = sshString(origin);
-  const clientDataStr = sshString(clientDataJSON);
-  const extensionsStr = sshString("");
 
-  const innerBlob = Buffer.concat([
-    ecdsaSigStr,
+  // The signature data that goes into the SSH packet:
+  //   string ecdsaSig     ← Blob (wrapped once as sshString)
+  //   byte   flags        ← Rest (raw, NOT wrapped)
+  //   uint32 counter
+  //   string origin
+  //   string clientData
+  //   string extensions
+  const sigData = Buffer.concat([
+    sshString(ecdsaSig),
     flagsBuf,
     counterBuf,
-    originStr,
-    clientDataStr,
-    extensionsStr,
+    sshString(origin),
+    sshString(clientDataJSON),
+    sshString(""),
   ]);
 
-  // Wrap: algorithm name + inner blob
-  const algoStr = sshString(ALGORITHM);
-  const blobStr = sshString(innerBlob);
-
-  return Buffer.concat([algoStr, blobStr]);
+  // Agent response format: string algorithm + string sigData
+  // ssh2 agent.js reads: readString() → algorithm (discarded)
+  //                      readString() → sigData (returned to Protocol.js)
+  return Buffer.concat([sshString(ALGORITHM), sshString(sigData)]);
 }
