@@ -135,7 +135,7 @@ describe("Error Scenarios", () => {
         security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
         notifications: { mcp: { debounceMs: 50 } },
       };
-      const app = await buildApp(config, tm, endpointRepo, keyRepo, {
+      const app = await buildApp(config, tm, endpointRepo, keyRepo, null, {
         logger: false,
         skipVite: true,
       });

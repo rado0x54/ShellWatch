@@ -138,9 +138,69 @@ wsClient.onMessage((msg) => {
   }
 });
 
+// --- Passkey management ---
+
+import {
+  deleteCredential,
+  listCredentials,
+  registerPasskey,
+  type WebAuthnCredential,
+} from "./webauthn.js";
+
+const passkeyList = document.getElementById("passkey-list") as HTMLElement;
+const registerBtn = document.getElementById("register-passkey-btn") as HTMLElement;
+
+let passkeys: WebAuthnCredential[] = [];
+
+function renderPasskeys() {
+  passkeyList.innerHTML = "";
+  if (passkeys.length === 0) {
+    passkeyList.innerHTML =
+      '<li style="color:#555;font-size:0.8rem;padding:0.25rem">No passkeys registered</li>';
+    return;
+  }
+  for (const pk of passkeys) {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div class="endpoint-item">
+        <div class="endpoint-info">
+          <span class="endpoint-label">${pk.label}</span>
+          <span class="endpoint-detail">${pk.createdAt.slice(0, 10)}</span>
+        </div>
+        <button class="btn btn-close" data-id="${pk.id}">Remove</button>
+      </div>
+    `;
+    li.querySelector(".btn-close")?.addEventListener("click", async () => {
+      await deleteCredential(pk.id);
+      await refreshPasskeys();
+    });
+    passkeyList.appendChild(li);
+  }
+}
+
+async function refreshPasskeys() {
+  passkeys = await listCredentials();
+  renderPasskeys();
+}
+
+registerBtn.addEventListener("click", async () => {
+  const label = prompt("Passkey label (e.g., YubiKey 5 NFC):");
+  if (!label) return;
+  try {
+    await registerPasskey(label);
+    await refreshPasskeys();
+  } catch (err) {
+    console.error("Passkey registration failed:", err);
+    alert(`Registration failed: ${(err as Error).message}`);
+  }
+});
+
+// --- Init ---
+
 async function init() {
   endpoints = await fetchEndpoints();
   renderEndpoints();
+  await refreshPasskeys();
 }
 
 init();

@@ -75,4 +75,17 @@ CREATE TABLE `ssh_keys` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `ssh_keys_fingerprint_unique` ON `ssh_keys` (`fingerprint`);
+CREATE UNIQUE INDEX `ssh_keys_fingerprint_unique` ON `ssh_keys` (`fingerprint`);--> statement-breakpoint
+CREATE TABLE `webauthn_credentials` (
+	`id` text PRIMARY KEY NOT NULL,
+	`credential_id` text NOT NULL,
+	`public_key` blob NOT NULL,
+	`counter` integer DEFAULT 0 NOT NULL,
+	`transports` text,
+	`label` text NOT NULL,
+	`public_key_openssh` text,
+	`created_at` text NOT NULL,
+	`last_used_at` text
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `webauthn_credentials_credential_id_unique` ON `webauthn_credentials` (`credential_id`);

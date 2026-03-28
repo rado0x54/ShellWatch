@@ -4,11 +4,13 @@ import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createServer as createViteServer } from "vite";
 import type { Config } from "../config/index.js";
+import type { ShellWatchDB } from "../db/connection.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
+import { registerWebAuthnRoutes } from "./webauthn.js";
 import { registerWebSocket } from "./ws-handler.js";
 
 export interface AppOptions {
@@ -21,6 +23,7 @@ export async function buildApp(
   terminalManager: TerminalManager,
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
+  db: ShellWatchDB | null = null,
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -136,6 +139,11 @@ export async function buildApp(
 
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo);
+
+  // WebAuthn routes
+  if (db) {
+    registerWebAuthnRoutes(app, db);
+  }
 
   // Vite dev server
   if (!options.skipVite) {

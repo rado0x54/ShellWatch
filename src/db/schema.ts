@@ -1,4 +1,18 @@
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+// --- WebAuthn Credentials ---
+
+export const webauthnCredentials = sqliteTable("webauthn_credentials", {
+  id: text("id").primaryKey(),
+  credentialId: text("credential_id").notNull().unique(), // base64url-encoded
+  publicKey: blob("public_key", { mode: "buffer" }).notNull(), // COSE-encoded
+  counter: integer("counter").notNull().default(0),
+  transports: text("transports"), // JSON array: ["usb", "nfc", "ble", "internal"]
+  label: text("label").notNull(), // User-friendly name (e.g., "YubiKey 5 NFC")
+  publicKeyOpenSsh: text("public_key_openssh"), // OpenSSH authorized_keys format (if convertible)
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+});
 
 // --- SSH Keys ---
 

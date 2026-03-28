@@ -35,7 +35,7 @@ try {
   const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore);
   const terminalManager = new TerminalManager(endpointRepo, transportFactory);
 
-  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo);
+  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, db);
 
   const endpoints = await endpointRepo.findAll();
   console.log(`${endpoints.length} endpoint(s) in database`);
