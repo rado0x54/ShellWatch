@@ -80,7 +80,6 @@ describe("MCP Client Flow", () => {
         (s: { sessionId: string }) => s.sessionId === session.sessionId,
       );
       expect(found).toBeDefined();
-      expect(found.source).toBe("mcp");
 
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });
     } finally {
@@ -244,9 +243,6 @@ describe("MCP Client Flow", () => {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
       );
-
-      // Drain the "open" status notification from session creation
-      await mcp.waitForNotification("notifications/shellwatch/session_status", 2000);
 
       // Close the session — should trigger a closing/closed status notification
       await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId });

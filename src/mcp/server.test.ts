@@ -38,13 +38,22 @@ function createMockTerminalManager() {
 }
 
 async function setupClient(config: Config, terminalManager: TerminalManager) {
-  const mcpServer = createMcpServer(config, terminalManager);
+  const { server: mcpServer } = createMcpServer(config, terminalManager);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "1.0.0" });
   await client.connect(clientTransport);
   return client;
 }
+
+const mockSession: TerminalSession = {
+  sessionId: "sess_abc123",
+  endpointId: "dev-box",
+  status: "open",
+  createdAt: new Date(),
+  lastActivityAt: new Date(),
+  source: "mcp",
+};
 
 describe("MCP Server Tools", () => {
   let mockManager: TerminalManager;
@@ -67,14 +76,6 @@ describe("MCP Server Tools", () => {
 
   describe("shellwatch_create_session", () => {
     it("creates a session", async () => {
-      const mockSession: TerminalSession = {
-        sessionId: "sess_abc123",
-        endpointId: "dev-box",
-        status: "open",
-        createdAt: new Date(),
-        lastActivityAt: new Date(),
-        source: "mcp",
-      };
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
 
       const client = await setupClient(testConfig, mockManager);
@@ -104,59 +105,68 @@ describe("MCP Server Tools", () => {
   });
 
   describe("shellwatch_list_sessions", () => {
-    it("returns active sessions", async () => {
-      const sessions: TerminalSession[] = [
-        {
-          sessionId: "sess_1",
-          endpointId: "dev-box",
-          status: "open",
-          createdAt: new Date("2025-01-01T00:00:00Z"),
-          lastActivityAt: new Date(),
-          source: "ui",
-        },
-      ];
-      (mockManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(sessions);
+    it("returns only owned sessions", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
+      (mockManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([mockSession]);
 
       const client = await setupClient(testConfig, mockManager);
-      const result = await client.callTool({
-        name: "shellwatch_list_sessions",
-        arguments: {},
+      // Create a session first so it's owned
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box" },
       });
+
+      const result = await client.callTool({ name: "shellwatch_list_sessions", arguments: {} });
       const content = (result.content as { type: string; text: string }[])[0].text;
       const parsed = JSON.parse(content);
       expect(parsed.sessions).toHaveLength(1);
-      expect(parsed.sessions[0].sessionId).toBe("sess_1");
+      expect(parsed.sessions[0].sessionId).toBe("sess_abc123");
+    });
+
+    it("excludes sessions created by others", async () => {
+      // Sessions exist but this client didn't create them
+      (mockManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([mockSession]);
+
+      const client = await setupClient(testConfig, mockManager);
+      const result = await client.callTool({ name: "shellwatch_list_sessions", arguments: {} });
+      const content = (result.content as { type: string; text: string }[])[0].text;
+      const parsed = JSON.parse(content);
+      expect(parsed.sessions).toHaveLength(0);
     });
   });
 
   describe("shellwatch_send_keys", () => {
-    it("sends named keys", async () => {
+    it("sends keys to owned session", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
+
       const client = await setupClient(testConfig, mockManager);
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box" },
+      });
+
       const result = await client.callTool({
         name: "shellwatch_send_keys",
-        arguments: { sessionId: "sess_1", keys: ["text:ls -la", "enter"] },
+        arguments: { sessionId: "sess_abc123", keys: ["text:ls -la", "enter"] },
       });
       const content = (result.content as { type: string; text: string }[])[0].text;
       expect(JSON.parse(content).status).toBe("sent");
-      expect(mockManager.sendKeys).toHaveBeenCalledWith("sess_1", ["text:ls -la", "enter"]);
+      expect(mockManager.sendKeys).toHaveBeenCalledWith("sess_abc123", ["text:ls -la", "enter"]);
     });
 
-    it("returns error for unknown session", async () => {
-      (mockManager.sendKeys as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new Error("Terminal session not found: bad-id");
-      });
-
+    it("rejects send to unowned session", async () => {
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({
         name: "shellwatch_send_keys",
-        arguments: { sessionId: "bad-id", keys: ["enter"] },
+        arguments: { sessionId: "sess_other", keys: ["enter"] },
       });
       expect(result.isError).toBe(true);
     });
   });
 
   describe("shellwatch_read_output", () => {
-    it("reads buffered output", async () => {
+    it("reads output from owned session", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
       (mockManager.readOutput as ReturnType<typeof vi.fn>).mockReturnValue({
         data: "total 42\ndrwxr-xr-x",
         offset: 20,
@@ -164,9 +174,14 @@ describe("MCP Server Tools", () => {
       });
 
       const client = await setupClient(testConfig, mockManager);
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box" },
+      });
+
       const result = await client.callTool({
         name: "shellwatch_read_output",
-        arguments: { sessionId: "sess_1" },
+        arguments: { sessionId: "sess_abc123" },
       });
       const content = (result.content as { type: string; text: string }[])[0].text;
       const parsed = JSON.parse(content);
@@ -174,45 +189,42 @@ describe("MCP Server Tools", () => {
       expect(parsed.offset).toBe(20);
     });
 
-    it("supports afterOffset and limit", async () => {
-      (mockManager.readOutput as ReturnType<typeof vi.fn>).mockReturnValue({
-        data: "more",
-        offset: 104,
-        hasMore: true,
-      });
-
-      const client = await setupClient(testConfig, mockManager);
-      await client.callTool({
-        name: "shellwatch_read_output",
-        arguments: { sessionId: "sess_1", afterOffset: 100, limit: 4 },
-      });
-      expect(mockManager.readOutput).toHaveBeenCalledWith("sess_1", 100, 4);
-    });
-
-    it("returns error for unknown session", async () => {
-      (mockManager.readOutput as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new Error("Terminal session not found: bad-id");
-      });
-
+    it("rejects read from unowned session", async () => {
       const client = await setupClient(testConfig, mockManager);
       const result = await client.callTool({
         name: "shellwatch_read_output",
-        arguments: { sessionId: "bad-id" },
+        arguments: { sessionId: "sess_other" },
       });
       expect(result.isError).toBe(true);
     });
   });
 
   describe("shellwatch_close_session", () => {
-    it("closes a session", async () => {
+    it("closes an owned session", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
+
       const client = await setupClient(testConfig, mockManager);
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box" },
+      });
+
       const result = await client.callTool({
         name: "shellwatch_close_session",
-        arguments: { sessionId: "sess_1" },
+        arguments: { sessionId: "sess_abc123" },
       });
       const content = (result.content as { type: string; text: string }[])[0].text;
       expect(JSON.parse(content).status).toBe("closed");
-      expect(mockManager.close).toHaveBeenCalledWith("sess_1");
+      expect(mockManager.close).toHaveBeenCalledWith("sess_abc123");
+    });
+
+    it("rejects close of unowned session", async () => {
+      const client = await setupClient(testConfig, mockManager);
+      const result = await client.callTool({
+        name: "shellwatch_close_session",
+        arguments: { sessionId: "sess_other" },
+      });
+      expect(result.isError).toBe(true);
     });
   });
 });

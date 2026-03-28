@@ -140,28 +140,6 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     log.clear();
   });
 
-  it("HTTP creates session → MCP list_sessions includes it", async () => {
-    const createRes = await fetch(`${appServer.url}/api/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpointId: "test-server" }),
-    });
-    const session = await createRes.json();
-
-    const mcp = await createTestMcpClient(appServer.url, log);
-    try {
-      const listResult = await mcp.callTool("shellwatch_list_sessions");
-      const parsed = JSON.parse(listResult.content);
-      expect(
-        parsed.sessions.some((s: { sessionId: string }) => s.sessionId === session.sessionId),
-      ).toBe(true);
-
-      await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
-    } finally {
-      await mcp.close();
-    }
-  });
-
   it("MCP creates session → HTTP GET /api/sessions includes it", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
@@ -170,6 +148,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
       });
       const session = JSON.parse(result.content);
 
+      // REST API sees all sessions regardless of source
       const listRes = await fetch(`${appServer.url}/api/sessions`);
       const data = await listRes.json();
       expect(
@@ -182,7 +161,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     }
   });
 
-  it("HTTP closes session → MCP list_sessions no longer includes it", async () => {
+  it("MCP cannot see HTTP-created sessions", async () => {
     const createRes = await fetch(`${appServer.url}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -190,15 +169,16 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     });
     const session = await createRes.json();
 
-    await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
-
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
+      // MCP only sees its own sessions
       const listResult = await mcp.callTool("shellwatch_list_sessions");
       const parsed = JSON.parse(listResult.content);
       expect(
         parsed.sessions.find((s: { sessionId: string }) => s.sessionId === session.sessionId),
       ).toBeUndefined();
+
+      await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
     } finally {
       await mcp.close();
     }

@@ -92,7 +92,7 @@ describe("Concurrent Sessions", () => {
     }
   });
 
-  it("sessions from different actors (MCP + HTTP) coexist", async () => {
+  it("sessions from different actors (MCP + HTTP) coexist independently", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       // Create via MCP
@@ -108,26 +108,14 @@ describe("Concurrent Sessions", () => {
       });
       const httpSession = await httpRes.json();
 
-      // Both should appear in MCP list
-      const listResult = await mcp.callTool("shellwatch_list_sessions");
-      const sessions = JSON.parse(listResult.content).sessions;
-      expect(sessions.length).toBeGreaterThanOrEqual(2);
-      expect(
-        sessions.find((s: { sessionId: string }) => s.sessionId === mcpSession.sessionId),
-      ).toBeDefined();
-      expect(
-        sessions.find((s: { sessionId: string }) => s.sessionId === httpSession.sessionId),
-      ).toBeDefined();
+      // MCP only sees its own session
+      const mcpList = JSON.parse((await mcp.callTool("shellwatch_list_sessions")).content).sessions;
+      expect(mcpList).toHaveLength(1);
+      expect(mcpList[0].sessionId).toBe(mcpSession.sessionId);
 
-      // Check sources
-      const mcpFound = sessions.find(
-        (s: { sessionId: string }) => s.sessionId === mcpSession.sessionId,
-      );
-      const httpFound = sessions.find(
-        (s: { sessionId: string }) => s.sessionId === httpSession.sessionId,
-      );
-      expect(mcpFound.source).toBe("mcp");
-      expect(httpFound.source).toBe("ui");
+      // REST API sees both
+      const httpList = await (await fetch(`${appServer.url}/api/sessions`)).json();
+      expect(httpList.sessions.length).toBeGreaterThanOrEqual(2);
 
       await mcp.callTool("shellwatch_close_session", { sessionId: mcpSession.sessionId });
       await fetch(`${appServer.url}/api/sessions/${httpSession.sessionId}`, { method: "DELETE" });

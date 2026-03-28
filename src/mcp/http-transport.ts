@@ -24,25 +24,20 @@ export async function registerMcpHttpTransport(
         sessionIdGenerator: () => randomUUID(),
       });
 
-      // Create MCP server with a session tracking callback (wired below)
-      let trackSession: (id: string) => void = () => {};
-      const mcpServer = createMcpServer(config, terminalManager, {
-        onSessionInteracted: (terminalSessionId) => trackSession(terminalSessionId),
-      });
+      const { server: mcpServer, ownership } = createMcpServer(config, terminalManager);
 
-      // Connect before attaching notifications (server needs transport for sending)
       await mcpServer.connect(newTransport);
 
-      // Attach notification dispatcher — now the server can send notifications
-      const notifications = attachMcpNotifications(mcpServer, terminalManager, {
+      const notifications = attachMcpNotifications(mcpServer, terminalManager, ownership, {
         debounceMs: config.notifications.mcp.debounceMs,
       });
-      trackSession = (id) => notifications.trackSession(id);
 
       newTransport.onclose = () => {
         if (newTransport.sessionId) {
           transports.delete(newTransport.sessionId);
         }
+        // Close all terminal sessions owned by this MCP client
+        ownership.closeAllSessions();
         notifications.destroy();
       };
 
