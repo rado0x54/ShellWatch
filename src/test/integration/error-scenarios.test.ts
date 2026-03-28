@@ -86,6 +86,93 @@ describe("Error Scenarios", () => {
     });
   });
 
+  describe("Key errors", () => {
+    it("MCP: create session with missing key file returns error", async () => {
+      // Endpoint references a key that exists in DB but has no matching file in KeyStore
+      const { InMemoryEndpointRepository } = await import("../../db/repositories/endpoint-repo.js");
+      const { InMemorySshKeyRepository } = await import("../../db/repositories/key-repo.js");
+      const { KeyStore } = await import("../../transport/key-scanner.js");
+      const { createSshTransportFactory } = await import("../../transport/ssh-transport.js");
+      const { TerminalManager } = await import("../../terminal/index.js");
+      const { buildApp } = await import("../../server/app.js");
+
+      const endpointRepo = new InMemoryEndpointRepository([
+        {
+          id: "no-key-ep",
+          label: "No Key",
+          host: "localhost",
+          port: 22,
+          username: "test",
+          keyId: "missing-key",
+        },
+      ]);
+      const keyRepo = new InMemorySshKeyRepository([
+        {
+          id: "missing-key",
+          label: "Missing",
+          type: "file",
+          publicKey: "ssh-ed25519 AAAA...",
+          fingerprint: "SHA256:doesnotexist",
+        },
+      ]);
+      // Empty key store — no files match
+      const keyStore = new KeyStore([]);
+      const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore);
+      const tm = new TerminalManager(endpointRepo, transportFactory);
+
+      const config = {
+        keyDirectory: "/tmp",
+        servers: [
+          {
+            id: "no-key-ep",
+            label: "No Key",
+            host: "localhost",
+            port: 22,
+            username: "test",
+            keyId: "missing-key",
+          },
+        ],
+        security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
+        notifications: { mcp: { debounceMs: 50 } },
+      };
+      const app = await buildApp(config, tm, endpointRepo, keyRepo, {
+        logger: false,
+        skipVite: true,
+      });
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const addr = app.server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+
+      try {
+        // Test via REST API
+        const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpointId: "no-key-ep" }),
+        });
+        expect(res.status).toBe(400);
+        const body = await res.json();
+        expect(body.error).toContain("No private key file found");
+
+        // Test via MCP
+        const { createTestMcpClient } = await import("../helpers/mcp-client.js");
+        const mcp = await createTestMcpClient(`http://127.0.0.1:${port}`, log);
+        try {
+          const result = await mcp.callTool("shellwatch_create_session", {
+            endpointId: "no-key-ep",
+          });
+          expect(result.isError).toBe(true);
+          expect(result.content).toContain("No private key file found");
+        } finally {
+          await mcp.close();
+        }
+      } finally {
+        tm.destroy();
+        await app.close();
+      }
+    });
+  });
+
   describe("HTTP errors", () => {
     it("create session when SSH server is unreachable returns 400", async () => {
       // Create an app pointing to a closed SSH server
