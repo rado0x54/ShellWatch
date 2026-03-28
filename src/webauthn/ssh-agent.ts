@@ -59,9 +59,14 @@ export class WebAuthnSshAgent extends BaseAgent {
    */
   getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
     try {
-      const keyBlobs = this.keys.map((k) => buildPublicKeyBlob(k));
+      console.log(`[WebAuthn Agent] getIdentities: ${this.keys.length} key(s)`);
+      const keyBlobs = this.keys.map((k) => {
+        console.log(`[WebAuthn Agent]   key: ${k.id} (${k.fingerprint})`);
+        return buildPublicKeyBlob(k);
+      });
       cb(null, keyBlobs);
     } catch (err) {
+      console.error("[WebAuthn Agent] getIdentities error:", (err as Error).message);
       cb(err as Error);
     }
   }
@@ -76,24 +81,27 @@ export class WebAuthnSshAgent extends BaseAgent {
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    // Find which credential matches this public key
+    console.log(`[WebAuthn Agent] sign() called, data length: ${data.length}`);
+
     const matchingKey = this.findKeyForPubKey(pubKey);
     if (!matchingKey) {
+      console.error("[WebAuthn Agent] No matching credential for public key");
       cb(new Error("No matching WebAuthn credential found for public key"));
       return;
     }
 
+    console.log(`[WebAuthn Agent] Matched key: ${matchingKey.credentialId}, sending to browser...`);
+
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Set a timeout (user has 60 seconds to touch the key)
     const timeout = setTimeout(() => {
+      console.error(`[WebAuthn Agent] Signing timed out for ${requestId}`);
       this.pendingSign.delete(requestId);
       cb(new Error("WebAuthn signing timed out — no response from browser"));
     }, 60_000);
 
     this.pendingSign.set(requestId, { cb, timeout });
 
-    // Send signing request to the browser
     this.onSignRequest({
       requestId,
       credentialId: matchingKey.credentialId,
@@ -106,8 +114,12 @@ export class WebAuthnSshAgent extends BaseAgent {
    * Called when the browser returns a WebAuthn assertion.
    */
   handleSignResponse(response: SignResponse): void {
+    console.log(`[WebAuthn Agent] Received sign response for ${response.requestId}`);
     const pending = this.pendingSign.get(response.requestId);
-    if (!pending) return;
+    if (!pending) {
+      console.error(`[WebAuthn Agent] No pending request for ${response.requestId}`);
+      return;
+    }
 
     this.pendingSign.delete(response.requestId);
     clearTimeout(pending.timeout);
@@ -119,8 +131,12 @@ export class WebAuthnSshAgent extends BaseAgent {
       );
 
       const signatureBlob = buildSshSignatureBlob(r, s, flags, counter, response.clientDataJSON);
+      console.log(
+        `[WebAuthn Agent] Signature built: ${signatureBlob.length} bytes, flags=${flags}, counter=${counter}`,
+      );
       pending.cb(null, signatureBlob);
     } catch (err) {
+      console.error("[WebAuthn Agent] Signature build error:", (err as Error).message);
       pending.cb(err as Error);
     }
   }
