@@ -87,7 +87,10 @@ export class SettingsPage {
               <input type="text" placeholder="Host" id="ep-host" />
               <input type="number" placeholder="Port" id="ep-port" value="22" />
               <input type="text" placeholder="Username" id="ep-username" />
-              <input type="text" placeholder="Key ID" id="ep-keyId" />
+              <select id="ep-keyId">
+                <option value="">No key</option>
+                ${keys.map((k) => `<option value="${k.id}">${k.label} (${k.type})</option>`).join("")}
+              </select>
               <button type="button" class="btn btn-connect" id="ep-add-btn">Add</button>
             </div>
           </div>

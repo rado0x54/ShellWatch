@@ -347,9 +347,19 @@ body {
   min-width: 80px;
 }
 
-.form-row input:focus {
+.form-row input:focus,
+.form-row select:focus {
   outline: none;
   border-color: #4a9eff;
+}
+
+.form-row select {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  color: #e0e0e0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
 }
 
 .form-row input[type="number"] {

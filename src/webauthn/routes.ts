@@ -3,7 +3,7 @@ import { generateRegistrationOptions, verifyRegistrationResponse } from "@simple
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
-import { webauthnCredentials } from "../db/schema.js";
+import { sshKeys, webauthnCredentials } from "../db/schema.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
 
 // In-memory challenge store (keyed by challenge ID, expires after 5 minutes)
@@ -135,6 +135,21 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
           })
           .run();
 
+        // Also register in ssh_keys so endpoints can reference this key via keyId
+        const fingerprint = computeFingerprint(pubKeyBuf);
+        db.insert(sshKeys)
+          .values({
+            id,
+            label: `${label || "Passkey"} (webauthn)`,
+            type: "webauthn",
+            publicKey: authorizedKeysEntry ?? "",
+            fingerprint,
+            enabled: true,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run();
+
         return {
           verified: true,
           credentialId: cred.id,
@@ -181,7 +196,10 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
 
   // --- Delete Credential ---
   app.delete<{ Params: { id: string } }>("/api/webauthn/credentials/:id", async (request) => {
-    db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, request.params.id)).run();
+    const { id } = request.params;
+    // Remove from both tables
+    db.delete(sshKeys).where(eq(sshKeys.id, id)).run();
+    db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
     return { status: "deleted" };
   });
 }
