@@ -15,6 +15,13 @@ type ServerMessage =
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
+  | {
+      type: "fido:sign-request";
+      requestId: string;
+      credentialId: string;
+      challenge: string;
+      rpId: string;
+    }
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;

@@ -81,4 +81,19 @@ export function getSshdConfigLine(): string {
   return `PubkeyAcceptedAlgorithms=+${ALGORITHM}`;
 }
 
+/**
+ * Build the raw SSH public key blob from a SshKeyInfo.
+ * This is what the agent returns from getIdentities().
+ * ssh2's parseKey() will parse this binary blob into a WebAuthnSKECDSAKey.
+ */
+export function buildPublicKeyBlob(keyInfo: { publicKey: string; fingerprint: string }): Buffer {
+  // publicKey is in OpenSSH format: "webauthn-sk-ecdsa-sha2-nistp256@openssh.com AAAA..."
+  // We need just the base64 blob part, decoded to binary
+  const parts = keyInfo.publicKey.split(" ");
+  if (parts.length < 2) {
+    throw new Error("Invalid public key format");
+  }
+  return Buffer.from(parts[1], "base64");
+}
+
 export { ALGORITHM as WEBAUTHN_SSH_ALGORITHM };

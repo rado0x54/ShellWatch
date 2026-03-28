@@ -8,6 +8,7 @@ const { Client } = ssh2;
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
+import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
 import type { KeyStore } from "./key-scanner.js";
 
 const CONNECTION_TIMEOUT = 10_000;
@@ -118,10 +119,64 @@ function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<Termina
   });
 }
 
+function connectSshWithAgent(
+  endpoint: EndpointInfo,
+  agent: WebAuthnSshAgent,
+): Promise<TerminalTransport> {
+  return new Promise((resolve, reject) => {
+    const client = new Client();
+
+    const timeout = setTimeout(() => {
+      client.end();
+      reject(new Error(`Connection to ${endpoint.host}:${endpoint.port} timed out`));
+    }, CONNECTION_TIMEOUT);
+
+    client.on("ready", () => {
+      clearTimeout(timeout);
+
+      client.shell(
+        { term: DEFAULT_PTY.term, cols: DEFAULT_PTY.cols, rows: DEFAULT_PTY.rows },
+        (err, stream) => {
+          if (err) {
+            client.end();
+            reject(new Error(`Failed to open shell on ${endpoint.host}: ${err.message}`));
+            return;
+          }
+          resolve(new SshTransport(client, stream));
+        },
+      );
+    });
+
+    client.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(
+        new Error(`SSH connection to ${endpoint.host}:${endpoint.port} failed: ${err.message}`),
+      );
+    });
+
+    client.connect({
+      host: endpoint.host,
+      port: endpoint.port,
+      username: endpoint.username,
+      agent: agent as unknown as string, // ssh2 accepts agent objects via this parameter
+      readyTimeout: CONNECTION_TIMEOUT,
+    });
+  });
+}
+
+export interface TransportFactoryOptions {
+  /** Called to create a WebAuthn agent for a given key — returns null if no browser is available */
+  createWebAuthnAgent?: (
+    keys: import("../db/repositories/key-repo.js").SshKeyInfo[],
+    rpId: string,
+  ) => WebAuthnSshAgent | null;
+}
+
 export function createSshTransportFactory(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
   keyStore: KeyStore,
+  options: TransportFactoryOptions = {},
 ): TransportFactory {
   return async (endpointId: string) => {
     const endpoint = await endpointRepo.findById(endpointId);
@@ -132,13 +187,26 @@ export function createSshTransportFactory(
       throw new Error(`No SSH key configured for endpoint ${endpointId}`);
     }
 
-    // Look up the key's fingerprint from the DB
     const keyInfo = await keyRepo.findById(endpoint.keyId);
     if (!keyInfo) {
       throw new Error(`SSH key "${endpoint.keyId}" not found`);
     }
 
-    // Find the matching private key file from the scanned key directory
+    // WebAuthn key — use browser-based signing
+    if (keyInfo.type === "webauthn") {
+      if (!options.createWebAuthnAgent) {
+        throw new Error("WebAuthn key configured but no agent factory provided");
+      }
+      const agent = options.createWebAuthnAgent([keyInfo], "localhost");
+      if (!agent) {
+        throw new Error(
+          "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
+        );
+      }
+      return connectSshWithAgent(endpoint, agent);
+    }
+
+    // File-based key — use private key from key directory
     const scannedKey = keyStore.findByFingerprint(keyInfo.fingerprint);
     if (!scannedKey) {
       throw new Error(

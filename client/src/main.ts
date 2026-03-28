@@ -154,7 +154,84 @@ wsClient.onMessage((msg) => {
   if (msg.type === "terminal:closed") {
     terminalView.removeSession(msg.sessionId);
   }
+
+  // Handle FIDO signing requests from the server
+  if (msg.type === "fido:sign-request") {
+    handleFidoSignRequest(msg);
+  }
 });
+
+async function handleFidoSignRequest(request: {
+  requestId: string;
+  credentialId: string;
+  challenge: string;
+  rpId: string;
+}) {
+  try {
+    // Convert base64url challenge to ArrayBuffer
+    const challengeBytes = Uint8Array.from(
+      atob(request.challenge.replace(/-/g, "+").replace(/_/g, "/")),
+      (c) => c.charCodeAt(0),
+    );
+
+    // Convert credentialId from base64url to ArrayBuffer
+    const credIdBytes = Uint8Array.from(
+      atob(request.credentialId.replace(/-/g, "+").replace(/_/g, "/")),
+      (c) => c.charCodeAt(0),
+    );
+
+    console.log(`[FIDO] Sign request: touching key for ${request.rpId}...`);
+
+    const assertion = (await navigator.credentials.get({
+      publicKey: {
+        challenge: challengeBytes,
+        rpId: request.rpId,
+        allowCredentials: [
+          {
+            id: credIdBytes,
+            type: "public-key",
+            transports: ["usb", "nfc", "ble", "internal"],
+          },
+        ],
+        userVerification: "discouraged",
+        timeout: 60000,
+      },
+    })) as PublicKeyCredential;
+
+    if (!assertion?.response) {
+      throw new Error("No assertion returned");
+    }
+
+    const authResponse = assertion.response as AuthenticatorAssertionResponse;
+
+    // Send the response back to the server
+    wsClient.send({
+      type: "fido:sign-response",
+      requestId: request.requestId,
+      authenticatorData: bufferToBase64url(authResponse.authenticatorData),
+      signature: bufferToBase64url(authResponse.signature),
+      clientDataJSON: new TextDecoder().decode(authResponse.clientDataJSON),
+    });
+
+    console.log("[FIDO] Sign response sent");
+  } catch (err) {
+    console.error("[FIDO] Signing failed:", err);
+    wsClient.send({
+      type: "fido:sign-error",
+      requestId: request.requestId,
+      error: (err as Error).message,
+    });
+  }
+}
+
+function bufferToBase64url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 async function refreshEndpoints() {
   endpoints = await fetchEndpoints();

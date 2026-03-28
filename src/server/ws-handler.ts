@@ -1,9 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { TerminalManager } from "../terminal/index.js";
+import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import { parseClientMessage, type ServerMessage, type SessionMode } from "./ws-protocol.js";
 
-export function registerWebSocket(app: FastifyInstance, terminalManager: TerminalManager) {
+export function registerWebSocket(
+  app: FastifyInstance,
+  terminalManager: TerminalManager,
+  signingBridge?: SigningBridge,
+) {
   const clients = new Set<WebSocket>();
   // Track which sessions were created via the UI (across all WS clients)
   const uiCreatedSessions = new Set<string>();
@@ -50,6 +55,7 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
 
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
     clients.add(socket);
+    signingBridge?.addClient(socket);
     const attachedSessions = new Set<string>();
     const controlledSessions = new Set<string>();
     clientMeta.set(socket, { attachedSessions, controlledSessions });
@@ -150,6 +156,21 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
             send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "control" });
             break;
           }
+
+          case "fido:sign-response": {
+            signingBridge?.handleSignResponse({
+              requestId: msg.requestId,
+              authenticatorData: Buffer.from(msg.authenticatorData, "base64url"),
+              signature: Buffer.from(msg.signature, "base64url"),
+              clientDataJSON: msg.clientDataJSON,
+            });
+            break;
+          }
+
+          case "fido:sign-error": {
+            signingBridge?.handleSignError(msg.requestId, msg.error);
+            break;
+          }
         }
       } catch (err) {
         sendError((err as Error).message);
@@ -158,6 +179,7 @@ export function registerWebSocket(app: FastifyInstance, terminalManager: Termina
 
     socket.on("close", () => {
       clients.delete(socket);
+      signingBridge?.removeClient(socket);
       clientMeta.delete(socket);
       terminalManager.off("output", onOutput);
       terminalManager.off("close", onClose);
