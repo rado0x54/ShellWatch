@@ -2,8 +2,9 @@ import { loadConfig } from "./config/index.js";
 import {
   createDatabase,
   DrizzleEndpointRepository,
+  DrizzleSshKeyRepository,
   runMigrations,
-  seedEndpoints,
+  seedFromConfig,
 } from "./db/index.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
@@ -14,18 +15,20 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 
 try {
   const config = loadConfig();
-  console.log(`Loaded ${config.servers.length} endpoint(s) from config`);
+  console.log(
+    `Loaded ${config.keys.length} key(s) and ${config.servers.length} endpoint(s) from config`,
+  );
 
-  // Initialize database
   const { db, close: closeDb } = createDatabase();
   runMigrations(db);
-  seedEndpoints(db, config);
+  seedFromConfig(db, config);
 
   const endpointRepo = new DrizzleEndpointRepository(db);
+  const keyRepo = new DrizzleSshKeyRepository(db);
   const transportFactory = createSshTransportFactory(endpointRepo);
   const terminalManager = new TerminalManager(endpointRepo, transportFactory);
 
-  const app = await buildApp(config, terminalManager, endpointRepo);
+  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo);
 
   const endpoints = await endpointRepo.findAll();
   console.log(`${endpoints.length} endpoint(s) in database`);

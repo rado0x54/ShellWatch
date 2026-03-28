@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../../config/index.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
+import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";
 import { createSshTransportFactory } from "../../transport/index.js";
@@ -24,6 +25,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
 
   const config: Config = {
+    keys: [{ id: "test-key", label: "Test Key", privateKeyPath: keyPath }],
     servers: [
       {
         id: "test-server",
@@ -31,21 +33,24 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
         host: sshServer.host,
         port: sshServer.port,
         username: "testuser",
-        privateKeyPath: keyPath,
+        keyId: "test-key",
       },
     ],
     security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
     notifications: { mcp: { debounceMs: 50 } },
   };
 
-  const endpointRepo = new InMemoryEndpointRepository(config.servers);
+  const endpointRepo = new InMemoryEndpointRepository(
+    config.servers.map((s) => ({ ...s, privateKeyPath: keyPath })),
+  );
+  const keyRepo = new InMemorySshKeyRepository(config.keys);
   const transportFactory = createSshTransportFactory(endpointRepo);
   const terminalManager = new TerminalManager(endpointRepo, transportFactory, {
     idleTimeoutMs: 60_000,
     cleanupIntervalMs: 60_000,
   });
 
-  const app = await buildApp(config, terminalManager, endpointRepo, {
+  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, {
     logger: false,
     skipVite: true,
   });

@@ -1,17 +1,31 @@
 import { count } from "drizzle-orm";
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "./connection.js";
-import { endpoints } from "./schema.js";
+import { endpoints, sshKeys } from "./schema.js";
 
 /**
- * Seed the endpoints table from YAML config on first run.
- * If the table already has data, this is a no-op (DB is the source of truth).
+ * Seed the database from YAML config on first run.
+ * If tables already have data, this is a no-op.
  */
-export function seedEndpoints(db: ShellWatchDB, config: Config): void {
-  const result = db.select({ total: count() }).from(endpoints).get();
-  if (result && result.total > 0) return;
+export function seedFromConfig(db: ShellWatchDB, config: Config): void {
+  const keyCount = db.select({ total: count() }).from(sshKeys).get();
+  if (keyCount && keyCount.total > 0) return;
 
   const now = new Date().toISOString();
+
+  for (const key of config.keys) {
+    db.insert(sshKeys)
+      .values({
+        id: key.id,
+        label: key.label,
+        type: "file",
+        privateKeyPath: key.privateKeyPath,
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
 
   for (const server of config.servers) {
     db.insert(endpoints)
@@ -21,7 +35,7 @@ export function seedEndpoints(db: ShellWatchDB, config: Config): void {
         host: server.host,
         port: server.port,
         username: server.username,
-        privateKeyPath: server.privateKeyPath,
+        keyId: server.keyId,
         enabled: true,
         createdAt: now,
         updatedAt: now,

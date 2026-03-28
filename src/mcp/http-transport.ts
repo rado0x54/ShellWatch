@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { attachMcpNotifications } from "./notifications.js";
 import { createMcpServer } from "./server.js";
@@ -13,6 +14,7 @@ export async function registerMcpHttpTransport(
   config: Config,
   terminalManager: TerminalManager,
   endpointRepo: EndpointRepository,
+  keyRepo: SshKeyRepository,
 ) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -28,7 +30,7 @@ export async function registerMcpHttpTransport(
       });
 
       const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
-      const mcpServer = await createMcpServer(agentSession);
+      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo);
 
       await mcpServer.connect(newTransport);
 

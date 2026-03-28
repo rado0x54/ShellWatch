@@ -4,26 +4,30 @@
 # Generate a key:  ssh-keygen -t ed25519 -f ./keys/my-server.pem -C "shellwatch"
 # Add public key:  ssh-copy-id -i ./keys/my-server.pem.pub user@host
 
+# SSH keys (shared across endpoints)
+keys:
+  - id: dev-key
+    label: Dev Key
+    privateKeyPath: ./keys/dev-box.pem
+
+# SSH endpoints (reference keys by ID)
 servers:
   - id: dev-box
     label: Dev Box
     host: dev.example.com
     port: 22
     username: ubuntu
-    privateKeyPath: ./keys/dev-box.pem
+    keyId: dev-key
 
   - id: staging
     label: Staging
     host: staging.example.com
     port: 22
     username: deploy
-    privateKeyPath: ./keys/staging.pem
+    keyId: dev-key
 
 # Security settings
-# MCP endpoint is protected by IP allowlist (default: localhost only)
 security:
   allowedNetworks:
-    - 127.0.0.1/32      # IPv4 localhost
-    - "::1/128"          # IPv6 localhost
-    # - 172.28.0.0/16    # Docker/container network
-    # - 192.168.1.0/24   # LAN
+    - 127.0.0.1/32
+    - "::1/128"

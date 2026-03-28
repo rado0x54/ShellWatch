@@ -33,7 +33,7 @@ describe("MCP Client Flow", () => {
   it("lists endpoints", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
-      const result = await mcp.callTool("shellwatch_list_endpoints");
+      const result = await mcp.callTool("shellwatch_manage_endpoints", { action: "list" });
       const parsed = JSON.parse(result.content);
       expect(parsed.endpoints).toHaveLength(1);
       expect(parsed.endpoints[0]).toMatchObject({

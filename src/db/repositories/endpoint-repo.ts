@@ -1,44 +1,87 @@
 import { eq } from "drizzle-orm";
-import type { Endpoint } from "../../config/index.js";
 import type { ShellWatchDB } from "../connection.js";
-import { endpoints } from "../schema.js";
+import { endpoints, sshKeys } from "../schema.js";
+
+export interface EndpointInfo {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  keyId: string | null;
+  privateKeyPath: string | null;
+}
 
 export interface EndpointRepository {
-  findAll(): Promise<Endpoint[]>;
-  findById(id: string): Promise<Endpoint | null>;
-  create(endpoint: Endpoint): Promise<void>;
-  update(id: string, data: Partial<Omit<Endpoint, "id">>): Promise<void>;
+  findAll(): Promise<EndpointInfo[]>;
+  findById(id: string): Promise<EndpointInfo | null>;
+  create(data: {
+    id: string;
+    label: string;
+    host: string;
+    port: number;
+    username: string;
+    keyId?: string;
+  }): Promise<void>;
+  update(
+    id: string,
+    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+  ): Promise<void>;
   delete(id: string): Promise<void>;
 }
 
-/**
- * Drizzle-backed endpoint repository (SQLite).
- */
 export class DrizzleEndpointRepository implements EndpointRepository {
   constructor(private db: ShellWatchDB) {}
 
-  async findAll(): Promise<Endpoint[]> {
-    const rows = this.db.select().from(endpoints).where(eq(endpoints.enabled, true)).all();
-    return rows.map(toEndpoint);
+  async findAll(): Promise<EndpointInfo[]> {
+    return this.db
+      .select({
+        id: endpoints.id,
+        label: endpoints.label,
+        host: endpoints.host,
+        port: endpoints.port,
+        username: endpoints.username,
+        keyId: endpoints.keyId,
+        privateKeyPath: sshKeys.privateKeyPath,
+      })
+      .from(endpoints)
+      .leftJoin(sshKeys, eq(endpoints.keyId, sshKeys.id))
+      .where(eq(endpoints.enabled, true))
+      .all();
   }
 
-  async findById(id: string): Promise<Endpoint | null> {
-    const row = this.db.select().from(endpoints).where(eq(endpoints.id, id)).get();
-    if (!row?.enabled) return null;
-    return toEndpoint(row);
+  async findById(id: string): Promise<EndpointInfo | null> {
+    const row = this.db
+      .select({
+        id: endpoints.id,
+        label: endpoints.label,
+        host: endpoints.host,
+        port: endpoints.port,
+        username: endpoints.username,
+        keyId: endpoints.keyId,
+        privateKeyPath: sshKeys.privateKeyPath,
+      })
+      .from(endpoints)
+      .leftJoin(sshKeys, eq(endpoints.keyId, sshKeys.id))
+      .where(eq(endpoints.id, id))
+      .get();
+    return row ?? null;
   }
 
-  async create(endpoint: Endpoint): Promise<void> {
+  async create(data: {
+    id: string;
+    label: string;
+    host: string;
+    port: number;
+    username: string;
+    keyId?: string;
+  }): Promise<void> {
     const now = new Date().toISOString();
     this.db
       .insert(endpoints)
       .values({
-        id: endpoint.id,
-        label: endpoint.label,
-        host: endpoint.host,
-        port: endpoint.port,
-        username: endpoint.username,
-        privateKeyPath: endpoint.privateKeyPath,
+        ...data,
+        keyId: data.keyId ?? null,
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -46,7 +89,10 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .run();
   }
 
-  async update(id: string, data: Partial<Omit<Endpoint, "id">>): Promise<void> {
+  async update(
+    id: string,
+    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+  ): Promise<void> {
     this.db
       .update(endpoints)
       .set({ ...data, updatedAt: new Date().toISOString() })
@@ -63,29 +109,50 @@ export class DrizzleEndpointRepository implements EndpointRepository {
   }
 }
 
-/**
- * In-memory endpoint repository — used in tests and as fallback when no DB is configured.
- */
 export class InMemoryEndpointRepository implements EndpointRepository {
-  private store: Endpoint[];
+  private store: EndpointInfo[];
 
-  constructor(initialEndpoints: Endpoint[] = []) {
-    this.store = [...initialEndpoints];
+  constructor(
+    initialEndpoints: Array<{
+      id: string;
+      label: string;
+      host: string;
+      port: number;
+      username: string;
+      keyId?: string;
+      privateKeyPath?: string;
+    }> = [],
+  ) {
+    this.store = initialEndpoints.map((e) => ({
+      ...e,
+      keyId: e.keyId ?? null,
+      privateKeyPath: e.privateKeyPath ?? null,
+    }));
   }
 
-  async findAll(): Promise<Endpoint[]> {
+  async findAll(): Promise<EndpointInfo[]> {
     return [...this.store];
   }
 
-  async findById(id: string): Promise<Endpoint | null> {
+  async findById(id: string): Promise<EndpointInfo | null> {
     return this.store.find((e) => e.id === id) ?? null;
   }
 
-  async create(endpoint: Endpoint): Promise<void> {
-    this.store.push(endpoint);
+  async create(data: {
+    id: string;
+    label: string;
+    host: string;
+    port: number;
+    username: string;
+    keyId?: string;
+  }): Promise<void> {
+    this.store.push({ ...data, keyId: data.keyId ?? null, privateKeyPath: null });
   }
 
-  async update(id: string, data: Partial<Omit<Endpoint, "id">>): Promise<void> {
+  async update(
+    id: string,
+    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+  ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id);
     if (idx >= 0) {
       this.store[idx] = { ...this.store[idx], ...data };
@@ -95,15 +162,4 @@ export class InMemoryEndpointRepository implements EndpointRepository {
   async delete(id: string): Promise<void> {
     this.store = this.store.filter((e) => e.id !== id);
   }
-}
-
-function toEndpoint(row: typeof endpoints.$inferSelect): Endpoint {
-  return {
-    id: row.id,
-    label: row.label,
-    host: row.host,
-    port: row.port,
-    username: row.username,
-    privateKeyPath: row.privateKeyPath,
-  };
 }

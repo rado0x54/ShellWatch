@@ -1,9 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentSession } from "../agent/index.js";
+import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { SUPPORTED_KEYS } from "../terminal/index.js";
 
-export async function createMcpServer(agentSession: AgentSession): Promise<McpServer> {
+export async function createMcpServer(
+  agentSession: AgentSession,
+  endpointRepo: EndpointRepository,
+  keyRepo: SshKeyRepository,
+): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
     .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
@@ -32,14 +38,9 @@ export async function createMcpServer(agentSession: AgentSession): Promise<McpSe
     "- You will receive notifications/shellwatch/session_status when your sessions change status",
   ].join("\n");
 
-  const mcpServer = new McpServer({ name: "shellwatch", version: "0.4.0" }, { instructions });
+  const mcpServer = new McpServer({ name: "shellwatch", version: "0.5.0" }, { instructions });
 
-  mcpServer.tool("shellwatch_list_endpoints", "List configured SSH endpoints", {}, async () => {
-    const currentEndpoints = await agentSession.listEndpoints();
-    return {
-      content: [{ type: "text", text: JSON.stringify({ endpoints: currentEndpoints }, null, 2) }],
-    };
-  });
+  // --- Session tools ---
 
   mcpServer.tool(
     "shellwatch_create_session",
@@ -77,20 +78,16 @@ export async function createMcpServer(agentSession: AgentSession): Promise<McpSe
       status: s.status,
       createdAt: s.createdAt.toISOString(),
     }));
-    return {
-      content: [{ type: "text", text: JSON.stringify({ sessions }, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify({ sessions }, null, 2) }] };
   });
 
   mcpServer.tool(
     "shellwatch_send_keys",
     [
       "Send named keystrokes or text to a terminal session.",
-      "This is how you type commands and interact with the shell.",
       'To run a command: send_keys(["text:ls -la", "enter"]), then read_output to see the result.',
       `Supported keys: ${SUPPORTED_KEYS.join(", ")}.`,
-      'Use "text:<content>" for arbitrary text (e.g., "text:ls -la").',
-      'Supports sequences: ["text:ls -la", "enter"] types the command and presses Enter.',
+      'Use "text:<content>" for arbitrary text.',
     ].join(" "),
     {
       sessionId: z.string().describe("ID of the session"),
@@ -108,19 +105,11 @@ export async function createMcpServer(agentSession: AgentSession): Promise<McpSe
 
   mcpServer.tool(
     "shellwatch_read_output",
-    [
-      "Read terminal output from a session.",
-      "Returns buffered output with an offset for incremental reads.",
-      "After sending a command with send_keys, wait briefly then call read_output to see the result.",
-      "Use afterOffset from the previous read to get only new output since your last read.",
-    ].join(" "),
+    "Read terminal output from a session. Use afterOffset for incremental reads.",
     {
       sessionId: z.string().describe("ID of the session"),
-      afterOffset: z
-        .number()
-        .optional()
-        .describe("Read output after this offset (from a previous read)"),
-      limit: z.number().optional().describe("Maximum characters to return (default: 4000)"),
+      afterOffset: z.number().optional().describe("Read output after this offset"),
+      limit: z.number().optional().describe("Max characters to return (default: 4000)"),
     },
     async ({ sessionId, afterOffset, limit }) => {
       try {
@@ -140,6 +129,156 @@ export async function createMcpServer(agentSession: AgentSession): Promise<McpSe
       try {
         agentSession.closeSession(sessionId);
         return { content: [{ type: "text", text: JSON.stringify({ status: "closed" }) }] };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
+      }
+    },
+  );
+
+  // --- Manage Endpoints ---
+
+  mcpServer.tool(
+    "shellwatch_manage_endpoints",
+    "Manage SSH endpoints. Actions: list, read, create, update, delete.",
+    {
+      action: z.enum(["list", "read", "create", "update", "delete"]).describe("Action to perform"),
+      id: z.string().optional().describe("Endpoint ID (required for read, update, delete)"),
+      data: z
+        .object({
+          label: z.string().optional(),
+          host: z.string().optional(),
+          port: z.number().optional(),
+          username: z.string().optional(),
+          keyId: z.string().optional(),
+        })
+        .optional()
+        .describe("Endpoint data (for create and update)"),
+    },
+    async ({ action, id, data }) => {
+      try {
+        switch (action) {
+          case "list": {
+            const all = await endpointRepo.findAll();
+            const result = all.map(({ id, label, host, port, username, keyId }) => ({
+              id,
+              label,
+              host,
+              port,
+              username,
+              keyId,
+            }));
+            return {
+              content: [{ type: "text", text: JSON.stringify({ endpoints: result }, null, 2) }],
+            };
+          }
+          case "read": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            const ep = await endpointRepo.findById(id);
+            if (!ep)
+              return {
+                isError: true,
+                content: [{ type: "text", text: `Endpoint not found: ${id}` }],
+              };
+            const { privateKeyPath: _, ...safe } = ep;
+            return { content: [{ type: "text", text: JSON.stringify(safe, null, 2) }] };
+          }
+          case "create": {
+            if (!id || !data?.label || !data?.host || !data?.username) {
+              return {
+                isError: true,
+                content: [
+                  { type: "text", text: "id, data.label, data.host, data.username are required" },
+                ],
+              };
+            }
+            await endpointRepo.create({
+              id,
+              label: data.label,
+              host: data.host,
+              port: data.port ?? 22,
+              username: data.username,
+              keyId: data.keyId,
+            });
+            return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
+          }
+          case "update": {
+            if (!id || !data)
+              return {
+                isError: true,
+                content: [{ type: "text", text: "id and data are required" }],
+              };
+            await endpointRepo.update(id, data);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id }) }] };
+          }
+          case "delete": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            await endpointRepo.delete(id);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
+          }
+        }
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
+      }
+    },
+  );
+
+  // --- Manage SSH Keys ---
+
+  mcpServer.tool(
+    "shellwatch_manage_keys",
+    "Manage SSH keys. Actions: list, read, create, delete. Keys can be shared across endpoints.",
+    {
+      action: z.enum(["list", "read", "create", "delete"]).describe("Action to perform"),
+      id: z.string().optional().describe("Key ID (required for read, delete)"),
+      data: z
+        .object({
+          label: z.string().optional(),
+          privateKeyPath: z.string().optional(),
+        })
+        .optional()
+        .describe("Key data (for create)"),
+    },
+    async ({ action, id, data }) => {
+      try {
+        switch (action) {
+          case "list": {
+            const all = await keyRepo.findAll();
+            const result = all.map(({ id, label, type }) => ({ id, label, type }));
+            return { content: [{ type: "text", text: JSON.stringify({ keys: result }, null, 2) }] };
+          }
+          case "read": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            const key = await keyRepo.findById(id);
+            if (!key)
+              return { isError: true, content: [{ type: "text", text: `Key not found: ${id}` }] };
+            // Don't expose privateKeyPath to agents
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ id: key.id, label: key.label, type: key.type }, null, 2),
+                },
+              ],
+            };
+          }
+          case "create": {
+            if (!id || !data?.label || !data?.privateKeyPath) {
+              return {
+                isError: true,
+                content: [
+                  { type: "text", text: "id, data.label, data.privateKeyPath are required" },
+                ],
+              };
+            }
+            await keyRepo.create({ id, label: data.label, privateKeyPath: data.privateKeyPath });
+            return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
+          }
+          case "delete": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            await keyRepo.delete(id);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
+          }
+        }
       } catch (err) {
         return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
       }

@@ -3,8 +3,9 @@ import fastifyCors from "@fastify/cors";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createServer as createViteServer } from "vite";
-import type { Config, Endpoint } from "../config/index.js";
+import type { Config } from "../config/index.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
@@ -19,6 +20,7 @@ export async function buildApp(
   config: Config,
   terminalManager: TerminalManager,
   endpointRepo: EndpointRepository,
+  keyRepo: SshKeyRepository,
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -30,24 +32,34 @@ export async function buildApp(
 
   app.get("/health", async () => ({ status: "ok" }));
 
-  // --- Endpoint API (backed by EndpointRepository) ---
+  // --- Endpoint API ---
 
   app.get("/api/endpoints", async () => {
     const all = await endpointRepo.findAll();
     return {
-      endpoints: all.map(({ id, label, host, port, username }) => ({
+      endpoints: all.map(({ id, label, host, port, username, keyId }) => ({
         id,
         label,
         host,
         port,
         username,
+        keyId,
       })),
     };
   });
 
-  app.post<{ Body: Endpoint }>("/api/endpoints", async (request, reply) => {
+  app.post<{
+    Body: {
+      id: string;
+      label: string;
+      host: string;
+      port?: number;
+      username: string;
+      keyId?: string;
+    };
+  }>("/api/endpoints", async (request, reply) => {
     try {
-      await endpointRepo.create(request.body);
+      await endpointRepo.create({ ...request.body, port: request.body.port ?? 22 });
       return { status: "created", id: request.body.id };
     } catch (err) {
       reply.status(400);
@@ -55,11 +67,14 @@ export async function buildApp(
     }
   });
 
-  app.put<{ Params: { id: string }; Body: Partial<Endpoint> }>(
+  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
     "/api/endpoints/:id",
     async (request, reply) => {
       try {
-        await endpointRepo.update(request.params.id, request.body);
+        await endpointRepo.update(
+          request.params.id,
+          request.body as Parameters<EndpointRepository["update"]>[1],
+        );
         return { status: "updated" };
       } catch (err) {
         reply.status(400);
@@ -70,7 +85,6 @@ export async function buildApp(
 
   app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
     try {
-      // Reject if active sessions exist for this endpoint
       const activeSessions = terminalManager
         .listSessions()
         .filter((s) => s.endpointId === request.params.id);
@@ -121,7 +135,7 @@ export async function buildApp(
   const { uiCreatedSessions } = registerWebSocket(app, terminalManager);
 
   // MCP server over streamable HTTP at /mcp
-  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo);
+  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo);
 
   // Vite dev server
   if (!options.skipVite) {

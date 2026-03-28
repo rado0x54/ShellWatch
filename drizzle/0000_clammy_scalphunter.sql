@@ -18,16 +18,25 @@ CREATE TABLE `audit_events` (
 	`data` text
 );
 --> statement-breakpoint
+CREATE TABLE `endpoint_keys` (
+	`endpoint_id` text NOT NULL,
+	`key_id` text NOT NULL,
+	PRIMARY KEY(`endpoint_id`, `key_id`),
+	FOREIGN KEY (`endpoint_id`) REFERENCES `endpoints`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
 CREATE TABLE `endpoints` (
 	`id` text PRIMARY KEY NOT NULL,
 	`label` text NOT NULL,
 	`host` text NOT NULL,
 	`port` integer DEFAULT 22 NOT NULL,
 	`username` text NOT NULL,
-	`private_key_path` text NOT NULL,
+	`key_id` text,
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `guardrail_rules` (
@@ -53,4 +62,15 @@ CREATE TABLE `session_history` (
 	`created_at` text NOT NULL,
 	`closed_at` text,
 	`duration_ms` integer
+);
+--> statement-breakpoint
+CREATE TABLE `ssh_keys` (
+	`id` text PRIMARY KEY NOT NULL,
+	`label` text NOT NULL,
+	`type` text DEFAULT 'file' NOT NULL,
+	`private_key_path` text,
+	`public_key` text,
+	`enabled` integer DEFAULT true NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
 );

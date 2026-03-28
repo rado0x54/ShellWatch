@@ -31,15 +31,23 @@ export function loadConfig(configPath?: string): Config {
   const config = result.data;
   const configDir = dirname(resolvedPath);
 
-  for (const server of config.servers) {
-    const keyPath = resolve(configDir, server.privateKeyPath);
+  // Validate and normalize key paths
+  for (const key of config.keys) {
+    const keyPath = resolve(configDir, key.privateKeyPath);
     try {
       accessSync(keyPath, constants.R_OK);
     } catch {
-      throw new Error(`Private key for server "${server.id}" not readable at ${keyPath}`);
+      throw new Error(`Private key "${key.id}" not readable at ${keyPath}`);
     }
-    // Normalize to absolute path
-    server.privateKeyPath = keyPath;
+    key.privateKeyPath = keyPath;
+  }
+
+  // Validate that all endpoints reference existing keys
+  const keyIds = new Set(config.keys.map((k) => k.id));
+  for (const server of config.servers) {
+    if (!keyIds.has(server.keyId)) {
+      throw new Error(`Endpoint "${server.id}" references unknown key "${server.keyId}"`);
+    }
   }
 
   return config;

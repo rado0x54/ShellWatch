@@ -1,8 +1,7 @@
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { Client, type ClientChannel } from "ssh2";
-import type { Endpoint } from "../config/index.js";
-import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
 
 const CONNECTION_TIMEOUT = 10_000; // 10 seconds
@@ -71,9 +70,13 @@ class SshTransport extends EventEmitter implements TerminalTransport {
   }
 }
 
-function connectSsh(endpoint: Endpoint): Promise<TerminalTransport> {
+function connectSsh(endpoint: EndpointInfo): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
+    if (!endpoint.privateKeyPath) {
+      reject(new Error(`No SSH key configured for endpoint ${endpoint.id}`));
+      return;
+    }
     const privateKey = readFileSync(endpoint.privateKeyPath, "utf-8");
 
     const timeout = setTimeout(() => {

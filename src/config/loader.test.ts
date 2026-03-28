@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { loadConfig } from "./loader.js";
 
 function createTempDir(): string {
@@ -20,25 +20,22 @@ function writeConfig(dir: string, yaml: string, keyFiles: string[] = []): string
 }
 
 describe("loadConfig", () => {
-  const dirs: string[] = [];
-
-  afterEach(() => {
-    // Cleanup is handled by OS temp dir
-  });
-
   it("loads a valid config", () => {
     const dir = createTempDir();
-    dirs.push(dir);
     const configPath = writeConfig(
       dir,
       `
+keys:
+  - id: test-key
+    label: Test Key
+    privateKeyPath: ./keys/test.pem
 servers:
   - id: test
     label: Test
     host: localhost
     port: 22
     username: user
-    privateKeyPath: ./keys/test.pem
+    keyId: test-key
 `,
       ["test.pem"],
     );
@@ -47,7 +44,9 @@ servers:
     expect(config.servers).toHaveLength(1);
     expect(config.servers[0].id).toBe("test");
     expect(config.servers[0].host).toBe("localhost");
-    expect(config.servers[0].privateKeyPath).toBe(join(dir, "keys", "test.pem"));
+    expect(config.servers[0].keyId).toBe("test-key");
+    expect(config.keys).toHaveLength(1);
+    expect(config.keys[0].privateKeyPath).toBe(join(dir, "keys", "test.pem"));
   });
 
   it("defaults port to 22", () => {
@@ -55,12 +54,16 @@ servers:
     const configPath = writeConfig(
       dir,
       `
+keys:
+  - id: k1
+    label: Key
+    privateKeyPath: ./keys/test.pem
 servers:
   - id: test
     label: Test
     host: localhost
     username: user
-    privateKeyPath: ./keys/test.pem
+    keyId: k1
 `,
       ["test.pem"],
     );
@@ -85,6 +88,7 @@ servers:
     const configPath = writeConfig(
       dir,
       `
+keys: []
 servers:
   - id: test
 `,
@@ -94,7 +98,17 @@ servers:
 
   it("throws on empty servers list", () => {
     const dir = createTempDir();
-    const configPath = writeConfig(dir, "servers: []");
+    const configPath = writeConfig(
+      dir,
+      `
+keys:
+  - id: k1
+    label: Key
+    privateKeyPath: ./keys/test.pem
+servers: []
+`,
+      ["test.pem"],
+    );
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
@@ -103,43 +117,74 @@ servers:
     const configPath = writeConfig(
       dir,
       `
+keys:
+  - id: k1
+    label: Key
+    privateKeyPath: ./keys/nonexistent.pem
 servers:
   - id: test
     label: Test
     host: localhost
     port: 22
     username: user
-    privateKeyPath: ./keys/nonexistent.pem
+    keyId: k1
 `,
     );
     expect(() => loadConfig(configPath)).toThrow("not readable");
   });
 
-  it("loads multiple servers", () => {
+  it("throws when endpoint references unknown key", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
+keys:
+  - id: k1
+    label: Key
+    privateKeyPath: ./keys/test.pem
+servers:
+  - id: test
+    label: Test
+    host: localhost
+    port: 22
+    username: user
+    keyId: unknown-key
+`,
+      ["test.pem"],
+    );
+    expect(() => loadConfig(configPath)).toThrow('references unknown key "unknown-key"');
+  });
+
+  it("loads multiple servers sharing a key", () => {
+    const dir = createTempDir();
+    const configPath = writeConfig(
+      dir,
+      `
+keys:
+  - id: shared-key
+    label: Shared Key
+    privateKeyPath: ./keys/shared.pem
 servers:
   - id: server1
     label: Server 1
     host: host1.example.com
     port: 22
     username: user1
-    privateKeyPath: ./keys/key1.pem
+    keyId: shared-key
   - id: server2
     label: Server 2
     host: host2.example.com
     port: 2222
     username: user2
-    privateKeyPath: ./keys/key2.pem
+    keyId: shared-key
 `,
-      ["key1.pem", "key2.pem"],
+      ["shared.pem"],
     );
 
     const config = loadConfig(configPath);
     expect(config.servers).toHaveLength(2);
-    expect(config.servers[0].id).toBe("server1");
-    expect(config.servers[1].port).toBe(2222);
+    expect(config.keys).toHaveLength(1);
+    expect(config.servers[0].keyId).toBe("shared-key");
+    expect(config.servers[1].keyId).toBe("shared-key");
   });
 });

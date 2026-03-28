@@ -1,6 +1,19 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-// --- Endpoints (replaces config.servers as source of truth) ---
+// --- SSH Keys ---
+
+export const sshKeys = sqliteTable("ssh_keys", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  type: text("type").notNull().default("file"), // "file" | "fido" (future)
+  privateKeyPath: text("private_key_path"),
+  publicKey: text("public_key"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// --- Endpoints ---
 
 export const endpoints = sqliteTable("endpoints", {
   id: text("id").primaryKey(),
@@ -8,13 +21,28 @@ export const endpoints = sqliteTable("endpoints", {
   host: text("host").notNull(),
   port: integer("port").notNull().default(22),
   username: text("username").notNull(),
-  privateKeyPath: text("private_key_path").notNull(),
+  keyId: text("key_id").references(() => sshKeys.id),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- Session History (records completed sessions) ---
+// --- Endpoint ↔ Key (many-to-many for future multi-key support) ---
+
+export const endpointKeys = sqliteTable(
+  "endpoint_keys",
+  {
+    endpointId: text("endpoint_id")
+      .notNull()
+      .references(() => endpoints.id),
+    keyId: text("key_id")
+      .notNull()
+      .references(() => sshKeys.id),
+  },
+  (table) => [primaryKey({ columns: [table.endpointId, table.keyId] })],
+);
+
+// --- Session History ---
 
 export const sessionHistory = sqliteTable("session_history", {
   sessionId: text("session_id").primaryKey(),
