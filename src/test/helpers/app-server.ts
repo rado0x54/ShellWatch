@@ -3,7 +3,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
-import { utils } from "ssh2";
+import ssh2 from "ssh2";
+
+const { utils } = ssh2;
+
 import type { Config } from "../../config/index.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";

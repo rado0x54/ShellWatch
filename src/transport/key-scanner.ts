@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { utils } from "ssh2";
+import ssh2 from "ssh2";
+
+const { utils } = ssh2;
 
 export interface ScannedKey {
   /** Filename (e.g., "dev-local.pem") */

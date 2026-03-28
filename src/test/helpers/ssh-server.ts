@@ -2,7 +2,10 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Connection, Server, type ServerChannel } from "ssh2";
+import ssh2, { type Connection, type ServerChannel } from "ssh2";
+
+const { Server } = ssh2;
+
 import type { TestLog } from "./test-log.js";
 
 export interface TestSshServer {

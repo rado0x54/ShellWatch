@@ -1,5 +1,10 @@
 import { EventEmitter } from "node:events";
-import { Client, type ClientChannel } from "ssh2";
+import ssh2 from "ssh2";
+
+type Client = ssh2.Client;
+type ClientChannel = ssh2.ClientChannel;
+const { Client } = ssh2;
+
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
