@@ -19,6 +19,7 @@ interface SshKeyData {
   label: string;
   type: string;
   fingerprint: string;
+  available: boolean;
   authorizedKeysEntry: string | null;
 }
 
@@ -100,7 +101,7 @@ export class SettingsPage {
           <h2>SSH Keys</h2>
           <table class="settings-table">
             <thead>
-              <tr><th>ID</th><th>Label</th><th>Type</th><th>Fingerprint</th><th></th></tr>
+              <tr><th>ID</th><th>Label</th><th>Type</th><th>Status</th><th>Fingerprint</th><th></th></tr>
             </thead>
             <tbody>
               ${keys
@@ -110,13 +111,14 @@ export class SettingsPage {
                   <td>${k.id}</td>
                   <td>${k.label}</td>
                   <td>${k.type}</td>
+                  <td><span class="badge ${k.available ? "badge-available" : "badge-unavailable"}">${k.available ? "available" : "unavailable"}</span></td>
                   <td style="font-family:monospace;font-size:0.75rem">${k.fingerprint}</td>
                   <td>${k.authorizedKeysEntry ? `<button type="button" class="btn btn-copy-authkey" data-key="${encodeURIComponent(k.authorizedKeysEntry)}" style="font-size:0.65rem">Copy authorized_keys</button>` : ""}</td>
                 </tr>
               `,
                 )
                 .join("")}
-              ${keys.length === 0 ? '<tr><td colspan="5" style="color:#555">No keys found</td></tr>' : ""}
+              ${keys.length === 0 ? '<tr><td colspan="6" style="color:#555">No keys found</td></tr>' : ""}
             </tbody>
           </table>
         </section>

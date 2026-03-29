@@ -8,7 +8,7 @@ import {
 } from "./db/index.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
-import { createSshTransportFactory, KeyStore, scanKeyDirectory } from "./transport/index.js";
+import { KeyDirectoryWatcher, SshTransportFactory } from "./transport/index.js";
 import { SigningBridge, WebAuthnSshAgent } from "./webauthn/index.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
@@ -17,22 +17,21 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 try {
   const config = loadConfig();
 
-  // Scan key directory for available SSH keys
-  const scannedKeys = scanKeyDirectory(config.keyDirectory);
+  // Initialize database
+  const { db, close: closeDb } = createDatabase();
+  runMigrations(db);
+  seedFromConfig(db, config);
+
+  const endpointRepo = new DrizzleEndpointRepository(db);
+  const keyRepo = new DrizzleSshKeyRepository(db);
+
+  // Scan key directory, auto-register keys in DB, and watch for changes
+  const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
+  const scannedKeys = await keyWatcher.start();
   console.log(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
   for (const key of scannedKeys) {
     console.log(`  ${key.filename}: ${key.type} (${key.fingerprint})`);
   }
-
-  const keyStore = new KeyStore(scannedKeys);
-
-  // Initialize database
-  const { db, close: closeDb } = createDatabase();
-  runMigrations(db);
-  seedFromConfig(db, config, scannedKeys);
-
-  const endpointRepo = new DrizzleEndpointRepository(db);
-  const keyRepo = new DrizzleSshKeyRepository(db);
 
   // WebAuthn signing bridge — connects SSH agent to browser
   const signingBridge = new SigningBridge();
@@ -41,7 +40,7 @@ try {
   const { webauthnCredentials: webauthnTable } = await import("./db/schema.js");
   const { eq } = await import("drizzle-orm");
 
-  const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore, {
+  const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
     createWebAuthnAgent: (keys, rpId) => {
       if (!signingBridge.hasClients) {
         return null;
@@ -63,18 +62,36 @@ try {
       });
       const agentId = `agent_${Date.now()}`;
       signingBridge.registerAgent(agentId, agent);
-      return agent;
+      return {
+        agent,
+        cleanup: () => {
+          signingBridge.unregisterAgent(agentId);
+          agent.destroy();
+        },
+      };
     },
   });
 
-  const terminalManager = new TerminalManager(endpointRepo, transportFactory);
+  const terminalManager = new TerminalManager(
+    endpointRepo,
+    (id) => sshTransportFactory.create(id),
+  );
 
-  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, db, signingBridge);
+  const app = await buildApp(
+    config,
+    terminalManager,
+    endpointRepo,
+    keyRepo,
+    db,
+    signingBridge,
+    keyWatcher,
+  );
 
   const endpoints = await endpointRepo.findAll();
   console.log(`${endpoints.length} endpoint(s) in database`);
 
   const shutdown = async () => {
+    keyWatcher.stop();
     terminalManager.destroy();
     await app.close();
     closeDb();

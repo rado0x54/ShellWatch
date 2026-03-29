@@ -73,7 +73,7 @@ class SshTransport extends EventEmitter implements TerminalTransport {
   }
 }
 
-function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<TerminalTransport> {
+export function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
 
@@ -121,7 +121,7 @@ function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<Termina
 
 const WEBAUTHN_CONNECTION_TIMEOUT = 90_000; // 90s — allows time for user to touch the key
 
-function connectSshWithAgent(
+export function connectSshWithAgent(
   endpoint: EndpointInfo,
   agent: WebAuthnSshAgent,
 ): Promise<TerminalTransport> {

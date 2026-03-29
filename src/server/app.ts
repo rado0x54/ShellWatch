@@ -9,6 +9,7 @@ import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
+import type { KeyAvailability } from "../transport/key-directory-watcher.js";
 import { registerWebAuthnRoutes, type SigningBridge } from "../webauthn/index.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
 import { registerWebSocket } from "./ws-handler.js";
@@ -25,6 +26,7 @@ export async function buildApp(
   keyRepo: SshKeyRepository,
   db: ShellWatchDB | null = null,
   signingBridge: SigningBridge | null = null,
+  keyAvailability: KeyAvailability | null = null,
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -46,6 +48,7 @@ export async function buildApp(
         label: k.label,
         type: k.type,
         fingerprint: k.fingerprint,
+        available: k.type === "webauthn" || (keyAvailability?.isAvailable(k.fingerprint) ?? true),
         authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
       })),
     };

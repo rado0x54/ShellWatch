@@ -88,11 +88,11 @@ describe("Error Scenarios", () => {
 
   describe("Key errors", () => {
     it("MCP: create session with missing key file returns error", async () => {
-      // Endpoint references a key that exists in DB but has no matching file in KeyStore
+      // Endpoint references a key that exists in DB but has no matching file
       const { InMemoryEndpointRepository } = await import("../../db/repositories/endpoint-repo.js");
       const { InMemorySshKeyRepository } = await import("../../db/repositories/key-repo.js");
-      const { KeyStore } = await import("../../transport/key-scanner.js");
-      const { createSshTransportFactory } = await import("../../transport/ssh-transport.js");
+      const { InMemoryKeyProvider } = await import("../../transport/key-directory-watcher.js");
+      const { SshTransportFactory } = await import("../../transport/ssh-transport-factory.js");
       const { TerminalManager } = await import("../../terminal/index.js");
       const { buildApp } = await import("../../server/app.js");
 
@@ -115,10 +115,10 @@ describe("Error Scenarios", () => {
           fingerprint: "SHA256:doesnotexist",
         },
       ]);
-      // Empty key store — no files match
-      const keyStore = new KeyStore([]);
-      const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore);
-      const tm = new TerminalManager(endpointRepo, transportFactory);
+      // Empty key provider — no files available
+      const keyProvider = new InMemoryKeyProvider([]);
+      const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider);
+      const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
 
       const config = {
         keyDirectory: "/tmp",
@@ -135,7 +135,7 @@ describe("Error Scenarios", () => {
         security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
         notifications: { mcp: { debounceMs: 50 } },
       };
-      const app = await buildApp(config, tm, endpointRepo, keyRepo, null, null, {
+      const app = await buildApp(config, tm, endpointRepo, keyRepo, null, null, null, {
         logger: false,
         skipVite: true,
       });
@@ -152,7 +152,7 @@ describe("Error Scenarios", () => {
         });
         expect(res.status).toBe(400);
         const body = await res.json();
-        expect(body.error).toContain("No private key file found");
+        expect(body.error).toContain("is unavailable");
 
         // Test via MCP
         const { createTestMcpClient } = await import("../helpers/mcp-client.js");
@@ -162,7 +162,7 @@ describe("Error Scenarios", () => {
             endpointId: "no-key-ep",
           });
           expect(result.isError).toBe(true);
-          expect(result.content).toContain("No private key file found");
+          expect(result.content).toContain("is unavailable");
         } finally {
           await mcp.close();
         }

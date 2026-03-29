@@ -12,8 +12,9 @@ import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";
-import { KeyStore, type ScannedKey } from "../../transport/key-scanner.js";
-import { createSshTransportFactory } from "../../transport/ssh-transport.js";
+import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
+import type { ScannedKey } from "../../transport/key-scanner.js";
+import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
 import type { TestSshServer } from "./ssh-server.js";
 import type { TestLog } from "./test-log.js";
 
@@ -66,15 +67,15 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   const keyRepo = new InMemorySshKeyRepository([
     { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
   ]);
-  const keyStore = new KeyStore([scannedKey]);
+  const keyProvider = new InMemoryKeyProvider([scannedKey]);
 
-  const transportFactory = createSshTransportFactory(endpointRepo, keyRepo, keyStore);
-  const terminalManager = new TerminalManager(endpointRepo, transportFactory, {
+  const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider);
+  const terminalManager = new TerminalManager(endpointRepo, (id) => sshTransportFactory.create(id), {
     idleTimeoutMs: 60_000,
     cleanupIntervalMs: 60_000,
   });
 
-  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, null, {
+  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, null, null, {
     logger: false,
     skipVite: true,
   });
