@@ -21,7 +21,7 @@
  * Where the part after algo is NOT wrapped in sshString — it's returned as the
  * second readString() from the agent response, then written verbatim by Protocol.js.
  *
- * Based on the ssheasy project (github.com/hullarb/ssheasy).
+ * Based on the OpenSSH PROTOCOL.u2f specification.
  */
 
 const _ALGORITHM = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";

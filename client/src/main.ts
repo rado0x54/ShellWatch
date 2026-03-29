@@ -1,5 +1,3 @@
-console.log("[ShellWatch] main.ts loaded");
-
 import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
 import { SettingsPage } from "./settings.js";
 import { TerminalView } from "./terminal-view.js";
@@ -170,33 +168,15 @@ async function handleFidoSignRequest(request: {
   rpId: string;
 }) {
   try {
-    // Convert standard base64 challenge to ArrayBuffer (matches ssheasy encoding)
-    console.log("[FIDO] Challenge base64 length:", request.challenge.length);
+    // Convert standard base64 challenge to ArrayBuffer
     const decoded = atob(request.challenge);
-    console.log("[FIDO] Decoded string length:", decoded.length);
     const challengeBytes = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
-    console.log("[FIDO] Challenge bytes length:", challengeBytes.length);
-    console.log("[FIDO] Challenge bytes buffer byteLength:", challengeBytes.buffer.byteLength);
-    console.log(
-      "[FIDO] First 10 bytes:",
-      Array.from(challengeBytes.slice(0, 10))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join(" "),
-    );
-    console.log(
-      "[FIDO] Last 10 bytes:",
-      Array.from(challengeBytes.slice(-10))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join(" "),
-    );
 
     // Convert credentialId from base64url to ArrayBuffer
     const credIdBytes = Uint8Array.from(
       atob(request.credentialId.replace(/-/g, "+").replace(/_/g, "/")),
       (c) => c.charCodeAt(0),
     );
-
-    console.log(`[FIDO] Sign request: touching key for ${request.rpId}...`);
 
     const assertion = (await navigator.credentials.get({
       publicKey: {
@@ -220,18 +200,6 @@ async function handleFidoSignRequest(request: {
 
     const authResponse = assertion.response as AuthenticatorAssertionResponse;
 
-    // Debug: inspect what the browser put in clientDataJSON
-    const rawClientData = new TextDecoder().decode(authResponse.clientDataJSON);
-    const parsedClientData = JSON.parse(rawClientData);
-    console.log("[FIDO] clientDataJSON challenge length:", parsedClientData.challenge.length);
-    console.log(
-      "[FIDO] clientDataJSON challenge:",
-      `${parsedClientData.challenge.slice(0, 80)}...`,
-    );
-    console.log("[FIDO] Expected challenge length (base64url of 272 bytes):", 363);
-    console.log("[FIDO] Challenge truncated:", parsedClientData.challenge.length < 363);
-
-    // Send the response back to the server
     wsClient.send({
       type: "fido:sign-response",
       requestId: request.requestId,
@@ -239,8 +207,6 @@ async function handleFidoSignRequest(request: {
       signature: bufferToBase64url(authResponse.signature),
       clientDataJSON: new TextDecoder().decode(authResponse.clientDataJSON),
     });
-
-    console.log("[FIDO] Sign response sent");
   } catch (err) {
     console.error("[FIDO] Signing failed:", err);
     wsClient.send({

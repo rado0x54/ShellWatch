@@ -2,7 +2,7 @@
  * Convert a WebAuthn ECDSA-P256 COSE public key to the custom
  * webauthn-sk-ecdsa-sha2-nistp256@openssh.com authorized_keys format.
  *
- * Based on the ssheasy project (github.com/hullarb/ssheasy).
+ * Based on the OpenSSH PROTOCOL.u2f specification.
  *
  * Wire format:
  *   string  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"

@@ -198,8 +198,6 @@ export function createSshTransportFactory(
       throw new Error(`SSH key "${endpoint.keyId}" not found`);
     }
 
-    console.log(`[SSH Transport] Key "${endpoint.keyId}" type: ${keyInfo.type}`);
-
     // WebAuthn key — use browser-based signing
     if (keyInfo.type === "webauthn") {
       if (!options.createWebAuthnAgent) {

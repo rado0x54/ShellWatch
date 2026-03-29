@@ -26,7 +26,7 @@ export class SigningBridge {
 
   /** Register an agent's sign request handler */
   handleSignRequest(request: SignRequest): void {
-    // IMPORTANT: Use standard base64 (not base64url) — matches ssheasy and what
+    // IMPORTANT: Use standard base64 (not base64url) — matches what
     // OpenSSH's verifier expects when reconstructing clientDataJSON
     const challenge = request.dataToSign.toString("base64");
 
@@ -38,10 +38,6 @@ export class SigningBridge {
       rpId: request.rpId,
     });
 
-    console.log(
-      `[SigningBridge] Sending fido:sign-request to browser (${this.clients.size} client(s) registered)`,
-    );
-
     // Send to ALL open clients — the most recent browser tab will handle it.
     // Stale connections from HMR/reload may still appear open briefly.
     let sent = false;
@@ -49,10 +45,8 @@ export class SigningBridge {
       if (client.readyState === client.OPEN) {
         client.send(msg);
         sent = true;
-        console.log("[SigningBridge]   → message sent to a client");
       }
     }
-    console.log(`[SigningBridge]   sent to ${sent ? "client(s)" : "nobody"}`);
 
     if (!sent) {
       // No browser clients — find the agent and report error

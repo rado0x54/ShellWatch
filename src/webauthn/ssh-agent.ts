@@ -64,11 +64,7 @@ export class WebAuthnSshAgent extends BaseAgent {
    */
   getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
     try {
-      console.log(`[WebAuthn Agent] getIdentities: ${this.keys.length} key(s)`);
-      const keyBlobs = this.keys.map((k) => {
-        console.log(`[WebAuthn Agent]   key: ${k.id} (${k.fingerprint})`);
-        return buildPublicKeyBlob(k);
-      });
+      const keyBlobs = this.keys.map((k) => buildPublicKeyBlob(k));
       cb(null, keyBlobs);
     } catch (err) {
       console.error("[WebAuthn Agent] getIdentities error:", (err as Error).message);
@@ -86,18 +82,11 @@ export class WebAuthnSshAgent extends BaseAgent {
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    console.log(`[WebAuthn Agent] sign() called, data length: ${data.length}`);
-
     const matchingKey = this.findKeyForPubKey(pubKey);
     if (!matchingKey) {
-      console.error("[WebAuthn Agent] No matching credential for public key");
       cb(new Error("No matching WebAuthn credential found for public key"));
       return;
     }
-
-    console.log(
-      `[WebAuthn Agent] Matched key: ${matchingKey.webauthnCredentialId}, sending to browser...`,
-    );
 
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -121,12 +110,8 @@ export class WebAuthnSshAgent extends BaseAgent {
    * Called when the browser returns a WebAuthn assertion.
    */
   handleSignResponse(response: SignResponse): void {
-    console.log(`[WebAuthn Agent] Received sign response for ${response.requestId}`);
     const pending = this.pendingSign.get(response.requestId);
-    if (!pending) {
-      console.error(`[WebAuthn Agent] No pending request for ${response.requestId}`);
-      return;
-    }
+    if (!pending) return;
 
     this.pendingSign.delete(response.requestId);
     clearTimeout(pending.timeout);
@@ -138,13 +123,6 @@ export class WebAuthnSshAgent extends BaseAgent {
       );
 
       const signatureBlob = buildSshSignatureBlob(r, s, flags, counter, response.clientDataJSON);
-      console.log(
-        `[WebAuthn Agent] Signature built: ${signatureBlob.length} bytes, flags=${flags}, counter=${counter}`,
-      );
-      console.log(`[WebAuthn Agent] Signature hex: ${signatureBlob.toString("hex")}`);
-      console.log(`[WebAuthn Agent] R (${r.length} bytes): ${r.toString("hex")}`);
-      console.log(`[WebAuthn Agent] S (${s.length} bytes): ${s.toString("hex")}`);
-      console.log(`[WebAuthn Agent] clientDataJSON: ${response.clientDataJSON.slice(0, 200)}`);
       pending.cb(null, signatureBlob);
     } catch (err) {
       console.error("[WebAuthn Agent] Signature build error:", (err as Error).message);

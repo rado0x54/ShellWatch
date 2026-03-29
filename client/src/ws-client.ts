@@ -37,17 +37,13 @@ export class WsClient {
   }
 
   connect(): void {
-    console.log("[WsClient] Connecting to", this.url);
     this.ws = new WebSocket(this.url);
 
-    this.ws.onopen = () => {
-      console.log("[WsClient] Connected");
-    };
+    this.ws.onopen = () => {};
 
     this.ws.onmessage = (event) => {
       try {
         const msg: ServerMessage = JSON.parse(event.data);
-        console.log("[WsClient] Message:", msg.type);
         for (const handler of this.handlers) {
           handler(msg);
         }

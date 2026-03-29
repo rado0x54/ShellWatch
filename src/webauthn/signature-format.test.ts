@@ -1,6 +1,6 @@
 /**
  * Test the SSH signature wire format against known-good structure.
- * Compares our output with what ssheasy (Go) produces.
+ * Compares our output with the expected OpenSSH wire format.
  */
 import { describe, expect, it } from "vitest";
 import {
