@@ -48,7 +48,7 @@ importers:
         specifier: ^5.8.4
         version: 5.8.4
       ssh2:
-        specifier: github:rado0x54/ssh2#debug/signature-dump
+        specifier: github:rado0x54/ssh2#feat/webauthn-sk-ecdsa
         version: https://codeload.github.com/rado0x54/ssh2/tar.gz/2b20266b1eb8a96aa7004f12977d257d1af70204
       ws:
         specifier: ^8.20.0
