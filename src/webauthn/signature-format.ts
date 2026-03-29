@@ -123,7 +123,9 @@ export function buildSshSignatureBlob(
   counter: number,
   clientDataJSON: string,
 ): Buffer {
-  // R and S as SSH mpint format
+  // ECDSA signature: string(mpint R + mpint S)
+  // The ecdsaSig is wrapped as a string because the server reads it via sshbuf_froms
+  const ecdsaSig = Buffer.concat([sshMpint(r), sshMpint(s)]);
 
   // Extract origin from clientDataJSON
   let origin = "";
@@ -187,9 +189,17 @@ export function buildSshSignatureBlob(
   //
   // FIX: Don't wrap ecdsaSig in sshString. Put R and S as raw mpints.
   // The server's sshbuf_froms gets our entire blob, then reads R and S directly.
+  // Wire format (matches Go's ssh.Signature: string Blob + raw Rest):
+  //   string ecdsaSig     ← sshbuf_froms reads this as sub-buffer containing R+S
+  //   byte flags           ← sshbuf_get_u8 from outer buf
+  //   uint32 counter       ← sshbuf_get_u32 from outer buf
+  //   string origin        ← sshbuf_get_cstring from outer buf
+  //   string clientData    ← sshbuf_froms from outer buf
+  //   string extensions    ← sshbuf_froms from outer buf
+  //
+  // Protocol.js (fork) writes this raw into the packet (no extra string wrapper)
   return Buffer.concat([
-    sshMpint(r),
-    sshMpint(s),
+    sshString(ecdsaSig),
     flagsBuf,
     counterBuf,
     sshString(origin),
