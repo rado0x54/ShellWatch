@@ -123,9 +123,7 @@ export function buildSshSignatureBlob(
   counter: number,
   clientDataJSON: string,
 ): Buffer {
-  // ECDSA signature in SSH wire format: mpint R || mpint S
-  // Go's ssh.Marshal on *big.Int produces mpint encoding
-  const ecdsaSig = Buffer.concat([sshMpint(r), sshMpint(s)]);
+  // R and S as SSH mpint format
 
   // Extract origin from clientDataJSON
   let origin = "";
@@ -147,12 +145,51 @@ export function buildSshSignatureBlob(
   //   string origin
   //   string clientData
   //   string extensions
-  // Return the raw signature data — NO algorithm prefix.
-  // Our BaseAgent.sign() is called directly by AgentContext (not through the agent protocol),
-  // so the return value goes straight to Protocol.js's cbSign callback.
-  // Protocol.js adds its own: string algo + string <our return value>
+  // Protocol.js wraps our return as: string algo + string <our return value>
+  // The server then reads ktype from algo, then sshbuf_froms to get our blob as "sigbuf".
+  // Inside sigbuf, it does sshbuf_get_bignum2 for R, then S.
+  // So our blob must have R and S as raw mpints (NOT wrapped in sshString).
+  // After that, the server reads flags, counter, origin, clientData, extensions
+  // from the OUTER buffer (after sigbuf is consumed).
+  //
+  // Wait — actually sshbuf_froms creates a SUB-buffer from our blob. Then:
+  //   sigbuf = our entire blob
+  //   sshbuf_get_bignum2(sigbuf, R)  ← reads mpint R from start of our blob
+  //   sshbuf_get_bignum2(sigbuf, S)  ← reads mpint S
+  //   Then flags, counter etc. are read from the OUTER buffer b (not sigbuf)
+  //
+  // But that means R+S must be a separate sub-buffer, not part of the outer flow.
+  // sshbuf_froms reads uint32 len + data and creates a sub-buffer of that data.
+  // So the outer buffer after ktype looks like:
+  //   uint32 ecdsaSigLen   ← sshbuf_froms reads this
+  //   <ecdsaSig bytes>     ← contains mpint R + mpint S
+  //   byte flags           ← read from outer buffer AFTER froms
+  //   uint32 counter
+  //   string origin
+  //   string clientData
+  //   string extensions
+  //
+  // This IS what sshString(ecdsaSig) produces! The issue is that Protocol.js
+  // ALSO wraps our entire blob in another string. So the server sees:
+  //
+  //   string ktype
+  //   uint32 outerLen       ← Protocol.js wraps our blob
+  //     uint32 ecdsaSigLen  ← our sshString(ecdsaSig)
+  //     <ecdsaSig>
+  //     byte flags
+  //     ...
+  //
+  // The server does sshbuf_froms(b) which reads outerLen + outerData.
+  // Then sigbuf = outerData = our ENTIRE blob.
+  // Then sshbuf_get_bignum2(sigbuf, R) reads from sigbuf.
+  // sigbuf starts with uint32 ecdsaSigLen — but get_bignum2 interprets
+  // that as the length of R! So it reads 73 bytes as R, which is wrong.
+  //
+  // FIX: Don't wrap ecdsaSig in sshString. Put R and S as raw mpints.
+  // The server's sshbuf_froms gets our entire blob, then reads R and S directly.
   return Buffer.concat([
-    sshString(ecdsaSig),
+    sshMpint(r),
+    sshMpint(s),
     flagsBuf,
     counterBuf,
     sshString(origin),
