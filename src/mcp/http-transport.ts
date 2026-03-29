@@ -16,47 +16,57 @@ export async function registerMcpHttpTransport(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
 ) {
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  interface ManagedTransport {
+    transport: StreamableHTTPServerTransport;
+    agentSession: AgentSession;
+    notifications: { destroy(): void };
+  }
+
+  const sessions = new Map<string, ManagedTransport>();
+
+  function destroyManaged(managed: ManagedTransport) {
+    const id = managed.transport.sessionId;
+    if (id) sessions.delete(id);
+    managed.agentSession.destroy();
+    managed.notifications.destroy();
+  }
 
   app.addHook("onRequest", async (request, reply) => {
     if (request.url !== "/mcp") return;
 
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
-    let transport = sessionId ? transports.get(sessionId) : undefined;
+    let managed = sessionId ? sessions.get(sessionId) : undefined;
 
-    if (!transport) {
-      const newTransport = new StreamableHTTPServerTransport({
+    if (!managed) {
+      const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
 
       const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
       const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo);
 
-      await mcpServer.connect(newTransport);
+      await mcpServer.connect(transport);
 
       const notifications = attachMcpNotifications(mcpServer, terminalManager, agentSession, {
         debounceMs: config.notifications.mcp.debounceMs,
       });
 
-      newTransport.onclose = () => {
-        if (newTransport.sessionId) {
-          transports.delete(newTransport.sessionId);
-        }
-        agentSession.destroy();
-        notifications.destroy();
-      };
+      managed = { transport, agentSession, notifications };
 
-      newTransport.onerror = (err) => {
+      transport.onclose = () => destroyManaged(managed!);
+
+      transport.onerror = (err) => {
         app.log.error(err, "MCP transport error");
       };
-
-      transport = newTransport;
     }
 
+    const isNew = !sessionId;
+
     try {
-      await transport.handleRequest(request.raw, reply.raw);
+      await managed.transport.handleRequest(request.raw, reply.raw);
     } catch (err) {
       app.log.error(err, "MCP handleRequest error");
+      if (isNew) destroyManaged(managed);
       if (!reply.raw.headersSent) {
         reply.raw.writeHead(500, { "Content-Type": "application/json" });
         reply.raw.end(
@@ -69,8 +79,12 @@ export async function registerMcpHttpTransport(
       }
     }
 
-    if (transport.sessionId && !transports.has(transport.sessionId)) {
-      transports.set(transport.sessionId, transport);
+    const tid = managed.transport.sessionId;
+    if (tid && !sessions.has(tid)) {
+      sessions.set(tid, managed);
+    } else if (isNew && !tid) {
+      // Transport never got a session ID (e.g. non-initialize request) — clean up
+      destroyManaged(managed);
     }
 
     reply.hijack();
