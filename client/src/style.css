@@ -245,6 +245,27 @@ body {
   padding: 4px;
 }
 
+.terminal-observer {
+  border: 2px solid #10b981;
+  border-radius: 4px;
+}
+
+.terminal-control {
+  border: 2px solid #f59e0b;
+  border-radius: 4px;
+}
+
+.btn-release-control {
+  background: transparent;
+  color: #f59e0b;
+  border: 1px solid #f59e0b55;
+  font-size: 0.7rem;
+}
+
+.btn-release-control:hover {
+  background: #f59e0b22;
+}
+
 /* Settings button */
 .sidebar-footer {
   margin-top: auto;

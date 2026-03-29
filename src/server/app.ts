@@ -10,7 +10,8 @@ import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability } from "../transport/key-directory-watcher.js";
-import { registerWebAuthnRoutes, type SigningBridge } from "../webauthn/index.js";
+import { registerWebAuthnRoutes } from "../webauthn/index.js";
+import type { WsExtension } from "./ws-extension.js";
 import { registerIpAllowlist } from "./ip-allowlist.js";
 import { registerWebSocket } from "./ws-handler.js";
 
@@ -25,7 +26,7 @@ export async function buildApp(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
   db: ShellWatchDB | null = null,
-  signingBridge: SigningBridge | null = null,
+  wsExtensions: WsExtension[] = [],
   keyAvailability: KeyAvailability | null = null,
   options: AppOptions = {},
 ) {
@@ -154,7 +155,9 @@ export async function buildApp(
   );
 
   // WebSocket for terminal I/O
-  const { uiCreatedSessions } = registerWebSocket(app, terminalManager, signingBridge ?? undefined);
+  const wsHandler = registerWebSocket(app, terminalManager);
+  for (const ext of wsExtensions) wsHandler.addExtension(ext);
+  const { uiCreatedSessions } = wsHandler;
 
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo);

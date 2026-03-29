@@ -7,14 +7,7 @@ export type ClientMessage =
   | { type: "terminal:resize"; sessionId: string; cols: number; rows: number }
   | { type: "terminal:close"; sessionId: string }
   | { type: "terminal:take-control"; sessionId: string }
-  | {
-      type: "fido:sign-response";
-      requestId: string;
-      authenticatorData: string;
-      signature: string;
-      clientDataJSON: string;
-    }
-  | { type: "fido:sign-error"; requestId: string; error: string };
+  | { type: "terminal:release-control"; sessionId: string };
 
 export type SessionMode = "control" | "observer";
 
@@ -34,13 +27,6 @@ export type ServerMessage =
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
-  | {
-      type: "fido:sign-request";
-      requestId: string;
-      credentialId: string;
-      challenge: string;
-      rpId: string;
-    }
   | { type: "error"; message: string };
 
 export function parseClientMessage(raw: string): ClientMessage | null {

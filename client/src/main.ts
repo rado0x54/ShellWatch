@@ -75,7 +75,7 @@ function renderSessions() {
           <span class="session-detail">${sess.sessionId} (${sess.source})</span>
         </div>
         <div class="session-actions">
-          ${isObserver ? `<button class="btn btn-take-control" data-session-id="${sess.sessionId}">Take Control</button>` : ""}
+          ${isObserver ? `<button class="btn btn-take-control" data-session-id="${sess.sessionId}">Take Control</button>` : `<button class="btn btn-release-control" data-session-id="${sess.sessionId}">Release</button>`}
           <button class="btn btn-close" data-session-id="${sess.sessionId}">Close</button>
         </div>
       </div>
@@ -88,6 +88,9 @@ function renderSessions() {
     });
     li.querySelector(".btn-take-control")?.addEventListener("click", () => {
       wsClient.takeControl(sess.sessionId);
+    });
+    li.querySelector(".btn-release-control")?.addEventListener("click", () => {
+      wsClient.releaseControl(sess.sessionId);
     });
     li.querySelector(".btn-close")?.addEventListener("click", () => onClose(sess.sessionId));
     sessionList.appendChild(li);

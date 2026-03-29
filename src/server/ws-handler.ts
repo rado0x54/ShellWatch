@@ -1,15 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { TerminalManager } from "../terminal/index.js";
-import type { SigningBridge } from "../webauthn/signing-bridge.js";
+import type { WsExtension } from "./ws-extension.js";
 import { parseClientMessage, type ServerMessage, type SessionMode } from "./ws-protocol.js";
+
+export interface WsHandler {
+  /** Register an extension that hooks into WS lifecycle events. */
+  addExtension(extension: WsExtension): void;
+  /** Track sessions created via the UI (for control mode). */
+  uiCreatedSessions: Set<string>;
+}
 
 export function registerWebSocket(
   app: FastifyInstance,
   terminalManager: TerminalManager,
-  signingBridge?: SigningBridge,
-) {
+): WsHandler {
   const clients = new Set<WebSocket>();
+  const extensions: WsExtension[] = [];
   // Track which sessions were created via the UI (across all WS clients)
   const uiCreatedSessions = new Set<string>();
 
@@ -55,7 +62,7 @@ export function registerWebSocket(
 
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
     clients.add(socket);
-    signingBridge?.addClient(socket);
+    for (const ext of extensions) ext.onConnect(socket);
     const attachedSessions = new Set<string>();
     const controlledSessions = new Set<string>();
     clientMeta.set(socket, { attachedSessions, controlledSessions });
@@ -101,6 +108,12 @@ export function registerWebSocket(
         sendError("Invalid message format");
         return;
       }
+
+      // Let extensions handle the message first
+      const handled = extensions.some((ext) =>
+        ext.onMessage(msg as Record<string, unknown>, socket),
+      );
+      if (handled) return;
 
       try {
         switch (msg.type) {
@@ -157,18 +170,9 @@ export function registerWebSocket(
             break;
           }
 
-          case "fido:sign-response": {
-            signingBridge?.handleSignResponse({
-              requestId: msg.requestId,
-              authenticatorData: Buffer.from(msg.authenticatorData, "base64url"),
-              signature: Buffer.from(msg.signature, "base64url"),
-              clientDataJSON: msg.clientDataJSON,
-            });
-            break;
-          }
-
-          case "fido:sign-error": {
-            signingBridge?.handleSignError(msg.requestId, msg.error);
+          case "terminal:release-control": {
+            controlledSessions.delete(msg.sessionId);
+            send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "observer" });
             break;
           }
         }
@@ -179,7 +183,7 @@ export function registerWebSocket(
 
     socket.on("close", () => {
       clients.delete(socket);
-      signingBridge?.removeClient(socket);
+      for (const ext of extensions) ext.onDisconnect(socket);
       clientMeta.delete(socket);
       terminalManager.off("output", onOutput);
       terminalManager.off("close", onClose);
@@ -188,6 +192,10 @@ export function registerWebSocket(
     });
   });
 
-  // Expose for REST API session creation to mark as UI-owned
-  return { uiCreatedSessions };
+  return {
+    addExtension(extension: WsExtension) {
+      extensions.push(extension);
+    },
+    uiCreatedSessions,
+  };
 }

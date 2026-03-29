@@ -84,6 +84,7 @@ export class TerminalView {
 
       managed = { terminal, fitAddon, element, mode: initialMode, inputDisposable };
       this.terminals.set(sessionId, managed);
+      this.updateBorder(managed);
 
       this.wsClient.attach(sessionId);
       this.wsClient.sendResize(sessionId, terminal.cols, terminal.rows);
@@ -117,14 +118,14 @@ export class TerminalView {
 
   private setMode(sessionId: string, managed: ManagedTerminal, mode: SessionMode): void {
     managed.mode = mode;
-    // Enable/disable terminal input
     managed.terminal.options.disableStdin = mode === "observer";
-    if (mode === "observer") {
-      managed.terminal.write("\r\n\x1b[33m[Observer mode — read only]\x1b[0m\r\n");
-    } else {
-      managed.terminal.write("\r\n\x1b[32m[Control mode — input enabled]\x1b[0m\r\n");
-    }
+    this.updateBorder(managed);
     this.onModeChange?.(sessionId, mode);
+  }
+
+  private updateBorder(managed: ManagedTerminal): void {
+    managed.element.classList.toggle("terminal-observer", managed.mode === "observer");
+    managed.element.classList.toggle("terminal-control", managed.mode === "control");
   }
 
   detach(): void {

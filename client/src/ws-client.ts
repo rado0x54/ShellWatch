@@ -91,4 +91,8 @@ export class WsClient {
   takeControl(sessionId: string): void {
     this.send({ type: "terminal:take-control", sessionId });
   }
+
+  releaseControl(sessionId: string): void {
+    this.send({ type: "terminal:release-control", sessionId });
+  }
 }

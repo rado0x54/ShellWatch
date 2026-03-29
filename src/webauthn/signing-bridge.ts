@@ -9,19 +9,38 @@
  */
 
 import type { WebSocket } from "ws";
+import type { WsExtension } from "../server/ws-extension.js";
 import type { SignRequest, SignResponse, WebAuthnSshAgent } from "./ssh-agent.js";
 
-export class SigningBridge {
+export class SigningBridge implements WsExtension {
   private clients = new Set<WebSocket>();
   private agents = new Map<string, WebAuthnSshAgent>();
 
-  /** Register a WebSocket client that can handle signing requests */
-  addClient(ws: WebSocket): void {
-    this.clients.add(ws);
+  // --- WsExtension implementation ---
+
+  onConnect(socket: WebSocket): void {
+    this.clients.add(socket);
   }
 
-  removeClient(ws: WebSocket): void {
-    this.clients.delete(ws);
+  onDisconnect(socket: WebSocket): void {
+    this.clients.delete(socket);
+  }
+
+  onMessage(msg: Record<string, unknown>, _socket: WebSocket): boolean {
+    if (msg.type === "fido:sign-response") {
+      this.handleSignResponse({
+        requestId: msg.requestId as string,
+        authenticatorData: Buffer.from(msg.authenticatorData as string, "base64url"),
+        signature: Buffer.from(msg.signature as string, "base64url"),
+        clientDataJSON: msg.clientDataJSON as string,
+      });
+      return true;
+    }
+    if (msg.type === "fido:sign-error") {
+      this.handleSignError(msg.requestId as string, msg.error as string);
+      return true;
+    }
+    return false;
   }
 
   /** Register an agent's sign request handler */

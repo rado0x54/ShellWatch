@@ -83,7 +83,7 @@ try {
     endpointRepo,
     keyRepo,
     db,
-    signingBridge,
+    [signingBridge],
     keyWatcher,
   );
 
