@@ -26,7 +26,9 @@ export class SigningBridge {
 
   /** Register an agent's sign request handler */
   handleSignRequest(request: SignRequest): void {
-    const challenge = request.dataToSign.toString("base64url");
+    // IMPORTANT: Use standard base64 (not base64url) — matches ssheasy and what
+    // OpenSSH's verifier expects when reconstructing clientDataJSON
+    const challenge = request.dataToSign.toString("base64");
 
     const msg = JSON.stringify({
       type: "fido:sign-request",

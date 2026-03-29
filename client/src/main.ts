@@ -170,11 +170,8 @@ async function handleFidoSignRequest(request: {
   rpId: string;
 }) {
   try {
-    // Convert base64url challenge to ArrayBuffer
-    const challengeBytes = Uint8Array.from(
-      atob(request.challenge.replace(/-/g, "+").replace(/_/g, "/")),
-      (c) => c.charCodeAt(0),
-    );
+    // Convert standard base64 challenge to ArrayBuffer (matches ssheasy encoding)
+    const challengeBytes = Uint8Array.from(atob(request.challenge), (c) => c.charCodeAt(0));
 
     // Convert credentialId from base64url to ArrayBuffer
     const credIdBytes = Uint8Array.from(
