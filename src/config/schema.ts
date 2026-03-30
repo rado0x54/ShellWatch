@@ -20,9 +20,18 @@ export const NotificationsSchema = z.object({
     .default({ debounceMs: 100 }),
 });
 
+export const ServerSchema = z.object({
+  port: z.number().int().min(1).max(65535).default(3000),
+  basePath: z
+    .string()
+    .default("")
+    .transform((v) => v.replace(/\/+$/, "")),
+});
+
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedServers: z.array(EndpointSchema).default([]),
+  server: ServerSchema.default({ port: 3000, basePath: "" }),
   security: SecuritySchema.default({ allowedNetworks: ["127.0.0.1/32", "::1/128"] }),
   notifications: NotificationsSchema.default({ mcp: { debounceMs: 100 } }),
 });

@@ -28,9 +28,9 @@ function getOriginAndRpId(host: string, protocol: string) {
   return { rpId, origin };
 }
 
-export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
+export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "") {
   // --- Registration: Generate Options ---
-  app.post<{ Body: { label: string } }>("/api/webauthn/register/options", async (request) => {
+  app.post<{ Body: { label: string } }>(`${basePath}/api/webauthn/register/options`, async (request) => {
     const { label } = request.body;
     const { rpId } = getOriginAndRpId(
       String(request.headers.host ?? "localhost"),
@@ -76,7 +76,7 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
 
   // --- Registration: Verify Response ---
   app.post<{ Body: { challengeId: string; label: string; credential: unknown } }>(
-    "/api/webauthn/register/verify",
+    `${basePath}/api/webauthn/register/verify`,
     async (request, reply) => {
       const { challengeId, label, credential } = request.body;
       const { rpId, origin } = getOriginAndRpId(
@@ -165,7 +165,7 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
   );
 
   // --- List Registered Credentials ---
-  app.get("/api/webauthn/credentials", async () => {
+  app.get(`${basePath}/api/webauthn/credentials`, async () => {
     const creds = db
       .select({
         id: webauthnCredentials.id,
@@ -195,7 +195,7 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB) {
   });
 
   // --- Delete Credential ---
-  app.delete<{ Params: { id: string } }>("/api/webauthn/credentials/:id", async (request) => {
+  app.delete<{ Params: { id: string } }>(`${basePath}/api/webauthn/credentials/:id`, async (request) => {
     const { id } = request.params;
     // Remove from both tables
     db.delete(sshKeys).where(eq(sshKeys.id, id)).run();

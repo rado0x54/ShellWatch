@@ -1,3 +1,4 @@
+import { basePath } from "./base-path.js";
 import {
   deleteCredential,
   listCredentials,
@@ -182,7 +183,7 @@ export class SettingsPage {
       btn.addEventListener("click", async () => {
         const id = (btn as HTMLElement).dataset.id;
         if (id && confirm(`Delete endpoint "${id}"?`)) {
-          await fetch(`/api/endpoints/${id}`, { method: "DELETE" });
+          await fetch(`${basePath}/api/endpoints/${id}`, { method: "DELETE" });
           await this.render();
         }
       });
@@ -204,7 +205,7 @@ export class SettingsPage {
         alert("ID, Label, Host, and Username are required");
         return;
       }
-      const res = await fetch("/api/endpoints", {
+      const res = await fetch(`${basePath}/api/endpoints`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -257,13 +258,13 @@ export class SettingsPage {
   }
 
   private async fetchEndpoints(): Promise<EndpointData[]> {
-    const res = await fetch("/api/endpoints");
+    const res = await fetch(`${basePath}/api/endpoints`);
     const data = await res.json();
     return data.endpoints;
   }
 
   private async fetchKeys(): Promise<SshKeyData[]> {
-    const res = await fetch("/api/keys");
+    const res = await fetch(`${basePath}/api/keys`);
     const data = await res.json();
     return data.keys;
   }

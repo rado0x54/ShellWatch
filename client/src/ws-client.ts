@@ -31,9 +31,9 @@ export class WsClient {
   private handlers = new Set<MessageHandler>();
   private url: string;
 
-  constructor() {
+  constructor(wsBasePath = "") {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    this.url = `${proto}//${location.host}/ws`;
+    this.url = `${proto}//${location.host}${wsBasePath}/ws`;
   }
 
   connect(): void {

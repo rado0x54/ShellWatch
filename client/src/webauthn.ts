@@ -1,10 +1,11 @@
 import { startRegistration } from "@simplewebauthn/browser";
+import { basePath } from "./base-path.js";
 
 export async function registerPasskey(
   label: string,
 ): Promise<{ credentialId: string; id: string }> {
   // Step 1: Get registration options from server
-  const optionsRes = await fetch("/api/webauthn/register/options", {
+  const optionsRes = await fetch(`${basePath}/api/webauthn/register/options`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -20,7 +21,7 @@ export async function registerPasskey(
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
   // Step 3: Verify with server
-  const verifyRes = await fetch("/api/webauthn/register/verify", {
+  const verifyRes = await fetch(`${basePath}/api/webauthn/register/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, label, credential }),
@@ -45,11 +46,11 @@ export interface WebAuthnCredential {
 }
 
 export async function listCredentials(): Promise<WebAuthnCredential[]> {
-  const res = await fetch("/api/webauthn/credentials");
+  const res = await fetch(`${basePath}/api/webauthn/credentials`);
   const data = await res.json();
   return data.credentials;
 }
 
 export async function deleteCredential(id: string): Promise<void> {
-  await fetch(`/api/webauthn/credentials/${id}`, { method: "DELETE" });
+  await fetch(`${basePath}/api/webauthn/credentials/${id}`, { method: "DELETE" });
 }

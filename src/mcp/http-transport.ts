@@ -31,8 +31,10 @@ export async function registerMcpHttpTransport(
     managed.notifications.destroy();
   }
 
+  const mcpPath = `${config.server.basePath}/mcp`;
+
   app.addHook("onRequest", async (request, reply) => {
-    if (request.url !== "/mcp") return;
+    if (request.url !== mcpPath) return;
 
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
     let managed = sessionId ? sessions.get(sessionId) : undefined;

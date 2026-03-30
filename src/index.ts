@@ -11,11 +11,11 @@ import { TerminalManager } from "./terminal/index.js";
 import { KeyDirectoryWatcher, SshTransportFactory } from "./transport/index.js";
 import { SigningBridge, WebAuthnSshAgent } from "./webauthn/index.js";
 
-const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 try {
   const config = loadConfig();
+  const PORT = config.server.port;
 
   // Initialize database
   const { db, close: closeDb } = createDatabase();
@@ -102,8 +102,9 @@ try {
   process.on("SIGTERM", shutdown);
 
   await app.listen({ port: PORT, host: HOST });
-  console.log(`ShellWatch server listening on http://${HOST}:${PORT}`);
-  console.log(`MCP endpoint available at http://${HOST}:${PORT}/mcp`);
+  const base = config.server.basePath || "";
+  console.log(`ShellWatch server listening on http://${HOST}:${PORT}${base}`);
+  console.log(`MCP endpoint available at http://${HOST}:${PORT}${base}/mcp`);
 } catch (err) {
   console.error("Failed to start ShellWatch:", (err as Error).message);
   process.exit(1);

@@ -1,10 +1,11 @@
 import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
+import { basePath } from "./base-path.js";
 import { ObserverPage } from "./observer.js";
 import { SettingsPage } from "./settings.js";
 import { TerminalView } from "./terminal-view.js";
 import { type SessionListEntry, WsClient } from "./ws-client.js";
 
-const wsClient = new WsClient();
+const wsClient = new WsClient(basePath);
 wsClient.connect();
 
 const terminalView = new TerminalView(wsClient);

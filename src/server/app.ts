@@ -33,17 +33,25 @@ export async function buildApp(
   options: AppOptions = {},
 ) {
   const app = Fastify({ logger: options.logger ?? true });
+  const base = config.server.basePath;
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
 
-  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
+  registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
 
-  app.get("/health", async () => ({ status: "ok" }));
+  // Redirect root to basePath when basePath is set
+  if (base) {
+    app.get("/", async (_request, reply) => {
+      reply.redirect(`${base}/`);
+    });
+  }
+
+  app.get(`${base}/health`, async () => ({ status: "ok" }));
 
   // --- SSH Keys API ---
 
-  app.get("/api/keys", async () => {
+  app.get(`${base}/api/keys`, async () => {
     const allKeys = await keyRepo.findAll();
     return {
       keys: allKeys.map((k) => ({
@@ -59,7 +67,7 @@ export async function buildApp(
 
   // --- Endpoint API ---
 
-  app.get("/api/endpoints", async () => {
+  app.get(`${base}/api/endpoints`, async () => {
     const all = await endpointRepo.findAll();
     return {
       endpoints: all.map(({ id, label, host, port, username, keyId }) => ({
@@ -82,7 +90,7 @@ export async function buildApp(
       username: string;
       keyId?: string;
     };
-  }>("/api/endpoints", async (request, reply) => {
+  }>(`${base}/api/endpoints`, async (request, reply) => {
     try {
       await endpointRepo.create({ ...request.body, port: request.body.port ?? 22 });
       return { status: "created", id: request.body.id };
@@ -93,7 +101,7 @@ export async function buildApp(
   });
 
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/endpoints/:id",
+    `${base}/api/endpoints/:id`,
     async (request, reply) => {
       try {
         await endpointRepo.update(
@@ -108,7 +116,7 @@ export async function buildApp(
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>(`${base}/api/endpoints/:id`, async (request, reply) => {
     try {
       const activeSessions = terminalManager
         .listSessions()
@@ -127,7 +135,7 @@ export async function buildApp(
 
   // --- Session API ---
 
-  app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
+  app.post<{ Body: { endpointId: string } }>(`${base}/api/sessions`, async (request, reply) => {
     try {
       const { endpointId } = request.body;
       const session = await terminalManager.create(endpointId, "ui");
@@ -139,12 +147,12 @@ export async function buildApp(
     }
   });
 
-  app.get("/api/sessions", async () => ({
+  app.get(`${base}/api/sessions`, async () => ({
     sessions: terminalManager.listSessions(),
   }));
 
   app.delete<{ Params: { sessionId: string } }>(
-    "/api/sessions/:sessionId",
+    `${base}/api/sessions/:sessionId`,
     async (request, reply) => {
       try {
         terminalManager.close(request.params.sessionId);
@@ -157,7 +165,7 @@ export async function buildApp(
   );
 
   // WebSocket for terminal I/O
-  const wsHandler = registerWebSocket(app, terminalManager);
+  const wsHandler = registerWebSocket(app, terminalManager, base);
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
   const { uiCreatedSessions } = wsHandler;
 
@@ -166,8 +174,14 @@ export async function buildApp(
 
   // WebAuthn routes
   if (db) {
-    registerWebAuthnRoutes(app, db);
+    registerWebAuthnRoutes(app, db, base);
   }
+
+  // Client runtime config
+  app.get(`${base}/config.js`, async (_request, reply) => {
+    reply.type("application/javascript");
+    return `window.__BASE_PATH__=${JSON.stringify(base)};`;
+  });
 
   // Serve client UI
   if (!options.skipVite) {
@@ -176,7 +190,7 @@ export async function buildApp(
 
     if (hasBuiltClient) {
       // Production: serve pre-built client assets
-      await app.register(fastifyStatic, { root: clientDist });
+      await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
       app.setNotFoundHandler((_request, reply) => {
         reply.sendFile("index.html");
       });
@@ -193,6 +207,10 @@ export async function buildApp(
       });
 
       app.setNotFoundHandler((request, reply) => {
+        // Strip basePath prefix so Vite sees root-relative paths
+        if (base && request.raw.url?.startsWith(base)) {
+          request.raw.url = request.raw.url.slice(base.length) || "/";
+        }
         vite.middlewares.handle(request.raw, reply.raw, () => {
           reply.status(404).send({ error: "Not found" });
         });

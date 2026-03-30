@@ -26,7 +26,15 @@ export interface TestAppServer {
   close(): Promise<void>;
 }
 
-export async function startTestApp(sshServer: TestSshServer, log: TestLog): Promise<TestAppServer> {
+export interface TestAppOptions {
+  basePath?: string;
+}
+
+export async function startTestApp(
+  sshServer: TestSshServer,
+  log: TestLog,
+  options: TestAppOptions = {},
+): Promise<TestAppServer> {
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -58,11 +66,14 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
         username: "testuser",
       },
     ],
+    server: { port: 3000, basePath: options.basePath ?? "" },
     security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
     notifications: { mcp: { debounceMs: 50 } },
   };
 
-  const endpointRepo = new InMemoryEndpointRepository(config.seedServers);
+  const endpointRepo = new InMemoryEndpointRepository(
+    config.seedServers.map((s) => ({ ...s, keyId: "test-key" })),
+  );
   const keyRepo = new InMemorySshKeyRepository([
     { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
   ]);

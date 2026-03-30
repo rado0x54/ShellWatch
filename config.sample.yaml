@@ -7,6 +7,11 @@
 #
 # Keys are assigned to endpoints via the web UI after discovery.
 
+# Server settings
+# server:
+#   port: 3000                # HTTP port (default: 3000)
+#   basePath: /shellwatch     # Serve under a subpath (default: none)
+
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
 

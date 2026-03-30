@@ -14,6 +14,7 @@ export interface WsHandler {
 export function registerWebSocket(
   app: FastifyInstance,
   terminalManager: TerminalManager,
+  basePath = "",
 ): WsHandler {
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
@@ -60,7 +61,7 @@ export function registerWebSocket(
     { attachedSessions: Set<string>; controlledSessions: Set<string> }
   >();
 
-  app.get("/ws", { websocket: true }, (socket: WebSocket) => {
+  app.get(`${basePath}/ws`, { websocket: true }, (socket: WebSocket) => {
     clients.add(socket);
     for (const ext of extensions) ext.onConnect(socket);
     const attachedSessions = new Set<string>();

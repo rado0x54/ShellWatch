@@ -14,14 +14,16 @@ export interface TerminalSession {
   source: string;
 }
 
+import { basePath } from "./base-path.js";
+
 export async function fetchEndpoints(): Promise<Endpoint[]> {
-  const res = await fetch("/api/endpoints");
+  const res = await fetch(`${basePath}/api/endpoints`);
   const data = await res.json();
   return data.endpoints;
 }
 
 export async function createSession(endpointId: string): Promise<TerminalSession> {
-  const res = await fetch("/api/sessions", {
+  const res = await fetch(`${basePath}/api/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpointId }),
@@ -34,11 +36,11 @@ export async function createSession(endpointId: string): Promise<TerminalSession
 }
 
 export async function fetchSessions(): Promise<TerminalSession[]> {
-  const res = await fetch("/api/sessions");
+  const res = await fetch(`${basePath}/api/sessions`);
   const data = await res.json();
   return data.sessions;
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
-  await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  await fetch(`${basePath}/api/sessions/${sessionId}`, { method: "DELETE" });
 }
