@@ -1,4 +1,5 @@
 import { closeSession, createSession, type Endpoint, fetchEndpoints } from "./api.js";
+import { ObserverPage } from "./observer.js";
 import { SettingsPage } from "./settings.js";
 import { TerminalView } from "./terminal-view.js";
 import { type SessionListEntry, WsClient } from "./ws-client.js";
@@ -12,21 +13,34 @@ const endpointList = document.getElementById("endpoint-list") as HTMLElement;
 const sessionList = document.getElementById("session-list") as HTMLElement;
 const terminalContainer = document.getElementById("terminal-container") as HTMLElement;
 const settingsContainer = document.getElementById("settings-page") as HTMLElement;
+const observerContainer = document.getElementById("observer-page") as HTMLElement;
 const settingsBtn = document.getElementById("settings-btn") as HTMLElement;
+const observerBtn = document.getElementById("observer-btn") as HTMLElement;
 
 let endpoints: Endpoint[] = [];
 let sessions: SessionListEntry[] = [];
 
 // Settings page
 const settingsPage = new SettingsPage(settingsContainer, () => {
-  // On close: show terminal, refresh endpoints
   terminalContainer.style.display = "block";
   refreshEndpoints();
 });
 
+// Observer page
+const observerPage = new ObserverPage(observerContainer, wsClient, () => {
+  terminalContainer.style.display = "block";
+});
+
 settingsBtn.addEventListener("click", () => {
   terminalContainer.style.display = "none";
+  observerPage.hide();
   settingsPage.show();
+});
+
+observerBtn.addEventListener("click", () => {
+  terminalContainer.style.display = "none";
+  settingsPage.hide();
+  observerPage.show(sessions);
 });
 
 terminalView.setModeChangeCallback(() => renderSessions());
@@ -111,6 +125,7 @@ async function onConnect(endpointId: string) {
 
 function onAttach(sessionId: string, mode: "control" | "observer" = "control") {
   settingsPage.hide();
+  observerPage.hide();
   terminalContainer.style.display = "block";
   terminalView.attach(sessionId, terminalContainer, mode);
   renderSessions();
@@ -134,6 +149,7 @@ wsClient.onMessage((msg) => {
     const oldIds = new Set(sessions.map((s) => s.sessionId));
     sessions = msg.sessions;
     renderSessions();
+    observerPage.updateSessions(sessions);
 
     for (const oldId of oldIds) {
       if (!sessions.some((s) => s.sessionId === oldId)) {
@@ -141,7 +157,11 @@ wsClient.onMessage((msg) => {
       }
     }
 
-    if (!terminalView.getActiveSessionId() && sessions.length > 0) {
+    if (
+      !observerPage.isVisible() &&
+      !terminalView.getActiveSessionId() &&
+      sessions.length > 0
+    ) {
       const newSession = sessions.find((s) => !oldIds.has(s.sessionId));
       if (newSession) {
         onAttach(newSession.sessionId, newSession.mode);
@@ -232,6 +252,7 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
 async function refreshEndpoints() {
   endpoints = await fetchEndpoints();
   renderEndpoints();
+  observerPage.setEndpoints(endpoints);
 }
 
 async function init() {

@@ -438,3 +438,86 @@ body {
 .code-block:hover {
   border-color: #4a9eff;
 }
+
+/* Observer mode */
+#observer-page {
+  height: 100%;
+  overflow: hidden;
+}
+
+.observer-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.observer-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.observer-header h1 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.observer-session-count {
+  font-size: 0.75rem;
+  color: #8888aa;
+  flex: 1;
+}
+
+.observer-grid {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  min-height: 0;
+}
+
+.observer-cell {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.observer-cell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.observer-cell-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.observer-cell-detail {
+  font-size: 0.6rem;
+  color: #8888aa;
+  font-family: monospace;
+}
+
+.observer-cell-terminal {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.observer-cell-terminal .xterm {
+  height: 100%;
+  padding: 2px;
+}
