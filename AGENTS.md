@@ -59,8 +59,18 @@ config.sample.yaml      # Sample SSH endpoint config
 ## Commands
 
 ```bash
+# Development
 pnpm dev              # Start server (UI + API + WebSocket + MCP) with hot reload
-pnpm build            # Compile TypeScript
+
+# Production
+pnpm build            # Build server (tsc) + client (vite) for production
+pnpm start            # Run production server (serves pre-built client)
+
+# Build (individual)
+pnpm build:server     # Compile server TypeScript only
+pnpm build:client     # Bundle client with Vite only
+
+# Quality
 pnpm typecheck        # Type check without emitting
 pnpm lint             # Check linting with Biome
 pnpm lint:fix         # Auto-fix linting issues

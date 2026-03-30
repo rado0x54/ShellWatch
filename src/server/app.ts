@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createServer as createViteServer } from "vite";
@@ -167,23 +169,35 @@ export async function buildApp(
     registerWebAuthnRoutes(app, db);
   }
 
-  // Vite dev server
+  // Serve client UI
   if (!options.skipVite) {
-    const clientRoot = resolve(import.meta.dirname, "../../client");
-    const vite = await createViteServer({
-      root: clientRoot,
-      server: {
-        middlewareMode: true,
-        hmr: { port: 24679 },
-      },
-      appType: "spa",
-    });
+    const clientDist = resolve(import.meta.dirname, "../client");
+    const hasBuiltClient = existsSync(resolve(clientDist, "index.html"));
 
-    app.setNotFoundHandler((request, reply) => {
-      vite.middlewares.handle(request.raw, reply.raw, () => {
-        reply.status(404).send({ error: "Not found" });
+    if (hasBuiltClient) {
+      // Production: serve pre-built client assets
+      await app.register(fastifyStatic, { root: clientDist });
+      app.setNotFoundHandler((_request, reply) => {
+        reply.sendFile("index.html");
       });
-    });
+    } else {
+      // Development: Vite dev server with HMR
+      const clientRoot = resolve(import.meta.dirname, "../../client");
+      const vite = await createViteServer({
+        root: clientRoot,
+        server: {
+          middlewareMode: true,
+          hmr: { port: 24679 },
+        },
+        appType: "spa",
+      });
+
+      app.setNotFoundHandler((request, reply) => {
+        vite.middlewares.handle(request.raw, reply.raw, () => {
+          reply.status(404).send({ error: "Not found" });
+        });
+      });
+    }
   }
 
   return app;
