@@ -7,9 +7,9 @@ ShellWatch lets you manage remote terminal sessions from two interfaces:
 - **Web UI** — connect to SSH endpoints and interact via an in-browser terminal (xterm.js)
 - **MCP** — AI agents (e.g., Claude) can programmatically create sessions, run commands, and read output
 
-Both interfaces share the same TerminalManager and are kept in sync in real time. Sessions created via MCP appear instantly in the UI (and vice versa). If no terminal is active in the browser, new MCP-created sessions auto-attach.
+Both interfaces share the same TerminalManager and are kept in sync in real time. Sessions created via MCP appear instantly in the UI (and vice versa).
 
-This is a **POC** — no auth, no database, no user management. SSH endpoints are loaded from a static YAML config file.
+For detailed architecture docs see [docs/architecture.md](./docs/architecture.md) and the [architecture diagram](./docs/architecture-diagram.md).
 
 ## Prerequisites
 
@@ -19,87 +19,112 @@ This is a **POC** — no auth, no database, no user management. SSH endpoints ar
 ## Setup
 
 ```bash
-# Clone and install
 git clone https://github.com/rado0x54/ShellWatch.git
 cd ShellWatch
 pnpm install
+```
 
-# Configure SSH endpoints
+### Configuration
+
+```bash
 cp config.sample.yaml config.yaml
 ```
 
 Edit `config.yaml` with your SSH targets:
 
 ```yaml
+keyDirectory: ./keys
+
 servers:
   - id: dev-box
     label: Dev Box
     host: dev.example.com
     port: 22
     username: ubuntu
-    privateKeyPath: ./keys/dev-box.pem
+    keyId: dev-box     # matches ./keys/dev-box.pem
+
+security:
+  allowedNetworks:
+    - 127.0.0.1/32
+    - "::1/128"
 ```
+
+Endpoints and keys can also be managed dynamically via the web UI or REST API — changes are persisted in SQLite.
 
 ### SSH key setup
 
-Generate an ed25519 key:
+Place key files in the `keys/` directory. They are auto-discovered on startup and watched for changes.
 
 ```bash
 ssh-keygen -t ed25519 -f ./keys/dev-box.pem -C "shellwatch"
-```
-
-Add the public key to the remote server:
-
-```bash
 ssh-copy-id -i ./keys/dev-box.pem.pub ubuntu@dev.example.com
 ```
 
-- `privateKeyPath` is relative to the config file location
+- Keys are matched to endpoints by `keyId` (filename without `.pem` extension)
 - Key files must be readable by the current user (`chmod 600`)
 - The `keys/` directory is gitignored
 
 ## Running
 
+### Development
+
 ```bash
 pnpm dev
 ```
 
-Everything runs on a single port — open `http://localhost:3000`:
+Starts the server with Vite HMR on `http://localhost:3000`.
 
-- Web UI served via Vite (with HMR)
-- REST API at `/api/*`
-- WebSocket at `/ws`
-- MCP endpoint at `/mcp`
+### Production
+
+```bash
+pnpm build   # compile server (tsc) + bundle client (vite)
+pnpm start   # run production server
+```
+
+The production server auto-detects the built client in `dist/client/` and serves it as static files. No Vite dependency at runtime.
+
+### All endpoints on a single port
+
+| Path | Interface |
+|------|-----------|
+| `/` | Web UI |
+| `/api/*` | REST API |
+| `/ws` | WebSocket (terminal I/O + events) |
+| `/mcp` | MCP (streamable HTTP) |
+| `/health` | Health check |
 
 ## Web UI
 
 Open `http://localhost:3000` in your browser.
 
-- **Sidebar** shows configured endpoints and active sessions
+- **Sidebar** shows configured endpoints, SSH keys, and active sessions
 - Click **Connect** on an endpoint to open a terminal session
 - Click a session in the sidebar to switch between terminals
 - Sessions show their source — `(ui)` or `(mcp)`
-- Click **Close** to terminate a session
 - Terminal auto-resizes with the browser window
 - Sessions created via MCP appear automatically — no refresh needed
-- If no terminal is active, new sessions auto-attach
+- **Observer mode** — grid view to monitor multiple sessions at once
 
 ## MCP
 
-ShellWatch exposes an MCP server over streamable HTTP at `/mcp` with 6 tools:
+ShellWatch exposes an MCP server over streamable HTTP at `/mcp`:
 
 | Tool | Description |
 |------|-------------|
 | `shellwatch_list_endpoints` | List configured SSH endpoints |
 | `shellwatch_create_session` | Create a new terminal session |
-| `shellwatch_list_sessions` | List active sessions |
-| `shellwatch_send_input` | Send text input to a session |
-| `shellwatch_get_output` | Read buffered output (supports offset/limit) |
+| `shellwatch_list_sessions` | List this agent's active sessions |
+| `shellwatch_send_keys` | Send keystrokes/text to a session |
+| `shellwatch_read_output` | Read session output (with offset) |
 | `shellwatch_close_session` | Close a session |
 
-Each MCP client session gets its own stateful transport. All sessions share the same TerminalManager, so they are visible across all clients and the web UI.
+Each MCP client gets an isolated `AgentSession` — agents can only see and control their own sessions. The web UI (admin view) sees all sessions regardless of source.
 
-### Claude Desktop configuration
+**Notifications (server -> client):**
+- `output_available` — new output ready (debounced)
+- `session_status` — session state changed
+
+### Claude Desktop / Claude Code configuration
 
 ```json
 {
@@ -112,48 +137,39 @@ Each MCP client session gets its own stateful transport. All sessions share the 
 }
 ```
 
-## Demo walkthrough
-
-1. **Start the app** — `pnpm dev`
-2. **Open the UI** — navigate to `http://localhost:3000`
-3. **View endpoints** — see your configured SSH targets in the sidebar
-4. **Open a session from UI** — click "Connect", an interactive terminal opens
-5. **Interact** — type commands in the terminal (e.g., `ls -la`, `whoami`)
-6. **Create a session via MCP** — use Claude Desktop or any MCP client to call `shellwatch_create_session` — it appears in the UI instantly
-7. **Send input via MCP** — call `shellwatch_send_input` with a command, then `shellwatch_get_output` to read the result
-8. **Switch sessions** — click between sessions in the sidebar
-9. **Close sessions** — close from the UI sidebar or via `shellwatch_close_session`
-
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `pnpm dev` | Start server with hot reload (UI + API + WebSocket + MCP) |
-| `pnpm build` | Compile TypeScript |
+| `pnpm dev` | Start server with hot reload (Vite HMR) |
+| `pnpm build` | Build server (tsc) + client (vite) for production |
+| `pnpm start` | Run production server |
+| `pnpm build:server` | Compile server TypeScript only |
+| `pnpm build:client` | Bundle client with Vite only |
 | `pnpm typecheck` | Type check without emitting |
 | `pnpm lint` | Check with Biome |
 | `pnpm lint:fix` | Auto-fix lint issues |
-| `pnpm test` | Run all tests (unit + integration) |
-| `pnpm test:watch` | Run tests in watch mode |
+| `pnpm test` | Run all tests |
 | `pnpm test:coverage` | Run tests with coverage report |
 
-## Architecture
+## Testing
 
-```
-[config.yaml]
-      |
-      v
-[TerminalManager] ←── [MCP tools @ /mcp (streamable HTTP)]
-   |          \
-   |           \
-   v            v
-[SSH/ssh2]    [WebSocket @ /ws]
-   |               |
-   v               v
-[Remote host]  [Web UI (xterm.js)]
+Tests cover unit and integration scenarios. No external services needed — everything runs in-process with an embedded ssh2 server.
+
+```bash
+pnpm test           # run all tests
+pnpm test:coverage  # run with coverage report
 ```
 
-The TerminalManager is the shared core. It emits events on session state changes, which the WebSocket handler broadcasts to all connected browser clients. This keeps the UI in sync regardless of whether sessions are created from the UI or MCP.
+## Tech stack
+
+- **Backend:** Fastify, ssh2, @modelcontextprotocol/sdk
+- **Frontend:** Vanilla TypeScript, Vite, xterm.js
+- **Database:** SQLite via Drizzle ORM
+- **Auth:** WebAuthn/passkeys (via @simplewebauthn)
+- **Testing:** Vitest, ssh2 Server (in-process)
+- **Config:** YAML + zod validation
+- **Linting:** Biome
 
 ## Troubleshooting
 
@@ -163,52 +179,4 @@ The TerminalManager is the shared core. It emits events on session state changes
 
 **"Auth failure"** — Ensure the private key matches the server's authorized keys and the username is correct.
 
-**"Config validation error"** — Check your `config.yaml` against `config.sample.yaml`. All fields (`id`, `label`, `host`, `username`, `privateKeyPath`) are required.
-
 **Port already in use** — Kill the existing process: `lsof -ti:3000 | xargs kill`
-
-## Testing
-
-104 tests covering unit and integration scenarios. No external services needed — everything runs in-process.
-
-```bash
-pnpm test           # run all tests
-pnpm test:coverage  # run with coverage report
-```
-
-### Unit tests (66)
-Tests for individual components with mocked dependencies:
-- **OutputBuffer** — append, incremental reads, eviction, clear
-- **TerminalManager** — session lifecycle, events, idle cleanup
-- **Config loader** — valid/invalid configs, validation errors
-- **MCP tools** — all 6 tools via InMemoryTransport
-- **API client** — REST calls with mocked fetch
-- **WS client** — message dispatch, reconnect, unsubscribe
-
-### Integration tests (38)
-End-to-end tests across all four actors, using real infrastructure:
-- **In-process ssh2 Server** — ed25519 auth, PTY, echo shell
-- **ShellWatch Fastify app** — on a random port
-- **MCP client** — via `StreamableHTTPClientTransport`
-- **WebSocket client** — via `ws` library
-
-| Category | Tests | What it verifies |
-|----------|-------|-----------------|
-| MCP Client Flow | 7 | Full MCP tool lifecycle against real SSH |
-| REST API Flow | 6 | HTTP CRUD + error codes |
-| WebSocket Flow | 6 | Attach, I/O, close, disconnect survivability |
-| Cross-Actor (MCP↔WS) | 3 | MCP actions trigger real-time WS events |
-| Cross-Actor (HTTP↔MCP) | 3 | Sessions shared across interfaces |
-| SSH Server Events | 4 | Server push propagation, disconnect handling |
-| Error Scenarios | 6 | Error handling across all actors |
-| Concurrent Sessions | 3 | Independent I/O, mixed actor sessions |
-
-On test failure, diagnostic logs from all actors (SSH server, app, MCP client, WS client) are dumped automatically.
-
-## Tech stack
-
-- **Backend:** Fastify, ssh2, @modelcontextprotocol/sdk
-- **Frontend:** Vanilla TypeScript, Vite (middleware mode), xterm.js
-- **Testing:** Vitest, ssh2 Server (in-process), MCP client SDK
-- **Config:** YAML + zod validation
-- **Linting:** Biome
