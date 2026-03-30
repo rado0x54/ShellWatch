@@ -14,7 +14,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): void {
 
   const now = new Date().toISOString();
 
-  for (const server of config.servers) {
+  for (const server of config.seedServers) {
     db.insert(endpoints)
       .values({
         id: server.id,
@@ -22,7 +22,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): void {
         host: server.host,
         port: server.port,
         username: server.username,
-        keyId: server.keyId,
         enabled: true,
         createdAt: now,
         updatedAt: now,

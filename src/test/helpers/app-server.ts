@@ -49,21 +49,20 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
 
   const config: Config = {
     keyDirectory: tmpDir,
-    servers: [
+    seedServers: [
       {
         id: "test-server",
         label: "Test Server",
         host: sshServer.host,
         port: sshServer.port,
         username: "testuser",
-        keyId: "test-key",
       },
     ],
     security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
     notifications: { mcp: { debounceMs: 50 } },
   };
 
-  const endpointRepo = new InMemoryEndpointRepository(config.servers);
+  const endpointRepo = new InMemoryEndpointRepository(config.seedServers);
   const keyRepo = new InMemorySshKeyRepository([
     { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
   ]);

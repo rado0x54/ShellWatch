@@ -21,20 +21,18 @@ describe("loadConfig", () => {
       dir,
       `
 keyDirectory: ./keys
-servers:
+seedServers:
   - id: test
     label: Test
     host: localhost
     port: 22
     username: user
-    keyId: test-key
 `,
     );
 
     const config = loadConfig(configPath);
-    expect(config.servers).toHaveLength(1);
-    expect(config.servers[0].id).toBe("test");
-    expect(config.servers[0].keyId).toBe("test-key");
+    expect(config.seedServers).toHaveLength(1);
+    expect(config.seedServers[0].id).toBe("test");
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
@@ -43,17 +41,16 @@ servers:
     const configPath = writeConfig(
       dir,
       `
-servers:
+seedServers:
   - id: test
     label: Test
     host: localhost
     username: user
-    keyId: k1
 `,
     );
 
     const config = loadConfig(configPath);
-    expect(config.servers[0].port).toBe(22);
+    expect(config.seedServers[0].port).toBe(22);
   });
 
   it("defaults keyDirectory to ./keys", () => {
@@ -61,17 +58,24 @@ servers:
     const configPath = writeConfig(
       dir,
       `
-servers:
+seedServers:
   - id: test
     label: Test
     host: localhost
     username: user
-    keyId: k1
 `,
     );
 
     const config = loadConfig(configPath);
     expect(config.keyDirectory).toBe(join(dir, "keys"));
+  });
+
+  it("defaults seedServers to empty array", () => {
+    const dir = createTempDir();
+    const configPath = writeConfig(dir, "keyDirectory: ./keys\n");
+
+    const config = loadConfig(configPath);
+    expect(config.seedServers).toEqual([]);
   });
 
   it("throws on missing config file", () => {
@@ -85,21 +89,15 @@ servers:
     expect(() => loadConfig(configPath)).toThrow("Failed to parse YAML");
   });
 
-  it("throws on missing required fields", () => {
+  it("throws on missing required fields in seedServers entries", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
-servers:
+seedServers:
   - id: test
 `,
     );
-    expect(() => loadConfig(configPath)).toThrow("Invalid config");
-  });
-
-  it("throws on empty servers list", () => {
-    const dir = createTempDir();
-    const configPath = writeConfig(dir, "servers: []");
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
@@ -108,25 +106,22 @@ servers:
     const configPath = writeConfig(
       dir,
       `
-servers:
+seedServers:
   - id: server1
     label: Server 1
     host: host1.example.com
     port: 22
     username: user1
-    keyId: shared-key
   - id: server2
     label: Server 2
     host: host2.example.com
     port: 2222
     username: user2
-    keyId: shared-key
 `,
     );
 
     const config = loadConfig(configPath);
-    expect(config.servers).toHaveLength(2);
-    expect(config.servers[0].keyId).toBe("shared-key");
-    expect(config.servers[1].port).toBe(2222);
+    expect(config.seedServers).toHaveLength(2);
+    expect(config.seedServers[1].port).toBe(2222);
   });
 });

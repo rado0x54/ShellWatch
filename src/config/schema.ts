@@ -6,7 +6,6 @@ export const EndpointSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().min(1),
-  keyId: z.string().min(1),
 });
 
 export const SecuritySchema = z.object({
@@ -23,7 +22,7 @@ export const NotificationsSchema = z.object({
 
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
-  servers: z.array(EndpointSchema).min(1, "At least one server must be configured"),
+  seedServers: z.array(EndpointSchema).default([]),
   security: SecuritySchema.default({ allowedNetworks: ["127.0.0.1/32", "::1/128"] }),
   notifications: NotificationsSchema.default({ mcp: { debounceMs: 100 } }),
 });

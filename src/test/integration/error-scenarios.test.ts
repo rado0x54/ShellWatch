@@ -122,14 +122,13 @@ describe("Error Scenarios", () => {
 
       const config = {
         keyDirectory: "/tmp",
-        servers: [
+        seedServers: [
           {
             id: "no-key-ep",
             label: "No Key",
             host: "localhost",
             port: 22,
             username: "test",
-            keyId: "missing-key",
           },
         ],
         security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },

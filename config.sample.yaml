@@ -1,31 +1,28 @@
 # ShellWatch SSH endpoint configuration
-# Copy this file to config.yaml and update with your SSH targets.
+# Copy this file to config.yaml and update with your settings.
 #
 # SSH keys are auto-discovered from the keyDirectory.
 # Generate a key:  ssh-keygen -t ed25519 -f ./keys/my-server.pem -C "shellwatch"
 # Add public key:  ssh-copy-id -i ./keys/my-server.pem.pub user@host
 #
-# Keys are matched to endpoints by their ID (filename without .pem extension).
-# One key can be shared across multiple endpoints.
+# Keys are assigned to endpoints via the web UI after discovery.
 
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
 
-# SSH endpoints (keyId = filename without .pem extension)
-servers:
-  - id: dev-box
-    label: Dev Box
-    host: dev.example.com
-    port: 22
-    username: ubuntu
-    keyId: dev-box     # matches ./keys/dev-box.pem
-
-  - id: staging
-    label: Staging
-    host: staging.example.com
-    port: 22
-    username: deploy
-    keyId: dev-box     # same key, different endpoint
+# Optional: seed endpoints on first run (keys are assigned via UI)
+# seedServers:
+#   - id: dev-box
+#     label: Dev Box
+#     host: dev.example.com
+#     port: 22
+#     username: ubuntu
+#
+#   - id: staging
+#     label: Staging
+#     host: staging.example.com
+#     port: 2222
+#     username: deploy
 
 # Security settings
 security:
