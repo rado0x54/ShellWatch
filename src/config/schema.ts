@@ -8,32 +8,43 @@ export const EndpointSchema = z.object({
   username: z.string().min(1),
 });
 
+const securityDefaults = { allowedNetworks: ["127.0.0.1/32", "::1/128"] };
+
 export const SecuritySchema = z.object({
-  allowedNetworks: z.array(z.string()).default(["127.0.0.1/32", "::1/128"]),
+  allowedNetworks: z.array(z.string()).default(securityDefaults.allowedNetworks),
 });
+
+const notificationDefaults = { mcp: { debounceMs: 100 } };
 
 export const NotificationsSchema = z.object({
   mcp: z
     .object({
-      debounceMs: z.number().int().min(10).max(5000).default(100),
+      debounceMs: z.number().int().min(10).max(5000).default(notificationDefaults.mcp.debounceMs),
     })
-    .default({ debounceMs: 100 }),
+    .default(notificationDefaults.mcp),
 });
 
+export const serverDefaults = {
+  port: 3000,
+  basePath: "",
+};
+
 export const ServerSchema = z.object({
-  port: z.number().int().min(1).max(65535).default(3000),
+  port: z.number().int().min(1).max(65535).default(serverDefaults.port),
   basePath: z
     .string()
-    .default("")
+    .default(serverDefaults.basePath)
     .transform((v) => v.replace(/\/+$/, "")),
+  trustedForwardedHostHeader: z.string().optional(),
+  trustedForwardedProtoHeader: z.string().optional(),
 });
 
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedServers: z.array(EndpointSchema).default([]),
-  server: ServerSchema.default({ port: 3000, basePath: "" }),
-  security: SecuritySchema.default({ allowedNetworks: ["127.0.0.1/32", "::1/128"] }),
-  notifications: NotificationsSchema.default({ mcp: { debounceMs: 100 } }),
+  server: ServerSchema.default(serverDefaults),
+  security: SecuritySchema.default(securityDefaults),
+  notifications: NotificationsSchema.default(notificationDefaults),
 });
 
 export type Endpoint = z.infer<typeof EndpointSchema>;

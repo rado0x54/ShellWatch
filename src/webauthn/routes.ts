@@ -22,19 +22,26 @@ function computeFingerprint(coseKey: Buffer): string {
   return `SHA256:${createHash("sha256").update(coseKey).digest("base64url")}`;
 }
 
-function getOriginAndRpId(request: { headers: Record<string, string | string[] | undefined>; protocol: string }) {
-  const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");
-  const protocol = String(request.headers["x-forwarded-proto"] ?? request.protocol);
+interface ProxyHeaderConfig {
+  hostHeader?: string;
+  protoHeader?: string;
+}
+
+function getOriginAndRpId(request: { headers: Record<string, string | string[] | undefined>; protocol: string }, proxy: ProxyHeaderConfig) {
+  const forwardedHost = proxy.hostHeader ? request.headers[proxy.hostHeader] : undefined;
+  const forwardedProto = proxy.protoHeader ? request.headers[proxy.protoHeader] : undefined;
+  const host = String(forwardedHost ?? request.headers.host ?? "localhost");
+  const protocol = String(forwardedProto ?? request.protocol);
   const rpId = host.split(":")[0];
   const origin = `${protocol}://${host}`;
   return { rpId, origin };
 }
 
-export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "") {
+export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "", proxy: ProxyHeaderConfig = {}) {
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(`${basePath}/api/webauthn/register/options`, async (request) => {
     const { label } = request.body;
-    const { rpId } = getOriginAndRpId(request);
+    const { rpId } = getOriginAndRpId(request, proxy);
 
     // Get existing credentials to exclude (prevent re-registration)
     const existing = db
@@ -78,7 +85,7 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, b
     `${basePath}/api/webauthn/register/verify`,
     async (request, reply) => {
       const { challengeId, label, credential } = request.body;
-      const { rpId, origin } = getOriginAndRpId(request);
+      const { rpId, origin } = getOriginAndRpId(request, proxy);
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
+import { serverDefaults } from "../../config/index.js";
 import {
   connectTestWsClient,
   createTestLog,
@@ -131,7 +132,7 @@ describe("Error Scenarios", () => {
             username: "test",
           },
         ],
-        server: { port: 3000, basePath: "" },
+        server: serverDefaults,
         security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
         notifications: { mcp: { debounceMs: 50 } },
       };

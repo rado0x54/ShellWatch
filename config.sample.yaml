@@ -9,8 +9,10 @@
 
 # Server settings
 # server:
-#   port: 3000                # HTTP port (default: 3000)
-#   basePath: /shellwatch     # Serve under a subpath (default: none)
+#   port: 3000                                        # HTTP port (default: 3000)
+#   basePath: /shellwatch                             # Serve under a subpath (default: none)
+#   trustedForwardedHostHeader: x-forwarded-host      # Trust proxy host header (default: disabled)
+#   trustedForwardedProtoHeader: x-forwarded-proto    # Trust proxy protocol header (default: disabled)
 
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys

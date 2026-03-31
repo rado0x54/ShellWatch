@@ -174,7 +174,10 @@ export async function buildApp(
 
   // WebAuthn routes
   if (db) {
-    registerWebAuthnRoutes(app, db, base);
+    registerWebAuthnRoutes(app, db, base, {
+      hostHeader: config.server.trustedForwardedHostHeader,
+      protoHeader: config.server.trustedForwardedProtoHeader,
+    });
   }
 
   // Client runtime config

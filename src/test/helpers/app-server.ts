@@ -7,7 +7,7 @@ import ssh2 from "ssh2";
 
 const { utils } = ssh2;
 
-import type { Config } from "../../config/index.js";
+import { serverDefaults, type Config } from "../../config/index.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
@@ -66,7 +66,7 @@ export async function startTestApp(
         username: "testuser",
       },
     ],
-    server: { port: 3000, basePath: options.basePath ?? "" },
+    server: { ...serverDefaults, basePath: options.basePath ?? "" },
     security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
     notifications: { mcp: { debounceMs: 50 } },
   };
