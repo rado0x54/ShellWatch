@@ -1,8 +1,9 @@
 import { basePath } from "./base-path.js";
 import {
   deleteCredential,
+  finishPasskeyRegistration,
   listCredentials,
-  registerPasskey,
+  startPasskeyRegistration,
   type WebAuthnCredential,
 } from "./webauthn.js";
 
@@ -150,6 +151,19 @@ export class SettingsPage {
           <div style="margin-top:1rem">
             <button type="button" class="btn btn-connect" id="register-passkey-settings">Register New Passkey</button>
           </div>
+          <div id="passkey-modal-overlay" class="modal-overlay" style="display:none">
+            <div class="modal">
+              <h3 id="passkey-modal-title">Name Your Passkey</h3>
+              <p id="passkey-modal-desc" style="color:#8888aa;font-size:0.85rem;margin:0.75rem 0">
+                Choose a label to identify this passkey.
+              </p>
+              <input type="text" id="passkey-label-input" placeholder="e.g., YubiKey 5 NFC" style="width:100%;margin-bottom:1rem" />
+              <div style="display:flex;gap:0.5rem;justify-content:flex-end">
+                <button type="button" class="btn btn-close" id="passkey-modal-cancel">Cancel</button>
+                <button type="button" class="btn btn-connect" id="passkey-modal-save">Save</button>
+              </div>
+            </div>
+          </div>
         </section>
       </div>
     `;
@@ -242,14 +256,56 @@ export class SettingsPage {
       });
     }
 
-    // Register passkey
+    // Register passkey (two-step: authenticate first, then name)
     this.container
       .querySelector("#register-passkey-settings")
       ?.addEventListener("click", async () => {
-        const label = prompt("Passkey label (e.g., YubiKey 5 NFC):");
-        if (!label) return;
         try {
-          await registerPasskey(label);
+          // Step 1+2: browser WebAuthn prompt (user touches key)
+          const { challengeId, credential, suggestedLabel } =
+            await startPasskeyRegistration();
+
+          // Show naming modal with suggested label
+          const overlay = this.container.querySelector("#passkey-modal-overlay") as HTMLElement;
+          const input = this.container.querySelector("#passkey-label-input") as HTMLInputElement;
+          const desc = this.container.querySelector("#passkey-modal-desc") as HTMLElement;
+          overlay.style.display = "flex";
+          input.value = suggestedLabel;
+          desc.textContent = `Detected: ${suggestedLabel}. Change the label if you like.`;
+          input.select();
+          input.focus();
+
+          // Wait for save or cancel
+          const label = await new Promise<string | null>((resolve) => {
+            const save = this.container.querySelector("#passkey-modal-save")!;
+            const cancel = this.container.querySelector("#passkey-modal-cancel")!;
+            const onSave = () => {
+              cleanup();
+              resolve(input.value.trim() || suggestedLabel);
+            };
+            const onCancel = () => {
+              cleanup();
+              resolve(null);
+            };
+            const onKey = (e: Event) => {
+              if ((e as KeyboardEvent).key === "Enter") onSave();
+              if ((e as KeyboardEvent).key === "Escape") onCancel();
+            };
+            const cleanup = () => {
+              save.removeEventListener("click", onSave);
+              cancel.removeEventListener("click", onCancel);
+              input.removeEventListener("keydown", onKey);
+              overlay.style.display = "none";
+            };
+            save.addEventListener("click", onSave);
+            cancel.addEventListener("click", onCancel);
+            input.addEventListener("keydown", onKey);
+          });
+
+          if (!label) return; // cancelled
+
+          // Step 3: verify and save with chosen label
+          await finishPasskeyRegistration(challengeId, credential, label);
           await this.render();
         } catch (err) {
           alert(`Registration failed: ${(err as Error).message}`);

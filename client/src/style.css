@@ -439,6 +439,45 @@ body {
   border-color: #4a9eff;
 }
 
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #16213e;
+  border: 1px solid #2a2a4a;
+  border-radius: 8px;
+  padding: 1.5rem;
+  min-width: 340px;
+  max-width: 480px;
+}
+
+.modal h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.modal input[type="text"] {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  color: #e0e0e0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.modal input[type="text"]:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+
 /* Observer mode */
 #observer-page {
   height: 100%;
