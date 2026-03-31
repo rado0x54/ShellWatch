@@ -47,6 +47,7 @@ export const ServerSchema = z.object({
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedServers: z.array(EndpointSchema).default([]),
+  seedApiKey: z.string().optional(),
   server: ServerSchema.default(serverDefaults),
   security: SecuritySchema.default(securityDefaults),
   notifications: NotificationsSchema.default(notificationDefaults),
