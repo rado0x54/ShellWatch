@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from "@simplewebauthn/server";
+import { count, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { sshKeys, webauthnCredentials } from "../db/schema.js";
@@ -37,7 +42,12 @@ function getOriginAndRpId(request: { headers: Record<string, string | string[] |
   return { rpId, origin };
 }
 
-export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "", proxy: ProxyHeaderConfig = {}) {
+export interface SessionConfig {
+  secret: string;
+  ttlSeconds: number;
+}
+
+export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "", proxy: ProxyHeaderConfig = {}, sessionConfig?: SessionConfig) {
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(`${basePath}/api/webauthn/register/options`, async (request) => {
     const { label } = request.body;
@@ -205,4 +215,122 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, b
     db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
     return { status: "deleted" };
   });
+
+  // --- Auth Status ---
+  app.get(`${basePath}/api/webauthn/status`, async () => {
+    const result = db.select({ count: count() }).from(webauthnCredentials).get();
+    return { hasPasskeys: (result?.count ?? 0) > 0 };
+  });
+
+  // --- Login (Assertion): Generate Options ---
+  app.post(`${basePath}/api/webauthn/login/options`, async (request) => {
+    const { rpId } = getOriginAndRpId(request, proxy);
+
+    const creds = db
+      .select({ credentialId: webauthnCredentials.credentialId })
+      .from(webauthnCredentials)
+      .all();
+
+    if (creds.length === 0) {
+      return { error: "No passkeys registered" };
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID: rpId,
+      userVerification: "preferred",
+      allowCredentials: creds.map((c) => ({ id: c.credentialId })),
+    });
+
+    const challengeId = randomUUID();
+    pendingChallenges.set(challengeId, {
+      challenge: options.challenge,
+      expires: Date.now() + 5 * 60 * 1000,
+    });
+
+    return { ...options, challengeId };
+  });
+
+  // --- Login (Assertion): Verify ---
+  app.post<{ Body: { challengeId: string; credential: unknown } }>(
+    `${basePath}/api/webauthn/login/verify`,
+    async (request, reply) => {
+      if (!sessionConfig) {
+        reply.status(500);
+        return { error: "Session config not available" };
+      }
+
+      const { challengeId, credential } = request.body;
+      const { rpId, origin } = getOriginAndRpId(request, proxy);
+
+      const pending = pendingChallenges.get(challengeId);
+      if (!pending || pending.expires < Date.now()) {
+        pendingChallenges.delete(challengeId);
+        reply.status(400);
+        return { error: "Challenge expired or not found" };
+      }
+      pendingChallenges.delete(challengeId);
+
+      // Find the credential in DB
+      const assertionResponse = credential as { id: string; rawId: string; response: unknown; type: string; authenticatorAttachment?: string; clientExtensionResults?: unknown };
+      const storedCred = db
+        .select({
+          id: webauthnCredentials.id,
+          credentialId: webauthnCredentials.credentialId,
+          publicKey: webauthnCredentials.publicKey,
+          counter: webauthnCredentials.counter,
+          transports: webauthnCredentials.transports,
+        })
+        .from(webauthnCredentials)
+        .where(eq(webauthnCredentials.credentialId, assertionResponse.id))
+        .get();
+
+      if (!storedCred) {
+        reply.status(400);
+        return { error: "Unknown credential" };
+      }
+
+      try {
+        const verification = await verifyAuthenticationResponse({
+          response: credential as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
+          expectedChallenge: pending.challenge,
+          expectedOrigin: origin,
+          expectedRPID: rpId,
+          credential: {
+            id: storedCred.credentialId,
+            publicKey: new Uint8Array(storedCred.publicKey),
+            counter: storedCred.counter,
+            transports: storedCred.transports ? JSON.parse(storedCred.transports) : undefined,
+          },
+        });
+
+        if (!verification.verified) {
+          reply.status(400);
+          return { error: "Verification failed" };
+        }
+
+        // Update counter and last used
+        db.update(webauthnCredentials)
+          .set({
+            counter: verification.authenticationInfo.newCounter,
+            lastUsedAt: new Date().toISOString(),
+          })
+          .where(eq(webauthnCredentials.id, storedCred.id))
+          .run();
+
+        // Set session cookie
+        const { createSessionCookie } = await import("../server/auth/session-cookie.js");
+        const cookieValue = createSessionCookie(sessionConfig.secret, sessionConfig.ttlSeconds);
+        const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
+        reply.header(
+          "Set-Cookie",
+          `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=${basePath || "/"}; Max-Age=${sessionConfig.ttlSeconds}`,
+        );
+
+        return { verified: true };
+      } catch (err) {
+        reply.status(400);
+        return { error: (err as Error).message };
+      }
+    },
+  );
 }

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
-import { serverDefaults } from "../../config/index.js";
+import { securityDefaults, serverDefaults } from "../../config/index.js";
 import {
   connectTestWsClient,
   createTestLog,
@@ -133,12 +133,12 @@ describe("Error Scenarios", () => {
           },
         ],
         server: serverDefaults,
-        security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
+        security: { ...securityDefaults, allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
         notifications: { mcp: { debounceMs: 50 } },
       };
       const app = await buildApp(config, tm, endpointRepo, keyRepo, null, [], null, {
         logger: false,
-        skipVite: true,
+        skipStaticFiles: true,
       });
       await app.listen({ port: 0, host: "127.0.0.1" });
       const addr = app.server.address();

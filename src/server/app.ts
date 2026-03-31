@@ -1,25 +1,27 @@
-import { existsSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
-import { createServer as createViteServer } from "vite";
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
+import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability } from "../transport/key-directory-watcher.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
+import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
+import { registerAuthGate } from "./auth/auth-gate.js";
+import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import type { WsExtension } from "./ws-extension.js";
-import { registerIpAllowlist } from "./ip-allowlist.js";
 import { registerWebSocket } from "./ws-handler.js";
 
 export interface AppOptions {
   logger?: boolean;
-  skipVite?: boolean;
+  skipStaticFiles?: boolean;
 }
 
 export async function buildApp(
@@ -31,14 +33,28 @@ export async function buildApp(
   wsExtensions: WsExtension[] = [],
   keyAvailability: KeyAvailability | null = null,
   options: AppOptions = {},
+  apiKeyRepo?: ApiKeyRepository,
 ) {
   const app = Fastify({ logger: options.logger ?? true });
   const base = config.server.basePath;
 
+  // Cookie secret for session signing
+  const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");
+  if (!config.security.cookieSecret) {
+    app.log.warn("No cookieSecret in config — sessions will not survive server restarts");
+  }
+
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
 
+  // Auth gate: require passkey login when passkeys exist
+  registerAuthGate(app, db, base, cookieSecret);
+
+  // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
+  if (apiKeyRepo) {
+    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`);
+  }
 
   // Redirect root to basePath when basePath is set
   if (base) {
@@ -164,6 +180,49 @@ export async function buildApp(
     },
   );
 
+  // --- API Keys ---
+
+  if (apiKeyRepo) {
+    app.get(`${base}/api/keys/api`, async () => {
+      const keys = await apiKeyRepo.findAll();
+      return {
+        keys: keys.map((k) => ({
+          id: k.id,
+          label: k.label,
+          keyPrefix: k.keyPrefix,
+          scopes: k.scopes,
+          enabled: k.enabled,
+          createdAt: k.createdAt,
+        })),
+      };
+    });
+
+    app.post<{ Body: { label: string } }>(
+      `${base}/api/keys/api`,
+      async (request, reply) => {
+        const { label } = request.body;
+        if (!label) {
+          reply.status(400);
+          return { error: "Label is required" };
+        }
+        const raw = `sw_${randomBytes(24).toString("hex")}`;
+        const keyHash = hashApiKey(raw);
+        const keyPrefix = raw.slice(0, 10);
+        const id = randomUUID();
+        await apiKeyRepo.create({ id, label, keyHash, keyPrefix, scopes: ["mcp"] });
+        return { id, label, keyPrefix, key: raw };
+      },
+    );
+
+    app.delete<{ Params: { id: string } }>(
+      `${base}/api/keys/api/:id`,
+      async (request) => {
+        await apiKeyRepo.revoke(request.params.id);
+        return { status: "revoked" };
+      },
+    );
+  }
+
   // WebSocket for terminal I/O
   const wsHandler = registerWebSocket(app, terminalManager, base);
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
@@ -174,10 +233,16 @@ export async function buildApp(
 
   // WebAuthn routes
   if (db) {
-    registerWebAuthnRoutes(app, db, base, {
-      hostHeader: config.server.trustedForwardedHostHeader,
-      protoHeader: config.server.trustedForwardedProtoHeader,
-    });
+    registerWebAuthnRoutes(
+      app,
+      db,
+      base,
+      {
+        hostHeader: config.server.trustedForwardedHostHeader,
+        protoHeader: config.server.trustedForwardedProtoHeader,
+      },
+      { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+    );
   }
 
   // Client runtime config
@@ -186,39 +251,20 @@ export async function buildApp(
     return `window.__BASE_PATH__=${JSON.stringify(base)};`;
   });
 
-  // Serve client UI
-  if (!options.skipVite) {
-    const clientDist = resolve(import.meta.dirname, "../client");
-    const hasBuiltClient = existsSync(resolve(clientDist, "index.html"));
+  // Static client files (built by vite build client → dist/client/)
+  if (!options.skipStaticFiles) {
+    const clientDist = resolve(process.cwd(), "dist/client");
+    await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
 
-    if (hasBuiltClient) {
-      // Production: serve pre-built client assets
-      await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
-      app.setNotFoundHandler((_request, reply) => {
-        reply.sendFile("index.html");
-      });
-    } else {
-      // Development: Vite dev server with HMR
-      const clientRoot = resolve(import.meta.dirname, "../../client");
-      const vite = await createViteServer({
-        root: clientRoot,
-        server: {
-          middlewareMode: true,
-          hmr: { port: 24679 },
-        },
-        appType: "spa",
-      });
+    // SPA fallback: serve index.html for unmatched routes
+    app.setNotFoundHandler((_request, reply) => {
+      reply.sendFile("index.html");
+    });
 
-      app.setNotFoundHandler((request, reply) => {
-        // Strip basePath prefix so Vite sees root-relative paths
-        if (base && request.raw.url?.startsWith(base)) {
-          request.raw.url = request.raw.url.slice(base.length) || "/";
-        }
-        vite.middlewares.handle(request.raw, reply.raw, () => {
-          reply.status(404).send({ error: "Not found" });
-        });
-      });
-    }
+    // Login page — explicit route so it doesn't fall through to SPA
+    app.get(`${base}/login`, async (_request, reply) => {
+      return reply.sendFile("login.html");
+    });
   }
 
   return app;

@@ -6,7 +6,6 @@ import { TerminalView } from "./terminal-view.js";
 import { type SessionListEntry, WsClient } from "./ws-client.js";
 
 const wsClient = new WsClient(basePath);
-wsClient.connect();
 
 const terminalView = new TerminalView(wsClient);
 
@@ -257,6 +256,25 @@ async function refreshEndpoints() {
 }
 
 async function init() {
+  // Check if auth is required — redirect to login if so
+  try {
+    const res = await fetch(`${basePath}/api/webauthn/status`);
+    if (res.ok) {
+      const { hasPasskeys } = await res.json();
+      if (hasPasskeys) {
+        // Test if we have a valid session by hitting an authenticated endpoint
+        const authCheck = await fetch(`${basePath}/api/sessions`);
+        if (authCheck.status === 401) {
+          window.location.href = `${basePath}/login`;
+          return;
+        }
+      }
+    }
+  } catch {
+    // Status endpoint unavailable — continue without auth check
+  }
+
+  wsClient.connect();
   await refreshEndpoints();
 }
 

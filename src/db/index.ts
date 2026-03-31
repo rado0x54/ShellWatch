@@ -1,6 +1,11 @@
 export { createDatabase, type DatabaseConnection, type ShellWatchDB } from "./connection.js";
 export { runMigrations } from "./migrate.js";
 export {
+  DrizzleApiKeyRepository,
+  type ApiKeyInfo,
+  type ApiKeyRepository,
+} from "./repositories/api-key-repo.js";
+export {
   DrizzleEndpointRepository,
   type EndpointInfo,
   type EndpointRepository,

@@ -1,6 +1,7 @@
 import { loadConfig } from "./config/index.js";
 import {
   createDatabase,
+  DrizzleApiKeyRepository,
   DrizzleEndpointRepository,
   DrizzleSshKeyRepository,
   runMigrations,
@@ -24,6 +25,7 @@ try {
 
   const endpointRepo = new DrizzleEndpointRepository(db);
   const keyRepo = new DrizzleSshKeyRepository(db);
+  const apiKeyRepo = new DrizzleApiKeyRepository(db);
 
   // Scan key directory, auto-register keys in DB, and watch for changes
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
@@ -85,6 +87,8 @@ try {
     db,
     [signingBridge],
     keyWatcher,
+    {},
+    apiKeyRepo,
   );
 
   const endpoints = await endpointRepo.findAll();

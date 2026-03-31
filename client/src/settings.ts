@@ -7,6 +7,15 @@ import {
   type WebAuthnCredential,
 } from "./webauthn.js";
 
+interface ApiKeyData {
+  id: string;
+  label: string;
+  keyPrefix: string;
+  scopes: string[];
+  enabled: boolean;
+  createdAt: string;
+}
+
 interface EndpointData {
   id: string;
   label: string;
@@ -45,10 +54,11 @@ export class SettingsPage {
   }
 
   private async render(): Promise<void> {
-    const [endpoints, keys, passkeys] = await Promise.all([
+    const [endpoints, keys, passkeys, apiKeys] = await Promise.all([
       this.fetchEndpoints(),
       this.fetchKeys(),
       listCredentials(),
+      this.fetchApiKeys(),
     ]);
 
     this.container.innerHTML = `
@@ -165,6 +175,51 @@ export class SettingsPage {
             </div>
           </div>
         </section>
+
+        <section class="settings-section">
+          <h2>API Keys (MCP)</h2>
+          <table class="settings-table">
+            <thead>
+              <tr><th>Label</th><th>Prefix</th><th>Status</th><th>Created</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${apiKeys
+                .map(
+                  (k) => `
+                <tr>
+                  <td>${k.label}</td>
+                  <td style="font-family:monospace;font-size:0.75rem">${k.keyPrefix}...</td>
+                  <td><span class="badge ${k.enabled ? "badge-available" : "badge-unavailable"}">${k.enabled ? "active" : "revoked"}</span></td>
+                  <td>${k.createdAt.slice(0, 10)}</td>
+                  <td>${k.enabled ? `<button type="button" class="btn btn-close btn-revoke-apikey" data-id="${k.id}">Revoke</button>` : ""}</td>
+                </tr>
+              `,
+                )
+                .join("")}
+              ${apiKeys.length === 0 ? '<tr><td colspan="5" style="color:#555">No API keys configured</td></tr>' : ""}
+            </tbody>
+          </table>
+          <div class="settings-form">
+            <h3>Generate API Key</h3>
+            <div class="form-row">
+              <input type="text" placeholder="Label (e.g., Claude Agent)" id="apikey-label" style="flex:1" />
+              <button type="button" class="btn btn-connect" id="apikey-generate-btn">Generate</button>
+            </div>
+          </div>
+          <div id="apikey-modal-overlay" class="modal-overlay" style="display:none">
+            <div class="modal">
+              <h3>API Key Created</h3>
+              <p style="color:#8888aa;font-size:0.85rem;margin:0.75rem 0">
+                Copy this key now — it will not be shown again.
+              </p>
+              <pre class="code-block" id="apikey-value" style="user-select:all;cursor:text"></pre>
+              <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem">
+                <button type="button" class="btn btn-connect" id="apikey-modal-copy">Copy</button>
+                <button type="button" class="btn btn-close" id="apikey-modal-close">Done</button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     `;
 
@@ -256,6 +311,63 @@ export class SettingsPage {
       });
     }
 
+    // Revoke API key
+    for (const btn of this.container.querySelectorAll(".btn-revoke-apikey")) {
+      btn.addEventListener("click", async () => {
+        const id = (btn as HTMLElement).dataset.id;
+        if (id && confirm("Revoke this API key?")) {
+          await fetch(`${basePath}/api/keys/api/${id}`, { method: "DELETE" });
+          await this.render();
+        }
+      });
+    }
+
+    // Generate API key
+    this.container.querySelector("#apikey-generate-btn")?.addEventListener("click", async () => {
+      const input = this.container.querySelector("#apikey-label") as HTMLInputElement;
+      const label = input?.value.trim();
+      if (!label) {
+        input?.focus();
+        return;
+      }
+      try {
+        const res = await fetch(`${basePath}/api/keys/api`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || "Failed to generate key");
+          return;
+        }
+        const { key } = await res.json();
+
+        // Show the key in a modal (one-time display)
+        const overlay = this.container.querySelector("#apikey-modal-overlay") as HTMLElement;
+        const valueEl = this.container.querySelector("#apikey-value") as HTMLElement;
+        overlay.style.display = "flex";
+        valueEl.textContent = key;
+
+        const copyBtn = this.container.querySelector("#apikey-modal-copy")!;
+        const closeBtn = this.container.querySelector("#apikey-modal-close")!;
+        const onCopy = () => {
+          navigator.clipboard.writeText(key);
+          (copyBtn as HTMLElement).textContent = "Copied!";
+        };
+        const onClose = () => {
+          copyBtn.removeEventListener("click", onCopy);
+          closeBtn.removeEventListener("click", onClose);
+          overlay.style.display = "none";
+          this.render();
+        };
+        copyBtn.addEventListener("click", onCopy);
+        closeBtn.addEventListener("click", onClose);
+      } catch (err) {
+        alert(`Failed: ${(err as Error).message}`);
+      }
+    });
+
     // Register passkey (two-step: authenticate first, then name)
     this.container
       .querySelector("#register-passkey-settings")
@@ -311,6 +423,17 @@ export class SettingsPage {
           alert(`Registration failed: ${(err as Error).message}`);
         }
       });
+  }
+
+  private async fetchApiKeys(): Promise<ApiKeyData[]> {
+    try {
+      const res = await fetch(`${basePath}/api/keys/api`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.keys;
+    } catch {
+      return [];
+    }
   }
 
   private async fetchEndpoints(): Promise<EndpointData[]> {

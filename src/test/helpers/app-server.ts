@@ -7,7 +7,7 @@ import ssh2 from "ssh2";
 
 const { utils } = ssh2;
 
-import { serverDefaults, type Config } from "../../config/index.js";
+import { securityDefaults, serverDefaults, type Config } from "../../config/index.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
@@ -67,7 +67,7 @@ export async function startTestApp(
       },
     ],
     server: { ...serverDefaults, basePath: options.basePath ?? "" },
-    security: { allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
+    security: { ...securityDefaults, allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"] },
     notifications: { mcp: { debounceMs: 50 } },
   };
 
@@ -87,7 +87,7 @@ export async function startTestApp(
 
   const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, [], null, {
     logger: false,
-    skipVite: true,
+    skipStaticFiles: true,
   });
 
   await app.listen({ port: 0, host: "127.0.0.1" });

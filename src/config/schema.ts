@@ -8,10 +8,15 @@ export const EndpointSchema = z.object({
   username: z.string().min(1),
 });
 
-const securityDefaults = { allowedNetworks: ["127.0.0.1/32", "::1/128"] };
+export const securityDefaults = {
+  allowedNetworks: ["127.0.0.1/32", "::1/128"],
+  sessionTtlSeconds: 86400,
+};
 
 export const SecuritySchema = z.object({
   allowedNetworks: z.array(z.string()).default(securityDefaults.allowedNetworks),
+  sessionTtlSeconds: z.number().int().min(60).default(securityDefaults.sessionTtlSeconds),
+  cookieSecret: z.string().optional(),
 });
 
 const notificationDefaults = { mcp: { debounceMs: 100 } };

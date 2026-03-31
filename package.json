@@ -4,7 +4,7 @@
   "description": "SSH session broker with browser UI and MCP interface",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "vite build client && tsx watch src/index.ts",
     "build": "tsc && vite build client",
     "build:server": "tsc",
     "build:client": "vite build client",
@@ -15,6 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "keys:generate": "tsx src/cli/manage-keys.ts generate",
+    "keys:list": "tsx src/cli/manage-keys.ts list",
+    "keys:revoke": "tsx src/cli/manage-keys.ts revoke",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
