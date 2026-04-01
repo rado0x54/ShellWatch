@@ -20,6 +20,6 @@
     }
   },
   "files": {
-    "includes": ["src/**", "client/**", "*.json", "*.ts"]
+    "includes": ["src/**", "client/src/**/*.ts", "*.json", "*.ts", "!client/.svelte-kit", "!dist"]
   }
 }

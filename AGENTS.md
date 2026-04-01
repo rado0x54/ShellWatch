@@ -15,7 +15,7 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 
 - **Runtime:** Node.js with TypeScript (strict mode)
 - **Backend:** Fastify with plugins (`@fastify/websocket`, `@fastify/cors`)
-- **Frontend:** Vanilla TypeScript + Vite (middleware mode, no framework — xterm.js is the main widget)
+- **Frontend:** SvelteKit (adapter-static, client-side SPA) with Svelte 5, xterm.js for terminal
 - **SSH:** ssh2 library
 - **Terminal:** xterm.js
 - **MCP:** @modelcontextprotocol/sdk (streamable HTTP transport)
@@ -45,14 +45,25 @@ src/
   test/
     helpers/            # Test infrastructure (SSH server, app, MCP/WS clients)
     integration/        # Integration tests by category
-client/                 # Vite frontend app
+client/                 # SvelteKit frontend app (adapter-static)
   src/
-    main.ts             # Client entry point
-    api.ts              # REST API client
-    ws-client.ts        # WebSocket client
-    terminal-view.ts    # xterm.js terminal management
-    style.css           # Global styles
-  index.html            # HTML entry
+    app.html            # HTML shell
+    app.css             # Global styles (CSS variables, shared classes)
+    lib/
+      stores/           # Svelte stores (ws, endpoints, keys, webauthn, auth)
+      components/       # Reusable components (Terminal, Sidebar)
+      utils/            # Utilities (FIDO signing)
+    routes/
+      +layout.svelte    # Root layout (sidebar + mobile nav)
+      +page.svelte      # Terminal view (default route)
+      login/            # WebAuthn login page
+      observer/         # Multi-session grid view
+      settings/         # Settings with tab sub-routes
+        endpoints/      # SSH endpoint management
+        keys/           # SSH key listing
+        passkeys/       # WebAuthn passkey management
+        api-keys/       # MCP API key management
+  svelte.config.js      # SvelteKit config
 config.sample.yaml      # Sample SSH endpoint config
 ```
 
@@ -63,12 +74,12 @@ config.sample.yaml      # Sample SSH endpoint config
 pnpm dev              # Start server (UI + API + WebSocket + MCP) with hot reload
 
 # Production
-pnpm build            # Build server (tsc) + client (vite) for production
+pnpm build            # Build server (tsc) + client (SvelteKit) for production
 pnpm start            # Run production server (serves pre-built client)
 
 # Build (individual)
 pnpm build:server     # Compile server TypeScript only
-pnpm build:client     # Bundle client with Vite only
+pnpm build:client     # Build SvelteKit client (svelte-kit sync + vite build)
 
 # Quality
 pnpm typecheck        # Type check without emitting
@@ -113,13 +124,11 @@ Tests cover both individual components and the full system. Integration tests us
 - `src/terminal/terminal-manager.test.ts` — lifecycle, events, idle cleanup (mock transport)
 - `src/config/loader.test.ts` — valid/invalid configs, validation errors
 - `src/mcp/server.test.ts` — all 6 MCP tools via InMemoryTransport
-- `client/src/api.test.ts` — REST API client (mock fetch)
-- `client/src/ws-client.test.ts` — WebSocket message handling, reconnect
 
 ### Integration Tests
 Integration tests spin up real infrastructure per test suite:
 - **In-process ssh2 Server** — ed25519 key auth, PTY, echo shell, server-push, disconnect simulation
-- **ShellWatch Fastify app** — on random port, `skipVite: true` for test isolation
+- **ShellWatch Fastify app** — on random port, `skipStaticFiles: true` for test isolation
 - **MCP client** — `StreamableHTTPClientTransport` against the app
 - **WebSocket client** — `ws` library with message buffering and `waitForMessage` helper
 

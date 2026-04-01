@@ -8,3 +8,4 @@ coverage/
 keys/
 config.yaml
 .env
+client/.svelte-kit/
