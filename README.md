@@ -72,12 +72,12 @@ ssh-copy-id -i ./keys/dev-box.pem.pub ubuntu@dev.example.com
 pnpm dev
 ```
 
-Starts the server with Vite HMR on `http://localhost:3000`.
+Builds the SvelteKit client and starts the server on `http://localhost:3000`.
 
 ### Production
 
 ```bash
-pnpm build   # compile server (tsc) + bundle client (vite)
+pnpm build   # compile server (tsc) + build client (SvelteKit)
 pnpm start   # run production server
 ```
 
@@ -87,7 +87,10 @@ The production server auto-detects the built client in `dist/client/` and serves
 
 | Path | Interface |
 |------|-----------|
-| `/` | Web UI |
+| `/` | Web UI — Terminal view |
+| `/observer` | Web UI — Multi-session grid |
+| `/settings/*` | Web UI — Settings (endpoints, keys, passkeys, API keys) |
+| `/login` | Web UI — WebAuthn login |
 | `/api/*` | REST API |
 | `/ws` | WebSocket (terminal I/O + events) |
 | `/mcp` | MCP (streamable HTTP) |
@@ -141,11 +144,11 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
 
 | Script | Description |
 |--------|-------------|
-| `pnpm dev` | Start server with hot reload (Vite HMR) |
-| `pnpm build` | Build server (tsc) + client (vite) for production |
+| `pnpm dev` | Build client + start server with hot reload |
+| `pnpm build` | Build server (tsc) + client (SvelteKit) for production |
 | `pnpm start` | Run production server |
 | `pnpm build:server` | Compile server TypeScript only |
-| `pnpm build:client` | Bundle client with Vite only |
+| `pnpm build:client` | Build SvelteKit client |
 | `pnpm typecheck` | Type check without emitting |
 | `pnpm lint` | Check with Biome |
 | `pnpm lint:fix` | Auto-fix lint issues |
@@ -164,7 +167,7 @@ pnpm test:coverage  # run with coverage report
 ## Tech stack
 
 - **Backend:** Fastify, ssh2, @modelcontextprotocol/sdk
-- **Frontend:** Vanilla TypeScript, Vite, xterm.js
+- **Frontend:** SvelteKit (Svelte 5, adapter-static), xterm.js
 - **Database:** SQLite via Drizzle ORM
 - **Auth:** WebAuthn/passkeys (via @simplewebauthn)
 - **Testing:** Vitest, ssh2 Server (in-process)

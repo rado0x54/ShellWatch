@@ -1,4 +1,4 @@
-# ShellWatch Architecture
+ok# ShellWatch Architecture
 
 ## Overview
 
@@ -93,17 +93,40 @@ ssh2-based implementation of `TerminalTransport`. Connects to a remote host, aut
 
 ### Web UI (`client/`)
 
-Browser-based terminal using xterm.js. Served via Vite middleware mode on the same port as the API.
+SvelteKit SPA (adapter-static) served as static files by Fastify. All routing is client-side. The UI uses xterm.js for terminal emulation and Svelte stores for reactive state management.
+
+**Routes:**
+| Route | View |
+|-------|------|
+| `/` | Terminal — single active session with xterm.js |
+| `/observer` | Observer — multi-session grid (dynamic layout) |
+| `/settings/endpoints` | SSH endpoint CRUD |
+| `/settings/keys` | SSH key listing |
+| `/settings/passkeys` | WebAuthn passkey management |
+| `/settings/api-keys` | MCP API key management |
+| `/login` | WebAuthn passkey login |
 
 **Communication:**
-- **REST API** (`/api/*`) — endpoint listing, session CRUD
-- **WebSocket** (`/ws`) — real-time terminal I/O and session status events
+- **REST API** (`/api/*`) — endpoint listing, session CRUD, key management, WebAuthn
+- **WebSocket** (`/ws`) — real-time terminal I/O, session status events, FIDO signing
 
 **WebSocket protocol:**
 ```
-Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close
-Server → Client: terminal:output, terminal:status, terminal:closed, sessions:changed, error
+Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
+                 terminal:take-control, terminal:release-control,
+                 fido:sign-response, fido:sign-error
+Server → Client: terminal:output, terminal:status, terminal:closed, terminal:mode,
+                 sessions:changed, fido:sign-request, error
 ```
+
+**State management:** Svelte stores provide reactive state shared across components:
+- `ws.ts` — WebSocket connection, message dispatch, session list
+- `endpoints.ts` — endpoint CRUD operations
+- `keys.ts` — SSH keys and API keys
+- `webauthn.ts` — passkey registration, login, credential management
+- `connection.ts` — base path configuration
+
+**Layout:** Responsive — persistent sidebar (280px) on desktop, hamburger slide-out on mobile (<768px). Settings uses a tab bar for sub-routes.
 
 The web UI sees ALL sessions (admin view) regardless of source. Sessions are displayed with their source label (`ui`, `mcp`, `ssh`).
 
@@ -209,7 +232,7 @@ Everything runs in a single Node.js process:
 │    ├── REST API routes (/api/*)         │
 │    ├── WebSocket handler (/ws)          │
 │    ├── MCP streamable HTTP (/mcp)       │
-│    └── Vite dev server (/ — SPA)        │
+│    └── Static files (/ — SvelteKit SPA)  │
 │                                         │
 │  TerminalManager                        │
 │    └── SSH connections (ssh2)           │
@@ -260,7 +283,7 @@ src/
     schema.ts                   # Zod schemas for config validation
     loader.ts                   # YAML config loading and key file verification
   server/
-    app.ts                      # Fastify app — routes, WebSocket, MCP, Vite
+    app.ts                      # Fastify app — routes, WebSocket, MCP, static files
     ws-handler.ts               # WebSocket protocol handler
     ws-protocol.ts              # WebSocket message type definitions
     ip-allowlist.ts             # CIDR-based IP filtering
@@ -279,12 +302,21 @@ src/
   test/
     helpers/                    # In-process test infrastructure
     integration/                # End-to-end tests across all actors
-client/
+client/                           # SvelteKit frontend (adapter-static)
   src/
-    main.ts                     # UI entry — endpoints, sessions, terminal switching
-    api.ts                      # REST API client
-    ws-client.ts                # WebSocket client with message buffering
-    terminal-view.ts            # xterm.js terminal management
+    app.html                    # HTML shell
+    app.css                     # Global styles (CSS variables, shared classes)
+    lib/
+      stores/                   # Svelte stores (ws, endpoints, keys, webauthn)
+      components/               # Reusable components (Terminal, Sidebar)
+      utils/                    # Utilities (FIDO signing)
+    routes/
+      +layout.svelte            # Root layout (sidebar + mobile nav)
+      +page.svelte              # Terminal view (default route)
+      login/                    # WebAuthn login page
+      observer/                 # Multi-session grid view
+      settings/                 # Settings with tab sub-routes
+  svelte.config.js              # SvelteKit config (adapter-static)
 ```
 
 ## Planned Architecture Extensions
@@ -292,9 +324,8 @@ client/
 See individual tickets for details:
 
 - **Guardrails (#13)** — input filtering layer in TerminalManager, before `sendInput()`
-- **Persistence (#14)** — Drizzle ORM with SQLite/PostgreSQL for dynamic config, audit, session history
 - **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
 - **Audit Log (#16)** — subscribes to TerminalManager events, persists to database
-- **Security (#15)** — API keys, passkey auth, per-agent endpoint restrictions
-- **Human-in-the-loop (#19)** — approval workflow with second-channel notifications
-- **Passkey (#20)** — unified WebAuthn for UI login, SSH signing, and approvals
+- **Multi-tenant (#17)** — user accounts, agent identities, scoped access
+- **Human-in-the-loop (#19)** — Web Push (PWA) notifications and interactive approvals
+- **SSH Agent Socket (#22)** — expose keys to system SSH clients via Unix domain socket

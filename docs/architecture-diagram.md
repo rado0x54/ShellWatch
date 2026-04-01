@@ -5,7 +5,7 @@ High-level functional architecture showing the four primary actors and their int
 ```mermaid
 graph TB
     subgraph Clients
-        User["User (Human)<br/>Browser + xterm.js"]
+        User["User (Human)<br/>SvelteKit SPA + xterm.js"]
         Agent["Agent (AI)<br/>MCP Client"]
     end
 

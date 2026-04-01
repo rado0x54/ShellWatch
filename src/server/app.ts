@@ -197,30 +197,24 @@ export async function buildApp(
       };
     });
 
-    app.post<{ Body: { label: string } }>(
-      `${base}/api/keys/api`,
-      async (request, reply) => {
-        const { label } = request.body;
-        if (!label) {
-          reply.status(400);
-          return { error: "Label is required" };
-        }
-        const raw = `sw_${randomBytes(24).toString("hex")}`;
-        const keyHash = hashApiKey(raw);
-        const keyPrefix = raw.slice(0, 10);
-        const id = randomUUID();
-        await apiKeyRepo.create({ id, label, keyHash, keyPrefix, scopes: ["mcp"] });
-        return { id, label, keyPrefix, key: raw };
-      },
-    );
+    app.post<{ Body: { label: string } }>(`${base}/api/keys/api`, async (request, reply) => {
+      const { label } = request.body;
+      if (!label) {
+        reply.status(400);
+        return { error: "Label is required" };
+      }
+      const raw = `sw_${randomBytes(24).toString("hex")}`;
+      const keyHash = hashApiKey(raw);
+      const keyPrefix = raw.slice(0, 10);
+      const id = randomUUID();
+      await apiKeyRepo.create({ id, label, keyHash, keyPrefix, scopes: ["mcp"] });
+      return { id, label, keyPrefix, key: raw };
+    });
 
-    app.delete<{ Params: { id: string } }>(
-      `${base}/api/keys/api/:id`,
-      async (request) => {
-        await apiKeyRepo.revoke(request.params.id);
-        return { status: "revoked" };
-      },
-    );
+    app.delete<{ Params: { id: string } }>(`${base}/api/keys/api/:id`, async (request) => {
+      await apiKeyRepo.revoke(request.params.id);
+      return { status: "revoked" };
+    });
   }
 
   // WebSocket for terminal I/O
@@ -251,19 +245,14 @@ export async function buildApp(
     return `window.__BASE_PATH__=${JSON.stringify(base)};`;
   });
 
-  // Static client files (built by vite build client → dist/client/)
+  // Static client files (built by SvelteKit adapter-static → dist/client/)
   if (!options.skipStaticFiles) {
     const clientDist = resolve(process.cwd(), "dist/client");
     await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
 
-    // SPA fallback: serve index.html for unmatched routes
+    // SPA fallback: serve index.html for client-side routing
     app.setNotFoundHandler((_request, reply) => {
       reply.sendFile("index.html");
-    });
-
-    // Login page — explicit route so it doesn't fall through to SPA
-    app.get(`${base}/login`, async (_request, reply) => {
-      return reply.sendFile("login.html");
     });
   }
 

@@ -28,10 +28,7 @@ export function registerAuthGate(
   function getPasskeyCount(): number {
     const now = Date.now();
     if (cachedCount !== null && now - cacheTime < CACHE_TTL_MS) return cachedCount;
-    const result = dbRef
-      .select({ count: count() })
-      .from(webauthnCredentials)
-      .get();
+    const result = dbRef.select({ count: count() }).from(webauthnCredentials).get();
     cachedCount = result?.count ?? 0;
     cacheTime = now;
     return cachedCount;
@@ -59,8 +56,8 @@ export function registerAuthGate(
       if (url === `${basePath}${suffix}`) return;
     }
 
-    // Allow static assets on the login page
-    if (url.startsWith(`${basePath}/assets/`)) return;
+    // Allow static assets (SvelteKit serves from /_app/)
+    if (url.startsWith(`${basePath}/_app/`)) return;
 
     // Verify session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
@@ -70,9 +67,7 @@ export function registerAuthGate(
     }
 
     // Not authenticated
-    const isApiOrWs =
-      url.startsWith(`${basePath}/api/`) ||
-      url === `${basePath}/ws`;
+    const isApiOrWs = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
 
     if (isApiOrWs) {
       reply.status(401).send({ error: "Authentication required" });

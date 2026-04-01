@@ -1,0 +1,232 @@
+<script lang="ts">
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import { onDestroy, onMount } from "svelte";
+import { endpoints } from "$lib/stores/endpoints.js";
+import { onWsMessage, type SessionListEntry, sessions, wsAttach } from "$lib/stores/ws.js";
+
+interface ObservedTerminal {
+  sessionId: string;
+  label: string;
+  terminal: Terminal;
+  fitAddon: FitAddon;
+}
+
+let gridEl: HTMLDivElement;
+let observed = $state<Map<string, ObservedTerminal>>(new Map());
+let resizeObserver: ResizeObserver | null = null;
+let unsubscribe: (() => void) | null = null;
+
+function getEndpointLabel(endpointId: string): string {
+  const ep = $endpoints.find((e) => e.id === endpointId);
+  return ep?.label ?? endpointId;
+}
+
+function getGridDimensions(count: number): { cols: number; rows: number } {
+  if (count <= 1) return { cols: 1, rows: 1 };
+  if (count <= 2) return { cols: 2, rows: 1 };
+  if (count <= 4) return { cols: 2, rows: 2 };
+  if (count <= 6) return { cols: 3, rows: 2 };
+  if (count <= 9) return { cols: 3, rows: 3 };
+  if (count <= 12) return { cols: 4, rows: 3 };
+  return { cols: 4, rows: 4 };
+}
+
+function fitAll() {
+  for (const obs of observed.values()) {
+    try {
+      obs.fitAddon.fit();
+    } catch {
+      /* not rendered yet */
+    }
+  }
+}
+
+function syncSessions(sessionList: SessionListEntry[]) {
+  if (!gridEl) return;
+
+  const currentIds = new Set(observed.keys());
+  const newIds = new Set(sessionList.map((s) => s.sessionId));
+
+  // Remove closed sessions
+  for (const id of currentIds) {
+    if (!newIds.has(id)) {
+      const obs = observed.get(id)!;
+      obs.terminal.dispose();
+      observed.delete(id);
+      observed = new Map(observed);
+    }
+  }
+
+  // Add new sessions
+  for (const sess of sessionList) {
+    if (!observed.has(sess.sessionId)) {
+      const label = getEndpointLabel(sess.endpointId);
+      const terminal = new Terminal({
+        cursorBlink: false,
+        fontSize: 11,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: {
+          background: "#1a1a2e",
+          foreground: "#e0e0e0",
+          cursor: "#4a9eff",
+          selectionBackground: "#4a9eff44",
+        },
+        disableStdin: true,
+        scrollback: 1000,
+      });
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+
+      observed.set(sess.sessionId, { sessionId: sess.sessionId, label, terminal, fitAddon });
+      observed = new Map(observed);
+
+      wsAttach(sess.sessionId);
+    }
+  }
+
+  // Update grid
+  const { cols, rows } = getGridDimensions(observed.size);
+  if (gridEl) {
+    gridEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    gridEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  }
+
+  requestAnimationFrame(() => fitAll());
+}
+
+function openTerminalInCell(node: HTMLDivElement, obs: ObservedTerminal) {
+  obs.terminal.open(node);
+  requestAnimationFrame(() => obs.fitAddon.fit());
+  return {
+    destroy() {
+      // Terminal cleanup handled in syncSessions/onDestroy
+    },
+  };
+}
+
+onMount(() => {
+  syncSessions($sessions);
+
+  unsubscribe = onWsMessage((msg) => {
+    if (msg.type === "terminal:output") {
+      const obs = observed.get(msg.sessionId);
+      if (obs) obs.terminal.write(msg.data);
+    }
+    if (msg.type === "sessions:changed") {
+      syncSessions(msg.sessions);
+    }
+  });
+
+  resizeObserver = new ResizeObserver(() => fitAll());
+  if (gridEl) resizeObserver.observe(gridEl);
+});
+
+onDestroy(() => {
+  unsubscribe?.();
+  resizeObserver?.disconnect();
+  for (const obs of observed.values()) {
+    obs.terminal.dispose();
+  }
+  observed.clear();
+});
+</script>
+
+<div class="observer-page">
+  <div class="observer-header">
+    <h1>Observer Mode</h1>
+    <span class="observer-session-count">{$sessions.length} session(s)</span>
+  </div>
+  <div class="observer-grid" bind:this={gridEl}>
+    {#each [...observed.values()] as obs (obs.sessionId)}
+      <div class="observer-cell">
+        <div class="observer-cell-header">
+          <span class="observer-cell-label">
+            <span class="status-dot open"></span>{obs.label}
+          </span>
+          <span class="observer-cell-detail">{obs.sessionId.slice(0, 8)}</span>
+        </div>
+        <div class="observer-cell-terminal" use:openTerminalInCell={obs}></div>
+      </div>
+    {/each}
+  </div>
+</div>
+
+<style>
+  .observer-page {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .observer-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .observer-header h1 {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .observer-session-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    flex: 1;
+  }
+
+  .observer-grid {
+    flex: 1;
+    display: grid;
+    gap: 4px;
+    padding: 4px;
+    min-height: 0;
+  }
+
+  .observer-cell {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .observer-cell-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .observer-cell-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+  }
+
+  .observer-cell-detail {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    font-family: monospace;
+  }
+
+  .observer-cell-terminal {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .observer-cell-terminal :global(.xterm) {
+    height: 100%;
+    padding: 2px;
+  }
+</style>
