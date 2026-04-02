@@ -34,6 +34,13 @@ export function registerAuthGate(
     return cachedCount;
   }
 
+  // Logout: clear session cookie
+  app.post(`${basePath}/api/auth/logout`, async (_request, reply) => {
+    reply
+      .header("Set-Cookie", `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`)
+      .send({ status: "logged_out" });
+  });
+
   // Exempt paths that don't require session auth
   const exemptSuffixes = [
     "/health",
@@ -41,6 +48,7 @@ export function registerAuthGate(
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
     "/api/webauthn/status",
+    "/api/auth/logout",
     "/login",
     "/config.js",
   ];

@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import { endpoints } from "$lib/stores/endpoints.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
+  import { logout } from "$lib/stores/webauthn.js";
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
 
   interface Props {
@@ -141,6 +142,7 @@
     >
       Settings
     </button>
+    <button class="btn-nav btn-logout" onclick={logout}> Sign Out </button>
   </div>
 </nav>
 
@@ -277,6 +279,11 @@
 
   .btn-nav.active {
     background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-logout:hover {
+    background: var(--red);
     color: #fff;
   }
 

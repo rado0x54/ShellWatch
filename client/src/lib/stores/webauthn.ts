@@ -121,6 +121,12 @@ export async function login(): Promise<void> {
   }
 }
 
+export async function logout(): Promise<void> {
+  const base = get(basePath);
+  await fetch(`${base}/api/auth/logout`, { method: "POST" });
+  window.location.href = `${base}/login`;
+}
+
 export async function checkAuth(): Promise<{ hasPasskeys: boolean; authenticated: boolean }> {
   const base = get(basePath);
   try {
