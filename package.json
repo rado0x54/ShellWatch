@@ -79,7 +79,7 @@
     "zod": "^4.3.6"
   },
   "lint-staged": {
-    "*.{ts,svelte}": "eslint --fix",
+    "*.{ts,svelte}": "eslint",
     "*.{ts,svelte,js,json,css,md,yaml}": "prettier --write"
   }
 }
