@@ -1,6 +1,7 @@
 import { loadConfig } from "./config/index.js";
 import {
   createDatabase,
+  DrizzleAccountRepository,
   DrizzleApiKeyRepository,
   DrizzleEndpointRepository,
   DrizzleSshKeyRepository,
@@ -26,6 +27,7 @@ try {
   const endpointRepo = new DrizzleEndpointRepository(db);
   const keyRepo = new DrizzleSshKeyRepository(db);
   const apiKeyRepo = new DrizzleApiKeyRepository(db);
+  const accountRepo = new DrizzleAccountRepository(db);
 
   // Scan key directory, auto-register keys in DB, and watch for changes
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
@@ -90,6 +92,7 @@ try {
     keyWatcher,
     {},
     apiKeyRepo,
+    accountRepo,
   );
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
@@ -100,6 +103,9 @@ try {
   }
   if (seedResult.seededApiKey) {
     app.log.info(`Seeded API key (prefix: ${seedResult.apiKeyPrefix}…)`);
+  }
+  if (seedResult.seededAdminAccount) {
+    app.log.info(`Seeded admin account (${seedResult.adminAccountId})`);
   }
   if (seedResult.seededAdminPasskey) {
     app.log.info(`Seeded admin passkey (${config.seedAdminPasskey?.label ?? "Admin Passkey"})`);

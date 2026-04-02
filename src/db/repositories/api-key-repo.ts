@@ -4,6 +4,7 @@ import { apiKeys } from "../schema.js";
 
 export interface ApiKeyInfo {
   id: string;
+  accountId: string | null;
   label: string;
   keyPrefix: string;
   scopes: string[];
@@ -28,6 +29,7 @@ export interface ApiKeyRepository {
 
 function parseRow(row: {
   id: string;
+  accountId: string | null;
   label: string;
   keyPrefix: string;
   scopes: string;
@@ -49,6 +51,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     const row = this.db
       .select({
         id: apiKeys.id,
+        accountId: apiKeys.accountId,
         label: apiKeys.label,
         keyPrefix: apiKeys.keyPrefix,
         scopes: apiKeys.scopes,
@@ -67,6 +70,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     const rows = this.db
       .select({
         id: apiKeys.id,
+        accountId: apiKeys.accountId,
         label: apiKeys.label,
         keyPrefix: apiKeys.keyPrefix,
         scopes: apiKeys.scopes,

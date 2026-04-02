@@ -1,5 +1,6 @@
 import { count } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { AccountRepository } from "../../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../../db/connection.js";
 import { webauthnCredentials } from "../../db/schema.js";
 import { verifySessionCookie } from "./session-cookie.js";
@@ -17,6 +18,7 @@ export function registerAuthGate(
   db: ShellWatchDB | null,
   basePath: string,
   secret: string,
+  accountRepo?: AccountRepository,
 ): void {
   if (!db) return;
   const dbRef = db;
@@ -75,7 +77,13 @@ export function registerAuthGate(
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);
-      if (session) return;
+      if (session) {
+        (request as { accountId?: string }).accountId = session.sub;
+        if (accountRepo && session.sub) {
+          accountRepo.touchLastUsed(session.sub);
+        }
+        return;
+      }
     }
 
     // Not authenticated

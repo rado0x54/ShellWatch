@@ -6,6 +6,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
@@ -34,6 +35,7 @@ export async function buildApp(
   keyAvailability: KeyAvailability | null = null,
   options: AppOptions = {},
   apiKeyRepo?: ApiKeyRepository,
+  accountRepo?: AccountRepository,
 ) {
   const app = Fastify({ logger: options.logger ?? true });
   const base = config.server.basePath;
@@ -48,12 +50,12 @@ export async function buildApp(
   await app.register(fastifyWebsocket);
 
   // Auth gate: require passkey login when passkeys exist
-  registerAuthGate(app, db, base, cookieSecret);
+  registerAuthGate(app, db, base, cookieSecret, accountRepo);
 
   // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
   if (apiKeyRepo) {
-    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`);
+    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`, accountRepo);
   }
 
   // Redirect root to basePath when basePath is set
@@ -236,6 +238,7 @@ export async function buildApp(
         protoHeader: config.server.trustedForwardedProtoHeader,
       },
       { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      accountRepo,
     );
   }
 

@@ -7,6 +7,7 @@ import {
 } from "@simplewebauthn/server";
 import { count, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { sshKeys, webauthnCredentials } from "../db/schema.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
@@ -56,6 +57,7 @@ export function registerWebAuthnRoutes(
   basePath = "",
   proxy: ProxyHeaderConfig = {},
   sessionConfig?: SessionConfig,
+  accountRepo?: AccountRepository,
 ) {
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(
@@ -146,9 +148,28 @@ export function registerWebAuthnRoutes(
           );
         }
 
+        // Resolve account: use authenticated session, or create admin on bootstrap
+        let accountId: string | null = null;
+        if ((request as { accountId?: string }).accountId) {
+          accountId = (request as { accountId?: string }).accountId!;
+        } else if (accountRepo) {
+          const accountCount = accountRepo.count();
+          if (accountCount === 0) {
+            // Bootstrap: first registration creates admin account
+            const admin = await accountRepo.create({
+              id: randomUUID(),
+              name: label || "Admin",
+              type: "human",
+              role: "admin",
+            });
+            accountId = admin.id;
+          }
+        }
+
         db.insert(webauthnCredentials)
           .values({
             id,
+            accountId,
             credentialId: cred.id,
             publicKey: pubKeyBuf,
             counter: cred.counter,
@@ -301,6 +322,7 @@ export function registerWebAuthnRoutes(
       const storedCred = db
         .select({
           id: webauthnCredentials.id,
+          accountId: webauthnCredentials.accountId,
           credentialId: webauthnCredentials.credentialId,
           publicKey: webauthnCredentials.publicKey,
           counter: webauthnCredentials.counter,
@@ -343,9 +365,19 @@ export function registerWebAuthnRoutes(
           .where(eq(webauthnCredentials.id, storedCred.id))
           .run();
 
-        // Set session cookie
+        // Update account lastUsedAt
+        if (storedCred.accountId && accountRepo) {
+          accountRepo.touchLastUsed(storedCred.accountId);
+        }
+
+        // Set session cookie with account ID
         const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-        const cookieValue = createSessionCookie(sessionConfig.secret, sessionConfig.ttlSeconds);
+        const accountIdForSession = storedCred.accountId ?? "admin";
+        const cookieValue = createSessionCookie(
+          sessionConfig.secret,
+          sessionConfig.ttlSeconds,
+          accountIdForSession,
+        );
         const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
         reply.header(
           "Set-Cookie",

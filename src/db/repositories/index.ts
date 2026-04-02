@@ -1,4 +1,9 @@
 export {
+  type AccountInfo,
+  type AccountRepository,
+  DrizzleAccountRepository,
+} from "./account-repo.js";
+export {
   DrizzleEndpointRepository,
   type EndpointInfo,
   type EndpointRepository,
