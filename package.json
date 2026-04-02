@@ -22,7 +22,8 @@
     "keys:revoke": "tsx src/cli/manage-keys.ts revoke",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "prepare": "husky"
   },
   "keywords": [],
   "author": "",
@@ -45,7 +46,9 @@
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-svelte": "^3.16.0",
     "globals": "^17.4.0",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.1",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "prettier-plugin-svelte": "^3.5.1",
     "svelte": "^5.55.1",
@@ -74,5 +77,9 @@
     "ws": "^8.20.0",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"
+  },
+  "lint-staged": {
+    "*.{ts,svelte}": "eslint --fix",
+    "*.{ts,svelte,js,json,css,md,yaml}": "prettier --write"
   }
 }
