@@ -4,7 +4,8 @@
   "description": "SSH session broker with browser UI and MCP interface",
   "type": "module",
   "scripts": {
-    "dev": "pnpm build:client && tsx watch src/index.ts 2>&1 | tee logs/dev.log",
+    "dev": "concurrently -n server,client -c blue,green \"tsx watch src/index.ts 2>&1 | tee logs/dev.log\" \"cd client && npx vite dev\"",
+    "dev:server": "tsx watch src/index.ts 2>&1 | tee logs/dev.log",
     "build": "tsc && pnpm build:client",
     "build:server": "tsc",
     "build:client": "cd client && npx svelte-kit sync && npx vite build",
@@ -40,6 +41,7 @@
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.2",
+    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
