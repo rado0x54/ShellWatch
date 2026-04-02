@@ -34,6 +34,10 @@ export interface SignResponse {
 
 type SignRequestCallback = (request: SignRequest) => void;
 
+export interface AgentLogger {
+  error(msg: string): void;
+}
+
 /**
  * A custom ssh2 agent backed by WebAuthn credentials.
  * The actual signing happens in the browser — this agent bridges the gap.
@@ -51,12 +55,19 @@ export class WebAuthnSshAgent extends BaseAgent {
   private onSignRequest: SignRequestCallback;
   private keys: WebAuthnKeyWithCredential[];
   private rpId: string;
+  private log: AgentLogger;
 
-  constructor(keys: WebAuthnKeyWithCredential[], rpId: string, onSignRequest: SignRequestCallback) {
+  constructor(
+    keys: WebAuthnKeyWithCredential[],
+    rpId: string,
+    onSignRequest: SignRequestCallback,
+    logger?: AgentLogger,
+  ) {
     super();
     this.keys = keys;
     this.rpId = rpId;
     this.onSignRequest = onSignRequest;
+    this.log = logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
 
   /**
@@ -67,7 +78,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       const keyBlobs = this.keys.map((k) => buildPublicKeyBlob(k));
       cb(null, keyBlobs);
     } catch (err) {
-      console.error("[WebAuthn Agent] getIdentities error:", (err as Error).message);
+      this.log.error(`[WebAuthn Agent] getIdentities error: ${(err as Error).message}`);
       cb(err as Error);
     }
   }
@@ -91,7 +102,7 @@ export class WebAuthnSshAgent extends BaseAgent {
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const timeout = setTimeout(() => {
-      console.error(`[WebAuthn Agent] Signing timed out for ${requestId}`);
+      this.log.error(`[WebAuthn Agent] Signing timed out for ${requestId}`);
       this.pendingSign.delete(requestId);
       cb(new Error("WebAuthn signing timed out — no response from browser"));
     }, 60_000);
@@ -125,7 +136,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       const signatureBlob = buildSshSignatureBlob(r, s, flags, counter, response.clientDataJSON);
       pending.cb(null, signatureBlob);
     } catch (err) {
-      console.error("[WebAuthn Agent] Signature build error:", (err as Error).message);
+      this.log.error(`[WebAuthn Agent] Signature build error: ${(err as Error).message}`);
       pending.cb(err as Error);
     }
   }

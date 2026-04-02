@@ -6,6 +6,7 @@ export {
 } from "./signature-format.js";
 export { SigningBridge } from "./signing-bridge.js";
 export {
+  type AgentLogger,
   type SignRequest,
   type SignResponse,
   type WebAuthnKeyWithCredential,

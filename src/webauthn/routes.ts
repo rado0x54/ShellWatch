@@ -141,9 +141,8 @@ export function registerWebAuthnRoutes(
         try {
           authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
         } catch (convErr) {
-          console.error(
-            "Failed to convert COSE key to OpenSSH format:",
-            (convErr as Error).message,
+          app.log.error(
+            `Failed to convert COSE key to OpenSSH format: ${(convErr as Error).message}`,
           );
         }
 

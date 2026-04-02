@@ -21,7 +21,7 @@ try {
   // Initialize database
   const { db, close: closeDb } = createDatabase();
   runMigrations(db);
-  seedFromConfig(db, config);
+  const seedResult = seedFromConfig(db, config);
 
   const endpointRepo = new DrizzleEndpointRepository(db);
   const keyRepo = new DrizzleSshKeyRepository(db);
@@ -30,10 +30,6 @@ try {
   // Scan key directory, auto-register keys in DB, and watch for changes
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
   const scannedKeys = await keyWatcher.start();
-  console.log(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
-  for (const key of scannedKeys) {
-    console.log(`  ${key.filename}: ${key.type} (${key.fingerprint})`);
-  }
 
   // WebAuthn signing bridge — connects SSH agent to browser
   const signingBridge = new SigningBridge();
@@ -41,6 +37,9 @@ try {
   // Look up WebAuthn credential IDs for the agent
   const { webauthnCredentials: webauthnTable } = await import("./db/schema.js");
   const { eq } = await import("drizzle-orm");
+
+  // Late-binding logger — set after buildApp(), but only used at session time
+  const agentLog: { current?: { error(msg: string): void } } = {};
 
   const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
     createWebAuthnAgent: (keys, rpId) => {
@@ -59,9 +58,14 @@ try {
           webauthnCredentialId: row?.credentialId ?? k.id,
         };
       });
-      const agent = new WebAuthnSshAgent(enrichedKeys, rpId, (request) => {
-        signingBridge.handleSignRequest(request);
-      });
+      const agent = new WebAuthnSshAgent(
+        enrichedKeys,
+        rpId,
+        (request) => {
+          signingBridge.handleSignRequest(request);
+        },
+        agentLog.current,
+      );
       const agentId = `agent_${Date.now()}`;
       signingBridge.registerAgent(agentId, agent);
       return {
@@ -88,8 +92,21 @@ try {
     apiKeyRepo,
   );
 
+  agentLog.current = { error: (msg) => app.log.error(msg) };
+
+  app.log.info(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
+  for (const key of scannedKeys) {
+    app.log.info(`  ${key.filename}: ${key.type} (${key.fingerprint})`);
+  }
+  if (seedResult.seededApiKey) {
+    app.log.info(`Seeded API key (prefix: ${seedResult.apiKeyPrefix}…)`);
+  }
+  if (seedResult.seededAdminPasskey) {
+    app.log.info(`Seeded admin passkey (${config.seedAdminPasskey?.label ?? "Admin Passkey"})`);
+  }
+
   const endpoints = await endpointRepo.findAll();
-  console.log(`${endpoints.length} endpoint(s) in database`);
+  app.log.info(`${endpoints.length} endpoint(s) in database`);
 
   const shutdown = async () => {
     keyWatcher.stop();
@@ -104,9 +121,10 @@ try {
 
   await app.listen({ port: PORT, host: HOST });
   const base = config.server.basePath || "";
-  console.log(`ShellWatch server listening on http://${HOST}:${PORT}${base}`);
-  console.log(`MCP endpoint available at http://${HOST}:${PORT}${base}/mcp`);
+  app.log.info(`ShellWatch server listening on http://${HOST}:${PORT}${base}`);
+  app.log.info(`MCP endpoint available at http://${HOST}:${PORT}${base}/mcp`);
 } catch (err) {
-  console.error("Failed to start ShellWatch:", (err as Error).message);
+  // Fatal startup error — app may not exist yet, use stderr directly
+  process.stderr.write(`Failed to start ShellWatch: ${(err as Error).message}\n`);
   process.exit(1);
 }
