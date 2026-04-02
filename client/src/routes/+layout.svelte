@@ -16,15 +16,9 @@
 
   let ready = $state(false);
   let mobileMenuOpen = $state(false);
-  let activeSessionId = $state<string | null>(null);
   let sessionModes = $state<Record<string, string>>({});
 
   const isLoginPage = $derived($page.url.pathname.endsWith("/login"));
-
-  function handleConnect(sessionId: string, mode: "control" | "observer") {
-    activeSessionId = sessionId;
-    sessionModes[sessionId] = mode;
-  }
 
   onMount(async () => {
     // Initialize base path from server-injected config
@@ -90,12 +84,7 @@
     <div class="app-body">
       <!-- Sidebar (desktop always visible, mobile toggleable) -->
       <div class="sidebar-container" class:mobile-open={mobileMenuOpen}>
-        <Sidebar
-          {activeSessionId}
-          {sessionModes}
-          onConnect={handleConnect}
-          onMobileClose={() => (mobileMenuOpen = false)}
-        />
+        <Sidebar {sessionModes} onMobileClose={() => (mobileMenuOpen = false)} />
       </div>
 
       <!-- Mobile overlay -->

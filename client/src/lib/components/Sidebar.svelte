@@ -10,23 +10,21 @@
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
 
   interface Props {
-    activeSessionId: string | null;
     sessionModes: Record<string, string>;
-    onConnect: (sessionId: string, mode: "control" | "observer") => void;
     onMobileClose?: () => void;
   }
 
-  let { activeSessionId, sessionModes, onConnect, onMobileClose }: Props = $props();
+  let { sessionModes, onMobileClose }: Props = $props();
 
   const currentPath = $derived($page.url.pathname);
+  const activeSessionId = $derived(
+    currentPath.startsWith("/session/") ? currentPath.split("/session/")[1] : null,
+  );
 
   async function handleConnect(endpointId: string) {
     try {
-      if (currentPath !== "/") {
-        await goto(resolve("/"));
-      }
       const session = await createSession(endpointId);
-      onConnect(session.sessionId, "control");
+      await goto(resolve(`/session/${session.sessionId}`));
       onMobileClose?.();
     } catch (err) {
       console.error("Failed to create session:", err);
@@ -41,11 +39,8 @@
     }
   }
 
-  async function handleSessionClick(sessionId: string, mode: "control" | "observer") {
-    if (currentPath !== "/") {
-      await goto(resolve("/"));
-    }
-    onConnect(sessionId, mode);
+  async function handleSessionClick(sessionId: string) {
+    await goto(resolve(`/session/${sessionId}`));
     onMobileClose?.();
   }
 
@@ -96,7 +91,7 @@
             class:active={isActive}
             onclick={(e) => {
               if ((e.target as HTMLElement).tagName !== "BUTTON") {
-                handleSessionClick(sess.sessionId, mode as "control" | "observer");
+                handleSessionClick(sess.sessionId);
               }
             }}
           >
