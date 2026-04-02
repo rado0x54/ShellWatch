@@ -6,6 +6,7 @@ export const EndpointSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().min(1),
+  keyId: z.string().optional(),
 });
 
 export const securityDefaults = {
@@ -44,10 +45,20 @@ export const ServerSchema = z.object({
   trustedForwardedProtoHeader: z.string().optional(),
 });
 
+export const SeedAdminPasskeySchema = z.object({
+  id: z.string().uuid(),
+  credentialId: z.string().min(1),
+  publicKeyHex: z.string().min(1), // COSE public key as hex
+  counter: z.number().int().default(0),
+  transports: z.array(z.string()).default([]),
+  label: z.string().default("Admin Passkey"),
+});
+
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedServers: z.array(EndpointSchema).default([]),
   seedApiKey: z.string().optional(),
+  seedAdminPasskey: SeedAdminPasskeySchema.optional(),
   server: ServerSchema.default(serverDefaults),
   security: SecuritySchema.default(securityDefaults),
   notifications: NotificationsSchema.default(notificationDefaults),

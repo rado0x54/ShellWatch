@@ -17,4 +17,4 @@ export {
   type SshKeyInfo,
   type SshKeyRepository,
 } from "./repositories/key-repo.js";
-export { seedFromConfig } from "./seed.js";
+export { seedFromConfig, type SeedResult } from "./seed.js";
