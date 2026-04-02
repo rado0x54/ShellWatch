@@ -11,6 +11,7 @@ CREATE TABLE `accounts` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `accounts_single_admin` ON `accounts` (`role`) WHERE `role` = 'admin';--> statement-breakpoint
 CREATE TABLE `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text,
