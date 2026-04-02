@@ -5,6 +5,7 @@
   import { page } from "$app/stores";
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import { fetchAccount } from "$lib/stores/account.js";
   import { basePath } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
   import { checkAuth } from "$lib/stores/webauthn.js";
@@ -45,6 +46,7 @@
     if (!isLogin) {
       connectWs();
       await fetchEndpoints();
+      fetchAccount();
 
       // Handle FIDO signing requests
       onWsMessage((msg) => {

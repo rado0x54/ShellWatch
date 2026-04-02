@@ -2,6 +2,8 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
+  import Identicon from "$lib/components/Identicon.svelte";
+  import { account } from "$lib/stores/account.js";
   import { endpoints } from "$lib/stores/endpoints.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
   import { logout } from "$lib/stores/webauthn.js";
@@ -128,6 +130,17 @@
   </div>
 
   <div class="sidebar-footer">
+    {#if $account}
+      <div class="account-info">
+        <Identicon uuid={$account.id} size={36} />
+        <div class="account-details">
+          <span class="account-name">{$account.name}</span>
+          {#if $account.role === "admin"}
+            <span class="badge badge-admin">admin</span>
+          {/if}
+        </div>
+      </div>
+    {/if}
     <button
       class="btn-nav"
       class:active={currentPath === "/observer"}
@@ -280,6 +293,37 @@
   .btn-nav.active {
     background: var(--accent);
     color: #fff;
+  }
+
+  .account-info {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.25rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .account-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .account-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .badge-admin {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    font-weight: 600;
   }
 
   .btn-logout:hover {

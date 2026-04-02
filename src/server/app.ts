@@ -67,6 +67,26 @@ export async function buildApp(
 
   app.get(`${base}/health`, async () => ({ status: "ok" }));
 
+  // --- Auth: current account ---
+  app.get(`${base}/api/auth/me`, async (request, reply) => {
+    const accountId = (request as { accountId?: string }).accountId;
+    if (!accountId || !accountRepo) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const account = await accountRepo.findById(accountId);
+    if (!account) {
+      reply.status(401);
+      return { error: "Account not found" };
+    }
+    return {
+      id: account.id,
+      name: account.name,
+      type: account.type,
+      role: account.role,
+    };
+  });
+
   // --- SSH Keys API ---
 
   app.get(`${base}/api/keys`, async () => {
