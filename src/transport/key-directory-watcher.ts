@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from "node:fs";
+import { type FSWatcher, watch } from "node:fs";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { type ScannedKey, scanKeyDirectory } from "./key-scanner.js";
 

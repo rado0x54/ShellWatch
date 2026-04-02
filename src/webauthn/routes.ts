@@ -32,7 +32,10 @@ interface ProxyHeaderConfig {
   protoHeader?: string;
 }
 
-function getOriginAndRpId(request: { headers: Record<string, string | string[] | undefined>; protocol: string }, proxy: ProxyHeaderConfig) {
+function getOriginAndRpId(
+  request: { headers: Record<string, string | string[] | undefined>; protocol: string },
+  proxy: ProxyHeaderConfig,
+) {
   const forwardedHost = proxy.hostHeader ? request.headers[proxy.hostHeader] : undefined;
   const forwardedProto = proxy.protoHeader ? request.headers[proxy.protoHeader] : undefined;
   const host = String(forwardedHost ?? request.headers.host ?? "localhost");
@@ -47,48 +50,57 @@ export interface SessionConfig {
   ttlSeconds: number;
 }
 
-export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, basePath = "", proxy: ProxyHeaderConfig = {}, sessionConfig?: SessionConfig) {
+export function registerWebAuthnRoutes(
+  app: FastifyInstance,
+  db: ShellWatchDB,
+  basePath = "",
+  proxy: ProxyHeaderConfig = {},
+  sessionConfig?: SessionConfig,
+) {
   // --- Registration: Generate Options ---
-  app.post<{ Body: { label: string } }>(`${basePath}/api/webauthn/register/options`, async (request) => {
-    const { label } = request.body;
-    const { rpId } = getOriginAndRpId(request, proxy);
+  app.post<{ Body: { label: string } }>(
+    `${basePath}/api/webauthn/register/options`,
+    async (request) => {
+      const { label } = request.body;
+      const { rpId } = getOriginAndRpId(request, proxy);
 
-    // Get existing credentials to exclude (prevent re-registration)
-    const existing = db
-      .select({ credentialId: webauthnCredentials.credentialId })
-      .from(webauthnCredentials)
-      .all();
+      // Get existing credentials to exclude (prevent re-registration)
+      const existing = db
+        .select({ credentialId: webauthnCredentials.credentialId })
+        .from(webauthnCredentials)
+        .all();
 
-    const options = await generateRegistrationOptions({
-      rpName: "ShellWatch",
-      rpID: rpId,
-      userName: "admin",
-      userDisplayName: label || "ShellWatch Admin",
-      attestationType: "none",
-      authenticatorSelection: {
-        residentKey: "preferred",
-        userVerification: "preferred",
-      },
-      supportedAlgorithmIDs: [-7, -8], // ES256 (P-256) and EdDSA (Ed25519)
-      excludeCredentials: existing.map((c) => ({
-        id: c.credentialId,
-      })),
-    });
+      const options = await generateRegistrationOptions({
+        rpName: "ShellWatch",
+        rpID: rpId,
+        userName: "admin",
+        userDisplayName: label || "ShellWatch Admin",
+        attestationType: "none",
+        authenticatorSelection: {
+          residentKey: "preferred",
+          userVerification: "preferred",
+        },
+        supportedAlgorithmIDs: [-7, -8], // ES256 (P-256) and EdDSA (Ed25519)
+        excludeCredentials: existing.map((c) => ({
+          id: c.credentialId,
+        })),
+      });
 
-    // Store challenge with expiry
-    const challengeId = randomUUID();
-    pendingChallenges.set(challengeId, {
-      challenge: options.challenge,
-      expires: Date.now() + 5 * 60 * 1000,
-    });
+      // Store challenge with expiry
+      const challengeId = randomUUID();
+      pendingChallenges.set(challengeId, {
+        challenge: options.challenge,
+        expires: Date.now() + 5 * 60 * 1000,
+      });
 
-    // Clean up expired challenges
-    for (const [id, { expires }] of pendingChallenges) {
-      if (expires < Date.now()) pendingChallenges.delete(id);
-    }
+      // Clean up expired challenges
+      for (const [id, { expires }] of pendingChallenges) {
+        if (expires < Date.now()) pendingChallenges.delete(id);
+      }
 
-    return { ...options, challengeId };
-  });
+      return { ...options, challengeId };
+    },
+  );
 
   // --- Registration: Verify Response ---
   app.post<{ Body: { challengeId: string; label: string; credential: unknown } }>(
@@ -208,13 +220,16 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, b
   });
 
   // --- Delete Credential ---
-  app.delete<{ Params: { id: string } }>(`${basePath}/api/webauthn/credentials/:id`, async (request) => {
-    const { id } = request.params;
-    // Remove from both tables
-    db.delete(sshKeys).where(eq(sshKeys.id, id)).run();
-    db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
-    return { status: "deleted" };
-  });
+  app.delete<{ Params: { id: string } }>(
+    `${basePath}/api/webauthn/credentials/:id`,
+    async (request) => {
+      const { id } = request.params;
+      // Remove from both tables
+      db.delete(sshKeys).where(eq(sshKeys.id, id)).run();
+      db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
+      return { status: "deleted" };
+    },
+  );
 
   // --- Auth Status ---
   app.get(`${basePath}/api/webauthn/status`, async () => {
@@ -271,7 +286,14 @@ export function registerWebAuthnRoutes(app: FastifyInstance, db: ShellWatchDB, b
       pendingChallenges.delete(challengeId);
 
       // Find the credential in DB
-      const assertionResponse = credential as { id: string; rawId: string; response: unknown; type: string; authenticatorAttachment?: string; clientExtensionResults?: unknown };
+      const assertionResponse = credential as {
+        id: string;
+        rawId: string;
+        response: unknown;
+        type: string;
+        authenticatorAttachment?: string;
+        clientExtensionResults?: unknown;
+      };
       const storedCred = db
         .select({
           id: webauthnCredentials.id,

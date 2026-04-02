@@ -33,7 +33,11 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): void {
   // Seed API key if configured and not already present
   if (config.seedApiKey) {
     const hash = createHash("sha256").update(config.seedApiKey).digest("hex");
-    const existing = db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.keyHash, hash)).get();
+    const existing = db
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(eq(apiKeys.keyHash, hash))
+      .get();
     if (!existing) {
       db.insert(apiKeys)
         .values({

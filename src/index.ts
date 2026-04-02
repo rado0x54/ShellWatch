@@ -74,10 +74,7 @@ try {
     },
   });
 
-  const terminalManager = new TerminalManager(
-    endpointRepo,
-    (id) => sshTransportFactory.create(id),
-  );
+  const terminalManager = new TerminalManager(endpointRepo, (id) => sshTransportFactory.create(id));
 
   const app = await buildApp(
     config,
