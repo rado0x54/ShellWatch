@@ -276,6 +276,11 @@ export function registerWebAuthnRoutes(
       const { challengeId, credential } = request.body;
       const { rpId, origin } = getOriginAndRpId(request, proxy);
 
+      // Accept the browser's Origin header too (passkey may have been registered on a different port)
+      const browserOrigin = request.headers.origin ? String(request.headers.origin) : undefined;
+      const expectedOrigins =
+        browserOrigin && browserOrigin !== origin ? [origin, browserOrigin] : [origin];
+
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
         pendingChallenges.delete(challengeId);
@@ -314,7 +319,7 @@ export function registerWebAuthnRoutes(
         const verification = await verifyAuthenticationResponse({
           response: credential as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: origin,
+          expectedOrigin: expectedOrigins,
           expectedRPID: rpId,
           credential: {
             id: storedCred.credentialId,
