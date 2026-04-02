@@ -40,6 +40,23 @@ export async function createEndpoint(body: {
   await fetchEndpoints();
 }
 
+export async function updateEndpoint(
+  id: string,
+  body: Partial<Omit<Endpoint, "id">>,
+): Promise<void> {
+  const base = get(basePath);
+  const res = await fetch(`${base}/api/endpoints/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to update endpoint");
+  }
+  await fetchEndpoints();
+}
+
 export async function deleteEndpoint(id: string): Promise<void> {
   const base = get(basePath);
   const res = await fetch(`${base}/api/endpoints/${id}`, { method: "DELETE" });

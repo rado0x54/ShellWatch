@@ -5,6 +5,7 @@
     deleteEndpoint,
     endpoints,
     fetchEndpoints,
+    updateEndpoint,
   } from "$lib/stores/endpoints.js";
   import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
 
@@ -45,6 +46,14 @@
     }
   }
 
+  async function handleKeyChange(id: string, keyId: string) {
+    try {
+      await updateEndpoint(id, { keyId: keyId || null });
+    } catch (err) {
+      alert((err as Error).message);
+    }
+  }
+
   async function handleDelete(id: string) {
     if (confirm(`Delete endpoint "${id}"?`)) {
       try {
@@ -78,7 +87,19 @@
           <td>{ep.host}</td>
           <td>{ep.port}</td>
           <td>{ep.username}</td>
-          <td>{ep.keyId ?? "\u2014"}</td>
+          <td>
+            <select
+              value={ep.keyId ?? ""}
+              onchange={(e) => handleKeyChange(ep.id, e.currentTarget.value)}
+            >
+              {#if !ep.keyId}
+                <option value="">No key</option>
+              {/if}
+              {#each $sshKeys as k (k.id)}
+                <option value={k.id}>{k.label} ({k.type})</option>
+              {/each}
+            </select>
+          </td>
           <td>
             <button class="btn btn-secondary" onclick={() => handleDelete(ep.id)}>Delete</button>
           </td>
