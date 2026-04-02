@@ -83,7 +83,7 @@ export async function buildApp(
       id: account.id,
       name: account.name,
       type: account.type,
-      role: account.role,
+      isAdmin: account.isAdmin,
     };
   });
 

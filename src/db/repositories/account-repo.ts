@@ -1,12 +1,12 @@
 import { count, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
-import { accounts } from "../schema.js";
+import { accounts, adminAccount } from "../schema.js";
 
 export interface AccountInfo {
   id: string;
   name: string;
   type: "human" | "agent";
-  role: "admin" | "user";
+  isAdmin: boolean;
   enabled: boolean;
   maxSessions: number;
   lastUsedAt: string | null;
@@ -17,18 +17,16 @@ export interface AccountInfo {
 export interface AccountRepository {
   findById(id: string): Promise<AccountInfo | null>;
   findAll(): Promise<AccountInfo[]>;
-  create(data: {
-    id: string;
-    name: string;
-    type: "human" | "agent";
-    role: "admin" | "user";
-  }): Promise<AccountInfo>;
+  create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo>;
   update(
     id: string,
-    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "role">>,
+    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
   ): Promise<void>;
   touchLastUsed(id: string): void;
   count(): number;
+  getAdminAccountId(): string | null;
+  setAdmin(accountId: string): void;
+  isAdmin(accountId: string): boolean;
 }
 
 export class DrizzleAccountRepository implements AccountRepository {
@@ -36,19 +34,20 @@ export class DrizzleAccountRepository implements AccountRepository {
 
   async findById(id: string): Promise<AccountInfo | null> {
     const row = this.db.select().from(accounts).where(eq(accounts.id, id)).get();
-    return (row as AccountInfo) ?? null;
+    if (!row) return null;
+    return { ...row, isAdmin: this.isAdmin(id) } as AccountInfo;
   }
 
   async findAll(): Promise<AccountInfo[]> {
-    return this.db.select().from(accounts).all() as AccountInfo[];
+    const rows = this.db.select().from(accounts).all();
+    const adminId = this.getAdminAccountId();
+    return rows.map((row) => ({
+      ...row,
+      isAdmin: row.id === adminId,
+    })) as AccountInfo[];
   }
 
-  async create(data: {
-    id: string;
-    name: string;
-    type: "human" | "agent";
-    role: "admin" | "user";
-  }): Promise<AccountInfo> {
+  async create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo> {
     const now = new Date().toISOString();
     this.db
       .insert(accounts)
@@ -66,7 +65,7 @@ export class DrizzleAccountRepository implements AccountRepository {
 
   async update(
     id: string,
-    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "role">>,
+    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
   ): Promise<void> {
     this.db
       .update(accounts)
@@ -86,5 +85,18 @@ export class DrizzleAccountRepository implements AccountRepository {
   count(): number {
     const result = this.db.select({ total: count() }).from(accounts).get();
     return result?.total ?? 0;
+  }
+
+  getAdminAccountId(): string | null {
+    const row = this.db.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
+    return row?.accountId ?? null;
+  }
+
+  setAdmin(accountId: string): void {
+    this.db.insert(adminAccount).values({ singleton: 1, accountId }).run();
+  }
+
+  isAdmin(accountId: string): boolean {
+    return this.getAdminAccountId() === accountId;
   }
 }

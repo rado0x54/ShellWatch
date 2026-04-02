@@ -130,7 +130,7 @@
         <Identicon uuid={$account.id} size={36} />
         <div class="account-details">
           <span class="account-name">{$account.name}</span>
-          {#if $account.role === "admin"}
+          {#if $account.isAdmin}
             <span class="badge badge-admin">admin</span>
           {/if}
         </div>

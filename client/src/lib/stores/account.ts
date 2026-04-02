@@ -5,7 +5,7 @@ export interface AccountData {
   id: string;
   name: string;
   type: "human" | "agent";
-  role: "admin" | "user";
+  isAdmin: boolean;
 }
 
 export const account = writable<AccountData | null>(null);

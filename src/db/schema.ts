@@ -1,4 +1,5 @@
-import { blob, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { blob, check, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // --- Accounts ---
 
@@ -6,7 +7,6 @@ export const accounts = sqliteTable("accounts", {
   id: text("id").primaryKey(), // UUIDv4
   name: text("name").notNull(),
   type: text("type").notNull(), // "human" | "agent"
-  role: text("role").notNull().default("user"), // "admin" | "user"
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
   recoveryCodeHash: text("recovery_code_hash"),
@@ -14,6 +14,19 @@ export const accounts = sqliteTable("accounts", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+// --- Admin Account (singleton — at most one row) ---
+
+export const adminAccount = sqliteTable(
+  "admin_account",
+  {
+    singleton: integer("singleton").primaryKey().default(1),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+  },
+  (table) => [check("single_row", sql`${table.singleton} = 1`)],
+);
 
 // --- WebAuthn Credentials ---
 

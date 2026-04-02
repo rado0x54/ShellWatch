@@ -2,7 +2,6 @@ CREATE TABLE `accounts` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`type` text NOT NULL,
-	`role` text DEFAULT 'user' NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`max_sessions` integer DEFAULT 5 NOT NULL,
 	`recovery_code_hash` text,
@@ -11,7 +10,13 @@ CREATE TABLE `accounts` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `accounts_single_admin` ON `accounts` (`role`) WHERE `role` = 'admin';--> statement-breakpoint
+CREATE TABLE `admin_account` (
+	`singleton` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`account_id` text NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "single_row" CHECK("admin_account"."singleton" = 1)
+);
+--> statement-breakpoint
 CREATE TABLE `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text,

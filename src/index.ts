@@ -105,7 +105,7 @@ try {
     app.log.info(`Seeded API key (prefix: ${seedResult.apiKeyPrefix}…)`);
   }
   if (seedResult.seededAdminAccount) {
-    app.log.info(`Seeded admin account (${seedResult.adminAccountId})`);
+    app.log.info(`Seeded admin account (${seedResult.seedAdminId})`);
   }
   if (seedResult.seededAdminPasskey) {
     app.log.info(`Seeded admin passkey (${config.seedAdminPasskey?.label ?? "Admin Passkey"})`);

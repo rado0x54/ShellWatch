@@ -160,8 +160,8 @@ export function registerWebAuthnRoutes(
               id: randomUUID(),
               name: label || "Admin",
               type: "human",
-              role: "admin",
             });
+            accountRepo.setAdmin(admin.id);
             accountId = admin.id;
           }
         }
