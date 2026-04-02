@@ -35,9 +35,13 @@ export function registerAuthGate(
   }
 
   // Logout: clear session cookie
-  app.post(`${basePath}/api/auth/logout`, async (_request, reply) => {
+  app.post(`${basePath}/api/auth/logout`, async (request, reply) => {
+    const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
     reply
-      .header("Set-Cookie", `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`)
+      .header(
+        "Set-Cookie",
+        `${COOKIE_NAME}=; Path=${basePath || "/"}; Max-Age=0; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict`,
+      )
       .send({ status: "logged_out" });
   });
 
