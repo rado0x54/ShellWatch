@@ -45,6 +45,7 @@ ShellWatch is an SSH session broker that sits between clients (humans and AI age
 The central session registry. Owns the lifecycle of all terminal sessions regardless of source.
 
 **Responsibilities:**
+
 - Create/close terminal sessions against configured endpoints
 - Route input to the SSH transport
 - Buffer output per session (append-only with offset tracking)
@@ -54,6 +55,7 @@ The central session registry. Owns the lifecycle of all terminal sessions regard
 **Key design:** The TerminalManager is source-agnostic. It doesn't know or care whether a session was created by the web UI, an MCP agent, or an SSH client. All paths converge here.
 
 **Event flow:**
+
 ```
 Client input → TerminalManager.sendInput() → SSH Transport → Remote host
 Remote host → SSH Transport (data event) → OutputBuffer.append() → TerminalManager emits "output"
@@ -93,7 +95,7 @@ ssh2-based implementation of `TerminalTransport`. Connects to a remote host, aut
 
 ### Web UI (`client/`)
 
-SvelteKit SPA (adapter-static) served as static files by Fastify. All routing is client-side. The UI uses xterm.js for terminal emulation and Svelte stores for reactive state management.
+SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit provides client-side routing, layouts, and the build pipeline — but no server-side features (no SSR, no API routes, no server hooks). All server logic lives in Fastify. The UI uses xterm.js for terminal emulation and Svelte stores for reactive state management.
 
 **Routes:**
 | Route | View |
@@ -107,10 +109,12 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. All routing is
 | `/login` | WebAuthn passkey login |
 
 **Communication:**
+
 - **REST API** (`/api/*`) — endpoint listing, session CRUD, key management, WebAuthn
 - **WebSocket** (`/ws`) — real-time terminal I/O, session status events, FIDO signing
 
 **WebSocket protocol:**
+
 ```
 Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
                  terminal:take-control, terminal:release-control,
@@ -120,6 +124,7 @@ Server → Client: terminal:output, terminal:status, terminal:closed, terminal:m
 ```
 
 **State management:** Svelte stores provide reactive state shared across components:
+
 - `ws.ts` — WebSocket connection, message dispatch, session list
 - `endpoints.ts` — endpoint CRUD operations
 - `keys.ts` — SSH keys and API keys
@@ -168,16 +173,17 @@ Manages terminal sessions owned by a single agent connection. Enforces session i
 
 ```typescript
 class AgentSession {
-  createSession(endpointId: string): Promise<TerminalSession>
-  listSessions(): TerminalSession[]        // only owned sessions
-  sendKeys(sessionId: string, keys: string[]): void
-  readOutput(sessionId: string, afterOffset?, limit?): OutputReadResult
-  closeSession(sessionId: string): void
-  destroy(): void                          // close all owned sessions
+  createSession(endpointId: string): Promise<TerminalSession>;
+  listSessions(): TerminalSession[]; // only owned sessions
+  sendKeys(sessionId: string, keys: string[]): void;
+  readOutput(sessionId: string, afterOffset?, limit?): OutputReadResult;
+  closeSession(sessionId: string): void;
+  destroy(): void; // close all owned sessions
 }
 ```
 
 **Used by:**
+
 - MCP server — one `AgentSession("mcp")` per MCP client connection
 - SSH server (planned) — one `AgentSession("ssh")` per SSH client connection
 
@@ -192,6 +198,7 @@ CIDR-based network filter applied to the MCP endpoint. Configured via `security.
 Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`).
 
 ### Planned (see tickets)
+
 - API keys for agents (#15)
 - Passkey/WebAuthn for admin (#20)
 - Guardrails — input filtering (#13)
@@ -200,7 +207,7 @@ Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`).
 ## Configuration
 
 ```yaml
-servers:                          # SSH endpoints
+servers: # SSH endpoints
   - id: dev-box
     label: Dev Box
     host: dev.example.com
@@ -209,13 +216,13 @@ servers:                          # SSH endpoints
     privateKeyPath: ./keys/dev-box.pem
 
 security:
-  allowedNetworks:                # CIDR allowlist for MCP
+  allowedNetworks: # CIDR allowlist for MCP
     - 127.0.0.1/32
     - "::1/128"
 
 notifications:
   mcp:
-    debounceMs: 100               # output_available debounce
+    debounceMs: 100 # output_available debounce
 ```
 
 Config is validated at startup via zod. Private key files are verified accessible.

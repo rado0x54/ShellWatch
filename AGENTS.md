@@ -5,6 +5,7 @@ This is the canonical project instructions file. All coding agents (Claude Code,
 ## Project Overview
 
 ShellWatch is an SSH session broker that provides:
+
 - A browser-based terminal UI for interactive SSH sessions
 - An MCP (Model Context Protocol) interface for programmatic session control
 - A shared TerminalManager that both UI and MCP operate on
@@ -14,8 +15,8 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 ## Tech Stack
 
 - **Runtime:** Node.js with TypeScript (strict mode)
-- **Backend:** Fastify with plugins (`@fastify/websocket`, `@fastify/cors`)
-- **Frontend:** SvelteKit (adapter-static, client-side SPA) with Svelte 5, xterm.js for terminal
+- **Backend:** Fastify with plugins (`@fastify/websocket`, `@fastify/cors`) — owns all server logic (API, WebSocket, MCP, SSH)
+- **Frontend:** SvelteKit (adapter-static, client-side SPA) with Svelte 5, xterm.js — routing, layouts, and build only; no SSR or server-side SvelteKit features (Fastify handles that)
 - **SSH:** ssh2 library
 - **Terminal:** xterm.js
 - **MCP:** @modelcontextprotocol/sdk (streamable HTTP transport)
@@ -98,6 +99,7 @@ pnpm test:coverage    # Run tests with coverage report
 For detailed architecture documentation including data flows, component responsibilities, and planned extensions, see [docs/architecture.md](./docs/architecture.md).
 
 **Key concepts:**
+
 - **TerminalManager** — central session registry, source-agnostic. All paths converge here.
 - **AgentSession** (`src/agent/`) — session isolation per agent connection. Each agent (MCP or future SSH) only sees its own sessions.
 - **Web UI** — admin view, sees all sessions regardless of source via REST API + WebSocket.
@@ -120,22 +122,27 @@ For detailed architecture documentation including data flows, component responsi
 ## Testing
 
 ### Philosophy
+
 Tests cover both individual components and the full system. Integration tests use in-process infrastructure (ssh2 Server, Fastify app, MCP client, WebSocket client) — no external services needed.
 
 ### Unit Tests
+
 - `src/terminal/output-buffer.test.ts` — buffer append, incremental reads, eviction
 - `src/terminal/terminal-manager.test.ts` — lifecycle, events, idle cleanup (mock transport)
 - `src/config/loader.test.ts` — valid/invalid configs, validation errors
 - `src/mcp/server.test.ts` — all 6 MCP tools via InMemoryTransport
 
 ### Integration Tests
+
 Integration tests spin up real infrastructure per test suite:
+
 - **In-process ssh2 Server** — ed25519 key auth, PTY, echo shell, server-push, disconnect simulation
 - **ShellWatch Fastify app** — on random port, `skipStaticFiles: true` for test isolation
 - **MCP client** — `StreamableHTTPClientTransport` against the app
 - **WebSocket client** — `ws` library with message buffering and `waitForMessage` helper
 
 Test categories (`src/test/integration/`):
+
 - `mcp-flow.test.ts` — MCP client full lifecycle
 - `rest-api-flow.test.ts` — REST API CRUD + error codes
 - `ws-flow.test.ts` — WebSocket attach, I/O, close, disconnect survivability
@@ -145,6 +152,7 @@ Test categories (`src/test/integration/`):
 - `concurrent-sessions.test.ts` — independent I/O, mixed actor sessions
 
 ### Writing Tests
+
 - **Unit tests** go next to the source file: `foo.ts` → `foo.test.ts`
 - **Integration tests** go in `src/test/integration/`
 - Use `createTestLog()` for diagnostics — logs dump automatically on test failure
@@ -182,26 +190,27 @@ Open tickets in implementation order. High priority items focus on core function
 
 ### High Priority (core function)
 
-| Phase | Ticket | Description |
-|-------|--------|-------------|
-| 1 | #10 | Enhanced MCP interface — `shellwatch_exec`, `send_keys`, notifications |
-| 2 | #14 | Persistence layer — Drizzle ORM, SQLite/PostgreSQL, dynamic config |
-| 3 | #13 | Guardrails — input filtering with warn/block/terminate/approve actions |
-| 4 | #15 | Security — IP allowlist, API keys for agents, passkey for admin |
-| 5 | #18 | FIDO/hardware key — ssh2 fork, WebAuthn browser bridge for SSH signing |
-| 6 | #20 | Passkey-first auth — unified WebAuthn for UI login, SSH signing, approvals |
-| 7 | #19 | Human-in-the-loop — second channel notifications, interactive approvals |
+| Phase | Ticket | Description                                                                |
+| ----- | ------ | -------------------------------------------------------------------------- |
+| 1     | #10    | Enhanced MCP interface — `shellwatch_exec`, `send_keys`, notifications     |
+| 2     | #14    | Persistence layer — Drizzle ORM, SQLite/PostgreSQL, dynamic config         |
+| 3     | #13    | Guardrails — input filtering with warn/block/terminate/approve actions     |
+| 4     | #15    | Security — IP allowlist, API keys for agents, passkey for admin            |
+| 5     | #18    | FIDO/hardware key — ssh2 fork, WebAuthn browser bridge for SSH signing     |
+| 6     | #20    | Passkey-first auth — unified WebAuthn for UI login, SSH signing, approvals |
+| 7     | #19    | Human-in-the-loop — second channel notifications, interactive approvals    |
 
 ### Lower Priority (extend later)
 
-| Ticket | Description | Why deferred |
-|--------|-------------|-------------|
-| #11 | Google Stitch UI design | Function before polish |
-| #12 | SSH server interface (bastion) | Needs auth foundation first |
-| #16 | Audit log (full I/O recording) | Needs persistence, not critical for function |
-| #17 | Multi-tenant (identities, scoped access) | Single-admin is sufficient for stage one |
+| Ticket | Description                              | Why deferred                                 |
+| ------ | ---------------------------------------- | -------------------------------------------- |
+| #11    | Google Stitch UI design                  | Function before polish                       |
+| #12    | SSH server interface (bastion)           | Needs auth foundation first                  |
+| #16    | Audit log (full I/O recording)           | Needs persistence, not critical for function |
+| #17    | Multi-tenant (identities, scoped access) | Single-admin is sufficient for stage one     |
 
 ### Dependency Graph
+
 ```
 #10 Enhanced MCP ←── no deps, start immediately
 #14 Persistence ←── no deps, foundational

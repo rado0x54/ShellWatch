@@ -41,7 +41,7 @@ servers:
     host: dev.example.com
     port: 22
     username: ubuntu
-    keyId: dev-box     # matches ./keys/dev-box.pem
+    keyId: dev-box # matches ./keys/dev-box.pem
 
 security:
   allowedNetworks:
@@ -85,16 +85,16 @@ The production server auto-detects the built client in `dist/client/` and serves
 
 ### All endpoints on a single port
 
-| Path | Interface |
-|------|-----------|
-| `/` | Web UI — Terminal view |
-| `/observer` | Web UI — Multi-session grid |
+| Path          | Interface                                               |
+| ------------- | ------------------------------------------------------- |
+| `/`           | Web UI — Terminal view                                  |
+| `/observer`   | Web UI — Multi-session grid                             |
 | `/settings/*` | Web UI — Settings (endpoints, keys, passkeys, API keys) |
-| `/login` | Web UI — WebAuthn login |
-| `/api/*` | REST API |
-| `/ws` | WebSocket (terminal I/O + events) |
-| `/mcp` | MCP (streamable HTTP) |
-| `/health` | Health check |
+| `/login`      | Web UI — WebAuthn login                                 |
+| `/api/*`      | REST API                                                |
+| `/ws`         | WebSocket (terminal I/O + events)                       |
+| `/mcp`        | MCP (streamable HTTP)                                   |
+| `/health`     | Health check                                            |
 
 ## Web UI
 
@@ -112,18 +112,19 @@ Open `http://localhost:3000` in your browser.
 
 ShellWatch exposes an MCP server over streamable HTTP at `/mcp`:
 
-| Tool | Description |
-|------|-------------|
-| `shellwatch_list_endpoints` | List configured SSH endpoints |
-| `shellwatch_create_session` | Create a new terminal session |
-| `shellwatch_list_sessions` | List this agent's active sessions |
-| `shellwatch_send_keys` | Send keystrokes/text to a session |
-| `shellwatch_read_output` | Read session output (with offset) |
-| `shellwatch_close_session` | Close a session |
+| Tool                        | Description                       |
+| --------------------------- | --------------------------------- |
+| `shellwatch_list_endpoints` | List configured SSH endpoints     |
+| `shellwatch_create_session` | Create a new terminal session     |
+| `shellwatch_list_sessions`  | List this agent's active sessions |
+| `shellwatch_send_keys`      | Send keystrokes/text to a session |
+| `shellwatch_read_output`    | Read session output (with offset) |
+| `shellwatch_close_session`  | Close a session                   |
 
 Each MCP client gets an isolated `AgentSession` — agents can only see and control their own sessions. The web UI (admin view) sees all sessions regardless of source.
 
 **Notifications (server -> client):**
+
 - `output_available` — new output ready (debounced)
 - `session_status` — session state changed
 
@@ -142,19 +143,19 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
 
 ## Scripts
 
-| Script | Description |
-|--------|-------------|
-| `pnpm dev` | Build client + start server with hot reload |
-| `pnpm build` | Build server (tsc) + client (SvelteKit) for production |
-| `pnpm start` | Run production server |
-| `pnpm build:server` | Compile server TypeScript only |
-| `pnpm build:client` | Build SvelteKit client |
-| `pnpm typecheck` | Type check without emitting |
-| `pnpm lint` | Lint with ESLint |
-| `pnpm lint:fix` | Auto-fix lint issues |
-| `pnpm format` | Format with Prettier |
-| `pnpm test` | Run all tests |
-| `pnpm test:coverage` | Run tests with coverage report |
+| Script               | Description                                            |
+| -------------------- | ------------------------------------------------------ |
+| `pnpm dev`           | Build client + start server with hot reload            |
+| `pnpm build`         | Build server (tsc) + client (SvelteKit) for production |
+| `pnpm start`         | Run production server                                  |
+| `pnpm build:server`  | Compile server TypeScript only                         |
+| `pnpm build:client`  | Build SvelteKit client                                 |
+| `pnpm typecheck`     | Type check without emitting                            |
+| `pnpm lint`          | Lint with ESLint                                       |
+| `pnpm lint:fix`      | Auto-fix lint issues                                   |
+| `pnpm format`        | Format with Prettier                                   |
+| `pnpm test`          | Run all tests                                          |
+| `pnpm test:coverage` | Run tests with coverage report                         |
 
 ## Testing
 
@@ -167,8 +168,8 @@ pnpm test:coverage  # run with coverage report
 
 ## Tech stack
 
-- **Backend:** Fastify, ssh2, @modelcontextprotocol/sdk
-- **Frontend:** SvelteKit (Svelte 5, adapter-static), xterm.js
+- **Backend:** Fastify (API, WebSocket, MCP, SSH — all server logic), ssh2, @modelcontextprotocol/sdk
+- **Frontend:** SvelteKit (Svelte 5, adapter-static — client-side routing and build only, no SSR), xterm.js
 - **Database:** SQLite via Drizzle ORM
 - **Auth:** WebAuthn/passkeys (via @simplewebauthn)
 - **Testing:** Vitest, ssh2 Server (in-process)
