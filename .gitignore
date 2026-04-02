@@ -6,6 +6,8 @@ coverage/
 *.pem
 *.key
 keys/
+logs/*
+!logs/.gitkeep
 config.yaml
 .env
 client/.svelte-kit/

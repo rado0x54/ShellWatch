@@ -4,7 +4,7 @@
   "description": "SSH session broker with browser UI and MCP interface",
   "type": "module",
   "scripts": {
-    "dev": "pnpm build:client && tsx watch src/index.ts",
+    "dev": "pnpm build:client && tsx watch src/index.ts 2>&1 | tee logs/dev.log",
     "build": "tsc && pnpm build:client",
     "build:server": "tsc",
     "build:client": "cd client && npx svelte-kit sync && npx vite build",
