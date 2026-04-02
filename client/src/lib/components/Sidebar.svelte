@@ -1,7 +1,8 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
+import { resolve } from "$app/paths";
 import { page } from "$app/stores";
-import { endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
+import { endpoints } from "$lib/stores/endpoints.js";
 import { closeSession, createSession } from "$lib/stores/sessions-api.js";
 import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
 
@@ -19,7 +20,7 @@ const currentPath = $derived($page.url.pathname);
 async function handleConnect(endpointId: string) {
   try {
     if (currentPath !== "/") {
-      await goto("/");
+      await goto(resolve("/"));
     }
     const session = await createSession(endpointId);
     onConnect(session.sessionId, "control");
@@ -37,9 +38,9 @@ async function handleClose(sessionId: string) {
   }
 }
 
-function handleSessionClick(sessionId: string, mode: "control" | "observer") {
+async function handleSessionClick(sessionId: string, mode: "control" | "observer") {
   if (currentPath !== "/") {
-    goto("/");
+    await goto(resolve("/"));
   }
   onConnect(sessionId, mode);
   onMobileClose?.();
@@ -50,8 +51,8 @@ function getEndpointLabel(endpointId: string): string {
   return ep?.label ?? endpointId;
 }
 
-function navTo(path: string) {
-  goto(path);
+async function navTo(path: string) {
+  await goto(resolve(path));
   onMobileClose?.();
 }
 </script>

@@ -2,6 +2,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { onDestroy, onMount } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
 import { endpoints } from "$lib/stores/endpoints.js";
 import { onWsMessage, type SessionListEntry, sessions, wsAttach } from "$lib/stores/ws.js";
 
@@ -13,7 +14,7 @@ interface ObservedTerminal {
 }
 
 let gridEl: HTMLDivElement;
-let observed = $state<Map<string, ObservedTerminal>>(new Map());
+let observed = new SvelteMap<string, ObservedTerminal>();
 let resizeObserver: ResizeObserver | null = null;
 let unsubscribe: (() => void) | null = null;
 
@@ -54,7 +55,6 @@ function syncSessions(sessionList: SessionListEntry[]) {
       const obs = observed.get(id)!;
       obs.terminal.dispose();
       observed.delete(id);
-      observed = new Map(observed);
     }
   }
 
@@ -79,7 +79,6 @@ function syncSessions(sessionList: SessionListEntry[]) {
       terminal.loadAddon(fitAddon);
 
       observed.set(sess.sessionId, { sessionId: sess.sessionId, label, terminal, fitAddon });
-      observed = new Map(observed);
 
       wsAttach(sess.sessionId);
     }

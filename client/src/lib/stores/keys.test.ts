@@ -24,7 +24,14 @@ describe("keys store", () => {
   describe("SSH keys", () => {
     it("fetchSshKeys populates the store", async () => {
       const mockKeys = [
-        { id: "k1", label: "Dev Key", type: "ed25519", fingerprint: "SHA256:abc", available: true, authorizedKeysEntry: "ssh-ed25519 AAAA..." },
+        {
+          id: "k1",
+          label: "Dev Key",
+          type: "ed25519",
+          fingerprint: "SHA256:abc",
+          available: true,
+          authorizedKeysEntry: "ssh-ed25519 AAAA...",
+        },
       ];
       vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
         new Response(JSON.stringify({ keys: mockKeys })),
@@ -40,7 +47,14 @@ describe("keys store", () => {
   describe("API keys", () => {
     it("fetchApiKeys populates the store", async () => {
       const mockKeys = [
-        { id: "ak1", label: "Agent", keyPrefix: "sw_abc123", scopes: ["mcp"], enabled: true, createdAt: "2026-04-01" },
+        {
+          id: "ak1",
+          label: "Agent",
+          keyPrefix: "sw_abc123",
+          scopes: ["mcp"],
+          enabled: true,
+          createdAt: "2026-04-01",
+        },
       ];
       vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
         new Response(JSON.stringify({ keys: mockKeys })),
@@ -52,7 +66,9 @@ describe("keys store", () => {
     });
 
     it("fetchApiKeys sets empty array on error", async () => {
-      apiKeys.set([{ id: "old", label: "Old", keyPrefix: "sw_", scopes: [], enabled: true, createdAt: "" }]);
+      apiKeys.set([
+        { id: "old", label: "Old", keyPrefix: "sw_", scopes: [], enabled: true, createdAt: "" },
+      ]);
       vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
         new Response("Not Found", { status: 404 }),
       );
@@ -74,12 +90,17 @@ describe("keys store", () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       // Generate response
       fetchSpy.mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: "ak2", label: "New", keyPrefix: "sw_new", key: "sw_full_secret_key" })),
+        new Response(
+          JSON.stringify({
+            id: "ak2",
+            label: "New",
+            keyPrefix: "sw_new",
+            key: "sw_full_secret_key",
+          }),
+        ),
       );
       // Refresh response
-      fetchSpy.mockResolvedValueOnce(
-        new Response(JSON.stringify({ keys: [] })),
-      );
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ keys: [] })));
 
       const key = await generateApiKey("New");
 

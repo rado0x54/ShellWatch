@@ -1,5 +1,6 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
+import { resolve } from "$app/paths";
 import { page } from "$app/stores";
 
 let { children } = $props();
@@ -24,7 +25,7 @@ const currentPath = $derived($page.url.pathname);
       <button
         class="tab"
         class:active={currentPath === tab.path}
-        onclick={() => goto(tab.path)}
+        onclick={() => goto(resolve(tab.path))}
       >
         {tab.label}
       </button>

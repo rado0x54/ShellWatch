@@ -4,6 +4,7 @@ import { basePath } from "./connection.js";
 import {
   connectWs,
   onWsMessage,
+  type SessionListEntry,
   sessions,
   wsAttach,
   wsReleaseControl,
@@ -11,7 +12,6 @@ import {
   wsSendInput,
   wsSendResize,
   wsTakeControl,
-  type SessionListEntry,
 } from "./ws.js";
 
 // Mock WebSocket
@@ -75,7 +75,14 @@ describe("ws store", () => {
     const ws = MockWebSocket.instances[0];
 
     const mockSessions: SessionListEntry[] = [
-      { sessionId: "s1", endpointId: "dev", status: "open", createdAt: "", source: "ui", mode: "control" },
+      {
+        sessionId: "s1",
+        endpointId: "dev",
+        status: "open",
+        createdAt: "",
+        source: "ui",
+        mode: "control",
+      },
     ];
 
     ws.simulateMessage({ type: "sessions:changed", sessions: mockSessions });
@@ -152,7 +159,11 @@ describe("ws store", () => {
 
     wsSendInput("sess-1", "ls\n");
 
-    expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:input", sessionId: "sess-1", data: "ls\n" });
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      type: "terminal:input",
+      sessionId: "sess-1",
+      data: "ls\n",
+    });
   });
 
   it("wsSendResize sends terminal:resize message", () => {
@@ -161,7 +172,12 @@ describe("ws store", () => {
 
     wsSendResize("sess-1", 120, 40);
 
-    expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:resize", sessionId: "sess-1", cols: 120, rows: 40 });
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      type: "terminal:resize",
+      sessionId: "sess-1",
+      cols: 120,
+      rows: 40,
+    });
   });
 
   it("wsTakeControl sends terminal:take-control message", () => {
@@ -179,7 +195,10 @@ describe("ws store", () => {
 
     wsReleaseControl("sess-1");
 
-    expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:release-control", sessionId: "sess-1" });
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      type: "terminal:release-control",
+      sessionId: "sess-1",
+    });
   });
 
   it("ignores invalid JSON messages", () => {

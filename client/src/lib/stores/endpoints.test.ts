@@ -75,13 +75,15 @@ describe("endpoints store", () => {
       new Response(JSON.stringify({ error: "Duplicate ID" }), { status: 400 }),
     );
 
-    await expect(createEndpoint({
-      id: "dup",
-      label: "Dup",
-      host: "h",
-      port: 22,
-      username: "u",
-    })).rejects.toThrow("Duplicate ID");
+    await expect(
+      createEndpoint({
+        id: "dup",
+        label: "Dup",
+        host: "h",
+        port: 22,
+        username: "u",
+      }),
+    ).rejects.toThrow("Duplicate ID");
   });
 
   it("deleteEndpoint sends DELETE and refreshes", async () => {

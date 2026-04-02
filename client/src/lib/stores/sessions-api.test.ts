@@ -19,9 +19,7 @@ describe("sessions-api store", () => {
       createdAt: "2026-04-01T00:00:00Z",
       source: "ui",
     };
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify(mockSession)),
-    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(mockSession)));
 
     const result = await createSession("dev");
 

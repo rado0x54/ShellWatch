@@ -1,13 +1,14 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import { goto } from "$app/navigation";
+import { resolve } from "$app/paths";
 import { page } from "$app/stores";
 import "../app.css";
 import Sidebar from "$lib/components/Sidebar.svelte";
 import { basePath } from "$lib/stores/connection.js";
-import { endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
+import { fetchEndpoints } from "$lib/stores/endpoints.js";
 import { checkAuth } from "$lib/stores/webauthn.js";
-import { connectWs, onWsMessage, sessions } from "$lib/stores/ws.js";
+import { connectWs, onWsMessage } from "$lib/stores/ws.js";
 import { handleFidoSignRequest } from "$lib/utils/fido.js";
 
 let { children } = $props();
@@ -35,7 +36,7 @@ onMount(async () => {
   if (!isLogin) {
     const { hasPasskeys, authenticated } = await checkAuth();
     if (hasPasskeys && !authenticated) {
-      await goto(`${base}/login`);
+      await goto(resolve("/login"));
       ready = true;
       return;
     }

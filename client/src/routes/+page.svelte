@@ -1,7 +1,6 @@
 <script lang="ts">
 import { onDestroy } from "svelte";
 import Terminal from "$lib/components/Terminal.svelte";
-import { endpoints } from "$lib/stores/endpoints.js";
 import { onWsMessage, type SessionMode, sessions } from "$lib/stores/ws.js";
 
 let activeSessionId = $state<string | null>(null);

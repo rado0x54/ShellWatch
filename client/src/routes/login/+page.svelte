@@ -1,6 +1,5 @@
 <script lang="ts">
 import { get } from "svelte/store";
-import { goto } from "$app/navigation";
 import { basePath } from "$lib/stores/connection.js";
 import { login } from "$lib/stores/webauthn.js";
 
