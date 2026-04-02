@@ -1,80 +1,80 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import {
-  credentials,
-  deleteCredential,
-  fetchCredentials,
-  finishPasskeyRegistration,
-  startPasskeyRegistration,
-} from "$lib/stores/webauthn.js";
+  import { onMount } from "svelte";
+  import {
+    credentials,
+    deleteCredential,
+    fetchCredentials,
+    finishPasskeyRegistration,
+    startPasskeyRegistration,
+  } from "$lib/stores/webauthn.js";
 
-let showModal = $state(false);
-let modalLabel = $state("");
-let modalDesc = $state("");
-let pendingRegistration: {
-  challengeId: string;
-  credential: Parameters<typeof finishPasskeyRegistration>[1];
-  suggestedLabel: string;
-} | null = null;
+  let showModal = $state(false);
+  let modalLabel = $state("");
+  let modalDesc = $state("");
+  let pendingRegistration: {
+    challengeId: string;
+    credential: Parameters<typeof finishPasskeyRegistration>[1];
+    suggestedLabel: string;
+  } | null = null;
 
-onMount(() => {
-  fetchCredentials();
-});
+  onMount(() => {
+    fetchCredentials();
+  });
 
-function copyKey(key: string, btn: HTMLButtonElement) {
-  navigator.clipboard.writeText(key);
-  const original = btn.textContent;
-  btn.textContent = "Copied!";
-  setTimeout(() => {
-    btn.textContent = original;
-  }, 1500);
-}
-
-async function handleDelete(id: string) {
-  if (confirm("Delete this passkey?")) {
-    await deleteCredential(id);
+  function copyKey(key: string, btn: HTMLButtonElement) {
+    navigator.clipboard.writeText(key);
+    const original = btn.textContent;
+    btn.textContent = "Copied!";
+    setTimeout(() => {
+      btn.textContent = original;
+    }, 1500);
   }
-}
 
-async function handleRegister() {
-  try {
-    const result = await startPasskeyRegistration();
-    pendingRegistration = result;
-    modalLabel = result.suggestedLabel;
-    modalDesc = `Detected: ${result.suggestedLabel}. Change the label if you like.`;
-    showModal = true;
-  } catch (err) {
-    alert(`Registration failed: ${(err as Error).message}`);
+  async function handleDelete(id: string) {
+    if (confirm("Delete this passkey?")) {
+      await deleteCredential(id);
+    }
   }
-}
 
-async function handleSave() {
-  if (!pendingRegistration) return;
-  const label = modalLabel.trim() || pendingRegistration.suggestedLabel;
-  try {
-    await finishPasskeyRegistration(
-      pendingRegistration.challengeId,
-      pendingRegistration.credential,
-      label,
-    );
-  } catch (err) {
-    alert(`Registration failed: ${(err as Error).message}`);
+  async function handleRegister() {
+    try {
+      const result = await startPasskeyRegistration();
+      pendingRegistration = result;
+      modalLabel = result.suggestedLabel;
+      modalDesc = `Detected: ${result.suggestedLabel}. Change the label if you like.`;
+      showModal = true;
+    } catch (err) {
+      alert(`Registration failed: ${(err as Error).message}`);
+    }
   }
-  showModal = false;
-  pendingRegistration = null;
-}
 
-function handleCancel() {
-  showModal = false;
-  pendingRegistration = null;
-}
+  async function handleSave() {
+    if (!pendingRegistration) return;
+    const label = modalLabel.trim() || pendingRegistration.suggestedLabel;
+    try {
+      await finishPasskeyRegistration(
+        pendingRegistration.challengeId,
+        pendingRegistration.credential,
+        label,
+      );
+    } catch (err) {
+      alert(`Registration failed: ${(err as Error).message}`);
+    }
+    showModal = false;
+    pendingRegistration = null;
+  }
 
-function handleModalKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter") handleSave();
-  if (e.key === "Escape") handleCancel();
-}
+  function handleCancel() {
+    showModal = false;
+    pendingRegistration = null;
+  }
 
-const hasAuthorizedKeys = $derived($credentials.some((pk) => pk.authorizedKeysEntry));
+  function handleModalKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") handleSave();
+    if (e.key === "Escape") handleCancel();
+  }
+
+  const hasAuthorizedKeys = $derived($credentials.some((pk) => pk.authorizedKeysEntry));
 </script>
 
 <section>
@@ -100,8 +100,10 @@ const hasAuthorizedKeys = $derived($credentials.some((pk) => pk.authorizedKeysEn
             {#if pk.authorizedKeysEntry}
               <button
                 class="btn-copy"
-                onclick={(e) => copyKey(pk.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
-              >Copy SSH Key</button>
+                onclick={(e) =>
+                  copyKey(pk.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
+                >Copy SSH Key</button
+              >
             {/if}
             <button class="btn btn-secondary" onclick={() => handleDelete(pk.id)}>Delete</button>
           </td>
@@ -117,7 +119,8 @@ const hasAuthorizedKeys = $derived($credentials.some((pk) => pk.authorizedKeysEn
     <div class="settings-info">
       <h3>SSH Server Setup</h3>
       <p>Add this line to <code>/etc/ssh/sshd_config</code> on your remote server:</p>
-      <pre class="code-block">PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</pre>
+      <pre
+        class="code-block">PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</pre>
       <p>Then add the passkey's SSH public key to <code>~/.ssh/authorized_keys</code>.</p>
     </div>
   {/if}

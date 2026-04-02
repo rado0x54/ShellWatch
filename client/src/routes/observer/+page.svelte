@@ -1,134 +1,134 @@
 <script lang="ts">
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import { onDestroy, onMount } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
-import { endpoints } from "$lib/stores/endpoints.js";
-import { onWsMessage, type SessionListEntry, sessions, wsAttach } from "$lib/stores/ws.js";
+  import { FitAddon } from "@xterm/addon-fit";
+  import { Terminal } from "@xterm/xterm";
+  import { onDestroy, onMount } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
+  import { endpoints } from "$lib/stores/endpoints.js";
+  import { onWsMessage, type SessionListEntry, sessions, wsAttach } from "$lib/stores/ws.js";
 
-interface ObservedTerminal {
-  sessionId: string;
-  label: string;
-  terminal: Terminal;
-  fitAddon: FitAddon;
-}
-
-let gridEl: HTMLDivElement;
-let observed = new SvelteMap<string, ObservedTerminal>();
-let resizeObserver: ResizeObserver | null = null;
-let unsubscribe: (() => void) | null = null;
-
-function getEndpointLabel(endpointId: string): string {
-  const ep = $endpoints.find((e) => e.id === endpointId);
-  return ep?.label ?? endpointId;
-}
-
-function getGridDimensions(count: number): { cols: number; rows: number } {
-  if (count <= 1) return { cols: 1, rows: 1 };
-  if (count <= 2) return { cols: 2, rows: 1 };
-  if (count <= 4) return { cols: 2, rows: 2 };
-  if (count <= 6) return { cols: 3, rows: 2 };
-  if (count <= 9) return { cols: 3, rows: 3 };
-  if (count <= 12) return { cols: 4, rows: 3 };
-  return { cols: 4, rows: 4 };
-}
-
-function fitAll() {
-  for (const obs of observed.values()) {
-    try {
-      obs.fitAddon.fit();
-    } catch {
-      /* not rendered yet */
-    }
+  interface ObservedTerminal {
+    sessionId: string;
+    label: string;
+    terminal: Terminal;
+    fitAddon: FitAddon;
   }
-}
 
-function syncSessions(sessionList: SessionListEntry[]) {
-  if (!gridEl) return;
+  let gridEl: HTMLDivElement;
+  let observed = new SvelteMap<string, ObservedTerminal>();
+  let resizeObserver: ResizeObserver | null = null;
+  let unsubscribe: (() => void) | null = null;
 
-  const currentIds = new Set(observed.keys());
-  const newIds = new Set(sessionList.map((s) => s.sessionId));
+  function getEndpointLabel(endpointId: string): string {
+    const ep = $endpoints.find((e) => e.id === endpointId);
+    return ep?.label ?? endpointId;
+  }
 
-  // Remove closed sessions
-  for (const id of currentIds) {
-    if (!newIds.has(id)) {
-      const obs = observed.get(id)!;
-      obs.terminal.dispose();
-      observed.delete(id);
+  function getGridDimensions(count: number): { cols: number; rows: number } {
+    if (count <= 1) return { cols: 1, rows: 1 };
+    if (count <= 2) return { cols: 2, rows: 1 };
+    if (count <= 4) return { cols: 2, rows: 2 };
+    if (count <= 6) return { cols: 3, rows: 2 };
+    if (count <= 9) return { cols: 3, rows: 3 };
+    if (count <= 12) return { cols: 4, rows: 3 };
+    return { cols: 4, rows: 4 };
+  }
+
+  function fitAll() {
+    for (const obs of observed.values()) {
+      try {
+        obs.fitAddon.fit();
+      } catch {
+        /* not rendered yet */
+      }
     }
   }
 
-  // Add new sessions
-  for (const sess of sessionList) {
-    if (!observed.has(sess.sessionId)) {
-      const label = getEndpointLabel(sess.endpointId);
-      const terminal = new Terminal({
-        cursorBlink: false,
-        fontSize: 11,
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-        theme: {
-          background: "#1a1a2e",
-          foreground: "#e0e0e0",
-          cursor: "#4a9eff",
-          selectionBackground: "#4a9eff44",
-        },
-        disableStdin: true,
-        scrollback: 1000,
-      });
-      const fitAddon = new FitAddon();
-      terminal.loadAddon(fitAddon);
+  function syncSessions(sessionList: SessionListEntry[]) {
+    if (!gridEl) return;
 
-      observed.set(sess.sessionId, { sessionId: sess.sessionId, label, terminal, fitAddon });
+    const currentIds = new Set(observed.keys());
+    const newIds = new Set(sessionList.map((s) => s.sessionId));
 
-      wsAttach(sess.sessionId);
+    // Remove closed sessions
+    for (const id of currentIds) {
+      if (!newIds.has(id)) {
+        const obs = observed.get(id)!;
+        obs.terminal.dispose();
+        observed.delete(id);
+      }
     }
+
+    // Add new sessions
+    for (const sess of sessionList) {
+      if (!observed.has(sess.sessionId)) {
+        const label = getEndpointLabel(sess.endpointId);
+        const terminal = new Terminal({
+          cursorBlink: false,
+          fontSize: 11,
+          fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+          theme: {
+            background: "#1a1a2e",
+            foreground: "#e0e0e0",
+            cursor: "#4a9eff",
+            selectionBackground: "#4a9eff44",
+          },
+          disableStdin: true,
+          scrollback: 1000,
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+
+        observed.set(sess.sessionId, { sessionId: sess.sessionId, label, terminal, fitAddon });
+
+        wsAttach(sess.sessionId);
+      }
+    }
+
+    // Update grid
+    const { cols, rows } = getGridDimensions(observed.size);
+    if (gridEl) {
+      gridEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      gridEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    }
+
+    requestAnimationFrame(() => fitAll());
   }
 
-  // Update grid
-  const { cols, rows } = getGridDimensions(observed.size);
-  if (gridEl) {
-    gridEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    gridEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  function openTerminalInCell(node: HTMLDivElement, obs: ObservedTerminal) {
+    obs.terminal.open(node);
+    requestAnimationFrame(() => obs.fitAddon.fit());
+    return {
+      destroy() {
+        // Terminal cleanup handled in syncSessions/onDestroy
+      },
+    };
   }
 
-  requestAnimationFrame(() => fitAll());
-}
+  onMount(() => {
+    syncSessions($sessions);
 
-function openTerminalInCell(node: HTMLDivElement, obs: ObservedTerminal) {
-  obs.terminal.open(node);
-  requestAnimationFrame(() => obs.fitAddon.fit());
-  return {
-    destroy() {
-      // Terminal cleanup handled in syncSessions/onDestroy
-    },
-  };
-}
+    unsubscribe = onWsMessage((msg) => {
+      if (msg.type === "terminal:output") {
+        const obs = observed.get(msg.sessionId);
+        if (obs) obs.terminal.write(msg.data);
+      }
+      if (msg.type === "sessions:changed") {
+        syncSessions(msg.sessions);
+      }
+    });
 
-onMount(() => {
-  syncSessions($sessions);
-
-  unsubscribe = onWsMessage((msg) => {
-    if (msg.type === "terminal:output") {
-      const obs = observed.get(msg.sessionId);
-      if (obs) obs.terminal.write(msg.data);
-    }
-    if (msg.type === "sessions:changed") {
-      syncSessions(msg.sessions);
-    }
+    resizeObserver = new ResizeObserver(() => fitAll());
+    if (gridEl) resizeObserver.observe(gridEl);
   });
 
-  resizeObserver = new ResizeObserver(() => fitAll());
-  if (gridEl) resizeObserver.observe(gridEl);
-});
-
-onDestroy(() => {
-  unsubscribe?.();
-  resizeObserver?.disconnect();
-  for (const obs of observed.values()) {
-    obs.terminal.dispose();
-  }
-  observed.clear();
-});
+  onDestroy(() => {
+    unsubscribe?.();
+    resizeObserver?.disconnect();
+    for (const obs of observed.values()) {
+      obs.terminal.dispose();
+    }
+    observed.clear();
+  });
 </script>
 
 <div class="observer-page">

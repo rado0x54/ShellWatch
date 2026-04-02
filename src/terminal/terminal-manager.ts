@@ -72,7 +72,9 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       transport = await this.transportFactory(endpointId);
     } catch (err) {
       session.status = "error";
-      throw new Error(`Failed to connect to ${endpointId}: ${(err as Error).message}`);
+      throw new Error(`Failed to connect to ${endpointId}: ${(err as Error).message}`, {
+        cause: err,
+      });
     }
 
     const managed: ManagedTerminal = { session, transport, output };

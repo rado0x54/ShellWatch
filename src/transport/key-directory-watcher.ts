@@ -72,7 +72,6 @@ export class KeyDirectoryWatcher implements PrivateKeyProvider, KeyAvailability 
     const scanned = scanKeyDirectory(this.directory);
 
     // Update availability map
-    const newFingerprints = new Set(scanned.map((k) => k.fingerprint));
     this.available.clear();
     for (const key of scanned) {
       this.available.set(key.fingerprint, key);

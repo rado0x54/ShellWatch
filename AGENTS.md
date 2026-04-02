@@ -21,7 +21,8 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 - **MCP:** @modelcontextprotocol/sdk (streamable HTTP transport)
 - **Config:** YAML with zod validation
 - **Testing:** Vitest (unit + integration)
-- **Linting/Formatting:** Biome
+- **Linting:** ESLint (typescript-eslint + eslint-plugin-svelte)
+- **Formatting:** Prettier (prettier-plugin-svelte)
 - **Package manager:** pnpm
 
 ## Code Conventions
@@ -83,8 +84,10 @@ pnpm build:client     # Build SvelteKit client (svelte-kit sync + vite build)
 
 # Quality
 pnpm typecheck        # Type check without emitting
-pnpm lint             # Check linting with Biome
-pnpm lint:fix         # Auto-fix linting issues
+pnpm lint             # Lint with ESLint (server + client + Svelte)
+pnpm lint:fix         # Auto-fix lint issues
+pnpm format           # Format with Prettier
+pnpm format:check     # Check formatting without writing
 pnpm test             # Run all tests (unit + integration)
 pnpm test:watch       # Run tests in watch mode
 pnpm test:coverage    # Run tests with coverage report

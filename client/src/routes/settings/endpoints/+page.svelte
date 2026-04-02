@@ -1,59 +1,59 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import {
-  createEndpoint,
-  deleteEndpoint,
-  endpoints,
-  fetchEndpoints,
-} from "$lib/stores/endpoints.js";
-import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
+  import { onMount } from "svelte";
+  import {
+    createEndpoint,
+    deleteEndpoint,
+    endpoints,
+    fetchEndpoints,
+  } from "$lib/stores/endpoints.js";
+  import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
 
-let epId = $state("");
-let epLabel = $state("");
-let epHost = $state("");
-let epPort = $state(22);
-let epUsername = $state("");
-let epKeyId = $state("");
+  let epId = $state("");
+  let epLabel = $state("");
+  let epHost = $state("");
+  let epPort = $state(22);
+  let epUsername = $state("");
+  let epKeyId = $state("");
 
-onMount(() => {
-  fetchEndpoints();
-  fetchSshKeys();
-});
+  onMount(() => {
+    fetchEndpoints();
+    fetchSshKeys();
+  });
 
-async function handleAdd() {
-  if (!epId || !epLabel || !epHost || !epUsername) {
-    alert("ID, Label, Host, and Username are required");
-    return;
-  }
-  try {
-    await createEndpoint({
-      id: epId,
-      label: epLabel,
-      host: epHost,
-      port: epPort,
-      username: epUsername,
-      keyId: epKeyId || undefined,
-    });
-    epId = "";
-    epLabel = "";
-    epHost = "";
-    epPort = 22;
-    epUsername = "";
-    epKeyId = "";
-  } catch (err) {
-    alert((err as Error).message);
-  }
-}
-
-async function handleDelete(id: string) {
-  if (confirm(`Delete endpoint "${id}"?`)) {
+  async function handleAdd() {
+    if (!epId || !epLabel || !epHost || !epUsername) {
+      alert("ID, Label, Host, and Username are required");
+      return;
+    }
     try {
-      await deleteEndpoint(id);
+      await createEndpoint({
+        id: epId,
+        label: epLabel,
+        host: epHost,
+        port: epPort,
+        username: epUsername,
+        keyId: epKeyId || undefined,
+      });
+      epId = "";
+      epLabel = "";
+      epHost = "";
+      epPort = 22;
+      epUsername = "";
+      epKeyId = "";
     } catch (err) {
       alert((err as Error).message);
     }
   }
-}
+
+  async function handleDelete(id: string) {
+    if (confirm(`Delete endpoint "${id}"?`)) {
+      try {
+        await deleteEndpoint(id);
+      } catch (err) {
+        alert((err as Error).message);
+      }
+    }
+  }
 </script>
 
 <section>

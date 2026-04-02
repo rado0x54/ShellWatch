@@ -1,18 +1,18 @@
 <script lang="ts">
-import { goto } from "$app/navigation";
-import { resolve } from "$app/paths";
-import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
+  import { page } from "$app/stores";
 
-let { children } = $props();
+  let { children } = $props();
 
-const tabs = [
-  { path: "/settings/endpoints", label: "Endpoints" },
-  { path: "/settings/keys", label: "SSH Keys" },
-  { path: "/settings/passkeys", label: "Passkeys" },
-  { path: "/settings/api-keys", label: "API Keys" },
-] as const;
+  const tabs = [
+    { path: "/settings/endpoints", label: "Endpoints" },
+    { path: "/settings/keys", label: "SSH Keys" },
+    { path: "/settings/passkeys", label: "Passkeys" },
+    { path: "/settings/api-keys", label: "API Keys" },
+  ] as const;
 
-const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived($page.url.pathname);
 </script>
 
 <div class="settings-page">

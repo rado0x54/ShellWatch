@@ -10,14 +10,18 @@ export function loadConfig(configPath?: string): Config {
   try {
     raw = readFileSync(resolvedPath, "utf-8");
   } catch (err) {
-    throw new Error(`Failed to read config file at ${resolvedPath}: ${(err as Error).message}`);
+    throw new Error(`Failed to read config file at ${resolvedPath}: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
 
   let parsed: unknown;
   try {
     parsed = parseYaml(raw);
   } catch (err) {
-    throw new Error(`Failed to parse YAML config at ${resolvedPath}: ${(err as Error).message}`);
+    throw new Error(`Failed to parse YAML config at ${resolvedPath}: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
 
   const result = ConfigSchema.safeParse(parsed);

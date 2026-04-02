@@ -1,64 +1,64 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import { goto } from "$app/navigation";
-import { resolve } from "$app/paths";
-import { page } from "$app/stores";
-import "../app.css";
-import Sidebar from "$lib/components/Sidebar.svelte";
-import { basePath } from "$lib/stores/connection.js";
-import { fetchEndpoints } from "$lib/stores/endpoints.js";
-import { checkAuth } from "$lib/stores/webauthn.js";
-import { connectWs, onWsMessage } from "$lib/stores/ws.js";
-import { handleFidoSignRequest } from "$lib/utils/fido.js";
+  import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
+  import { page } from "$app/stores";
+  import "../app.css";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import { basePath } from "$lib/stores/connection.js";
+  import { fetchEndpoints } from "$lib/stores/endpoints.js";
+  import { checkAuth } from "$lib/stores/webauthn.js";
+  import { connectWs, onWsMessage } from "$lib/stores/ws.js";
+  import { handleFidoSignRequest } from "$lib/utils/fido.js";
 
-let { children } = $props();
+  let { children } = $props();
 
-let ready = $state(false);
-let mobileMenuOpen = $state(false);
-let activeSessionId = $state<string | null>(null);
-let sessionModes = $state<Record<string, string>>({});
+  let ready = $state(false);
+  let mobileMenuOpen = $state(false);
+  let activeSessionId = $state<string | null>(null);
+  let sessionModes = $state<Record<string, string>>({});
 
-const isLoginPage = $derived($page.url.pathname.endsWith("/login"));
+  const isLoginPage = $derived($page.url.pathname.endsWith("/login"));
 
-function handleConnect(sessionId: string, mode: "control" | "observer") {
-  activeSessionId = sessionId;
-  sessionModes[sessionId] = mode;
-}
+  function handleConnect(sessionId: string, mode: "control" | "observer") {
+    activeSessionId = sessionId;
+    sessionModes[sessionId] = mode;
+  }
 
-onMount(async () => {
-  // Initialize base path from server-injected config
-  const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
-  basePath.set(base);
+  onMount(async () => {
+    // Initialize base path from server-injected config
+    const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
+    basePath.set(base);
 
-  const currentPath = window.location.pathname;
-  const isLogin = currentPath.endsWith("/login");
+    const currentPath = window.location.pathname;
+    const isLogin = currentPath.endsWith("/login");
 
-  if (!isLogin) {
-    const { hasPasskeys, authenticated } = await checkAuth();
-    if (hasPasskeys && !authenticated) {
-      await goto(resolve("/login"));
-      ready = true;
-      return;
+    if (!isLogin) {
+      const { hasPasskeys, authenticated } = await checkAuth();
+      if (hasPasskeys && !authenticated) {
+        await goto(resolve("/login"));
+        ready = true;
+        return;
+      }
     }
-  }
 
-  if (!isLogin) {
-    connectWs();
-    await fetchEndpoints();
+    if (!isLogin) {
+      connectWs();
+      await fetchEndpoints();
 
-    // Handle FIDO signing requests
-    onWsMessage((msg) => {
-      if (msg.type === "fido:sign-request") {
-        handleFidoSignRequest(msg);
-      }
-      if (msg.type === "terminal:mode") {
-        sessionModes[msg.sessionId] = msg.mode;
-      }
-    });
-  }
+      // Handle FIDO signing requests
+      onWsMessage((msg) => {
+        if (msg.type === "fido:sign-request") {
+          handleFidoSignRequest(msg);
+        }
+        if (msg.type === "terminal:mode") {
+          sessionModes[msg.sessionId] = msg.mode;
+        }
+      });
+    }
 
-  ready = true;
-});
+    ready = true;
+  });
 </script>
 
 <svelte:head>

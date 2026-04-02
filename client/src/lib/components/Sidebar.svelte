@@ -1,60 +1,60 @@
 <script lang="ts">
-import { goto } from "$app/navigation";
-import { resolve } from "$app/paths";
-import { page } from "$app/stores";
-import { endpoints } from "$lib/stores/endpoints.js";
-import { closeSession, createSession } from "$lib/stores/sessions-api.js";
-import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
+  import { page } from "$app/stores";
+  import { endpoints } from "$lib/stores/endpoints.js";
+  import { closeSession, createSession } from "$lib/stores/sessions-api.js";
+  import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
 
-interface Props {
-  activeSessionId: string | null;
-  sessionModes: Record<string, string>;
-  onConnect: (sessionId: string, mode: "control" | "observer") => void;
-  onMobileClose?: () => void;
-}
+  interface Props {
+    activeSessionId: string | null;
+    sessionModes: Record<string, string>;
+    onConnect: (sessionId: string, mode: "control" | "observer") => void;
+    onMobileClose?: () => void;
+  }
 
-let { activeSessionId, sessionModes, onConnect, onMobileClose }: Props = $props();
+  let { activeSessionId, sessionModes, onConnect, onMobileClose }: Props = $props();
 
-const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived($page.url.pathname);
 
-async function handleConnect(endpointId: string) {
-  try {
+  async function handleConnect(endpointId: string) {
+    try {
+      if (currentPath !== "/") {
+        await goto(resolve("/"));
+      }
+      const session = await createSession(endpointId);
+      onConnect(session.sessionId, "control");
+      onMobileClose?.();
+    } catch (err) {
+      console.error("Failed to create session:", err);
+    }
+  }
+
+  async function handleClose(sessionId: string) {
+    try {
+      await closeSession(sessionId);
+    } catch (err) {
+      console.error("Failed to close session:", err);
+    }
+  }
+
+  async function handleSessionClick(sessionId: string, mode: "control" | "observer") {
     if (currentPath !== "/") {
       await goto(resolve("/"));
     }
-    const session = await createSession(endpointId);
-    onConnect(session.sessionId, "control");
+    onConnect(sessionId, mode);
     onMobileClose?.();
-  } catch (err) {
-    console.error("Failed to create session:", err);
   }
-}
 
-async function handleClose(sessionId: string) {
-  try {
-    await closeSession(sessionId);
-  } catch (err) {
-    console.error("Failed to close session:", err);
+  function getEndpointLabel(endpointId: string): string {
+    const ep = $endpoints.find((e) => e.id === endpointId);
+    return ep?.label ?? endpointId;
   }
-}
 
-async function handleSessionClick(sessionId: string, mode: "control" | "observer") {
-  if (currentPath !== "/") {
-    await goto(resolve("/"));
+  async function navTo(path: string) {
+    await goto(resolve(path));
+    onMobileClose?.();
   }
-  onConnect(sessionId, mode);
-  onMobileClose?.();
-}
-
-function getEndpointLabel(endpointId: string): string {
-  const ep = $endpoints.find((e) => e.id === endpointId);
-  return ep?.label ?? endpointId;
-}
-
-async function navTo(path: string) {
-  await goto(resolve(path));
-  onMobileClose?.();
-}
 </script>
 
 <nav class="sidebar">
@@ -108,11 +108,17 @@ async function navTo(path: string) {
             </div>
             <div class="session-actions">
               {#if isObserver}
-                <button class="btn btn-warn" onclick={() => wsTakeControl(sess.sessionId)}>Take Control</button>
+                <button class="btn btn-warn" onclick={() => wsTakeControl(sess.sessionId)}
+                  >Take Control</button
+                >
               {:else}
-                <button class="btn btn-ghost" onclick={() => wsReleaseControl(sess.sessionId)}>Release</button>
+                <button class="btn btn-ghost" onclick={() => wsReleaseControl(sess.sessionId)}
+                  >Release</button
+                >
               {/if}
-              <button class="btn btn-secondary" onclick={() => handleClose(sess.sessionId)}>Close</button>
+              <button class="btn btn-secondary" onclick={() => handleClose(sess.sessionId)}
+                >Close</button
+              >
             </div>
           </div>
         </li>
@@ -121,10 +127,18 @@ async function navTo(path: string) {
   </div>
 
   <div class="sidebar-footer">
-    <button class="btn-nav" class:active={currentPath === "/observer"} onclick={() => navTo("/observer")}>
+    <button
+      class="btn-nav"
+      class:active={currentPath === "/observer"}
+      onclick={() => navTo("/observer")}
+    >
       Observer Mode
     </button>
-    <button class="btn-nav" class:active={currentPath.startsWith("/settings")} onclick={() => navTo("/settings")}>
+    <button
+      class="btn-nav"
+      class:active={currentPath.startsWith("/settings")}
+      onclick={() => navTo("/settings")}
+    >
       Settings
     </button>
   </div>

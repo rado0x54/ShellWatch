@@ -1,41 +1,41 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
+  import { onMount } from "svelte";
+  import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
 
-let label = $state("");
-let showKeyModal = $state(false);
-let generatedKey = $state("");
+  let label = $state("");
+  let showKeyModal = $state(false);
+  let generatedKey = $state("");
 
-onMount(() => {
-  fetchApiKeys();
-});
+  onMount(() => {
+    fetchApiKeys();
+  });
 
-async function handleGenerate() {
-  if (!label.trim()) return;
-  try {
-    generatedKey = await generateApiKey(label.trim());
-    showKeyModal = true;
-    label = "";
-  } catch (err) {
-    alert((err as Error).message);
+  async function handleGenerate() {
+    if (!label.trim()) return;
+    try {
+      generatedKey = await generateApiKey(label.trim());
+      showKeyModal = true;
+      label = "";
+    } catch (err) {
+      alert((err as Error).message);
+    }
   }
-}
 
-async function handleRevoke(id: string) {
-  if (confirm("Revoke this API key?")) {
-    await revokeApiKey(id);
+  async function handleRevoke(id: string) {
+    if (confirm("Revoke this API key?")) {
+      await revokeApiKey(id);
+    }
   }
-}
 
-function handleCopy(btn: HTMLButtonElement) {
-  navigator.clipboard.writeText(generatedKey);
-  btn.textContent = "Copied!";
-}
+  function handleCopy(btn: HTMLButtonElement) {
+    navigator.clipboard.writeText(generatedKey);
+    btn.textContent = "Copied!";
+  }
 
-function handleCloseModal() {
-  showKeyModal = false;
-  generatedKey = "";
-}
+  function handleCloseModal() {
+    showKeyModal = false;
+    generatedKey = "";
+  }
 </script>
 
 <section>
@@ -56,7 +56,11 @@ function handleCloseModal() {
           <td>{k.label}</td>
           <td class="monospace">{k.keyPrefix}...</td>
           <td>
-            <span class="badge" class:badge-available={k.enabled} class:badge-unavailable={!k.enabled}>
+            <span
+              class="badge"
+              class:badge-available={k.enabled}
+              class:badge-unavailable={!k.enabled}
+            >
               {k.enabled ? "active" : "revoked"}
             </span>
           </td>
@@ -77,7 +81,12 @@ function handleCloseModal() {
   <div class="settings-form">
     <h3>Generate API Key</h3>
     <div class="form-row">
-      <input type="text" placeholder="Label (e.g., Claude Agent)" bind:value={label} style="flex: 1" />
+      <input
+        type="text"
+        placeholder="Label (e.g., Claude Agent)"
+        bind:value={label}
+        style="flex: 1"
+      />
       <button class="btn btn-primary" onclick={handleGenerate}>Generate</button>
     </div>
   </div>
@@ -93,7 +102,10 @@ function handleCloseModal() {
         <p class="modal-desc">Copy this key now — it will not be shown again.</p>
         <pre class="code-block key-value">{generatedKey}</pre>
         <div class="modal-actions">
-          <button class="btn btn-primary" onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button>
+          <button
+            class="btn btn-primary"
+            onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
+          >
           <button class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
         </div>
       </div>

@@ -1,27 +1,27 @@
 <script lang="ts">
-import { get } from "svelte/store";
-import { basePath } from "$lib/stores/connection.js";
-import { login } from "$lib/stores/webauthn.js";
+  import { get } from "svelte/store";
+  import { basePath } from "$lib/stores/connection.js";
+  import { login } from "$lib/stores/webauthn.js";
 
-let loading = $state(false);
-let error = $state("");
-let status = $state("");
+  let loading = $state(false);
+  let error = $state("");
+  let status = $state("");
 
-async function handleLogin() {
-  loading = true;
-  error = "";
-  status = "Waiting for passkey...";
+  async function handleLogin() {
+    loading = true;
+    error = "";
+    status = "Waiting for passkey...";
 
-  try {
-    await login();
-    const base = get(basePath);
-    window.location.href = `${base}/`;
-  } catch (err) {
-    error = (err as Error).message;
-    status = "";
-    loading = false;
+    try {
+      await login();
+      const base = get(basePath);
+      window.location.href = `${base}/`;
+    } catch (err) {
+      error = (err as Error).message;
+      status = "";
+      loading = false;
+    }
   }
-}
 </script>
 
 <div class="login-page">

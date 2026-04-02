@@ -150,8 +150,9 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
 | `pnpm build:server` | Compile server TypeScript only |
 | `pnpm build:client` | Build SvelteKit client |
 | `pnpm typecheck` | Type check without emitting |
-| `pnpm lint` | Check with Biome |
+| `pnpm lint` | Lint with ESLint |
 | `pnpm lint:fix` | Auto-fix lint issues |
+| `pnpm format` | Format with Prettier |
 | `pnpm test` | Run all tests |
 | `pnpm test:coverage` | Run tests with coverage report |
 
@@ -172,7 +173,8 @@ pnpm test:coverage  # run with coverage report
 - **Auth:** WebAuthn/passkeys (via @simplewebauthn)
 - **Testing:** Vitest, ssh2 Server (in-process)
 - **Config:** YAML + zod validation
-- **Linting:** Biome
+- **Linting:** ESLint (typescript-eslint + eslint-plugin-svelte)
+- **Formatting:** Prettier
 
 ## Troubleshooting
 
