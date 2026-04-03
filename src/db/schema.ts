@@ -42,6 +42,7 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   transports: text("transports"), // JSON array: ["usb", "nfc", "ble", "internal"]
   label: text("label").notNull(), // User-friendly name (e.g., "YubiKey 5 NFC")
   publicKeyOpenSsh: text("public_key_openssh"), // OpenSSH authorized_keys format (if convertible)
+  revoked: integer("revoked", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
   lastUsedAt: text("last_used_at"),
 });

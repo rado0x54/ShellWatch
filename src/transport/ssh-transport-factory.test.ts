@@ -162,7 +162,10 @@ describe("SshTransportFactory", () => {
       const transport = await factory.create("ep-1");
 
       expect(transport).toBe(mockTransport);
-      expect(createWebAuthnAgent).toHaveBeenCalledWith([testWebAuthnKey], "localhost");
+      expect(createWebAuthnAgent).toHaveBeenCalledWith(
+        [expect.objectContaining(testWebAuthnKey)],
+        "localhost",
+      );
       expect(mockConnectSshWithAgent).toHaveBeenCalledWith(
         expect.objectContaining({ host: "example.com" }),
         mockAgent,
