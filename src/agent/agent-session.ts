@@ -18,6 +18,7 @@ export class AgentSession {
     private endpointRepo: EndpointRepository,
     private terminalManager: TerminalManager,
     private source: AgentSource,
+    private maxSessions = 5,
   ) {}
 
   /** Sessions owned by this agent */
@@ -37,6 +38,9 @@ export class AgentSession {
   }
 
   async createSession(endpointId: string): Promise<TerminalSession> {
+    if (this.ownedSessions.size >= this.maxSessions) {
+      throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
+    }
     const session = await this.terminalManager.create(endpointId, this.source);
     this.ownedSessions.add(session.sessionId);
     return session;

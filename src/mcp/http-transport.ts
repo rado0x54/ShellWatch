@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalManager } from "../terminal/index.js";
@@ -15,6 +16,7 @@ export async function registerMcpHttpTransport(
   terminalManager: TerminalManager,
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
+  accountRepo: AccountRepository,
 ) {
   interface ManagedTransport {
     transport: StreamableHTTPServerTransport;
@@ -44,7 +46,14 @@ export async function registerMcpHttpTransport(
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
+      // Look up account's session limit
+      let maxSessions = 5;
+      if (request.accountId) {
+        const account = await accountRepo.findById(request.accountId);
+        if (account) maxSessions = account.maxSessions;
+      }
+
+      const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp", maxSessions);
       const mcpServer = await createMcpServer(
         agentSession,
         endpointRepo,

@@ -114,10 +114,13 @@ export async function buildApp(params: BuildAppParams) {
 
   // --- SSH Keys API ---
 
-  app.get(`${base}/api/keys`, async () => {
+  app.get(`${base}/api/keys`, async (request) => {
     const allKeys = await keyRepo.findAll();
+    // Non-admin accounts can only see WebAuthn keys, not file-based keys
+    const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
+    const visibleKeys = isAdmin ? allKeys : allKeys.filter((k) => k.type === "webauthn");
     return {
-      keys: allKeys.map((k) => ({
+      keys: visibleKeys.map((k) => ({
         id: k.id,
         label: k.label,
         type: k.type,
@@ -220,7 +223,26 @@ export async function buildApp(params: BuildAppParams) {
   // --- Session API ---
 
   app.post<{ Body: { endpointId: string } }>(`${base}/api/sessions`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
     try {
+      // Enforce per-account session limit
+      const account = await accountRepo.findById(request.accountId);
+      if (account) {
+        const activeSessions = terminalManager.listSessions();
+        const accountSessions = activeSessions.filter(
+          (s) => s.source === "ui" && s.status === "open",
+        );
+        if (accountSessions.length >= account.maxSessions) {
+          reply.status(429);
+          return {
+            error: `Maximum concurrent sessions (${account.maxSessions}) reached`,
+          };
+        }
+      }
+
       const { endpointId } = request.body;
       const session = await terminalManager.create(endpointId, "ui");
       uiCreatedSessions.add(session.sessionId);
@@ -302,7 +324,7 @@ export async function buildApp(params: BuildAppParams) {
   const { uiCreatedSessions } = wsHandler;
 
   // MCP server over streamable HTTP at /mcp
-  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo);
+  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo, accountRepo);
 
   // WebAuthn routes
   if (db) {
