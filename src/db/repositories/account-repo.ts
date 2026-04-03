@@ -147,11 +147,8 @@ export class DrizzleAccountRepository implements AccountRepository {
   }
 
   setAdmin(accountId: string): void {
-    this.db
-      .insert(adminAccount)
-      .values({ singleton: 1, accountId })
-      .onConflictDoUpdate({ target: adminAccount.singleton, set: { accountId } })
-      .run();
+    // INSERT OR IGNORE — first writer wins. If admin already exists, this is a no-op.
+    this.db.insert(adminAccount).values({ singleton: 1, accountId }).onConflictDoNothing().run();
   }
 
   isAdmin(accountId: string): boolean {
