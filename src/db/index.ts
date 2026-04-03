@@ -4,6 +4,7 @@ export {
   type AccountInfo,
   type AccountRepository,
   DrizzleAccountRepository,
+  StubAccountRepository,
 } from "./repositories/account-repo.js";
 export {
   type ApiKeyInfo,

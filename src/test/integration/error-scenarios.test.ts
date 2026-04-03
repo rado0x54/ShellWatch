@@ -90,6 +90,7 @@ describe("Error Scenarios", () => {
   describe("Key errors", () => {
     it("MCP: create session with missing key file returns error", async () => {
       // Endpoint references a key that exists in DB but has no matching file
+      const { StubAccountRepository } = await import("../../db/repositories/account-repo.js");
       const { InMemoryEndpointRepository } = await import("../../db/repositories/endpoint-repo.js");
       const { InMemorySshKeyRepository } = await import("../../db/repositories/key-repo.js");
       const { InMemoryKeyProvider } = await import("../../transport/key-directory-watcher.js");
@@ -139,10 +140,18 @@ describe("Error Scenarios", () => {
         },
         notifications: { mcp: { debounceMs: 50 } },
       };
-      const app = await buildApp(config, tm, endpointRepo, keyRepo, null, [], null, {
-        logger: false,
-        skipStaticFiles: true,
-      });
+      const app = await buildApp(
+        config,
+        tm,
+        endpointRepo,
+        keyRepo,
+        null,
+        [],
+        null,
+        { logger: false, skipStaticFiles: true },
+        null,
+        new StubAccountRepository(),
+      );
       await app.listen({ port: 0, host: "127.0.0.1" });
       const addr = app.server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;

@@ -18,7 +18,7 @@ export function registerAuthGate(
   db: ShellWatchDB | null,
   basePath: string,
   secret: string,
-  accountRepo?: AccountRepository,
+  accountRepo: AccountRepository,
 ): void {
   if (!db) return;
   const dbRef = db;
@@ -85,7 +85,7 @@ export function registerAuthGate(
       const session = verifySessionCookie(cookie, secret);
       if (session) {
         request.accountId = session.sub;
-        if (accountRepo && session.sub) {
+        if (session.sub) {
           accountRepo.touchLastUsed(session.sub);
         }
         return;

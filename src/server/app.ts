@@ -34,8 +34,8 @@ export async function buildApp(
   wsExtensions: WsExtension[] = [],
   keyAvailability: KeyAvailability | null = null,
   options: AppOptions = {},
-  apiKeyRepo?: ApiKeyRepository,
-  accountRepo?: AccountRepository,
+  apiKeyRepo: ApiKeyRepository | null,
+  accountRepo: AccountRepository,
 ) {
   const app = Fastify({ logger: options.logger ?? true });
   const base = config.server.basePath;
@@ -73,7 +73,7 @@ export async function buildApp(
   // --- Auth: current account ---
   app.get(`${base}/api/auth/me`, async (request, reply) => {
     const accountId = request.accountId;
-    if (!accountId || !accountRepo) {
+    if (!accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
     }

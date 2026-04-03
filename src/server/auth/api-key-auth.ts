@@ -11,7 +11,7 @@ export function registerApiKeyAuth(
   app: FastifyInstance,
   apiKeyRepo: ApiKeyRepository,
   mcpPath: string,
-  accountRepo?: AccountRepository,
+  accountRepo: AccountRepository,
 ): void {
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.url.startsWith(mcpPath)) return;
@@ -34,9 +34,7 @@ export function registerApiKeyAuth(
     // Decorate request with account ID
     if (key.accountId) {
       request.accountId = key.accountId;
-      if (accountRepo) {
-        accountRepo.touchLastUsed(key.accountId);
-      }
+      accountRepo.touchLastUsed(key.accountId);
     }
   });
 }

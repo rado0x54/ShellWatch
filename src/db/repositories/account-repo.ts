@@ -29,6 +29,40 @@ export interface AccountRepository {
   isAdmin(accountId: string): boolean;
 }
 
+/** No-op implementation for tests that don't need account functionality */
+export class StubAccountRepository implements AccountRepository {
+  async findById(): Promise<AccountInfo | null> {
+    return null;
+  }
+  async findAll(): Promise<AccountInfo[]> {
+    return [];
+  }
+  async create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo> {
+    const now = new Date().toISOString();
+    return {
+      ...data,
+      isAdmin: false,
+      enabled: true,
+      maxSessions: 5,
+      lastUsedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+  async update(): Promise<void> {}
+  touchLastUsed(): void {}
+  count(): number {
+    return 0;
+  }
+  getAdminAccountId(): string | null {
+    return null;
+  }
+  setAdmin(): void {}
+  isAdmin(): boolean {
+    return false;
+  }
+}
+
 export class DrizzleAccountRepository implements AccountRepository {
   constructor(private db: ShellWatchDB) {}
 

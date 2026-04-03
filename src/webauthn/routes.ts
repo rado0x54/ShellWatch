@@ -56,8 +56,8 @@ export function registerWebAuthnRoutes(
   db: ShellWatchDB,
   basePath = "",
   proxy: ProxyHeaderConfig = {},
-  sessionConfig?: SessionConfig,
-  accountRepo?: AccountRepository,
+  sessionConfig: SessionConfig | undefined,
+  accountRepo: AccountRepository,
 ) {
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(
@@ -152,7 +152,7 @@ export function registerWebAuthnRoutes(
         let accountId: string | null = null;
         if (request.accountId) {
           accountId = request.accountId;
-        } else if (accountRepo) {
+        } else {
           const accountCount = accountRepo.count();
           if (accountCount === 0) {
             // Bootstrap: first registration creates admin account
@@ -366,7 +366,7 @@ export function registerWebAuthnRoutes(
           .run();
 
         // Update account lastUsedAt
-        if (storedCred.accountId && accountRepo) {
+        if (storedCred.accountId) {
           accountRepo.touchLastUsed(storedCred.accountId);
         }
 

@@ -8,6 +8,7 @@ import ssh2 from "ssh2";
 const { utils } = ssh2;
 
 import { type Config, securityDefaults, serverDefaults } from "../../config/index.js";
+import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
@@ -92,10 +93,18 @@ export async function startTestApp(
     },
   );
 
-  const app = await buildApp(config, terminalManager, endpointRepo, keyRepo, null, [], null, {
-    logger: false,
-    skipStaticFiles: true,
-  });
+  const app = await buildApp(
+    config,
+    terminalManager,
+    endpointRepo,
+    keyRepo,
+    null,
+    [],
+    null,
+    { logger: false, skipStaticFiles: true },
+    null,
+    new StubAccountRepository(),
+  );
 
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();
