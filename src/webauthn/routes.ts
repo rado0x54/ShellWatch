@@ -160,19 +160,24 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
           );
         }
 
-        // Resolve account: use authenticated session, or create admin on bootstrap
+        // Resolve account: use authenticated session, or bootstrap admin
         let accountId: string | undefined;
         if (request.accountId) {
           accountId = request.accountId;
-        } else if (accountRepo.count() === 0) {
-          // Bootstrap: first registration creates admin account
-          const admin = await accountRepo.create({
-            id: randomUUID(),
-            name: label || "Admin",
-            type: "human",
-          });
-          accountRepo.setAdmin(admin.id);
-          accountId = admin.id;
+        } else if (!accountRepo.hasPasskeys()) {
+          // No passkeys yet — this is onboarding. Either create admin or use existing.
+          const existingAdminId = accountRepo.getAdminAccountId();
+          if (existingAdminId) {
+            accountId = existingAdminId;
+          } else {
+            const admin = await accountRepo.create({
+              id: randomUUID(),
+              name: label || "Admin",
+              type: "human",
+            });
+            accountRepo.setAdmin(admin.id);
+            accountId = admin.id;
+          }
         }
 
         if (!accountId) {
