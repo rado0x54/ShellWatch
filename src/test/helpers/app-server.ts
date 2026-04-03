@@ -66,9 +66,8 @@ export async function startTestApp(
 
   const config: Config = {
     keyDirectory: tmpDir,
-    seedAdminServers: [
+    seedAdminEndpoints: [
       {
-        id: "test-server",
         label: "Test Server",
         host: sshServer.host,
         port: sshServer.port,
@@ -84,9 +83,17 @@ export async function startTestApp(
     notifications: { mcp: { debounceMs: 50 } },
   };
 
-  const endpointRepo = new InMemoryEndpointRepository(
-    config.seedAdminServers.map((s) => ({ ...s, keyId: "test-key", accountId: testAccountId })),
-  );
+  const endpointRepo = new InMemoryEndpointRepository([
+    {
+      id: "test-server",
+      accountId: testAccountId,
+      label: "Test Server",
+      host: sshServer.host,
+      port: sshServer.port,
+      username: "testuser",
+      keyId: "test-key",
+    },
+  ]);
   const keyRepo = new InMemorySshKeyRepository([
     { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
   ]);

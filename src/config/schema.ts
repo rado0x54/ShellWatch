@@ -1,12 +1,11 @@
 import { z } from "zod";
 
-export const EndpointSchema = z.object({
-  id: z.string().min(1),
+export const SeedEndpointSchema = z.object({
   label: z.string().min(1),
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().min(1),
-  keyId: z.string().optional(),
+  passkeyCredentialRef: z.string().optional(), // references a passkey by its credentialId
 });
 
 export const securityDefaults = {
@@ -48,7 +47,6 @@ export const ServerSchema = z.object({
 });
 
 export const SeedAdminPasskeySchema = z.object({
-  id: z.string().uuid(),
   credentialId: z.string().min(1),
   publicKeyHex: z.string().min(1), // COSE public key as hex
   counter: z.number().int().default(0),
@@ -58,7 +56,7 @@ export const SeedAdminPasskeySchema = z.object({
 
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
-  seedAdminServers: z.array(EndpointSchema).default([]),
+  seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskey: SeedAdminPasskeySchema.optional(),
   server: ServerSchema.default(serverDefaults),
@@ -66,5 +64,5 @@ export const ConfigSchema = z.object({
   notifications: NotificationsSchema.default(notificationDefaults),
 });
 
-export type Endpoint = z.infer<typeof EndpointSchema>;
+export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;
 export type Config = z.infer<typeof ConfigSchema>;
