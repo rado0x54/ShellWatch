@@ -20,7 +20,7 @@
       window.location.href = `${base}/`;
     } catch (err) {
       if (err instanceof NoPasskeysError) {
-        await goto(resolve("/onboarding"));
+        await goto(resolve("/register"));
         return;
       }
       error = (err as Error).message;
@@ -43,6 +43,9 @@
     {#if status}
       <p class="status">{status}</p>
     {/if}
+    <p class="register-link">
+      <a href={resolve("/register")}>Create new account</a>
+    </p>
   </div>
 </div>
 
@@ -110,5 +113,20 @@
     color: var(--text-muted);
     font-size: 0.85rem;
     margin-top: 1rem;
+  }
+
+  .register-link {
+    margin-top: 1.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .register-link a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .register-link a:hover {
+    text-decoration: underline;
   }
 </style>

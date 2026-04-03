@@ -399,4 +399,111 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       }
     },
   );
+
+  // --- Self-Registration: Create account + passkey atomically ---
+  app.post<{
+    Body: { name: string; challengeId: string; label: string; credential: unknown };
+  }>(`${basePath}/api/auth/register`, async (request, reply) => {
+    const { name, challengeId, label, credential } = request.body;
+    if (!name || !challengeId || !credential) {
+      reply.status(400);
+      return { error: "name, challengeId, and credential are required" };
+    }
+
+    const { rpId, origin } = getOriginAndRpId(request, proxy);
+    const pending = pendingChallenges.get(challengeId);
+    if (!pending || pending.expires < Date.now()) {
+      pendingChallenges.delete(challengeId);
+      reply.status(400);
+      return { error: "Challenge expired or not found" };
+    }
+    pendingChallenges.delete(challengeId);
+
+    try {
+      const verification = await verifyRegistrationResponse({
+        response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
+        expectedChallenge: pending.challenge,
+        expectedOrigin: [origin, ...trustedOrigins],
+        expectedRPID: rpId,
+      });
+
+      if (!verification.verified || !verification.registrationInfo) {
+        reply.status(400);
+        return { error: "Verification failed" };
+      }
+
+      const { credential: cred } = verification.registrationInfo;
+
+      // Create account — first account becomes admin
+      const account = await accountRepo.create({
+        id: randomUUID(),
+        name,
+        type: "human",
+      });
+      if (!accountRepo.getAdminAccountId()) {
+        accountRepo.setAdmin(account.id);
+      }
+
+      const credId = randomUUID();
+      const now = new Date().toISOString();
+      const pubKeyBuf = Buffer.from(cred.publicKey);
+
+      let authorizedKeysEntry: string | null = null;
+      try {
+        authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+      } catch {
+        // Non-fatal
+      }
+
+      // Create passkey
+      db.insert(webauthnCredentials)
+        .values({
+          id: credId,
+          accountId: account.id,
+          credentialId: cred.id,
+          publicKey: pubKeyBuf,
+          counter: cred.counter,
+          transports: JSON.stringify(cred.transports ?? []),
+          label: label || "Passkey",
+          publicKeyOpenSsh: authorizedKeysEntry,
+          createdAt: now,
+        })
+        .run();
+
+      // Register in ssh_keys
+      const fingerprint = computeFingerprint(pubKeyBuf);
+      db.insert(sshKeys)
+        .values({
+          id: credId,
+          label: `${label || "Passkey"} (webauthn)`,
+          type: "webauthn",
+          publicKey: authorizedKeysEntry ?? "",
+          fingerprint,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+
+      // Auto-login: set session cookie
+      if (sessionConfig) {
+        const { createSessionCookie } = await import("../server/auth/session-cookie.js");
+        const cookieValue = createSessionCookie(
+          sessionConfig.secret,
+          sessionConfig.ttlSeconds,
+          account.id,
+        );
+        const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
+        reply.header(
+          "Set-Cookie",
+          `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=${basePath || "/"}; Max-Age=${sessionConfig.ttlSeconds}`,
+        );
+      }
+
+      return { verified: true, accountId: account.id };
+    } catch (err) {
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
 }
