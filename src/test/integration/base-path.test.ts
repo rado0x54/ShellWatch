@@ -43,14 +43,14 @@ describe("Base path", () => {
   // --- REST API under basePath ---
 
   it("GET /basePath/health returns ok", async () => {
-    const res = await fetch(`${appServer.url}${BASE}/health`);
+    const res = await appServer.fetch(`${BASE}/health`);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.status).toBe("ok");
   });
 
   it("GET /basePath/api/endpoints returns endpoints", async () => {
-    const res = await fetch(`${appServer.url}${BASE}/api/endpoints`);
+    const res = await appServer.fetch(`${BASE}/api/endpoints`);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.endpoints).toHaveLength(1);
@@ -58,7 +58,7 @@ describe("Base path", () => {
   });
 
   it("POST + DELETE /basePath/api/sessions works", async () => {
-    const createRes = await fetch(`${appServer.url}${BASE}/api/sessions`, {
+    const createRes = await appServer.fetch(`${BASE}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
@@ -67,7 +67,7 @@ describe("Base path", () => {
     const session = await createRes.json();
     expect(session.sessionId).toMatch(/^sess_/);
 
-    const deleteRes = await fetch(`${appServer.url}${BASE}/api/sessions/${session.sessionId}`, {
+    const deleteRes = await appServer.fetch(`${BASE}/api/sessions/${session.sessionId}`, {
       method: "DELETE",
     });
     expect(deleteRes.status).toBe(200);
@@ -88,7 +88,7 @@ describe("Base path", () => {
   // --- WebSocket under basePath ---
 
   it("WebSocket connects at /basePath/ws", async () => {
-    const ws = await connectTestWsClient(`${appServer.url}${BASE}`, log);
+    const ws = await connectTestWsClient(`${appServer.url}${BASE}`, log, appServer.sessionCookie);
     try {
       const msg = await ws.waitForMessage<{ type: string; sessions: unknown[] }>(
         "sessions:changed",
@@ -100,15 +100,14 @@ describe("Base path", () => {
   });
 
   it("WebSocket terminal attach works under basePath", async () => {
-    // Create session via prefixed API
-    const createRes = await fetch(`${appServer.url}${BASE}/api/sessions`, {
+    const createRes = await appServer.fetch(`${BASE}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
     });
     const session = await createRes.json();
 
-    const ws = await connectTestWsClient(`${appServer.url}${BASE}`, log);
+    const ws = await connectTestWsClient(`${appServer.url}${BASE}`, log, appServer.sessionCookie);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId: session.sessionId });
@@ -116,7 +115,7 @@ describe("Base path", () => {
       expect(msg.status).toBe("open");
     } finally {
       ws.close();
-      await fetch(`${appServer.url}${BASE}/api/sessions/${session.sessionId}`, {
+      await appServer.fetch(`${BASE}/api/sessions/${session.sessionId}`, {
         method: "DELETE",
       });
     }
@@ -125,7 +124,7 @@ describe("Base path", () => {
   // --- config.js endpoint ---
 
   it("GET /basePath/config.js returns basePath", async () => {
-    const res = await fetch(`${appServer.url}${BASE}/config.js`);
+    const res = await appServer.fetch(`${BASE}/config.js`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("javascript");
     const body = await res.text();

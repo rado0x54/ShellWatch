@@ -5,8 +5,10 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { count, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
+import { hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { sshKeys, webauthnCredentials } from "../db/schema.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
@@ -50,13 +52,26 @@ export interface SessionConfig {
   ttlSeconds: number;
 }
 
-export function registerWebAuthnRoutes(
-  app: FastifyInstance,
-  db: ShellWatchDB,
-  basePath = "",
-  proxy: ProxyHeaderConfig = {},
-  sessionConfig?: SessionConfig,
-) {
+export interface WebAuthnRoutesParams {
+  app: FastifyInstance;
+  db: ShellWatchDB;
+  accountRepo: AccountRepository;
+  basePath?: string;
+  proxy?: ProxyHeaderConfig;
+  sessionConfig?: SessionConfig;
+  trustedOrigins?: string[];
+}
+
+export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
+  const {
+    app,
+    db,
+    accountRepo,
+    basePath = "",
+    proxy = {},
+    sessionConfig,
+    trustedOrigins = [],
+  } = params;
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(
     `${basePath}/api/webauthn/register/options`,
@@ -121,7 +136,7 @@ export function registerWebAuthnRoutes(
         const verification = await verifyRegistrationResponse({
           response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: origin,
+          expectedOrigin: [origin, ...trustedOrigins],
           expectedRPID: rpId,
         });
 
@@ -146,9 +161,35 @@ export function registerWebAuthnRoutes(
           );
         }
 
+        // Resolve account: use authenticated session, or bootstrap admin
+        let accountId: string | undefined;
+        if (request.accountId) {
+          accountId = request.accountId;
+        } else if (!hasPasskeys(db)) {
+          // No passkeys yet — this is onboarding. Either create admin or use existing.
+          const existingAdminId = accountRepo.getAdminAccountId();
+          if (existingAdminId) {
+            accountId = existingAdminId;
+          } else {
+            const admin = await accountRepo.create({
+              id: randomUUID(),
+              name: label || "Admin",
+              type: "human",
+            });
+            accountRepo.setAdmin(admin.id);
+            accountId = admin.id;
+          }
+        }
+
+        if (!accountId) {
+          reply.status(400);
+          return { error: "No account associated with this registration" };
+        }
+
         db.insert(webauthnCredentials)
           .values({
             id,
+            accountId,
             credentialId: cred.id,
             publicKey: pubKeyBuf,
             counter: cred.counter,
@@ -230,12 +271,6 @@ export function registerWebAuthnRoutes(
     },
   );
 
-  // --- Auth Status ---
-  app.get(`${basePath}/api/webauthn/status`, async () => {
-    const result = db.select({ count: count() }).from(webauthnCredentials).get();
-    return { hasPasskeys: (result?.count ?? 0) > 0 };
-  });
-
   // --- Login (Assertion): Generate Options ---
   app.post(`${basePath}/api/webauthn/login/options`, async (request) => {
     const { rpId } = getOriginAndRpId(request, proxy);
@@ -246,7 +281,7 @@ export function registerWebAuthnRoutes(
       .all();
 
     if (creds.length === 0) {
-      return { error: "No passkeys registered" };
+      return { error: "no_passkeys" };
     }
 
     const options = await generateAuthenticationOptions({
@@ -276,10 +311,7 @@ export function registerWebAuthnRoutes(
       const { challengeId, credential } = request.body;
       const { rpId, origin } = getOriginAndRpId(request, proxy);
 
-      // Accept the browser's Origin header too (passkey may have been registered on a different port)
-      const browserOrigin = request.headers.origin ? String(request.headers.origin) : undefined;
-      const expectedOrigins =
-        browserOrigin && browserOrigin !== origin ? [origin, browserOrigin] : [origin];
+      const expectedOrigins = [origin, ...trustedOrigins];
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
@@ -301,6 +333,7 @@ export function registerWebAuthnRoutes(
       const storedCred = db
         .select({
           id: webauthnCredentials.id,
+          accountId: webauthnCredentials.accountId,
           credentialId: webauthnCredentials.credentialId,
           publicKey: webauthnCredentials.publicKey,
           counter: webauthnCredentials.counter,
@@ -343,9 +376,16 @@ export function registerWebAuthnRoutes(
           .where(eq(webauthnCredentials.id, storedCred.id))
           .run();
 
-        // Set session cookie
+        // Update account lastUsedAt
+        accountRepo.touchLastUsed(storedCred.accountId);
+
+        // Set session cookie with account ID
         const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-        const cookieValue = createSessionCookie(sessionConfig.secret, sessionConfig.ttlSeconds);
+        const cookieValue = createSessionCookie(
+          sessionConfig.secret,
+          sessionConfig.ttlSeconds,
+          storedCred.accountId,
+        );
         const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
         reply.header(
           "Set-Cookie",

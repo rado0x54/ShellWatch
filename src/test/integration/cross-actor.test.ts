@@ -32,7 +32,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP creates session → WebSocket receives sessions:changed", async () => {
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       // Drain initial sessions:changed
@@ -58,7 +58,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP sends input → WebSocket receives terminal:output", async () => {
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       await ws.waitForMessage("sessions:changed");
@@ -91,7 +91,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP closes session → WebSocket receives sessions:changed and terminal:closed", async () => {
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     const mcp = await createTestMcpClient(appServer.url, log);
     try {
       await ws.waitForMessage("sessions:changed");
@@ -149,7 +149,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
       const session = JSON.parse(result.content);
 
       // REST API sees all sessions regardless of source
-      const listRes = await fetch(`${appServer.url}/api/sessions`);
+      const listRes = await appServer.fetch(`/api/sessions`);
       const data = await listRes.json();
       expect(
         data.sessions.some((s: { sessionId: string }) => s.sessionId === session.sessionId),
@@ -162,7 +162,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
   });
 
   it("MCP cannot see HTTP-created sessions", async () => {
-    const createRes = await fetch(`${appServer.url}/api/sessions`, {
+    const createRes = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
@@ -178,7 +178,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
         parsed.sessions.find((s: { sessionId: string }) => s.sessionId === session.sessionId),
       ).toBeUndefined();
 
-      await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
+      await appServer.fetch(`/api/sessions/${session.sessionId}`, { method: "DELETE" });
     } finally {
       await mcp.close();
     }

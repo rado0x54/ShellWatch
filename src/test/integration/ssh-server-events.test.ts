@@ -55,7 +55,7 @@ describe("SSH Server Events", () => {
 
   it("SSH server pushes output → WebSocket client receives terminal:output", async () => {
     const mcp = await createTestMcpClient(appServer.url, log);
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       await ws.waitForMessage("sessions:changed");
 
@@ -112,7 +112,7 @@ describe("SSH Server Events", () => {
     const isolatedSshServer = await startTestSshServer(log);
     const isolatedApp = await startTestApp(isolatedSshServer, log);
 
-    const ws = await connectTestWsClient(isolatedApp.url, log);
+    const ws = await connectTestWsClient(isolatedApp.url, log, isolatedApp.sessionCookie);
     const mcp = await createTestMcpClient(isolatedApp.url, log);
     try {
       await ws.waitForMessage("sessions:changed");

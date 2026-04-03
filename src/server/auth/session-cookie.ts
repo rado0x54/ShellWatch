@@ -10,10 +10,10 @@ function sign(payload: string, secret: string): string {
   return createHmac("sha256", secret).update(payload).digest("base64url");
 }
 
-export function createSessionCookie(secret: string, ttlSeconds: number): string {
+export function createSessionCookie(secret: string, ttlSeconds: number, accountId: string): string {
   const now = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
-    sub: "admin",
+    sub: accountId,
     iat: now,
     exp: now + ttlSeconds,
   };

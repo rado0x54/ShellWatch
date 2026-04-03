@@ -1,12 +1,33 @@
+CREATE TABLE `accounts` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`type` text NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`max_sessions` integer DEFAULT 5 NOT NULL,
+	`recovery_code_hash` text,
+	`last_used_at` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `admin_account` (
+	`singleton` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`account_id` text NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "single_row" CHECK("admin_account"."singleton" = 1)
+);
+--> statement-breakpoint
 CREATE TABLE `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
 	`label` text NOT NULL,
 	`key_hash` text NOT NULL,
 	`key_prefix` text NOT NULL,
 	`scopes` text NOT NULL,
 	`endpoints` text,
 	`enabled` integer DEFAULT true NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);--> statement-breakpoint
@@ -14,6 +35,7 @@ CREATE TABLE `audit_events` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`timestamp` text NOT NULL,
 	`session_id` text,
+	`account_id` text,
 	`event_type` text NOT NULL,
 	`data` text
 );
@@ -57,6 +79,7 @@ CREATE UNIQUE INDEX `guardrail_rules_name_unique` ON `guardrail_rules` (`name`);
 CREATE TABLE `session_history` (
 	`session_id` text PRIMARY KEY NOT NULL,
 	`endpoint_id` text NOT NULL,
+	`account_id` text NOT NULL,
 	`source` text NOT NULL,
 	`status` text NOT NULL,
 	`created_at` text NOT NULL,
@@ -78,6 +101,7 @@ CREATE TABLE `ssh_keys` (
 CREATE UNIQUE INDEX `ssh_keys_fingerprint_unique` ON `ssh_keys` (`fingerprint`);--> statement-breakpoint
 CREATE TABLE `webauthn_credentials` (
 	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
 	`credential_id` text NOT NULL,
 	`public_key` blob NOT NULL,
 	`counter` integer DEFAULT 0 NOT NULL,
@@ -85,7 +109,8 @@ CREATE TABLE `webauthn_credentials` (
 	`label` text NOT NULL,
 	`public_key_openssh` text,
 	`created_at` text NOT NULL,
-	`last_used_at` text
+	`last_used_at` text,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `webauthn_credentials_credential_id_unique` ON `webauthn_credentials` (`credential_id`);

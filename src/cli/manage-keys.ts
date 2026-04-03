@@ -1,5 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { createDatabase, DrizzleApiKeyRepository, runMigrations } from "../db/index.js";
+import {
+  createDatabase,
+  DrizzleAccountRepository,
+  DrizzleApiKeyRepository,
+  runMigrations,
+} from "../db/index.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
 
 const [, , command, ...args] = process.argv;
@@ -7,6 +12,7 @@ const [, , command, ...args] = process.argv;
 const { db, close } = createDatabase();
 runMigrations(db);
 const repo = new DrizzleApiKeyRepository(db);
+const accountRepo = new DrizzleAccountRepository(db);
 
 try {
   switch (command) {
@@ -22,8 +28,15 @@ try {
       const hash = hashApiKey(raw);
       const prefix = raw.slice(0, 10);
 
+      const adminId = accountRepo.getAdminAccountId();
+      if (!adminId) {
+        console.error("No admin account found. Start the server first to create one.");
+        process.exit(1);
+      }
+
       await repo.create({
         id: randomUUID(),
+        accountId: adminId,
         label,
         keyHash: hash,
         keyPrefix: prefix,

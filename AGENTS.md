@@ -33,6 +33,7 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 - TypeScript strict mode — no `any` unless absolutely necessary
 - Use `.js` extensions in relative import paths (required for Node16 module resolution)
 - Single-line commit messages with category prefix: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`
+- **Functions with 5+ parameters must use a typed parameter object** instead of positional args. Export the params interface for callers.
 
 ## Project Structure
 

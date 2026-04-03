@@ -6,12 +6,14 @@ import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability } from "../transport/key-directory-watcher.js";
+import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
@@ -24,17 +26,33 @@ export interface AppOptions {
   skipStaticFiles?: boolean;
 }
 
-export async function buildApp(
-  config: Config,
-  terminalManager: TerminalManager,
-  endpointRepo: EndpointRepository,
-  keyRepo: SshKeyRepository,
-  db: ShellWatchDB | null = null,
-  wsExtensions: WsExtension[] = [],
-  keyAvailability: KeyAvailability | null = null,
-  options: AppOptions = {},
-  apiKeyRepo?: ApiKeyRepository,
-) {
+export interface BuildAppParams {
+  config: Config;
+  terminalManager: TerminalManager;
+  endpointRepo: EndpointRepository;
+  keyRepo: SshKeyRepository;
+  accountRepo: AccountRepository;
+  db?: ShellWatchDB | null;
+  wsExtensions?: WsExtension[];
+  keyAvailability?: KeyAvailability | null;
+  apiKeyRepo?: ApiKeyRepository | null;
+  options?: AppOptions;
+}
+
+export async function buildApp(params: BuildAppParams) {
+  const {
+    config,
+    terminalManager,
+    endpointRepo,
+    keyRepo,
+    accountRepo,
+    db = null,
+    wsExtensions = [],
+    keyAvailability = null,
+    apiKeyRepo = null,
+    options = {},
+  } = params;
+
   const app = Fastify({ logger: options.logger ?? true });
   const base = config.server.basePath;
 
@@ -47,13 +65,22 @@ export async function buildApp(
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
 
-  // Auth gate: require passkey login when passkeys exist
-  registerAuthGate(app, db, base, cookieSecret);
+  // Decorate request with accountId (set by auth gate / API key auth)
+  app.decorateRequest("accountId", null);
+
+  // Auth gate: onboarding + login enforcement
+  registerAuthGate({
+    app,
+    basePath: base,
+    secret: cookieSecret,
+    accountRepo,
+    checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
+  });
 
   // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
   if (apiKeyRepo) {
-    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`);
+    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`, accountRepo);
   }
 
   // Redirect root to basePath when basePath is set
@@ -64,6 +91,26 @@ export async function buildApp(
   }
 
   app.get(`${base}/health`, async () => ({ status: "ok" }));
+
+  // --- Auth: current account ---
+  app.get(`${base}/api/auth/me`, async (request, reply) => {
+    const accountId = request.accountId;
+    if (!accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const account = await accountRepo.findById(accountId);
+    if (!account) {
+      reply.status(401);
+      return { error: "Account not found" };
+    }
+    return {
+      id: account.id,
+      name: account.name,
+      type: account.type,
+      isAdmin: account.isAdmin,
+    };
+  });
 
   // --- SSH Keys API ---
 
@@ -207,7 +254,18 @@ export async function buildApp(
       const keyHash = hashApiKey(raw);
       const keyPrefix = raw.slice(0, 10);
       const id = randomUUID();
-      await apiKeyRepo.create({ id, label, keyHash, keyPrefix, scopes: ["mcp"] });
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
+      await apiKeyRepo.create({
+        id,
+        accountId: request.accountId,
+        label,
+        keyHash,
+        keyPrefix,
+        scopes: ["mcp"],
+      });
       return { id, label, keyPrefix, key: raw };
     });
 
@@ -227,16 +285,18 @@ export async function buildApp(
 
   // WebAuthn routes
   if (db) {
-    registerWebAuthnRoutes(
+    registerWebAuthnRoutes({
       app,
       db,
-      base,
-      {
+      accountRepo,
+      basePath: base,
+      proxy: {
         hostHeader: config.server.trustedForwardedHostHeader,
         protoHeader: config.server.trustedForwardedProtoHeader,
       },
-      { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
-    );
+      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      trustedOrigins: config.security.trustedWebauthnOrigins,
+    });
   }
 
   // Client runtime config

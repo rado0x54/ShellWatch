@@ -30,7 +30,7 @@ describe("REST API Flow", () => {
   });
 
   it("GET /api/endpoints returns configured endpoints", async () => {
-    const res = await fetch(`${appServer.url}/api/endpoints`);
+    const res = await appServer.fetch(`/api/endpoints`);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.endpoints).toHaveLength(1);
@@ -39,7 +39,7 @@ describe("REST API Flow", () => {
   });
 
   it("POST /api/sessions creates a session", async () => {
-    const res = await fetch(`${appServer.url}/api/sessions`, {
+    const res = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
@@ -50,35 +50,35 @@ describe("REST API Flow", () => {
     expect(session.status).toBe("open");
 
     // Cleanup
-    await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
+    await appServer.fetch(`/api/sessions/${session.sessionId}`, { method: "DELETE" });
   });
 
   it("GET /api/sessions lists active sessions", async () => {
-    const createRes = await fetch(`${appServer.url}/api/sessions`, {
+    const createRes = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
     });
     const session = await createRes.json();
 
-    const listRes = await fetch(`${appServer.url}/api/sessions`);
+    const listRes = await appServer.fetch(`/api/sessions`);
     const data = await listRes.json();
     expect(
       data.sessions.some((s: { sessionId: string }) => s.sessionId === session.sessionId),
     ).toBe(true);
 
-    await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, { method: "DELETE" });
+    await appServer.fetch(`/api/sessions/${session.sessionId}`, { method: "DELETE" });
   });
 
   it("DELETE /api/sessions/:id closes a session", async () => {
-    const createRes = await fetch(`${appServer.url}/api/sessions`, {
+    const createRes = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
     });
     const session = await createRes.json();
 
-    const deleteRes = await fetch(`${appServer.url}/api/sessions/${session.sessionId}`, {
+    const deleteRes = await appServer.fetch(`/api/sessions/${session.sessionId}`, {
       method: "DELETE",
     });
     expect(deleteRes.status).toBe(200);
@@ -87,7 +87,7 @@ describe("REST API Flow", () => {
   });
 
   it("POST /api/sessions with invalid endpoint returns 400", async () => {
-    const res = await fetch(`${appServer.url}/api/sessions`, {
+    const res = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "nonexistent" }),
@@ -98,7 +98,7 @@ describe("REST API Flow", () => {
   });
 
   it("DELETE /api/sessions/:id with unknown session returns 404", async () => {
-    const res = await fetch(`${appServer.url}/api/sessions/sess_nonexistent`, {
+    const res = await appServer.fetch(`/api/sessions/sess_nonexistent`, {
       method: "DELETE",
     });
     expect(res.status).toBe(404);

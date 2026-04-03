@@ -1,7 +1,5 @@
-import { count } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ShellWatchDB } from "../../db/connection.js";
-import { webauthnCredentials } from "../../db/schema.js";
+import type { AccountRepository } from "../../db/repositories/account-repo.js";
 import { verifySessionCookie } from "./session-cookie.js";
 
 const COOKIE_NAME = "sw_session";
@@ -12,28 +10,21 @@ export function parseCookie(header: string | undefined, name: string): string | 
   return match?.[1];
 }
 
-export function registerAuthGate(
-  app: FastifyInstance,
-  db: ShellWatchDB | null,
-  basePath: string,
-  secret: string,
-): void {
-  if (!db) return;
-  const dbRef = db;
+export interface AuthGateParams {
+  app: FastifyInstance;
+  basePath: string;
+  secret: string;
+  accountRepo: AccountRepository;
+  checkHasPasskeys: () => boolean;
+}
 
-  let cachedCount: number | null = null;
-  let cacheTime = 0;
-  const CACHE_TTL_MS = 5000;
-
-  function getPasskeyCount(): number {
-    const now = Date.now();
-    if (cachedCount !== null && now - cacheTime < CACHE_TTL_MS) return cachedCount;
-    const result = dbRef.select({ count: count() }).from(webauthnCredentials).get();
-    cachedCount = result?.count ?? 0;
-    cacheTime = now;
-    return cachedCount;
-  }
-
+export function registerAuthGate({
+  app,
+  basePath,
+  secret,
+  accountRepo,
+  checkHasPasskeys,
+}: AuthGateParams): void {
   // Logout: clear session cookie
   app.post(`${basePath}/api/auth/logout`, async (request, reply) => {
     const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
@@ -45,43 +36,79 @@ export function registerAuthGate(
       .send({ status: "logged_out" });
   });
 
-  // Exempt paths that don't require session auth
-  const exemptSuffixes = [
+  // Paths that never require a session
+  const alwaysExempt = [
     "/health",
-    "/mcp",
+    "/api/auth/logout",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
-    "/api/webauthn/status",
-    "/api/auth/logout",
     "/login",
+    "/mcp",
     "/config.js",
   ];
 
-  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    // Bootstrap mode: no passkeys = open access
-    if (getPasskeyCount() === 0) return;
+  // Only exempt during onboarding (no passkeys registered yet)
+  const onboardingOnly = [
+    "/api/webauthn/register/options",
+    "/api/webauthn/register/verify",
+    "/onboarding",
+  ];
 
+  function isExempt(url: string, suffixes: string[]): boolean {
+    for (const suffix of suffixes) {
+      if (url === `${basePath}${suffix}`) return true;
+    }
+    return false;
+  }
+
+  // Cache passkey count to avoid DB queries on every request
+  let cachedHasPasskeys: boolean | null = null;
+  let cacheTime = 0;
+  const CACHE_TTL_MS = 5000;
+
+  function hasPasskeys(): boolean {
+    const now = Date.now();
+    if (cachedHasPasskeys !== null && now - cacheTime < CACHE_TTL_MS) return cachedHasPasskeys;
+    cachedHasPasskeys = checkHasPasskeys();
+    cacheTime = now;
+    return cachedHasPasskeys;
+  }
+
+  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     const url = request.url.split("?")[0];
 
-    // Check exempt paths
-    for (const suffix of exemptSuffixes) {
-      if (url === `${basePath}${suffix}`) return;
-    }
-
-    // Allow static assets (SvelteKit serves from /_app/)
+    // Static assets
     if (url.startsWith(`${basePath}/_app/`)) return;
 
-    // Verify session cookie
+    // Only apply auth to routes under basePath
+    if (basePath && !url.startsWith(`${basePath}/`) && url !== basePath) return;
+
+    // Always-exempt paths
+    if (isExempt(url, alwaysExempt)) return;
+
+    // Onboarding-only paths (registration, /onboarding) — exempt only when no passkeys exist
+    if (!hasPasskeys()) {
+      if (isExempt(url, onboardingOnly)) return;
+      // No passkeys — allow all other routes too (bootstrap mode)
+      return;
+    }
+
+    // System is ready — require session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);
-      if (session) return;
+      if (session) {
+        request.accountId = session.sub;
+        if (session.sub) {
+          accountRepo.touchLastUsed(session.sub);
+        }
+        return;
+      }
     }
 
     // Not authenticated
-    const isApiOrWs = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
-
-    if (isApiOrWs) {
+    const isApi = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
+    if (isApi) {
       reply.status(401).send({ error: "Authentication required" });
     } else {
       reply.redirect(`${basePath}/login`);

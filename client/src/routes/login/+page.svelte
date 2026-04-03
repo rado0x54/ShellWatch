@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { get } from "svelte/store";
   import { basePath } from "$lib/stores/connection.js";
-  import { login } from "$lib/stores/webauthn.js";
+  import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
   let loading = $state(false);
   let error = $state("");
@@ -17,6 +19,10 @@
       const base = get(basePath);
       window.location.href = `${base}/`;
     } catch (err) {
+      if (err instanceof NoPasskeysError) {
+        await goto(resolve("/onboarding"));
+        return;
+      }
       error = (err as Error).message;
       status = "";
       loading = false;

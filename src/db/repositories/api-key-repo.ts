@@ -4,6 +4,7 @@ import { apiKeys } from "../schema.js";
 
 export interface ApiKeyInfo {
   id: string;
+  accountId: string;
   label: string;
   keyPrefix: string;
   scopes: string[];
@@ -17,6 +18,7 @@ export interface ApiKeyRepository {
   findAll(): Promise<ApiKeyInfo[]>;
   create(data: {
     id: string;
+    accountId: string;
     label: string;
     keyHash: string;
     keyPrefix: string;
@@ -28,6 +30,7 @@ export interface ApiKeyRepository {
 
 function parseRow(row: {
   id: string;
+  accountId: string;
   label: string;
   keyPrefix: string;
   scopes: string;
@@ -49,6 +52,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     const row = this.db
       .select({
         id: apiKeys.id,
+        accountId: apiKeys.accountId,
         label: apiKeys.label,
         keyPrefix: apiKeys.keyPrefix,
         scopes: apiKeys.scopes,
@@ -67,6 +71,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     const rows = this.db
       .select({
         id: apiKeys.id,
+        accountId: apiKeys.accountId,
         label: apiKeys.label,
         keyPrefix: apiKeys.keyPrefix,
         scopes: apiKeys.scopes,
@@ -81,6 +86,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
 
   async create(data: {
     id: string;
+    accountId: string;
     label: string;
     keyHash: string;
     keyPrefix: string;
@@ -91,6 +97,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
       .insert(apiKeys)
       .values({
         id: data.id,
+        accountId: data.accountId,
         label: data.label,
         keyHash: data.keyHash,
         keyPrefix: data.keyPrefix,

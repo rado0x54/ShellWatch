@@ -17,11 +17,15 @@ interface ParsedMessage {
   [key: string]: unknown;
 }
 
-export function connectTestWsClient(appUrl: string, log: TestLog): Promise<TestWsClient> {
+export function connectTestWsClient(
+  appUrl: string,
+  log: TestLog,
+  cookie?: string,
+): Promise<TestWsClient> {
   const wsUrl = `${appUrl.replace("http://", "ws://")}/ws`;
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, cookie ? { headers: { cookie } } : undefined);
 
     // Buffer messages from the start — before "open" fires
     const buffered: ParsedMessage[] = [];

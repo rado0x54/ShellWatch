@@ -5,6 +5,7 @@
   import { page } from "$app/stores";
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import { fetchAccount } from "$lib/stores/account.js";
   import { basePath } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
   import { checkAuth } from "$lib/stores/webauthn.js";
@@ -15,15 +16,11 @@
 
   let ready = $state(false);
   let mobileMenuOpen = $state(false);
-  let activeSessionId = $state<string | null>(null);
   let sessionModes = $state<Record<string, string>>({});
 
-  const isLoginPage = $derived($page.url.pathname.endsWith("/login"));
-
-  function handleConnect(sessionId: string, mode: "control" | "observer") {
-    activeSessionId = sessionId;
-    sessionModes[sessionId] = mode;
-  }
+  const isFullscreenPage = $derived(
+    $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/onboarding"),
+  );
 
   onMount(async () => {
     // Initialize base path from server-injected config
@@ -31,20 +28,21 @@
     basePath.set(base);
 
     const currentPath = window.location.pathname;
-    const isLogin = currentPath.endsWith("/login");
+    const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/onboarding");
 
-    if (!isLogin) {
-      const { hasPasskeys, authenticated } = await checkAuth();
-      if (hasPasskeys && !authenticated) {
+    if (!isUnauthPage) {
+      const { authenticated } = await checkAuth();
+      if (!authenticated) {
         await goto(resolve("/login"));
         ready = true;
         return;
       }
     }
 
-    if (!isLogin) {
+    if (!isUnauthPage) {
       connectWs();
       await fetchEndpoints();
+      fetchAccount();
 
       // Handle FIDO signing requests
       onWsMessage((msg) => {
@@ -69,7 +67,7 @@
   <div class="loading">
     <span>Loading...</span>
   </div>
-{:else if isLoginPage}
+{:else if isFullscreenPage}
   {@render children()}
 {:else}
   <div class="app-shell">
@@ -88,12 +86,7 @@
     <div class="app-body">
       <!-- Sidebar (desktop always visible, mobile toggleable) -->
       <div class="sidebar-container" class:mobile-open={mobileMenuOpen}>
-        <Sidebar
-          {activeSessionId}
-          {sessionModes}
-          onConnect={handleConnect}
-          onMobileClose={() => (mobileMenuOpen = false)}
-        />
+        <Sidebar {sessionModes} onMobileClose={() => (mobileMenuOpen = false)} />
       </div>
 
       <!-- Mobile overlay -->

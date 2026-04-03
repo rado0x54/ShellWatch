@@ -101,7 +101,7 @@ describe("Concurrent Sessions", () => {
       );
 
       // Create via HTTP
-      const httpRes = await fetch(`${appServer.url}/api/sessions`, {
+      const httpRes = await appServer.fetch(`/api/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpointId: "test-server" }),
@@ -114,11 +114,11 @@ describe("Concurrent Sessions", () => {
       expect(mcpList[0].sessionId).toBe(mcpSession.sessionId);
 
       // REST API sees both
-      const httpList = await (await fetch(`${appServer.url}/api/sessions`)).json();
+      const httpList = await (await appServer.fetch(`/api/sessions`)).json();
       expect(httpList.sessions.length).toBeGreaterThanOrEqual(2);
 
       await mcp.callTool("shellwatch_close_session", { sessionId: mcpSession.sessionId });
-      await fetch(`${appServer.url}/api/sessions/${httpSession.sessionId}`, { method: "DELETE" });
+      await appServer.fetch(`/api/sessions/${httpSession.sessionId}`, { method: "DELETE" });
     } finally {
       await mcp.close();
     }

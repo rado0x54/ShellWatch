@@ -1,9 +1,40 @@
-import { blob, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { blob, check, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+// --- Accounts ---
+
+export const accounts = sqliteTable("accounts", {
+  id: text("id").primaryKey(), // UUIDv4
+  name: text("name").notNull(),
+  type: text("type").notNull(), // "human" | "agent"
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  maxSessions: integer("max_sessions").notNull().default(5),
+  recoveryCodeHash: text("recovery_code_hash"),
+  lastUsedAt: text("last_used_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// --- Admin Account (singleton — at most one row) ---
+
+export const adminAccount = sqliteTable(
+  "admin_account",
+  {
+    singleton: integer("singleton").primaryKey().default(1),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+  },
+  (table) => [check("single_row", sql`${table.singleton} = 1`)],
+);
 
 // --- WebAuthn Credentials ---
 
 export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   id: text("id").primaryKey(),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
   credentialId: text("credential_id").notNull().unique(), // base64url-encoded
   publicKey: blob("public_key", { mode: "buffer" }).notNull(), // COSE-encoded
   counter: integer("counter").notNull().default(0),
@@ -19,7 +50,7 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
 export const sshKeys = sqliteTable("ssh_keys", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
-  type: text("type").notNull().default("file"), // "file" | "fido" (future)
+  type: text("type").notNull().default("file"), // "file" | "webauthn"
   publicKey: text("public_key").notNull(), // OpenSSH format (e.g., "ssh-ed25519 AAAA...")
   fingerprint: text("fingerprint").notNull().unique(), // SHA256:... — used to match runtime key files
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -61,6 +92,7 @@ export const endpointKeys = sqliteTable(
 export const sessionHistory = sqliteTable("session_history", {
   sessionId: text("session_id").primaryKey(),
   endpointId: text("endpoint_id").notNull(),
+  accountId: text("account_id").notNull(),
   source: text("source").notNull(),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
@@ -74,6 +106,7 @@ export const auditEvents = sqliteTable("audit_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   timestamp: text("timestamp").notNull(),
   sessionId: text("session_id"),
+  accountId: text("account_id"),
   eventType: text("event_type").notNull(),
   data: text("data"),
 });
@@ -94,10 +127,13 @@ export const guardrailRules = sqliteTable("guardrail_rules", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- API Keys (placeholder for #15) ---
+// --- API Keys ---
 
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
   label: text("label").notNull(),
   keyHash: text("key_hash").notNull().unique(),
   keyPrefix: text("key_prefix").notNull(),

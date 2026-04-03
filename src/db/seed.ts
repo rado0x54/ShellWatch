@@ -1,12 +1,19 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import type { Config } from "../config/index.js";
 import { coseToAuthorizedKeys } from "../webauthn/ssh-key-format.js";
 import type { ShellWatchDB } from "./connection.js";
-import { apiKeys, endpoints, sshKeys, webauthnCredentials } from "./schema.js";
+import {
+  accounts,
+  adminAccount,
+  apiKeys,
+  endpoints,
+  sshKeys,
+  webauthnCredentials,
+} from "./schema.js";
 
 /**
- * Seed the database with admin passkey, endpoints, and API key from config.
+ * Seed the database with admin account, passkey, endpoints, and API key from config.
  * SSH keys are auto-discovered by KeyDirectoryWatcher.
  * Each section is independently idempotent.
  */
@@ -14,12 +21,47 @@ export interface SeedResult {
   seededApiKey: boolean;
   apiKeyPrefix?: string;
   seededAdminPasskey: boolean;
+  seededAdminAccount: boolean;
+  seededAdminId?: string;
 }
 
 export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
-  const result: SeedResult = { seededApiKey: false, seededAdminPasskey: false };
+  const result: SeedResult = {
+    seededApiKey: false,
+    seededAdminPasskey: false,
+    seededAdminAccount: false,
+  };
 
-  // Seed admin passkey first (endpoints may reference it via keyId)
+  // Seed admin account if no accounts exist yet
+  const accountCount = db.select({ total: count() }).from(accounts).get();
+  let adminId: string;
+  if (!accountCount || accountCount.total === 0) {
+    adminId = randomUUID();
+    const now = new Date().toISOString();
+    db.insert(accounts)
+      .values({
+        id: adminId,
+        name: "Admin",
+        type: "human",
+        enabled: true,
+        maxSessions: 5,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    // Designate as admin via singleton table
+    db.insert(adminAccount).values({ singleton: 1, accountId: adminId }).run();
+    result.seededAdminAccount = true;
+    result.seededAdminId = adminId;
+  } else {
+    // Find existing admin account for linking
+    const admin = db.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
+    if (!admin) throw new Error("No admin account found — database is in an invalid state");
+    adminId = admin.accountId;
+  }
+
+  // Seed admin passkey (endpoints may reference it via keyId)
   if (config.seedAdminPasskey) {
     const pk = config.seedAdminPasskey;
     const existing = db
@@ -43,6 +85,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       db.insert(webauthnCredentials)
         .values({
           id: pk.id,
+          accountId: adminId,
           credentialId: pk.credentialId,
           publicKey: pubKeyBuf,
           counter: pk.counter,
@@ -116,6 +159,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       db.insert(apiKeys)
         .values({
           id: "seed-api-key",
+          accountId: adminId,
           label: "Seeded from config",
           keyHash: hash,
           keyPrefix: config.seedApiKey.slice(0, 10),
