@@ -10,6 +10,7 @@ export interface SshKeyInfo {
   fingerprint: string;
   enabled: boolean;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface SshKeyRepository {
@@ -38,6 +39,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
         createdAt: sshKeys.createdAt,
+        updatedAt: sshKeys.updatedAt,
       })
       .from(sshKeys)
       .all();
@@ -53,6 +55,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
         createdAt: sshKeys.createdAt,
+        updatedAt: sshKeys.updatedAt,
       })
       .from(sshKeys)
       .where(eq(sshKeys.id, id))
@@ -97,13 +100,19 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
 
   constructor(
     initialKeys: Array<
-      Omit<SshKeyInfo, "enabled" | "createdAt"> & { enabled?: boolean; createdAt?: string }
+      Omit<SshKeyInfo, "enabled" | "createdAt" | "updatedAt"> & {
+        enabled?: boolean;
+        createdAt?: string;
+        updatedAt?: string;
+      }
     > = [],
   ) {
+    const now = new Date().toISOString();
     this.store = initialKeys.map((k) => ({
       ...k,
       enabled: k.enabled ?? true,
-      createdAt: k.createdAt ?? new Date().toISOString(),
+      createdAt: k.createdAt ?? now,
+      updatedAt: k.updatedAt ?? k.createdAt ?? now,
     }));
   }
 
@@ -122,6 +131,7 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
     publicKey: string;
     fingerprint: string;
   }): Promise<void> {
+    const now = new Date().toISOString();
     this.store.push({
       id: data.id,
       label: data.label,
@@ -129,7 +139,8 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       enabled: true,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     });
   }
 
