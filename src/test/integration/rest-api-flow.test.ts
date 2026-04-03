@@ -86,15 +86,15 @@ describe("REST API Flow", () => {
     expect(result.status).toBe("closed");
   });
 
-  it("POST /api/sessions with invalid endpoint returns 400", async () => {
+  it("POST /api/sessions with invalid endpoint returns 404", async () => {
     const res = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "nonexistent" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     const data = await res.json();
-    expect(data.error).toContain("Unknown endpoint");
+    expect(data.error).toContain("not found");
   });
 
   it("DELETE /api/sessions/:id with unknown session returns 404", async () => {
