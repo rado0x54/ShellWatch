@@ -8,8 +8,11 @@ import type { Config } from "../config/index.js";
 import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
 import {
+  accounts as accountsTable,
   apiKeys as apiKeysTable,
+  endpointKeys,
   endpoints as endpointsTable,
+  sessionHistory,
   sshKeys,
   webauthnCredentials,
 } from "../db/schema.js";
@@ -178,13 +181,22 @@ export async function buildApp(params: BuildAppParams) {
       return { error: "Cannot delete the admin account" };
     }
 
-    // Hard-delete: cascade all owned data
+    // Hard-delete: cascade all owned data (order matters for FK constraints)
     if (db) {
+      // Get the account's endpoint IDs for junction table cleanup
+      const accountEndpoints = db
+        .select({ id: endpointsTable.id })
+        .from(endpointsTable)
+        .where(eq(endpointsTable.accountId, targetId))
+        .all();
+      for (const ep of accountEndpoints) {
+        db.delete(endpointKeys).where(eq(endpointKeys.endpointId, ep.id)).run();
+      }
+      db.delete(sessionHistory).where(eq(sessionHistory.accountId, targetId)).run();
       db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
       db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
       db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();
-      const { accounts: accountsSchema } = await import("../db/schema.js");
-      db.delete(accountsSchema).where(eq(accountsSchema.id, targetId)).run();
+      db.delete(accountsTable).where(eq(accountsTable.id, targetId)).run();
     }
 
     return { status: "deleted" };
@@ -337,12 +349,14 @@ export async function buildApp(params: BuildAppParams) {
       return { error: "Not authenticated" };
     }
     try {
-      // Enforce per-account session limit
+      // Enforce per-account session limit (scoped to this account's endpoints)
       const account = await accountRepo.findById(request.accountId);
       if (account) {
+        const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
+        const accountEndpointIds = new Set(accountEndpoints.map((e) => e.id));
         const activeSessions = terminalManager.listSessions();
         const accountSessions = activeSessions.filter(
-          (s) => s.source === "ui" && s.status === "open",
+          (s) => accountEndpointIds.has(s.endpointId) && s.status === "open",
         );
         if (accountSessions.length >= account.maxSessions) {
           reply.status(429);
