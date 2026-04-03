@@ -1,4 +1,4 @@
-import { and, eq, lt, ne } from "drizzle-orm";
+import { and, eq, lt, ne, sql } from "drizzle-orm";
 import type { ShellWatchDB } from "./connection.js";
 import {
   accounts,
@@ -27,11 +27,16 @@ export function cleanupInactiveAccounts(
   const admin = db.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
   const adminId = admin?.accountId;
 
-  // Find expired accounts (not admin, lastUsedAt before cutoff)
+  // Find expired accounts (not admin, coalesce lastUsedAt with createdAt for never-used accounts)
   const expired = db
     .select({ id: accounts.id })
     .from(accounts)
-    .where(and(lt(accounts.lastUsedAt, cutoff), adminId ? ne(accounts.id, adminId) : undefined))
+    .where(
+      and(
+        lt(sql`coalesce(${accounts.lastUsedAt}, ${accounts.createdAt})`, cutoff),
+        adminId ? ne(accounts.id, adminId) : undefined,
+      ),
+    )
     .all();
 
   const deletedIds: string[] = [];
