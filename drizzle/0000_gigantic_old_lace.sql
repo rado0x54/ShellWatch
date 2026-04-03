@@ -122,6 +122,7 @@ CREATE TABLE `webauthn_credentials` (
 	`transports` text,
 	`label` text NOT NULL,
 	`public_key_openssh` text,
+	`revoked` integer DEFAULT false NOT NULL,
 	`created_at` text NOT NULL,
 	`last_used_at` text,
 	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action

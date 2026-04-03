@@ -245,6 +245,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         publicKey: webauthnCredentials.publicKey,
         publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
         label: webauthnCredentials.label,
+        revoked: webauthnCredentials.revoked,
         createdAt: webauthnCredentials.createdAt,
         lastUsedAt: webauthnCredentials.lastUsedAt,
       })
@@ -260,6 +261,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         algorithm: detectAlgorithm(c.publicKey),
         fingerprint: computeFingerprint(c.publicKey),
         authorizedKeysEntry: c.publicKeyOpenSsh ?? null,
+        revoked: c.revoked,
         createdAt: c.createdAt,
         lastUsedAt: c.lastUsedAt,
       })),
@@ -267,18 +269,19 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     };
   });
 
-  // --- Delete Credential (scoped to account) ---
-  app.delete<{ Params: { id: string } }>(
-    `${basePath}/api/webauthn/credentials/:id`,
+  // --- Revoke Credential (permanent, scoped to account) ---
+  app.post<{ Params: { id: string } }>(
+    `${basePath}/api/webauthn/credentials/:id/revoke`,
     async (request, reply) => {
       if (!request.accountId) {
         reply.status(401);
         return { error: "Not authenticated" };
       }
       const { id } = request.params;
+
       // Verify ownership
       const cred = db
-        .select({ id: webauthnCredentials.id })
+        .select({ id: webauthnCredentials.id, revoked: webauthnCredentials.revoked })
         .from(webauthnCredentials)
         .where(
           and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
@@ -288,9 +291,38 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         reply.status(404);
         return { error: "Credential not found" };
       }
-      db.delete(sshKeys).where(eq(sshKeys.id, id)).run();
-      db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
-      return { status: "deleted" };
+      if (cred.revoked) {
+        reply.status(400);
+        return { error: "Credential is already revoked" };
+      }
+
+      // Prevent revoking the last active passkey
+      const activeCount = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, request.accountId),
+            eq(webauthnCredentials.revoked, false),
+          ),
+        )
+        .all().length;
+      if (activeCount <= 1) {
+        reply.status(400);
+        return { error: "Cannot revoke the last active passkey" };
+      }
+
+      // Revoke the credential and its ssh_key entry
+      db.update(webauthnCredentials)
+        .set({ revoked: true })
+        .where(eq(webauthnCredentials.id, id))
+        .run();
+      db.update(sshKeys)
+        .set({ enabled: false, updatedAt: new Date().toISOString() })
+        .where(eq(sshKeys.id, id))
+        .run();
+
+      return { status: "revoked" };
     },
   );
 
@@ -301,6 +333,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     const creds = db
       .select({ credentialId: webauthnCredentials.credentialId })
       .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.revoked, false))
       .all();
 
     if (creds.length === 0) {
@@ -361,6 +394,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
           publicKey: webauthnCredentials.publicKey,
           counter: webauthnCredentials.counter,
           transports: webauthnCredentials.transports,
+          revoked: webauthnCredentials.revoked,
         })
         .from(webauthnCredentials)
         .where(eq(webauthnCredentials.credentialId, assertionResponse.id))
@@ -369,6 +403,11 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       if (!storedCred) {
         reply.status(400);
         return { error: "Unknown credential" };
+      }
+
+      if (storedCred.revoked) {
+        reply.status(403);
+        return { error: "This passkey has been revoked" };
       }
 
       try {

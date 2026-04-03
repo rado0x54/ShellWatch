@@ -5,9 +5,12 @@ export interface SshKeyData {
   id: string;
   label: string;
   type: string;
+  algorithm: string;
   fingerprint: string;
+  revoked: boolean;
   available: boolean;
   authorizedKeysEntry: string | null;
+  createdAt: string;
 }
 
 export interface ApiKeyData {

@@ -138,14 +138,20 @@ export async function buildApp(params: BuildAppParams) {
     const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
     const fileKeys = allKeys.filter((k) => k.type === "file");
     return {
-      keys: (isAdmin ? fileKeys : []).map((k) => ({
-        id: k.id,
-        label: k.label,
-        type: k.type,
-        fingerprint: k.fingerprint,
-        available: keyAvailability?.isAvailable(k.fingerprint) ?? true,
-        authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
-      })),
+      keys: (isAdmin ? fileKeys : []).map((k) => {
+        const available = keyAvailability?.isAvailable(k.fingerprint) ?? true;
+        return {
+          id: k.id,
+          label: k.label,
+          type: k.type,
+          algorithm: k.publicKey.split(" ")[0] ?? "unknown",
+          fingerprint: k.fingerprint,
+          revoked: !k.enabled,
+          available: k.enabled && available,
+          authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
+          createdAt: k.createdAt,
+        };
+      }),
     };
   });
 

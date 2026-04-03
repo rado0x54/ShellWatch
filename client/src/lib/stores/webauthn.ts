@@ -10,6 +10,7 @@ export interface WebAuthnCredential {
   algorithm: string;
   fingerprint: string;
   authorizedKeysEntry: string | null;
+  revoked: boolean;
   createdAt: string;
   lastUsedAt: string | null;
 }
@@ -21,12 +22,6 @@ export async function fetchCredentials(): Promise<void> {
   const res = await fetch(`${base}/api/webauthn/credentials`);
   const data = await res.json();
   credentials.set(data.credentials);
-}
-
-export async function deleteCredential(id: string): Promise<void> {
-  const base = get(basePath);
-  await fetch(`${base}/api/webauthn/credentials/${id}`, { method: "DELETE" });
-  await fetchCredentials();
 }
 
 function suggestLabel(credential: RegistrationResponseJSON): string {
