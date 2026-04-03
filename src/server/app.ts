@@ -7,7 +7,12 @@ import Fastify from "fastify";
 import type { Config } from "../config/index.js";
 import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
-import { sshKeys, webauthnCredentials } from "../db/schema.js";
+import {
+  apiKeys as apiKeysTable,
+  endpoints as endpointsTable,
+  sshKeys,
+  webauthnCredentials,
+} from "../db/schema.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
@@ -130,6 +135,59 @@ export async function buildApp(params: BuildAppParams) {
       await accountRepo.update(accountId, { name: trimmed });
     }
     return { status: "updated" };
+  });
+
+  // --- Account Management (admin only) ---
+
+  app.get(`${base}/api/accounts`, async (request, reply) => {
+    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+      reply.status(403);
+      return { error: "Admin access required" };
+    }
+    const all = await accountRepo.findAll();
+    return {
+      accounts: all.map((a) => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        isAdmin: a.isAdmin,
+        enabled: a.enabled,
+        maxSessions: a.maxSessions,
+        lastUsedAt: a.lastUsedAt,
+        createdAt: a.createdAt,
+      })),
+    };
+  });
+
+  app.delete<{ Params: { id: string } }>(`${base}/api/accounts/:id`, async (request, reply) => {
+    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+      reply.status(403);
+      return { error: "Admin access required" };
+    }
+    const targetId = request.params.id;
+
+    // Cannot delete yourself
+    if (targetId === request.accountId) {
+      reply.status(400);
+      return { error: "Cannot delete your own account" };
+    }
+
+    // Cannot delete the admin account
+    if (accountRepo.isAdmin(targetId)) {
+      reply.status(400);
+      return { error: "Cannot delete the admin account" };
+    }
+
+    // Hard-delete: cascade all owned data
+    if (db) {
+      db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
+      db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
+      db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();
+      const { accounts: accountsSchema } = await import("../db/schema.js");
+      db.delete(accountsSchema).where(eq(accountsSchema.id, targetId)).run();
+    }
+
+    return { status: "deleted" };
   });
 
   // --- SSH Keys API ---
