@@ -17,12 +17,12 @@
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
 
-# Optional: seed a static API key into the database on first run.
+# Optional: seed a static API key for the admin account on first run.
 # Useful for local dev so .mcp.json can reference a known key.
-# seedApiKey: sw_000000000000000000000000000000000000000000000000
+# seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
 
-# Optional: seed endpoints on first run (keys are assigned via UI)
-# seedServers:
+# Optional: seed endpoints for the admin account on first run (keys are assigned via UI)
+# seedAdminServers:
 #   - id: dev-box
 #     label: Dev Box
 #     host: dev.example.com

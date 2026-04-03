@@ -21,7 +21,7 @@ describe("loadConfig", () => {
       dir,
       `
 keyDirectory: ./keys
-seedServers:
+seedAdminServers:
   - id: test
     label: Test
     host: localhost
@@ -31,8 +31,8 @@ seedServers:
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedServers).toHaveLength(1);
-    expect(config.seedServers[0].id).toBe("test");
+    expect(config.seedAdminServers).toHaveLength(1);
+    expect(config.seedAdminServers[0].id).toBe("test");
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
@@ -41,7 +41,7 @@ seedServers:
     const configPath = writeConfig(
       dir,
       `
-seedServers:
+seedAdminServers:
   - id: test
     label: Test
     host: localhost
@@ -50,7 +50,7 @@ seedServers:
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedServers[0].port).toBe(22);
+    expect(config.seedAdminServers[0].port).toBe(22);
   });
 
   it("defaults keyDirectory to ./keys", () => {
@@ -58,7 +58,7 @@ seedServers:
     const configPath = writeConfig(
       dir,
       `
-seedServers:
+seedAdminServers:
   - id: test
     label: Test
     host: localhost
@@ -70,12 +70,12 @@ seedServers:
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
-  it("defaults seedServers to empty array", () => {
+  it("defaults seedAdminServers to empty array", () => {
     const dir = createTempDir();
     const configPath = writeConfig(dir, "keyDirectory: ./keys\n");
 
     const config = loadConfig(configPath);
-    expect(config.seedServers).toEqual([]);
+    expect(config.seedAdminServers).toEqual([]);
   });
 
   it("throws on missing config file", () => {
@@ -89,12 +89,12 @@ seedServers:
     expect(() => loadConfig(configPath)).toThrow("Failed to parse YAML");
   });
 
-  it("throws on missing required fields in seedServers entries", () => {
+  it("throws on missing required fields in seedAdminServers entries", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
-seedServers:
+seedAdminServers:
   - id: test
 `,
     );
@@ -106,7 +106,7 @@ seedServers:
     const configPath = writeConfig(
       dir,
       `
-seedServers:
+seedAdminServers:
   - id: server1
     label: Server 1
     host: host1.example.com
@@ -121,7 +121,7 @@ seedServers:
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedServers).toHaveLength(2);
-    expect(config.seedServers[1].port).toBe(2222);
+    expect(config.seedAdminServers).toHaveLength(2);
+    expect(config.seedAdminServers[1].port).toBe(2222);
   });
 });
