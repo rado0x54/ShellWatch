@@ -15,7 +15,7 @@ function writeConfig(dir: string, yaml: string): string {
 }
 
 describe("loadConfig", () => {
-  it("loads a valid config", () => {
+  it("loads a valid config with address format", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
@@ -23,32 +23,35 @@ describe("loadConfig", () => {
 keyDirectory: ./keys
 seedAdminEndpoints:
   - label: Test
-    host: localhost
-    port: 22
-    username: user
+    address: user@localhost:22
 `,
     );
 
     const config = loadConfig(configPath);
     expect(config.seedAdminEndpoints).toHaveLength(1);
     expect(config.seedAdminEndpoints[0].label).toBe("Test");
+    expect(config.seedAdminEndpoints[0].address).toEqual({
+      username: "user",
+      host: "localhost",
+      port: 22,
+    });
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
-  it("defaults port to 22", () => {
+  it("defaults port to 22 and username to shellwatch", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
 seedAdminEndpoints:
   - label: Test
-    host: localhost
-    username: user
+    address: example.com
 `,
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedAdminEndpoints[0].port).toBe(22);
+    expect(config.seedAdminEndpoints[0].address.port).toBe(22);
+    expect(config.seedAdminEndpoints[0].address.username).toBe("shellwatch");
   });
 
   it("defaults keyDirectory to ./keys", () => {
@@ -58,8 +61,7 @@ seedAdminEndpoints:
       `
 seedAdminEndpoints:
   - label: Test
-    host: localhost
-    username: user
+    address: localhost
 `,
     );
 
@@ -98,25 +100,25 @@ seedAdminEndpoints:
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
-  it("loads multiple endpoints", () => {
+  it("loads multiple endpoints with different address formats", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
 seedAdminEndpoints:
   - label: Server 1
-    host: host1.example.com
-    port: 22
-    username: user1
+    address: host1.example.com
   - label: Server 2
-    host: host2.example.com
-    port: 2222
-    username: user2
+    address: deploy@host2.example.com:2222
 `,
     );
 
     const config = loadConfig(configPath);
     expect(config.seedAdminEndpoints).toHaveLength(2);
-    expect(config.seedAdminEndpoints[1].port).toBe(2222);
+    expect(config.seedAdminEndpoints[1].address).toEqual({
+      username: "deploy",
+      host: "host2.example.com",
+      port: 2222,
+    });
   });
 });

@@ -2,6 +2,7 @@
   import { get } from "svelte/store";
   import { basePath } from "$lib/stores/connection.js";
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
+  import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
   import {
     finishPasskeyRegistration,
@@ -64,37 +65,32 @@
   }
 
   // --- Step 3: Endpoints ---
-  let epHost = $state("");
-  let epPort = $state(22);
-  let epUsername = $state("");
   let epLabel = $state("");
-
-  const epId = $derived(
-    epLabel
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, ""),
-  );
+  let epAddress = $state("");
 
   async function handleAddEndpoint() {
-    if (!epLabel || !epHost || !epUsername) {
-      error = "Label, Host, and Username are required";
+    if (!epLabel || !epAddress) {
+      error = "Label and Address are required";
+      return;
+    }
+    let parsed;
+    try {
+      parsed = parseEndpointAddress(epAddress);
+    } catch (err) {
+      error = (err as Error).message;
       return;
     }
     loading = true;
     error = "";
     try {
       await createEndpoint({
-        id: epId,
         label: epLabel,
-        host: epHost,
-        port: epPort,
-        username: epUsername,
+        host: parsed.host,
+        port: parsed.port,
+        username: parsed.username,
       });
-      epHost = "";
-      epPort = 22;
-      epUsername = "";
       epLabel = "";
+      epAddress = "";
     } catch (err) {
       error = (err as Error).message;
     }
@@ -190,17 +186,15 @@
           {#each $endpoints as ep (ep.id)}
             <div class="endpoint-item">
               <span class="endpoint-label">{ep.label}</span>
-              <span class="endpoint-detail">{ep.username}@{ep.host}:{ep.port}</span>
+              <span class="endpoint-detail">{formatEndpointAddress(ep)}</span>
             </div>
           {/each}
         </div>
       {/if}
 
-      <div class="form-grid">
+      <div class="form-row">
         <input type="text" class="input" bind:value={epLabel} placeholder="Label" />
-        <input type="text" class="input" bind:value={epHost} placeholder="Host" />
-        <input type="number" class="input input-sm" bind:value={epPort} placeholder="Port" />
-        <input type="text" class="input" bind:value={epUsername} placeholder="Username" />
+        <input type="text" class="input" bind:value={epAddress} placeholder="user@host:port" />
       </div>
       <div class="btn-row">
         <button class="btn-secondary" disabled={loading} onclick={handleAddEndpoint}>

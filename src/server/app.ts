@@ -153,11 +153,10 @@ export async function buildApp(params: BuildAppParams) {
 
   app.post<{
     Body: {
-      id: string;
       label: string;
       host: string;
       port?: number;
-      username: string;
+      username?: string;
       keyId?: string;
     };
   }>(`${base}/api/endpoints`, async (request, reply) => {
@@ -166,12 +165,17 @@ export async function buildApp(params: BuildAppParams) {
       return { error: "Not authenticated" };
     }
     try {
+      const id = randomUUID();
       await endpointRepo.create({
-        ...request.body,
+        id,
         accountId: request.accountId,
+        label: request.body.label,
+        host: request.body.host,
         port: request.body.port ?? 22,
+        username: request.body.username ?? "shellwatch",
+        keyId: request.body.keyId,
       });
-      return { status: "created", id: request.body.id };
+      return { status: "created", id };
     } catch (err) {
       reply.status(400);
       return { error: (err as Error).message };

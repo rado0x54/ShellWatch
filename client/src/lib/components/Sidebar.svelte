@@ -5,6 +5,7 @@
   import Identicon from "$lib/components/Identicon.svelte";
   import { account } from "$lib/stores/account.js";
   import { endpoints } from "$lib/stores/endpoints.js";
+  import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
   import { logout } from "$lib/stores/webauthn.js";
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
@@ -64,7 +65,7 @@
           <div class="endpoint-item">
             <div class="endpoint-info">
               <span class="endpoint-label">{ep.label}</span>
-              <span class="endpoint-detail">{ep.username}@{ep.host}:{ep.port}</span>
+              <span class="endpoint-detail">{formatEndpointAddress(ep)}</span>
             </div>
             <button class="btn btn-primary" onclick={() => handleConnect(ep.id)}>Connect</button>
           </div>

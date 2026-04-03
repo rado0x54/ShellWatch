@@ -69,9 +69,7 @@ export async function startTestApp(
     seedAdminEndpoints: [
       {
         label: "Test Server",
-        host: sshServer.host,
-        port: sshServer.port,
-        username: "testuser",
+        address: { username: "testuser", host: sshServer.host, port: sshServer.port },
       },
     ],
     server: { ...serverDefaults, basePath: options.basePath ?? "" },
