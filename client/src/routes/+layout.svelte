@@ -19,7 +19,7 @@
   let sessionModes = $state<Record<string, string>>({});
 
   const isFullscreenPage = $derived(
-    $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/onboarding"),
+    $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/register"),
   );
 
   onMount(async () => {
@@ -28,7 +28,7 @@
     basePath.set(base);
 
     const currentPath = window.location.pathname;
-    const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/onboarding");
+    const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/register");
 
     if (!isUnauthPage) {
       const { authenticated } = await checkAuth();

@@ -98,6 +98,28 @@ export async function finishPasskeyRegistration(
   await fetchCredentials();
 }
 
+/**
+ * Register a new account with a passkey (atomic: creates account + passkey + session).
+ * Used for both admin onboarding and user self-registration.
+ */
+export async function registerAccount(
+  name: string,
+  challengeId: string,
+  credential: RegistrationResponseJSON,
+  label: string,
+): Promise<void> {
+  const base = get(basePath);
+  const res = await fetch(`${base}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, challengeId, label, credential }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Registration failed");
+  }
+}
+
 export class NoPasskeysError extends Error {
   constructor() {
     super("No passkeys registered");

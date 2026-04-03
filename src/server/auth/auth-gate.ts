@@ -40,19 +40,18 @@ export function registerAuthGate({
   const alwaysExempt = [
     "/health",
     "/api/auth/logout",
+    "/api/auth/register",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
+    "/api/webauthn/register/options",
     "/login",
+    "/register",
     "/mcp",
     "/config.js",
   ];
 
-  // Only exempt during onboarding (no passkeys registered yet)
-  const onboardingOnly = [
-    "/api/webauthn/register/options",
-    "/api/webauthn/register/verify",
-    "/onboarding",
-  ];
+  // Only exempt during onboarding (no passkeys registered yet — admin bootstrap)
+  const onboardingOnly = ["/api/webauthn/register/verify"];
 
   function isExempt(url: string, suffixes: string[]): boolean {
     for (const suffix of suffixes) {
