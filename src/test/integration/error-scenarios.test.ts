@@ -34,7 +34,7 @@ describe("Error Scenarios", () => {
 
   describe("MCP errors", () => {
     it("create session with unknown endpoint returns error", async () => {
-      const mcp = await createTestMcpClient(appServer.url, log);
+      const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
       try {
         const result = await mcp.callTool("shellwatch_create_session", {
           endpointId: "nonexistent",
@@ -47,7 +47,7 @@ describe("Error Scenarios", () => {
     });
 
     it("send keys to nonexistent session returns error", async () => {
-      const mcp = await createTestMcpClient(appServer.url, log);
+      const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
       try {
         const result = await mcp.callTool("shellwatch_send_keys", {
           sessionId: "sess_nonexistent",
@@ -61,7 +61,7 @@ describe("Error Scenarios", () => {
     });
 
     it("read_output on nonexistent session returns error", async () => {
-      const mcp = await createTestMcpClient(appServer.url, log);
+      const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
       try {
         const result = await mcp.callTool("shellwatch_read_output", {
           sessionId: "sess_nonexistent",
@@ -74,7 +74,7 @@ describe("Error Scenarios", () => {
     });
 
     it("close nonexistent session returns error", async () => {
-      const mcp = await createTestMcpClient(appServer.url, log);
+      const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
       try {
         const result = await mcp.callTool("shellwatch_close_session", {
           sessionId: "sess_nonexistent",
@@ -91,12 +91,14 @@ describe("Error Scenarios", () => {
     it("MCP: create session with missing key file returns error", async () => {
       // Endpoint references a key that exists in DB but has no matching file
       const { StubAccountRepository } = await import("../../db/repositories/account-repo.js");
+      const { InMemoryApiKeyRepository } = await import("../../db/repositories/api-key-repo.js");
       const { InMemoryEndpointRepository } = await import("../../db/repositories/endpoint-repo.js");
       const { InMemorySshKeyRepository } = await import("../../db/repositories/key-repo.js");
       const { InMemoryKeyProvider } = await import("../../transport/key-directory-watcher.js");
       const { SshTransportFactory } = await import("../../transport/ssh-transport-factory.js");
       const { TerminalManager } = await import("../../terminal/index.js");
       const { buildApp } = await import("../../server/app.js");
+      const { hashApiKey } = await import("../../server/auth/api-key-auth.js");
       const { createSessionCookie } = await import("../../server/auth/session-cookie.js");
 
       const endpointRepo = new InMemoryEndpointRepository([
@@ -141,12 +143,23 @@ describe("Error Scenarios", () => {
         },
         notifications: { mcp: { debounceMs: 50 } },
       };
+      const testApiKey = "sw_test_error_scenario_key";
+      const errorApiKeyRepo = new InMemoryApiKeyRepository();
+      await errorApiKeyRepo.create({
+        id: "err-api-key",
+        accountId: "test-account",
+        label: "Test",
+        keyHash: hashApiKey(testApiKey),
+        keyPrefix: testApiKey.slice(0, 10),
+        scopes: ["mcp"],
+      });
       const app = await buildApp({
         config,
         terminalManager: tm,
         endpointRepo,
         keyRepo,
         accountRepo: new StubAccountRepository(),
+        apiKeyRepo: errorApiKeyRepo,
         options: { logger: false, skipStaticFiles: true },
       });
       const cookie = `sw_session=${createSessionCookie(testSecret, 86400, "test-account")}`;
@@ -167,7 +180,7 @@ describe("Error Scenarios", () => {
 
         // Test via MCP
         const { createTestMcpClient } = await import("../helpers/mcp-client.js");
-        const mcp = await createTestMcpClient(`http://127.0.0.1:${port}`, log);
+        const mcp = await createTestMcpClient(`http://127.0.0.1:${port}`, log, testApiKey);
         try {
           const result = await mcp.callTool("shellwatch_create_session", {
             endpointId: "no-key-ep",

@@ -113,3 +113,43 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     this.db.update(apiKeys).set({ enabled: false }).where(eq(apiKeys.id, id)).run();
   }
 }
+
+export class InMemoryApiKeyRepository implements ApiKeyRepository {
+  private store: (ApiKeyInfo & { keyHash: string })[] = [];
+
+  async findByHash(hash: string): Promise<ApiKeyInfo | null> {
+    const key = this.store.find((k) => k.keyHash === hash && k.enabled);
+    return key ?? null;
+  }
+
+  async findAll(): Promise<ApiKeyInfo[]> {
+    return this.store.map(({ keyHash: _, ...rest }) => rest);
+  }
+
+  async create(data: {
+    id: string;
+    accountId: string;
+    label: string;
+    keyHash: string;
+    keyPrefix: string;
+    scopes: string[];
+    endpoints?: string[];
+  }): Promise<void> {
+    this.store.push({
+      id: data.id,
+      accountId: data.accountId,
+      label: data.label,
+      keyHash: data.keyHash,
+      keyPrefix: data.keyPrefix,
+      scopes: data.scopes,
+      endpoints: data.endpoints ?? null,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  async revoke(id: string): Promise<void> {
+    const key = this.store.find((k) => k.id === id);
+    if (key) key.enabled = false;
+  }
+}

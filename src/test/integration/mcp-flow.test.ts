@@ -31,7 +31,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("lists endpoints", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const result = await mcp.callTool("shellwatch_manage_endpoints", { action: "list" });
       const parsed = JSON.parse(result.content);
@@ -49,7 +49,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("creates a session", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
@@ -66,7 +66,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("lists sessions", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const createResult = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
@@ -88,7 +88,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("send_keys sends input and read_output returns echoed data", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -117,7 +117,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("read_output supports incremental reads via offset", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -159,7 +159,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("closes a session", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const createResult = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
@@ -182,7 +182,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("full lifecycle: create → send_keys → read_output → close", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -212,7 +212,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("receives output_available notification after sending input", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -238,7 +238,7 @@ describe("MCP Client Flow", () => {
   });
 
   it("receives session_status notification on session close", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
