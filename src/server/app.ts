@@ -7,7 +7,7 @@ import Fastify from "fastify";
 import type { Config } from "../config/index.js";
 import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
-import { webauthnCredentials } from "../db/schema.js";
+import { sshKeys, webauthnCredentials } from "../db/schema.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
@@ -295,8 +295,26 @@ export async function buildApp(params: BuildAppParams) {
       }
 
       const { endpointId } = request.body;
+      const endpoint = await endpointRepo.findByIdForAccount(endpointId, request.accountId);
+      if (!endpoint) {
+        reply.status(404);
+        return { error: "Endpoint not found" };
+      }
       const session = await terminalManager.create(endpointId, "ui");
       uiCreatedSessions.add(session.sessionId);
+
+      // Update lastUsedAt on the assigned key
+      if (endpoint.keyId && db) {
+        db.update(webauthnCredentials)
+          .set({ lastUsedAt: new Date().toISOString() })
+          .where(eq(webauthnCredentials.id, endpoint.keyId))
+          .run();
+        db.update(sshKeys)
+          .set({ updatedAt: new Date().toISOString() })
+          .where(eq(sshKeys.id, endpoint.keyId))
+          .run();
+      }
+
       return session;
     } catch (err) {
       reply.status(400);
