@@ -4,6 +4,7 @@ import {
   accounts,
   adminAccount,
   apiKeys,
+  endpointKeys,
   endpoints,
   sessionHistory,
   webauthnCredentials,
@@ -36,11 +37,19 @@ export function cleanupInactiveAccounts(
   const deletedIds: string[] = [];
 
   for (const { id } of expired) {
-    // Delete owned data
+    // Delete owned data (order matters for FK constraints)
+    const accountEndpoints = db
+      .select({ id: endpoints.id })
+      .from(endpoints)
+      .where(eq(endpoints.accountId, id))
+      .all();
+    for (const ep of accountEndpoints) {
+      db.delete(endpointKeys).where(eq(endpointKeys.endpointId, ep.id)).run();
+    }
+    db.delete(sessionHistory).where(eq(sessionHistory.accountId, id)).run();
     db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, id)).run();
     db.delete(apiKeys).where(eq(apiKeys.accountId, id)).run();
     db.delete(endpoints).where(eq(endpoints.accountId, id)).run();
-    db.delete(sessionHistory).where(eq(sessionHistory.accountId, id)).run();
     db.delete(accounts).where(eq(accounts.id, id)).run();
     deletedIds.push(id);
   }
