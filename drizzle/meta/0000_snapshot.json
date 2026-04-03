@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dc113a6a-1306-478e-b100-406ec57d3568",
+  "id": "3ea9f1a2-4762-4c9b-a77a-1d1aa740e7ec",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "accounts": {
@@ -43,6 +43,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 5
+        },
+        "guardrail_profile_id": {
+          "name": "guardrail_profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "recovery_code_hash": {
           "name": "recovery_code_hash",
@@ -410,6 +417,57 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "guardrail_profiles": {
+      "name": "guardrail_profiles",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "guardrail_profiles_name_unique": {
+          "name": "guardrail_profiles_name_unique",
+          "columns": ["name"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "guardrail_rules": {
       "name": "guardrail_rules",
       "columns": {
@@ -418,6 +476,13 @@
           "type": "text",
           "primaryKey": true,
           "notNull": true,
+          "autoincrement": false
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "name": {
@@ -500,7 +565,17 @@
           "isUnique": true
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "guardrail_rules_profile_id_guardrail_profiles_id_fk": {
+          "name": "guardrail_rules_profile_id_guardrail_profiles_id_fk",
+          "tableFrom": "guardrail_rules",
+          "tableTo": "guardrail_profiles",
+          "columnsFrom": ["profile_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

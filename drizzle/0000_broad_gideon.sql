@@ -4,6 +4,7 @@ CREATE TABLE `accounts` (
 	`type` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`max_sessions` integer DEFAULT 5 NOT NULL,
+	`guardrail_profile_id` text,
 	`recovery_code_hash` text,
 	`last_used_at` text,
 	`created_at` text NOT NULL,
@@ -63,8 +64,18 @@ CREATE TABLE `endpoints` (
 	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE TABLE `guardrail_profiles` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`description` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `guardrail_profiles_name_unique` ON `guardrail_profiles` (`name`);--> statement-breakpoint
 CREATE TABLE `guardrail_rules` (
 	`id` text PRIMARY KEY NOT NULL,
+	`profile_id` text,
 	`name` text NOT NULL,
 	`pattern` text NOT NULL,
 	`action` text NOT NULL,
@@ -74,7 +85,8 @@ CREATE TABLE `guardrail_rules` (
 	`endpoint_id` text,
 	`source` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`profile_id`) REFERENCES `guardrail_profiles`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `guardrail_rules_name_unique` ON `guardrail_rules` (`name`);--> statement-breakpoint

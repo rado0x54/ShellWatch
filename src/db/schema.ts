@@ -9,6 +9,7 @@ export const accounts = sqliteTable("accounts", {
   type: text("type").notNull(), // "human" | "agent"
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
+  guardrailProfileId: text("guardrail_profile_id"),
   recoveryCodeHash: text("recovery_code_hash"),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
@@ -114,13 +115,24 @@ export const auditEvents = sqliteTable("audit_events", {
   data: text("data"),
 });
 
-// --- Guardrail Rules (placeholder for #13) ---
+// --- Guardrail Profiles ---
+
+export const guardrailProfiles = sqliteTable("guardrail_profiles", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(), // "strict", "moderate", "relaxed"
+  description: text("description"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// --- Guardrail Rules ---
 
 export const guardrailRules = sqliteTable("guardrail_rules", {
   id: text("id").primaryKey(),
+  profileId: text("profile_id").references(() => guardrailProfiles.id),
   name: text("name").notNull().unique(),
   pattern: text("pattern").notNull(),
-  action: text("action").notNull(),
+  action: text("action").notNull(), // "block" | "warn" | "terminate"
   message: text("message"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   priority: integer("priority").notNull().default(0),

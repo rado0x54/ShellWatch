@@ -1,4 +1,5 @@
 import { loadConfig } from "./config/index.js";
+import { startCleanupJob } from "./db/cleanup.js";
 import {
   createDatabase,
   DrizzleAccountRepository,
@@ -113,7 +114,13 @@ try {
   const endpoints = await endpointRepo.findAll();
   app.log.info(`${endpoints.length} endpoint(s) in database`);
 
+  // Inactivity cleanup: delete accounts unused for 90+ days (admin exempt)
+  const stopCleanup = startCleanupJob(db, 90, (deletedIds) => {
+    app.log.info(`Cleaned up ${deletedIds.length} inactive account(s)`);
+  });
+
   const shutdown = async () => {
+    stopCleanup();
     keyWatcher.stop();
     terminalManager.destroy();
     accountRepo.destroy();
