@@ -21,9 +21,8 @@ describe("loadConfig", () => {
       dir,
       `
 keyDirectory: ./keys
-seedAdminServers:
-  - id: test
-    label: Test
+seedAdminEndpoints:
+  - label: Test
     host: localhost
     port: 22
     username: user
@@ -31,8 +30,8 @@ seedAdminServers:
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedAdminServers).toHaveLength(1);
-    expect(config.seedAdminServers[0].id).toBe("test");
+    expect(config.seedAdminEndpoints).toHaveLength(1);
+    expect(config.seedAdminEndpoints[0].label).toBe("Test");
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
@@ -41,16 +40,15 @@ seedAdminServers:
     const configPath = writeConfig(
       dir,
       `
-seedAdminServers:
-  - id: test
-    label: Test
+seedAdminEndpoints:
+  - label: Test
     host: localhost
     username: user
 `,
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedAdminServers[0].port).toBe(22);
+    expect(config.seedAdminEndpoints[0].port).toBe(22);
   });
 
   it("defaults keyDirectory to ./keys", () => {
@@ -58,9 +56,8 @@ seedAdminServers:
     const configPath = writeConfig(
       dir,
       `
-seedAdminServers:
-  - id: test
-    label: Test
+seedAdminEndpoints:
+  - label: Test
     host: localhost
     username: user
 `,
@@ -70,12 +67,12 @@ seedAdminServers:
     expect(config.keyDirectory).toBe(join(dir, "keys"));
   });
 
-  it("defaults seedAdminServers to empty array", () => {
+  it("defaults seedAdminEndpoints to empty array", () => {
     const dir = createTempDir();
     const configPath = writeConfig(dir, "keyDirectory: ./keys\n");
 
     const config = loadConfig(configPath);
-    expect(config.seedAdminServers).toEqual([]);
+    expect(config.seedAdminEndpoints).toEqual([]);
   });
 
   it("throws on missing config file", () => {
@@ -89,31 +86,29 @@ seedAdminServers:
     expect(() => loadConfig(configPath)).toThrow("Failed to parse YAML");
   });
 
-  it("throws on missing required fields in seedAdminServers entries", () => {
+  it("throws on missing required fields in seedAdminEndpoints entries", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
-seedAdminServers:
-  - id: test
+seedAdminEndpoints:
+  - label: test
 `,
     );
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
-  it("loads multiple servers", () => {
+  it("loads multiple endpoints", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
       `
-seedAdminServers:
-  - id: server1
-    label: Server 1
+seedAdminEndpoints:
+  - label: Server 1
     host: host1.example.com
     port: 22
     username: user1
-  - id: server2
-    label: Server 2
+  - label: Server 2
     host: host2.example.com
     port: 2222
     username: user2
@@ -121,7 +116,7 @@ seedAdminServers:
     );
 
     const config = loadConfig(configPath);
-    expect(config.seedAdminServers).toHaveLength(2);
-    expect(config.seedAdminServers[1].port).toBe(2222);
+    expect(config.seedAdminEndpoints).toHaveLength(2);
+    expect(config.seedAdminEndpoints[1].port).toBe(2222);
   });
 });

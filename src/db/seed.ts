@@ -61,15 +61,16 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
     adminId = admin.accountId;
   }
 
-  // Seed admin passkey (endpoints may reference it via keyId)
+  // Seed admin passkey (endpoints may reference it via keyRef → credentialId)
   if (config.seedAdminPasskey) {
     const pk = config.seedAdminPasskey;
     const existing = db
       .select({ id: webauthnCredentials.id })
       .from(webauthnCredentials)
-      .where(eq(webauthnCredentials.id, pk.id))
+      .where(eq(webauthnCredentials.credentialId, pk.credentialId))
       .get();
     if (!existing) {
+      const id = randomUUID();
       const now = new Date().toISOString();
       const pubKeyBuf = Buffer.from(pk.publicKeyHex, "hex");
       const fingerprint = `SHA256:${createHash("sha256").update(pubKeyBuf).digest("base64url")}`;
@@ -84,7 +85,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
 
       db.insert(webauthnCredentials)
         .values({
-          id: pk.id,
+          id,
           accountId: adminId,
           credentialId: pk.credentialId,
           publicKey: pubKeyBuf,
@@ -99,7 +100,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       // Also register in ssh_keys so endpoints can reference this key via keyId
       db.insert(sshKeys)
         .values({
-          id: pk.id,
+          id,
           label: `${pk.label} (webauthn)`,
           type: "webauthn",
           publicKey: publicKeyOpenSsh ?? "",
@@ -118,27 +119,26 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   const endpointCount = db.select({ total: count() }).from(endpoints).get();
   if (!endpointCount || endpointCount.total === 0) {
     const now = new Date().toISOString();
-    for (const server of config.seedAdminServers) {
-      // Only set keyId if the referenced key already exists in the DB
-      // (file-based keys are discovered at runtime and linked later)
+    for (const ep of config.seedAdminEndpoints) {
+      // Resolve passkeyCredentialRef to an actual ssh_keys.id
       let keyId: string | null = null;
-      if (server.keyId) {
-        const keyExists = db
-          .select({ id: sshKeys.id })
-          .from(sshKeys)
-          .where(eq(sshKeys.id, server.keyId))
+      if (ep.passkeyCredentialRef) {
+        const cred = db
+          .select({ id: webauthnCredentials.id })
+          .from(webauthnCredentials)
+          .where(eq(webauthnCredentials.credentialId, ep.passkeyCredentialRef))
           .get();
-        keyId = keyExists ? server.keyId : null;
+        keyId = cred?.id ?? null;
       }
 
       db.insert(endpoints)
         .values({
-          id: server.id,
+          id: randomUUID(),
           accountId: adminId,
-          label: server.label,
-          host: server.host,
-          port: server.port,
-          username: server.username,
+          label: ep.label,
+          host: ep.host,
+          port: ep.port,
+          username: ep.username,
           keyId,
           enabled: true,
           createdAt: now,
@@ -159,7 +159,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
     if (!existing) {
       db.insert(apiKeys)
         .values({
-          id: "seed-api-key",
+          id: randomUUID(),
           accountId: adminId,
           label: "Seeded from config",
           keyHash: hash,

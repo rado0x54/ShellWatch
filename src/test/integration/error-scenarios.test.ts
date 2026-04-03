@@ -127,9 +127,8 @@ describe("Error Scenarios", () => {
       const testSecret = "test-secret";
       const config = {
         keyDirectory: "/tmp",
-        seedAdminServers: [
+        seedAdminEndpoints: [
           {
-            id: "no-key-ep",
             label: "No Key",
             host: "localhost",
             port: 22,
