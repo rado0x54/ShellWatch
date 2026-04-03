@@ -22,16 +22,13 @@ keyDirectory: ./keys
 # seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
 
 # Optional: seed endpoints for the admin account on first run (keys are assigned via UI)
+# Format: [user@]host[:port] — defaults: user=shellwatch, port=22
 # seedAdminEndpoints:
 #   - label: Dev Box
-#     host: dev.example.com
-#     port: 22
-#     username: ubuntu
+#     address: ubuntu@dev.example.com
 #
 #   - label: Staging
-#     host: staging.example.com
-#     port: 2222
-#     username: deploy
+#     address: deploy@staging.example.com:2222
 
 # Security settings
 security:

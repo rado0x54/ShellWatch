@@ -130,9 +130,7 @@ describe("Error Scenarios", () => {
         seedAdminEndpoints: [
           {
             label: "No Key",
-            host: "localhost",
-            port: 22,
-            username: "test",
+            address: { username: "test", host: "localhost", port: 22 },
           },
         ],
         server: serverDefaults,

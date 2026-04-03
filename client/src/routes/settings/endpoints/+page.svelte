@@ -8,12 +8,10 @@
     updateEndpoint,
   } from "$lib/stores/endpoints.js";
   import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
+  import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
 
-  let epId = $state("");
   let epLabel = $state("");
-  let epHost = $state("");
-  let epPort = $state(22);
-  let epUsername = $state("");
+  let epAddress = $state("");
   let epKeyId = $state("");
 
   onMount(() => {
@@ -22,24 +20,27 @@
   });
 
   async function handleAdd() {
-    if (!epId || !epLabel || !epHost || !epUsername) {
-      alert("ID, Label, Host, and Username are required");
+    if (!epLabel || !epAddress) {
+      alert("Label and Address are required");
+      return;
+    }
+    let parsed;
+    try {
+      parsed = parseEndpointAddress(epAddress);
+    } catch (err) {
+      alert((err as Error).message);
       return;
     }
     try {
       await createEndpoint({
-        id: epId,
         label: epLabel,
-        host: epHost,
-        port: epPort,
-        username: epUsername,
+        host: parsed.host,
+        port: parsed.port,
+        username: parsed.username,
         keyId: epKeyId || undefined,
       });
-      epId = "";
       epLabel = "";
-      epHost = "";
-      epPort = 22;
-      epUsername = "";
+      epAddress = "";
       epKeyId = "";
     } catch (err) {
       alert((err as Error).message);
@@ -70,11 +71,8 @@
   <table class="settings-table">
     <thead>
       <tr>
-        <th>ID</th>
         <th>Label</th>
-        <th>Host</th>
-        <th>Port</th>
-        <th>Username</th>
+        <th>Address</th>
         <th>Key</th>
         <th></th>
       </tr>
@@ -82,11 +80,8 @@
     <tbody>
       {#each $endpoints as ep (ep.id)}
         <tr>
-          <td>{ep.id}</td>
           <td>{ep.label}</td>
-          <td>{ep.host}</td>
-          <td>{ep.port}</td>
-          <td>{ep.username}</td>
+          <td>{formatEndpointAddress(ep)}</td>
           <td>
             <select
               value={ep.keyId ?? ""}
@@ -106,7 +101,7 @@
         </tr>
       {/each}
       {#if $endpoints.length === 0}
-        <tr><td colspan="7" class="empty">No endpoints configured</td></tr>
+        <tr><td colspan="4" class="empty">No endpoints configured</td></tr>
       {/if}
     </tbody>
   </table>
@@ -114,11 +109,8 @@
   <div class="settings-form">
     <h3>Add Endpoint</h3>
     <div class="form-row">
-      <input type="text" placeholder="ID" bind:value={epId} />
       <input type="text" placeholder="Label" bind:value={epLabel} />
-      <input type="text" placeholder="Host" bind:value={epHost} />
-      <input type="number" placeholder="Port" bind:value={epPort} />
-      <input type="text" placeholder="Username" bind:value={epUsername} />
+      <input type="text" placeholder="user@host:port" bind:value={epAddress} />
       <select bind:value={epKeyId}>
         <option value="">No key</option>
         {#each $sshKeys as k (k.id)}

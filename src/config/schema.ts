@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { parseEndpointAddress } from "../utils/endpoint-address.js";
 
 export const SeedEndpointSchema = z.object({
   label: z.string().min(1),
-  host: z.string().min(1),
-  port: z.number().int().min(1).max(65535).default(22),
-  username: z.string().min(1),
+  address: z
+    .string()
+    .min(1)
+    .transform((addr) => parseEndpointAddress(addr)),
   passkeyCredentialRef: z.string().optional(), // references a passkey by its credentialId
 });
 

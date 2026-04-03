@@ -20,7 +20,6 @@ export async function fetchEndpoints(): Promise<void> {
 }
 
 export async function createEndpoint(body: {
-  id: string;
   label: string;
   host: string;
   port: number;
