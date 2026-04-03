@@ -172,6 +172,11 @@
         servers through a unified interface. Authentication is passkey-only — no passwords, no
         emails.
       </p>
+      <p class="hint">
+        Choose a name for your account. This does not need to contain personal information — it is
+        written into your passkey to help identify the account. You can change it later in Settings
+        (existing passkeys are not updated).
+      </p>
       <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
       <button class="btn-primary" disabled={!accountName.trim()} onclick={() => (currentStep = 1)}>
         Get Started
@@ -363,7 +368,8 @@
     margin-bottom: 0.75rem;
   }
 
-  .description {
+  .description,
+  .hint {
     color: var(--text-muted);
     font-size: 0.85rem;
     margin-bottom: 1rem;
