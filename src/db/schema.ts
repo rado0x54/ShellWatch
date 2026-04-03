@@ -92,7 +92,7 @@ export const endpointKeys = sqliteTable(
 export const sessionHistory = sqliteTable("session_history", {
   sessionId: text("session_id").primaryKey(),
   endpointId: text("endpoint_id").notNull(),
-  accountId: text("account_id"),
+  accountId: text("account_id").notNull(),
   source: text("source").notNull(),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),

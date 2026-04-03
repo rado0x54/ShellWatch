@@ -13,6 +13,7 @@ import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability } from "../transport/key-directory-watcher.js";
+import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
@@ -68,7 +69,13 @@ export async function buildApp(params: BuildAppParams) {
   app.decorateRequest("accountId", null);
 
   // Auth gate: onboarding + login enforcement
-  registerAuthGate({ app, basePath: base, secret: cookieSecret, accountRepo });
+  registerAuthGate({
+    app,
+    basePath: base,
+    secret: cookieSecret,
+    accountRepo,
+    checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
+  });
 
   // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);

@@ -79,7 +79,7 @@ CREATE UNIQUE INDEX `guardrail_rules_name_unique` ON `guardrail_rules` (`name`);
 CREATE TABLE `session_history` (
 	`session_id` text PRIMARY KEY NOT NULL,
 	`endpoint_id` text NOT NULL,
-	`account_id` text,
+	`account_id` text NOT NULL,
 	`source` text NOT NULL,
 	`status` text NOT NULL,
 	`created_at` text NOT NULL,

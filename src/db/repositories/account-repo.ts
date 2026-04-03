@@ -1,6 +1,6 @@
 import { count, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
-import { accounts, adminAccount, webauthnCredentials } from "../schema.js";
+import { accounts, adminAccount } from "../schema.js";
 
 export interface AccountInfo {
   id: string;
@@ -30,7 +30,6 @@ export interface AccountRepository {
   getAdminAccountId(): string | null;
   setAdmin(accountId: string): void;
   isAdmin(accountId: string): boolean;
-  hasPasskeys(): boolean;
   destroy(): void;
 }
 
@@ -58,9 +57,6 @@ export class StubAccountRepository implements AccountRepository {
   touchLastUsed(): void {}
   flushLastUsed(): void {}
   destroy(): void {}
-  hasPasskeys(): boolean {
-    return true;
-  }
   count(): number {
     return 0;
   }
@@ -160,11 +156,6 @@ export class DrizzleAccountRepository implements AccountRepository {
 
   isAdmin(accountId: string): boolean {
     return this.getAdminAccountId() === accountId;
-  }
-
-  hasPasskeys(): boolean {
-    const result = this.db.select({ total: count() }).from(webauthnCredentials).get();
-    return (result?.total ?? 0) > 0;
   }
 
   /** Flush pending writes and stop the background timer. Call on shutdown. */

@@ -15,9 +15,16 @@ export interface AuthGateParams {
   basePath: string;
   secret: string;
   accountRepo: AccountRepository;
+  checkHasPasskeys: () => boolean;
 }
 
-export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGateParams): void {
+export function registerAuthGate({
+  app,
+  basePath,
+  secret,
+  accountRepo,
+  checkHasPasskeys,
+}: AuthGateParams): void {
   // Logout: clear session cookie
   app.post(`${basePath}/api/auth/logout`, async (request, reply) => {
     const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
@@ -30,21 +37,25 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
   });
 
   // Paths that never require a session
-  const exemptSuffixes = [
+  const alwaysExempt = [
     "/health",
     "/api/auth/logout",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
-    "/api/webauthn/register/options",
-    "/api/webauthn/register/verify",
     "/login",
-    "/onboarding",
     "/mcp",
     "/config.js",
   ];
 
-  function isExempt(url: string): boolean {
-    for (const suffix of exemptSuffixes) {
+  // Only exempt during onboarding (no passkeys registered yet)
+  const onboardingOnly = [
+    "/api/webauthn/register/options",
+    "/api/webauthn/register/verify",
+    "/onboarding",
+  ];
+
+  function isExempt(url: string, suffixes: string[]): boolean {
+    for (const suffix of suffixes) {
       if (url === `${basePath}${suffix}`) return true;
     }
     return false;
@@ -58,7 +69,7 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
   function hasPasskeys(): boolean {
     const now = Date.now();
     if (cachedHasPasskeys !== null && now - cacheTime < CACHE_TTL_MS) return cachedHasPasskeys;
-    cachedHasPasskeys = accountRepo.hasPasskeys();
+    cachedHasPasskeys = checkHasPasskeys();
     cacheTime = now;
     return cachedHasPasskeys;
   }
@@ -72,11 +83,15 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
     // Only apply auth to routes under basePath
     if (basePath && !url.startsWith(`${basePath}/`) && url !== basePath) return;
 
-    // Exempt paths (login, registration, health, etc.)
-    if (isExempt(url)) return;
+    // Always-exempt paths
+    if (isExempt(url, alwaysExempt)) return;
 
-    // No passkeys registered — open access
-    if (!hasPasskeys()) return;
+    // Onboarding-only paths (registration, /onboarding) — exempt only when no passkeys exist
+    if (!hasPasskeys()) {
+      if (isExempt(url, onboardingOnly)) return;
+      // No passkeys — allow all other routes too (bootstrap mode)
+      return;
+    }
 
     // System is ready — require session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);

@@ -4,7 +4,7 @@ import { apiKeys } from "../schema.js";
 
 export interface ApiKeyInfo {
   id: string;
-  accountId: string | null;
+  accountId: string;
   label: string;
   keyPrefix: string;
   scopes: string[];
@@ -30,7 +30,7 @@ export interface ApiKeyRepository {
 
 function parseRow(row: {
   id: string;
-  accountId: string | null;
+  accountId: string;
   label: string;
   keyPrefix: string;
   scopes: string;

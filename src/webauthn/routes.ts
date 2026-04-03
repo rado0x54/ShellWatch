@@ -8,6 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
+import { hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { sshKeys, webauthnCredentials } from "../db/schema.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
@@ -164,7 +165,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         let accountId: string | undefined;
         if (request.accountId) {
           accountId = request.accountId;
-        } else if (!accountRepo.hasPasskeys()) {
+        } else if (!hasPasskeys(db)) {
           // No passkeys yet — this is onboarding. Either create admin or use existing.
           const existingAdminId = accountRepo.getAdminAccountId();
           if (existingAdminId) {
@@ -376,15 +377,9 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
           .run();
 
         // Update account lastUsedAt
-        if (storedCred.accountId) {
-          accountRepo.touchLastUsed(storedCred.accountId);
-        }
+        accountRepo.touchLastUsed(storedCred.accountId);
 
         // Set session cookie with account ID
-        if (!storedCred.accountId) {
-          reply.status(400);
-          return { error: "Credential is not linked to an account" };
-        }
         const { createSessionCookie } = await import("../server/auth/session-cookie.js");
         const cookieValue = createSessionCookie(
           sessionConfig.secret,

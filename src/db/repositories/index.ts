@@ -4,6 +4,7 @@ export {
   DrizzleAccountRepository,
   StubAccountRepository,
 } from "./account-repo.js";
+export { hasPasskeys } from "./credential-queries.js";
 export {
   DrizzleEndpointRepository,
   type EndpointInfo,
