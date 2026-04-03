@@ -12,6 +12,7 @@ import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
 import { buildApp } from "../../server/app.js";
+import { createSessionCookie } from "../../server/auth/session-cookie.js";
 import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
@@ -24,6 +25,10 @@ export interface TestAppServer {
   url: string;
   app: FastifyInstance;
   terminalManager: TerminalManager;
+  /** Session cookie header value (e.g. "sw_session=...") for authenticated requests */
+  sessionCookie: string;
+  /** Fetch with session cookie pre-attached */
+  fetch(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
 }
 
@@ -56,6 +61,9 @@ export async function startTestApp(
     privateKeyContent: sshServer.clientPrivateKey,
   };
 
+  const testCookieSecret = "test-secret-for-session-signing";
+  const testAccountId = "test-account-00000000-0000-0000-0000-000000000000";
+
   const config: Config = {
     keyDirectory: tmpDir,
     seedServers: [
@@ -70,6 +78,7 @@ export async function startTestApp(
     server: { ...serverDefaults, basePath: options.basePath ?? "" },
     security: {
       ...securityDefaults,
+      cookieSecret: testCookieSecret,
       allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
     },
     notifications: { mcp: { debounceMs: 50 } },
@@ -99,8 +108,10 @@ export async function startTestApp(
     endpointRepo,
     keyRepo,
     accountRepo: new StubAccountRepository(),
-    options: { logger: false, skipStaticFiles: true, skipAuth: true },
+    options: { logger: false, skipStaticFiles: true },
   });
+
+  const sessionCookie = `sw_session=${createSessionCookie(testCookieSecret, 86400, testAccountId)}`;
 
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();
@@ -108,11 +119,19 @@ export async function startTestApp(
 
   log.add("app-server", `listening on port ${port}`);
 
+  const baseUrl = `http://127.0.0.1:${port}`;
+
   return {
     port,
-    url: `http://127.0.0.1:${port}`,
+    url: baseUrl,
     app,
     terminalManager,
+    sessionCookie,
+    fetch(path: string, init?: RequestInit): Promise<Response> {
+      const headers = new Headers(init?.headers);
+      headers.set("cookie", sessionCookie);
+      return fetch(`${baseUrl}${path}`, { ...init, headers });
+    },
     async close() {
       terminalManager.destroy();
       await app.close();

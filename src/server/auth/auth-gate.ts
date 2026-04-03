@@ -78,6 +78,9 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
     // Static assets
     if (url.startsWith(`${basePath}/_app/`)) return;
 
+    // Only apply auth to routes under basePath (root redirect etc. are not our concern)
+    if (basePath && !url.startsWith(`${basePath}/`) && url !== basePath) return;
+
     const initStatus = getInitStatus();
 
     // --- Onboarding mode: system not yet ready ---

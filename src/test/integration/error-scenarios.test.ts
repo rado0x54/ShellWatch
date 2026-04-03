@@ -97,6 +97,7 @@ describe("Error Scenarios", () => {
       const { SshTransportFactory } = await import("../../transport/ssh-transport-factory.js");
       const { TerminalManager } = await import("../../terminal/index.js");
       const { buildApp } = await import("../../server/app.js");
+      const { createSessionCookie } = await import("../../server/auth/session-cookie.js");
 
       const endpointRepo = new InMemoryEndpointRepository([
         {
@@ -122,6 +123,7 @@ describe("Error Scenarios", () => {
       const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider);
       const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
 
+      const testSecret = "test-secret";
       const config = {
         keyDirectory: "/tmp",
         seedServers: [
@@ -136,6 +138,7 @@ describe("Error Scenarios", () => {
         server: serverDefaults,
         security: {
           ...securityDefaults,
+          cookieSecret: testSecret,
           allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
         },
         notifications: { mcp: { debounceMs: 50 } },
@@ -146,8 +149,9 @@ describe("Error Scenarios", () => {
         endpointRepo,
         keyRepo,
         accountRepo: new StubAccountRepository(),
-        options: { logger: false, skipStaticFiles: true, skipAuth: true },
+        options: { logger: false, skipStaticFiles: true },
       });
+      const cookie = `sw_session=${createSessionCookie(testSecret, 86400, "test-account")}`;
       await app.listen({ port: 0, host: "127.0.0.1" });
       const addr = app.server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
@@ -156,7 +160,7 @@ describe("Error Scenarios", () => {
         // Test via REST API
         const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", cookie },
           body: JSON.stringify({ endpointId: "no-key-ep" }),
         });
         expect(res.status).toBe(400);
@@ -193,7 +197,7 @@ describe("Error Scenarios", () => {
       const deadApp = await startTestApp({ ...deadSshServer, port: deadPort }, log);
 
       try {
-        const res = await fetch(`${deadApp.url}/api/sessions`, {
+        const res = await deadApp.fetch(`/api/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ endpointId: "test-server" }),
@@ -207,7 +211,7 @@ describe("Error Scenarios", () => {
 
   describe("WebSocket errors", () => {
     it("attach to nonexistent session returns error message", async () => {
-      const ws = await connectTestWsClient(appServer.url, log);
+      const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
       try {
         await ws.waitForMessage("sessions:changed");
         ws.send({ type: "terminal:attach", sessionId: "sess_nonexistent" });

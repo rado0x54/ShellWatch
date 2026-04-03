@@ -31,7 +31,7 @@ describe("WebSocket Flow", () => {
   });
 
   async function createSessionViaApi(): Promise<string> {
-    const res = await fetch(`${appServer.url}/api/sessions`, {
+    const res = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpointId: "test-server" }),
@@ -41,7 +41,7 @@ describe("WebSocket Flow", () => {
   }
 
   it("receives sessions:changed on connect", async () => {
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       const msg = await ws.waitForMessage<{ type: string; sessions: unknown[] }>(
         "sessions:changed",
@@ -54,7 +54,7 @@ describe("WebSocket Flow", () => {
 
   it("receives terminal:status after attach", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       // Wait for initial sessions:changed
       await ws.waitForMessage("sessions:changed");
@@ -64,7 +64,7 @@ describe("WebSocket Flow", () => {
       expect(msg.status).toBe("open");
     } finally {
       ws.close();
-      await fetch(`${appServer.url}/api/sessions/${sessionId}`, { method: "DELETE" });
+      await appServer.fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
     }
   });
 
@@ -75,7 +75,7 @@ describe("WebSocket Flow", () => {
     appServer.terminalManager.sendInput(sessionId, "buffer-test");
     await new Promise((r) => setTimeout(r, 100));
 
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -84,13 +84,13 @@ describe("WebSocket Flow", () => {
       expect(msg.data).toContain("buffer-test");
     } finally {
       ws.close();
-      await fetch(`${appServer.url}/api/sessions/${sessionId}`, { method: "DELETE" });
+      await appServer.fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
     }
   });
 
   it("sends input and receives echoed output", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -104,13 +104,13 @@ describe("WebSocket Flow", () => {
       expect(msg.data).toContain("ws-echo-test");
     } finally {
       ws.close();
-      await fetch(`${appServer.url}/api/sessions/${sessionId}`, { method: "DELETE" });
+      await appServer.fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
     }
   });
 
   it("terminal:close closes the session", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -120,7 +120,7 @@ describe("WebSocket Flow", () => {
       await ws.waitForMessage("terminal:closed");
 
       // Verify session is gone
-      const res = await fetch(`${appServer.url}/api/sessions`);
+      const res = await appServer.fetch(`/api/sessions`);
       const data = await res.json();
       expect(
         data.sessions.find((s: { sessionId: string }) => s.sessionId === sessionId),
@@ -132,7 +132,7 @@ describe("WebSocket Flow", () => {
 
   it("WebSocket disconnect does NOT kill the session", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
 
     await ws.waitForMessage("sessions:changed");
     ws.send({ type: "terminal:attach", sessionId });
@@ -147,6 +147,6 @@ describe("WebSocket Flow", () => {
     expect(session).not.toBeNull();
     expect(session?.status).toBe("open");
 
-    await fetch(`${appServer.url}/api/sessions/${sessionId}`, { method: "DELETE" });
+    await appServer.fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
   });
 });
