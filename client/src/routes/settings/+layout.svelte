@@ -6,6 +6,7 @@
   let { children } = $props();
 
   const tabs = [
+    { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "SSH Keys" },
     { path: "/settings/passkeys", label: "Passkeys" },

@@ -24,3 +24,17 @@ export async function fetchAccount(): Promise<void> {
     account.set(null);
   }
 }
+
+export async function updateAccountName(name: string): Promise<void> {
+  const base = get(basePath);
+  const res = await fetch(`${base}/api/auth/me`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to update account");
+  }
+  await fetchAccount();
+}

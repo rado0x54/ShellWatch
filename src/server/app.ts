@@ -112,6 +112,24 @@ export async function buildApp(params: BuildAppParams) {
     };
   });
 
+  app.put<{ Body: { name?: string } }>(`${base}/api/auth/me`, async (request, reply) => {
+    const accountId = request.accountId;
+    if (!accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const { name } = request.body;
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        reply.status(400);
+        return { error: "Name cannot be empty" };
+      }
+      await accountRepo.update(accountId, { name: trimmed });
+    }
+    return { status: "updated" };
+  });
+
   // --- SSH Keys API ---
 
   app.get(`${base}/api/keys`, async (request) => {
