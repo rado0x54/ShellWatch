@@ -38,6 +38,7 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
     "/api/webauthn/register/options",
     "/api/webauthn/register/verify",
     "/login",
+    "/onboarding",
     "/mcp",
     "/config.js",
   ];

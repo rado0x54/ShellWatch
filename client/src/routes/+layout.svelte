@@ -26,9 +26,9 @@
     basePath.set(base);
 
     const currentPath = window.location.pathname;
-    const isLogin = currentPath.endsWith("/login");
+    const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/onboarding");
 
-    if (!isLogin) {
+    if (!isUnauthPage) {
       const { authenticated } = await checkAuth();
       if (!authenticated) {
         await goto(resolve("/login"));
@@ -37,7 +37,7 @@
       }
     }
 
-    if (!isLogin) {
+    if (!isUnauthPage) {
       connectWs();
       await fetchEndpoints();
       fetchAccount();
