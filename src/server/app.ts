@@ -288,6 +288,7 @@ export async function buildApp(params: BuildAppParams) {
         protoHeader: config.server.trustedForwardedProtoHeader,
       },
       sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      trustedOrigins: config.security.trustedWebauthnOrigins,
     });
   }
 

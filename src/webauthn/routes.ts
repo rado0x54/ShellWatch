@@ -58,10 +58,19 @@ export interface WebAuthnRoutesParams {
   basePath?: string;
   proxy?: ProxyHeaderConfig;
   sessionConfig?: SessionConfig;
+  trustedOrigins?: string[];
 }
 
 export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
-  const { app, db, accountRepo, basePath = "", proxy = {}, sessionConfig } = params;
+  const {
+    app,
+    db,
+    accountRepo,
+    basePath = "",
+    proxy = {},
+    sessionConfig,
+    trustedOrigins = [],
+  } = params;
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(
     `${basePath}/api/webauthn/register/options`,
@@ -123,15 +132,10 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       pendingChallenges.delete(challengeId);
 
       try {
-        // Accept the browser's Origin header too (dev proxy may use a different port)
-        const browserOrigin = request.headers.origin ? String(request.headers.origin) : undefined;
-        const expectedOrigins =
-          browserOrigin && browserOrigin !== origin ? [origin, browserOrigin] : [origin];
-
         const verification = await verifyRegistrationResponse({
           response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: expectedOrigins,
+          expectedOrigin: [origin, ...trustedOrigins],
           expectedRPID: rpId,
         });
 
@@ -301,10 +305,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       const { challengeId, credential } = request.body;
       const { rpId, origin } = getOriginAndRpId(request, proxy);
 
-      // Accept the browser's Origin header too (passkey may have been registered on a different port)
-      const browserOrigin = request.headers.origin ? String(request.headers.origin) : undefined;
-      const expectedOrigins =
-        browserOrigin && browserOrigin !== origin ? [origin, browserOrigin] : [origin];
+      const expectedOrigins = [origin, ...trustedOrigins];
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
