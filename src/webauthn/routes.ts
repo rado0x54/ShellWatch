@@ -123,10 +123,15 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       pendingChallenges.delete(challengeId);
 
       try {
+        // Accept the browser's Origin header too (dev proxy may use a different port)
+        const browserOrigin = request.headers.origin ? String(request.headers.origin) : undefined;
+        const expectedOrigins =
+          browserOrigin && browserOrigin !== origin ? [origin, browserOrigin] : [origin];
+
         const verification = await verifyRegistrationResponse({
           response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: origin,
+          expectedOrigin: expectedOrigins,
           expectedRPID: rpId,
         });
 
