@@ -22,7 +22,7 @@ export interface SeedResult {
   apiKeyPrefix?: string;
   seededAdminPasskey: boolean;
   seededAdminAccount: boolean;
-  seedAdminId?: string;
+  seededAdminId?: string;
 }
 
 export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
@@ -34,13 +34,13 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
 
   // Seed admin account if no accounts exist yet
   const accountCount = db.select({ total: count() }).from(accounts).get();
-  let seedAdminId: string | undefined;
+  let adminId: string;
   if (!accountCount || accountCount.total === 0) {
-    seedAdminId = randomUUID();
+    adminId = randomUUID();
     const now = new Date().toISOString();
     db.insert(accounts)
       .values({
-        id: seedAdminId,
+        id: adminId,
         name: "Admin",
         type: "human",
         enabled: true,
@@ -51,13 +51,14 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       })
       .run();
     // Designate as admin via singleton table
-    db.insert(adminAccount).values({ singleton: 1, accountId: seedAdminId }).run();
+    db.insert(adminAccount).values({ singleton: 1, accountId: adminId }).run();
     result.seededAdminAccount = true;
-    result.seedAdminId = seedAdminId;
+    result.seededAdminId = adminId;
   } else {
     // Find existing admin account for linking
     const admin = db.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
-    seedAdminId = admin?.accountId;
+    if (!admin) throw new Error("No admin account found — database is in an invalid state");
+    adminId = admin.accountId;
   }
 
   // Seed admin passkey (endpoints may reference it via keyId)
@@ -84,7 +85,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       db.insert(webauthnCredentials)
         .values({
           id: pk.id,
-          accountId: seedAdminId ?? null,
+          accountId: adminId,
           credentialId: pk.credentialId,
           publicKey: pubKeyBuf,
           counter: pk.counter,
@@ -158,7 +159,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       db.insert(apiKeys)
         .values({
           id: "seed-api-key",
-          accountId: seedAdminId ?? null,
+          accountId: adminId,
           label: "Seeded from config",
           keyHash: hash,
           keyPrefix: config.seedApiKey.slice(0, 10),

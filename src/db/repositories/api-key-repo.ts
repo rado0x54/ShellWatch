@@ -18,6 +18,7 @@ export interface ApiKeyRepository {
   findAll(): Promise<ApiKeyInfo[]>;
   create(data: {
     id: string;
+    accountId: string;
     label: string;
     keyHash: string;
     keyPrefix: string;
@@ -85,6 +86,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
 
   async create(data: {
     id: string;
+    accountId: string;
     label: string;
     keyHash: string;
     keyPrefix: string;
@@ -95,6 +97,7 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
       .insert(apiKeys)
       .values({
         id: data.id,
+        accountId: data.accountId,
         label: data.label,
         keyHash: data.keyHash,
         keyPrefix: data.keyPrefix,

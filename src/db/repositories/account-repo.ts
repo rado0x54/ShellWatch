@@ -30,6 +30,7 @@ export interface AccountRepository {
   getAdminAccountId(): string | null;
   setAdmin(accountId: string): void;
   isAdmin(accountId: string): boolean;
+  destroy(): void;
 }
 
 /** No-op implementation for tests that don't need account functionality */
@@ -55,6 +56,7 @@ export class StubAccountRepository implements AccountRepository {
   async update(): Promise<void> {}
   touchLastUsed(): void {}
   flushLastUsed(): void {}
+  destroy(): void {}
   count(): number {
     return 0;
   }
@@ -145,10 +147,23 @@ export class DrizzleAccountRepository implements AccountRepository {
   }
 
   setAdmin(accountId: string): void {
-    this.db.insert(adminAccount).values({ singleton: 1, accountId }).run();
+    this.db
+      .insert(adminAccount)
+      .values({ singleton: 1, accountId })
+      .onConflictDoUpdate({ target: adminAccount.singleton, set: { accountId } })
+      .run();
   }
 
   isAdmin(accountId: string): boolean {
     return this.getAdminAccountId() === accountId;
+  }
+
+  /** Flush pending writes and stop the background timer. Call on shutdown. */
+  destroy(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.flushLastUsed();
   }
 }

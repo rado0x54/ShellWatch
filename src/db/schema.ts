@@ -32,7 +32,9 @@ export const adminAccount = sqliteTable(
 
 export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   id: text("id").primaryKey(),
-  accountId: text("account_id").references(() => accounts.id),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
   credentialId: text("credential_id").notNull().unique(), // base64url-encoded
   publicKey: blob("public_key", { mode: "buffer" }).notNull(), // COSE-encoded
   counter: integer("counter").notNull().default(0),
@@ -129,7 +131,9 @@ export const guardrailRules = sqliteTable("guardrail_rules", {
 
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
-  accountId: text("account_id").references(() => accounts.id),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
   label: text("label").notNull(),
   keyHash: text("key_hash").notNull().unique(),
   keyPrefix: text("key_prefix").notNull(),

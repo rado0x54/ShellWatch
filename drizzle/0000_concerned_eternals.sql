@@ -19,7 +19,7 @@ CREATE TABLE `admin_account` (
 --> statement-breakpoint
 CREATE TABLE `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
-	`account_id` text,
+	`account_id` text NOT NULL,
 	`label` text NOT NULL,
 	`key_hash` text NOT NULL,
 	`key_prefix` text NOT NULL,
@@ -101,7 +101,7 @@ CREATE TABLE `ssh_keys` (
 CREATE UNIQUE INDEX `ssh_keys_fingerprint_unique` ON `ssh_keys` (`fingerprint`);--> statement-breakpoint
 CREATE TABLE `webauthn_credentials` (
 	`id` text PRIMARY KEY NOT NULL,
-	`account_id` text,
+	`account_id` text NOT NULL,
 	`credential_id` text NOT NULL,
 	`public_key` blob NOT NULL,
 	`counter` integer DEFAULT 0 NOT NULL,

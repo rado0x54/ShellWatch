@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8801252b-35b2-459b-a527-edddc6df4c5a",
+  "id": "adbb646a-cea4-4809-9efe-1dc567a5528d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "accounts": {
@@ -133,7 +133,7 @@
           "name": "account_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "label": {
@@ -643,7 +643,7 @@
           "name": "account_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "credential_id": {

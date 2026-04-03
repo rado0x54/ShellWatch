@@ -152,21 +152,23 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         }
 
         // Resolve account: use authenticated session, or create admin on bootstrap
-        let accountId: string | null = null;
+        let accountId: string | undefined;
         if (request.accountId) {
           accountId = request.accountId;
-        } else {
-          const accountCount = accountRepo.count();
-          if (accountCount === 0) {
-            // Bootstrap: first registration creates admin account
-            const admin = await accountRepo.create({
-              id: randomUUID(),
-              name: label || "Admin",
-              type: "human",
-            });
-            accountRepo.setAdmin(admin.id);
-            accountId = admin.id;
-          }
+        } else if (accountRepo.count() === 0) {
+          // Bootstrap: first registration creates admin account
+          const admin = await accountRepo.create({
+            id: randomUUID(),
+            name: label || "Admin",
+            type: "human",
+          });
+          accountRepo.setAdmin(admin.id);
+          accountId = admin.id;
+        }
+
+        if (!accountId) {
+          reply.status(400);
+          return { error: "No account associated with this registration" };
         }
 
         db.insert(webauthnCredentials)
@@ -374,12 +376,15 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         }
 
         // Set session cookie with account ID
+        if (!storedCred.accountId) {
+          reply.status(400);
+          return { error: "Credential is not linked to an account" };
+        }
         const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-        const accountIdForSession = storedCred.accountId ?? "admin";
         const cookieValue = createSessionCookie(
           sessionConfig.secret,
           sessionConfig.ttlSeconds,
-          accountIdForSession,
+          storedCred.accountId,
         );
         const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
         reply.header(

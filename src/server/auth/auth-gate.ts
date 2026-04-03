@@ -2,7 +2,7 @@ import { count } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AccountRepository } from "../../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../../db/connection.js";
-import { adminAccount, webauthnCredentials } from "../../db/schema.js";
+import { webauthnCredentials } from "../../db/schema.js";
 import { verifySessionCookie } from "./session-cookie.js";
 
 const COOKIE_NAME = "sw_session";
@@ -64,9 +64,9 @@ export function registerAuthGate({ app, db, basePath, secret, accountRepo }: Aut
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     // Bootstrap mode: no passkeys = open access, but resolve admin account
     if (getPasskeyCount() === 0) {
-      const admin = dbRef.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
-      if (admin) {
-        request.accountId = admin.accountId;
+      const adminId = accountRepo.getAdminAccountId();
+      if (adminId) {
+        request.accountId = adminId;
       }
       return;
     }

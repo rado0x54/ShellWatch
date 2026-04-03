@@ -104,7 +104,7 @@ try {
     app.log.info(`Seeded API key (prefix: ${seedResult.apiKeyPrefix}…)`);
   }
   if (seedResult.seededAdminAccount) {
-    app.log.info(`Seeded admin account (${seedResult.seedAdminId})`);
+    app.log.info(`Seeded admin account (${seedResult.seededAdminId})`);
   }
   if (seedResult.seededAdminPasskey) {
     app.log.info(`Seeded admin passkey (${config.seedAdminPasskey?.label ?? "Admin Passkey"})`);
@@ -116,7 +116,7 @@ try {
   const shutdown = async () => {
     keyWatcher.stop();
     terminalManager.destroy();
-    accountRepo.flushLastUsed();
+    accountRepo.destroy();
     await app.close();
     closeDb();
     process.exit(0);

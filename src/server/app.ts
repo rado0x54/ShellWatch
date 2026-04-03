@@ -247,7 +247,18 @@ export async function buildApp(params: BuildAppParams) {
       const keyHash = hashApiKey(raw);
       const keyPrefix = raw.slice(0, 10);
       const id = randomUUID();
-      await apiKeyRepo.create({ id, label, keyHash, keyPrefix, scopes: ["mcp"] });
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
+      await apiKeyRepo.create({
+        id,
+        accountId: request.accountId,
+        label,
+        keyHash,
+        keyPrefix,
+        scopes: ["mcp"],
+      });
       return { id, label, keyPrefix, key: raw };
     });
 
