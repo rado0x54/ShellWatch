@@ -33,7 +33,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
 
   it("MCP creates session → WebSocket receives sessions:changed", async () => {
     const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       // Drain initial sessions:changed
       await ws.waitForMessage("sessions:changed");
@@ -59,7 +59,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
 
   it("MCP sends input → WebSocket receives terminal:output", async () => {
     const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       await ws.waitForMessage("sessions:changed");
 
@@ -92,7 +92,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
 
   it("MCP closes session → WebSocket receives sessions:changed and terminal:closed", async () => {
     const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       await ws.waitForMessage("sessions:changed");
 
@@ -141,7 +141,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
   });
 
   it("MCP creates session → HTTP GET /api/sessions includes it", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
@@ -169,7 +169,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     });
     const session = await createRes.json();
 
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       // MCP only sees its own sessions
       const listResult = await mcp.callTool("shellwatch_list_sessions");

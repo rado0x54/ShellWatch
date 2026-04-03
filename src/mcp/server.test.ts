@@ -61,7 +61,7 @@ async function setupClient(terminalManager: TerminalManager) {
   const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
   const keyRepo = new InMemorySshKeyRepository(testKeys);
   const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
-  const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo);
+  const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "1.0.0" });

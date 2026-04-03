@@ -9,8 +9,10 @@ const { utils } = ssh2;
 
 import { type Config, securityDefaults, serverDefaults } from "../../config/index.js";
 import { StubAccountRepository } from "../../db/repositories/account-repo.js";
+import { InMemoryApiKeyRepository } from "../../db/repositories/api-key-repo.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
+import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { buildApp } from "../../server/app.js";
 import { createSessionCookie } from "../../server/auth/session-cookie.js";
 import { TerminalManager } from "../../terminal/index.js";
@@ -27,6 +29,8 @@ export interface TestAppServer {
   terminalManager: TerminalManager;
   /** Session cookie header value (e.g. "sw_session=...") for authenticated requests */
   sessionCookie: string;
+  /** Raw API key for MCP authentication */
+  apiKey: string;
   /** Fetch with session cookie pre-attached */
   fetch(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -107,12 +111,24 @@ export async function startTestApp(
     },
   );
 
+  const testApiKey = "sw_test_000000000000000000000000";
+  const apiKeyRepo = new InMemoryApiKeyRepository();
+  await apiKeyRepo.create({
+    id: "test-api-key",
+    accountId: testAccountId,
+    label: "Test API Key",
+    keyHash: hashApiKey(testApiKey),
+    keyPrefix: testApiKey.slice(0, 10),
+    scopes: ["mcp"],
+  });
+
   const app = await buildApp({
     config,
     terminalManager,
     endpointRepo,
     keyRepo,
     accountRepo: new StubAccountRepository(),
+    apiKeyRepo,
     options: { logger: false, skipStaticFiles: true },
   });
 
@@ -132,6 +148,7 @@ export async function startTestApp(
     app,
     terminalManager,
     sessionCookie,
+    apiKey: testApiKey,
     fetch(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);
       headers.set("cookie", sessionCookie);

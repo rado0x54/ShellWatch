@@ -31,7 +31,7 @@ describe("Concurrent Sessions", () => {
   });
 
   it("multiple sessions on the same endpoint have independent I/O", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const s1 = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -68,7 +68,7 @@ describe("Concurrent Sessions", () => {
   });
 
   it("closing one session does not affect others", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const s1 = JSON.parse(
         (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
@@ -93,7 +93,7 @@ describe("Concurrent Sessions", () => {
   });
 
   it("sessions from different actors (MCP + HTTP) coexist independently", async () => {
-    const mcp = await createTestMcpClient(appServer.url, log);
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       // Create via MCP
       const mcpSession = JSON.parse(

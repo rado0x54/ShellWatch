@@ -159,9 +159,13 @@ export async function createMcpServer(
       try {
         switch (action) {
           case "list": {
-            const all = accountId
-              ? await endpointRepo.findAllForAccount(accountId)
-              : await endpointRepo.findAll();
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context" }],
+              };
+            }
+            const all = await endpointRepo.findAllForAccount(accountId);
             const result = all.map(({ id, label, host, port, username, keyId }) => ({
               id,
               label,
@@ -176,7 +180,13 @@ export async function createMcpServer(
           }
           case "read": {
             if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
-            const ep = await endpointRepo.findById(id);
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context" }],
+              };
+            }
+            const ep = await endpointRepo.findByIdForAccount(id, accountId);
             if (!ep)
               return {
                 isError: true,

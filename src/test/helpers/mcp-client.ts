@@ -17,8 +17,14 @@ export interface TestMcpClient {
   close(): Promise<void>;
 }
 
-export async function createTestMcpClient(appUrl: string, log: TestLog): Promise<TestMcpClient> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${appUrl}/mcp`));
+export async function createTestMcpClient(
+  appUrl: string,
+  log: TestLog,
+  apiKey?: string,
+): Promise<TestMcpClient> {
+  const transport = new StreamableHTTPClientTransport(new URL(`${appUrl}/mcp`), {
+    requestInit: apiKey ? { headers: { authorization: `Bearer ${apiKey}` } } : undefined,
+  });
   const client = new Client({ name: "test-client", version: "1.0.0" });
 
   // Buffer notifications for waitForNotification
