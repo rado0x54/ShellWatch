@@ -67,7 +67,7 @@
           <th>Name</th>
           <th>Type</th>
           <th>Role</th>
-          <th>Sessions</th>
+          <th>Max Sessions</th>
           <th>Created</th>
           <th>Last Active</th>
           <th></th>
