@@ -502,9 +502,9 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         name,
         type: "human",
       });
-      // First account becomes admin. setAdmin uses upsert (onConflictDoUpdate)
-      // so concurrent registrations can't create duplicate admins — the singleton
-      // CHECK constraint ensures only one row, and the last write wins.
+      // First account becomes admin. setAdmin uses INSERT OR IGNORE —
+      // first writer wins. Concurrent registrations can't create duplicate
+      // admins (singleton CHECK constraint), and the second call is a no-op.
       if (!accountRepo.getAdminAccountId()) {
         accountRepo.setAdmin(account.id);
       }
