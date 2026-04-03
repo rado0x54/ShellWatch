@@ -8,8 +8,7 @@
   const tabs = [
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
-    { path: "/settings/keys", label: "SSH Keys" },
-    { path: "/settings/passkeys", label: "Passkeys" },
+    { path: "/settings/keys", label: "Keys" },
     { path: "/settings/api-keys", label: "API Keys" },
   ] as const;
 

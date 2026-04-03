@@ -134,16 +134,16 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get(`${base}/api/keys`, async (request) => {
     const allKeys = await keyRepo.findAll();
-    // Non-admin accounts can only see WebAuthn keys, not file-based keys
+    // File-based keys: admin only. Webauthn keys are accessed via /api/webauthn/credentials.
     const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
-    const visibleKeys = isAdmin ? allKeys : allKeys.filter((k) => k.type === "webauthn");
+    const fileKeys = allKeys.filter((k) => k.type === "file");
     return {
-      keys: visibleKeys.map((k) => ({
+      keys: (isAdmin ? fileKeys : []).map((k) => ({
         id: k.id,
         label: k.label,
         type: k.type,
         fingerprint: k.fingerprint,
-        available: k.type === "webauthn" || (keyAvailability?.isAvailable(k.fingerprint) ?? true),
+        available: keyAvailability?.isAvailable(k.fingerprint) ?? true,
         authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
       })),
     };
