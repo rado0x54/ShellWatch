@@ -18,7 +18,9 @@
   let mobileMenuOpen = $state(false);
   let sessionModes = $state<Record<string, string>>({});
 
-  const isLoginPage = $derived($page.url.pathname.endsWith("/login"));
+  const isFullscreenPage = $derived(
+    $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/onboarding"),
+  );
 
   onMount(async () => {
     // Initialize base path from server-injected config
@@ -65,7 +67,7 @@
   <div class="loading">
     <span>Loading...</span>
   </div>
-{:else if isLoginPage}
+{:else if isFullscreenPage}
   {@render children()}
 {:else}
   <div class="app-shell">
