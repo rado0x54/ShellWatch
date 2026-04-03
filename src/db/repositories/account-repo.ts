@@ -1,6 +1,11 @@
 import { count, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
-import { accounts, adminAccount } from "../schema.js";
+import { accounts, adminAccount, webauthnCredentials } from "../schema.js";
+
+export type InitStatus =
+  | { status: "setup_required" }
+  | { status: "passkey_required"; accountId: string }
+  | { status: "ready" };
 
 export interface AccountInfo {
   id: string;
@@ -30,6 +35,7 @@ export interface AccountRepository {
   getAdminAccountId(): string | null;
   setAdmin(accountId: string): void;
   isAdmin(accountId: string): boolean;
+  getInitStatus(): InitStatus;
   destroy(): void;
 }
 
@@ -57,6 +63,9 @@ export class StubAccountRepository implements AccountRepository {
   touchLastUsed(): void {}
   flushLastUsed(): void {}
   destroy(): void {}
+  getInitStatus(): InitStatus {
+    return { status: "ready" };
+  }
   count(): number {
     return 0;
   }
@@ -156,6 +165,20 @@ export class DrizzleAccountRepository implements AccountRepository {
 
   isAdmin(accountId: string): boolean {
     return this.getAdminAccountId() === accountId;
+  }
+
+  getInitStatus(): InitStatus {
+    const adminId = this.getAdminAccountId();
+    if (!adminId) return { status: "setup_required" };
+
+    const passkey = this.db
+      .select({ id: webauthnCredentials.id })
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.accountId, adminId))
+      .get();
+    if (!passkey) return { status: "passkey_required", accountId: adminId };
+
+    return { status: "ready" };
   }
 
   /** Flush pending writes and stop the background timer. Call on shutdown. */

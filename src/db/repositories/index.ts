@@ -2,6 +2,7 @@ export {
   type AccountInfo,
   type AccountRepository,
   DrizzleAccountRepository,
+  type InitStatus,
   StubAccountRepository,
 } from "./account-repo.js";
 export {

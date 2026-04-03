@@ -99,7 +99,7 @@ export async function startTestApp(
     endpointRepo,
     keyRepo,
     accountRepo: new StubAccountRepository(),
-    options: { logger: false, skipStaticFiles: true },
+    options: { logger: false, skipStaticFiles: true, skipAuth: true },
   });
 
   await app.listen({ port: 0, host: "127.0.0.1" });

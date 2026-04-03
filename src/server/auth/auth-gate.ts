@@ -1,8 +1,5 @@
-import { count } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AccountRepository } from "../../db/repositories/account-repo.js";
-import type { ShellWatchDB } from "../../db/connection.js";
-import { webauthnCredentials } from "../../db/schema.js";
 import { verifySessionCookie } from "./session-cookie.js";
 
 const COOKIE_NAME = "sw_session";
@@ -15,29 +12,12 @@ export function parseCookie(header: string | undefined, name: string): string | 
 
 export interface AuthGateParams {
   app: FastifyInstance;
-  db: ShellWatchDB | null;
   basePath: string;
   secret: string;
   accountRepo: AccountRepository;
 }
 
-export function registerAuthGate({ app, db, basePath, secret, accountRepo }: AuthGateParams): void {
-  if (!db) return;
-  const dbRef = db;
-
-  let cachedCount: number | null = null;
-  let cacheTime = 0;
-  const CACHE_TTL_MS = 5000;
-
-  function getPasskeyCount(): number {
-    const now = Date.now();
-    if (cachedCount !== null && now - cacheTime < CACHE_TTL_MS) return cachedCount;
-    const result = dbRef.select({ count: count() }).from(webauthnCredentials).get();
-    cachedCount = result?.count ?? 0;
-    cacheTime = now;
-    return cachedCount;
-  }
-
+export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGateParams): void {
   // Logout: clear session cookie
   app.post(`${basePath}/api/auth/logout`, async (request, reply) => {
     const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
@@ -49,37 +29,81 @@ export function registerAuthGate({ app, db, basePath, secret, accountRepo }: Aut
       .send({ status: "logged_out" });
   });
 
-  // Exempt paths that don't require session auth
-  const exemptSuffixes = [
-    "/health",
-    "/mcp",
+  // Paths accessible without any authentication
+  const alwaysExempt = ["/health", "/api/init", "/api/auth/logout", "/config.js"];
+
+  // Additional paths accessible during onboarding (system not yet ready)
+  const onboardingExempt = [
+    "/onboarding",
+    "/api/webauthn/register/options",
+    "/api/webauthn/register/verify",
+    "/api/webauthn/status",
+  ];
+
+  // Paths accessible when system is ready but user is not logged in
+  const loginExempt = [
+    "/login",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
     "/api/webauthn/status",
-    "/api/auth/logout",
-    "/login",
-    "/config.js",
+    "/mcp",
   ];
 
+  function isExempt(url: string, suffixes: string[]): boolean {
+    for (const suffix of suffixes) {
+      if (url === `${basePath}${suffix}`) return true;
+    }
+    return false;
+  }
+
+  // Cache init status to avoid DB queries on every request
+  let cachedInitStatus: ReturnType<AccountRepository["getInitStatus"]> | null = null;
+  let cacheTime = 0;
+  const CACHE_TTL_MS = 5000;
+
+  function getInitStatus() {
+    const now = Date.now();
+    if (cachedInitStatus !== null && now - cacheTime < CACHE_TTL_MS) return cachedInitStatus;
+    cachedInitStatus = accountRepo.getInitStatus();
+    cacheTime = now;
+    return cachedInitStatus;
+  }
+
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    // Bootstrap mode: no passkeys = open access, but resolve admin account
-    if (getPasskeyCount() === 0) {
-      const adminId = accountRepo.getAdminAccountId();
-      if (adminId) {
-        request.accountId = adminId;
+    const url = request.url.split("?")[0];
+
+    // Always-exempt paths
+    if (isExempt(url, alwaysExempt)) return;
+
+    // Static assets
+    if (url.startsWith(`${basePath}/_app/`)) return;
+
+    const initStatus = getInitStatus();
+
+    // --- Onboarding mode: system not yet ready ---
+    if (initStatus.status !== "ready") {
+      // Resolve admin account if it exists (for onboarding passkey registration)
+      if (initStatus.status === "passkey_required") {
+        request.accountId = initStatus.accountId;
+      }
+
+      // Allow onboarding + login pages
+      if (isExempt(url, onboardingExempt) || isExempt(url, loginExempt)) return;
+
+      // Block everything else — redirect to onboarding
+      const isApi = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
+      if (isApi) {
+        reply.status(503).send({ error: "System setup required", initStatus: initStatus.status });
+      } else {
+        reply.redirect(`${basePath}/onboarding`);
       }
       return;
     }
 
-    const url = request.url.split("?")[0];
+    // --- System is ready: normal auth flow ---
 
-    // Check exempt paths
-    for (const suffix of exemptSuffixes) {
-      if (url === `${basePath}${suffix}`) return;
-    }
-
-    // Allow static assets (SvelteKit serves from /_app/)
-    if (url.startsWith(`${basePath}/_app/`)) return;
+    // Login-related paths are exempt
+    if (isExempt(url, loginExempt)) return;
 
     // Verify session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
@@ -95,9 +119,8 @@ export function registerAuthGate({ app, db, basePath, secret, accountRepo }: Aut
     }
 
     // Not authenticated
-    const isApiOrWs = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
-
-    if (isApiOrWs) {
+    const isApi = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
+    if (isApi) {
       reply.status(401).send({ error: "Authentication required" });
     } else {
       reply.redirect(`${basePath}/login`);

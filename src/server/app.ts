@@ -23,6 +23,7 @@ import { registerWebSocket } from "./ws-handler.js";
 export interface AppOptions {
   logger?: boolean;
   skipStaticFiles?: boolean;
+  skipAuth?: boolean;
 }
 
 export interface BuildAppParams {
@@ -68,7 +69,9 @@ export async function buildApp(params: BuildAppParams) {
   app.decorateRequest("accountId", null);
 
   // Auth gate: require passkey login when passkeys exist
-  registerAuthGate({ app, db, basePath: base, secret: cookieSecret, accountRepo });
+  if (!options.skipAuth) {
+    registerAuthGate({ app, basePath: base, secret: cookieSecret, accountRepo });
+  }
 
   // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
@@ -84,6 +87,9 @@ export async function buildApp(params: BuildAppParams) {
   }
 
   app.get(`${base}/health`, async () => ({ status: "ok" }));
+
+  // --- Init status ---
+  app.get(`${base}/api/init`, async () => accountRepo.getInitStatus());
 
   // --- Auth: current account ---
   app.get(`${base}/api/auth/me`, async (request, reply) => {
