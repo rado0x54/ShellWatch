@@ -57,7 +57,7 @@ function suggestLabel(credential: RegistrationResponseJSON): string {
   return "Passkey";
 }
 
-export async function startPasskeyRegistration(): Promise<{
+export async function startPasskeyRegistration(name?: string): Promise<{
   challengeId: string;
   credential: RegistrationResponseJSON;
   suggestedLabel: string;
@@ -66,7 +66,7 @@ export async function startPasskeyRegistration(): Promise<{
   const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: "pending" }),
+    body: JSON.stringify({ label: "pending", name }),
   });
   if (!optionsRes.ok) {
     const err = await optionsRes.json();

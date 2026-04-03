@@ -73,10 +73,10 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     trustedOrigins = [],
   } = params;
   // --- Registration: Generate Options ---
-  app.post<{ Body: { label: string } }>(
+  app.post<{ Body: { label: string; name?: string } }>(
     `${basePath}/api/webauthn/register/options`,
     async (request) => {
-      const { label } = request.body;
+      const { label, name } = request.body;
       const { rpId } = getOriginAndRpId(request, proxy);
 
       // Get existing credentials to exclude (prevent re-registration)
@@ -85,11 +85,14 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         .from(webauthnCredentials)
         .all();
 
+      // userName: max 64 bytes per WebAuthn recommendation
+      const userName = (name || label || "user").slice(0, 64);
+
       const options = await generateRegistrationOptions({
         rpName: "ShellWatch",
         rpID: rpId,
-        userName: "admin",
-        userDisplayName: label || "ShellWatch Admin",
+        userName,
+        userDisplayName: name || label || "ShellWatch User",
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",

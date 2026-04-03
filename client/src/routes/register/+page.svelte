@@ -12,6 +12,7 @@
   let error = $state("");
   let status = $state("");
   let currentStep = $state(0);
+  let accountName = $state("");
 
   // Detect mode on mount: try login/options — if no_passkeys, this is admin setup
   onMount(async () => {
@@ -21,10 +22,15 @@
       const data = await res.json();
       if (data.error === "no_passkeys") {
         isAdminSetup = true;
+        const domain = window.location.host;
+        const path = get(basePath);
+        accountName = `Admin (${domain}${path || ""})`;
+      } else {
+        accountName = "ShellWatch Account";
       }
     } catch {
-      // Network error — assume admin setup
       isAdminSetup = true;
+      accountName = `Admin (${window.location.host})`;
     }
   });
 
@@ -43,7 +49,7 @@
     error = "";
     status = "Waiting for passkey...";
     try {
-      const result = await startPasskeyRegistration();
+      const result = await startPasskeyRegistration(accountName);
       registrationStep = result;
       labelInput = result.suggestedLabel;
       status = "";
@@ -62,7 +68,7 @@
     try {
       const passkeyLabel = labelInput || registrationStep.suggestedLabel;
       await registerAccount(
-        passkeyLabel,
+        accountName,
         registrationStep.challengeId,
         registrationStep.credential as Parameters<typeof registerAccount>[2],
         passkeyLabel,
@@ -166,7 +172,10 @@
         servers through a unified interface. Authentication is passkey-only — no passwords, no
         emails.
       </p>
-      <button class="btn-primary" onclick={() => (currentStep = 1)}>Get Started</button>
+      <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
+      <button class="btn-primary" disabled={!accountName.trim()} onclick={() => (currentStep = 1)}>
+        Get Started
+      </button>
 
       <!-- Step 2: Passkey -->
     {:else if currentStep === 1}
