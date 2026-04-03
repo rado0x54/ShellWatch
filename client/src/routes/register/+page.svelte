@@ -28,14 +28,9 @@
     }
   });
 
-  const steps = $derived(
-    isAdminSetup
-      ? (["Welcome", "Passkey", "Endpoints", "MCP"] as const)
-      : (["Welcome", "Passkey"] as const),
-  );
+  const steps = ["Welcome", "Passkey", "Endpoints", "MCP"] as const;
 
   // --- Passkey step ---
-  let accountName = $state("");
   let registrationStep = $state<null | {
     challengeId: string;
     credential: unknown;
@@ -65,23 +60,17 @@
     error = "";
     status = "Creating account...";
     try {
+      const passkeyLabel = labelInput || registrationStep.suggestedLabel;
       await registerAccount(
-        accountName || "User",
+        passkeyLabel,
         registrationStep.challengeId,
         registrationStep.credential as Parameters<typeof registerAccount>[2],
-        labelInput || registrationStep.suggestedLabel,
+        passkeyLabel,
       );
       registrationStep = null;
       status = "";
-
-      if (isAdminSetup) {
-        currentStep = 2;
-        await fetchEndpoints();
-      } else {
-        // User registration complete — go to app
-        const base = get(basePath);
-        window.location.href = `${base}/`;
-      }
+      currentStep = 2;
+      await fetchEndpoints();
     } catch (err) {
       error = (err as Error).message;
       status = "";
@@ -171,20 +160,13 @@
           You are the first user — your account will be the administrator. This gives you access to
           file-based SSH keys and account management.
         </p>
-      {:else}
-        <p class="description">
-          Create your account to get started. Authentication is passkey-only — no passwords, no
-          emails.
-        </p>
       {/if}
       <p class="description">
         ShellWatch is an SSH session broker that lets you and your AI agents securely manage remote
-        servers through a unified interface.
+        servers through a unified interface. Authentication is passkey-only — no passwords, no
+        emails.
       </p>
-      <input type="text" class="input" bind:value={accountName} placeholder="Your name" />
-      <button class="btn-primary" disabled={!accountName} onclick={() => (currentStep = 1)}>
-        Continue
-      </button>
+      <button class="btn-primary" onclick={() => (currentStep = 1)}>Get Started</button>
 
       <!-- Step 2: Passkey -->
     {:else if currentStep === 1}
@@ -198,7 +180,7 @@
           placeholder="e.g. MacBook Touch ID"
         />
         <button class="btn-primary" disabled={loading} onclick={handleFinishPasskey}>
-          {isAdminSetup ? "Save & Continue" : "Save & Sign In"}
+          Save & Continue
         </button>
       {:else}
         <p class="description">
