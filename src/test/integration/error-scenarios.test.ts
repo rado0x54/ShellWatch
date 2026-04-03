@@ -102,6 +102,7 @@ describe("Error Scenarios", () => {
       const endpointRepo = new InMemoryEndpointRepository([
         {
           id: "no-key-ep",
+          accountId: "test-account",
           label: "No Key",
           host: "localhost",
           port: 22,

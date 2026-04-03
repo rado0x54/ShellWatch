@@ -128,10 +128,14 @@ export async function buildApp(params: BuildAppParams) {
     };
   });
 
-  // --- Endpoint API ---
+  // --- Endpoint API (scoped to account) ---
 
-  app.get(`${base}/api/endpoints`, async () => {
-    const all = await endpointRepo.findAll();
+  app.get(`${base}/api/endpoints`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
       endpoints: all.map(({ id, label, host, port, username, keyId }) => ({
         id,
@@ -154,8 +158,16 @@ export async function buildApp(params: BuildAppParams) {
       keyId?: string;
     };
   }>(`${base}/api/endpoints`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
     try {
-      await endpointRepo.create({ ...request.body, port: request.body.port ?? 22 });
+      await endpointRepo.create({
+        ...request.body,
+        accountId: request.accountId,
+        port: request.body.port ?? 22,
+      });
       return { status: "created", id: request.body.id };
     } catch (err) {
       reply.status(400);
@@ -166,10 +178,15 @@ export async function buildApp(params: BuildAppParams) {
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
     `${base}/api/endpoints/:id`,
     async (request, reply) => {
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
       try {
         await endpointRepo.update(
           request.params.id,
-          request.body as Parameters<EndpointRepository["update"]>[1],
+          request.accountId,
+          request.body as Parameters<EndpointRepository["update"]>[2],
         );
         return { status: "updated" };
       } catch (err) {
@@ -180,6 +197,10 @@ export async function buildApp(params: BuildAppParams) {
   );
 
   app.delete<{ Params: { id: string } }>(`${base}/api/endpoints/:id`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
     try {
       const activeSessions = terminalManager
         .listSessions()
@@ -188,7 +209,7 @@ export async function buildApp(params: BuildAppParams) {
         reply.status(409);
         return { error: "Cannot delete endpoint with active sessions" };
       }
-      await endpointRepo.delete(request.params.id);
+      await endpointRepo.delete(request.params.id, request.accountId);
       return { status: "deleted" };
     } catch (err) {
       reply.status(400);
