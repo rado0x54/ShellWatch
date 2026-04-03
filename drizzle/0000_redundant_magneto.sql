@@ -50,6 +50,7 @@ CREATE TABLE `endpoint_keys` (
 --> statement-breakpoint
 CREATE TABLE `endpoints` (
 	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
 	`label` text NOT NULL,
 	`host` text NOT NULL,
 	`port` integer DEFAULT 22 NOT NULL,
@@ -58,6 +59,7 @@ CREATE TABLE `endpoints` (
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint

@@ -62,6 +62,9 @@ export const sshKeys = sqliteTable("ssh_keys", {
 
 export const endpoints = sqliteTable("endpoints", {
   id: text("id").primaryKey(),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
   label: text("label").notNull(),
   host: text("host").notNull(),
   port: integer("port").notNull().default(22),

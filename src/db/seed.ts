@@ -134,6 +134,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       db.insert(endpoints)
         .values({
           id: server.id,
+          accountId: adminId,
           label: server.label,
           host: server.host,
           port: server.port,

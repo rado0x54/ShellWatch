@@ -45,7 +45,12 @@ export async function registerMcpHttpTransport(
       });
 
       const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
-      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo);
+      const mcpServer = await createMcpServer(
+        agentSession,
+        endpointRepo,
+        keyRepo,
+        request.accountId,
+      );
 
       await mcpServer.connect(transport);
 

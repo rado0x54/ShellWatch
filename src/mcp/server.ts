@@ -9,6 +9,7 @@ export async function createMcpServer(
   agentSession: AgentSession,
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
+  accountId?: string | null,
 ): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
@@ -158,7 +159,9 @@ export async function createMcpServer(
       try {
         switch (action) {
           case "list": {
-            const all = await endpointRepo.findAll();
+            const all = accountId
+              ? await endpointRepo.findAllForAccount(accountId)
+              : await endpointRepo.findAll();
             const result = all.map(({ id, label, host, port, username, keyId }) => ({
               id,
               label,
@@ -191,8 +194,15 @@ export async function createMcpServer(
                 ],
               };
             }
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint creation" }],
+              };
+            }
             await endpointRepo.create({
               id,
+              accountId,
               label: data.label,
               host: data.host,
               port: data.port ?? 22,
@@ -207,12 +217,26 @@ export async function createMcpServer(
                 isError: true,
                 content: [{ type: "text", text: "id and data are required" }],
               };
-            await endpointRepo.update(id, data);
+            if (accountId) {
+              await endpointRepo.update(id, accountId, data);
+            } else {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint update" }],
+              };
+            }
             return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id }) }] };
           }
           case "delete": {
             if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
-            await endpointRepo.delete(id);
+            if (accountId) {
+              await endpointRepo.delete(id, accountId);
+            } else {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint deletion" }],
+              };
+            }
             return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
           }
         }

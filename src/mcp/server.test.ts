@@ -9,9 +9,12 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/types.js";
 import { createMcpServer } from "./server.js";
 
+const testAccountId = "test-account";
+
 const testEndpoints = [
   {
     id: "dev-box",
+    accountId: testAccountId,
     label: "Dev Box",
     host: "dev.example.com",
     port: 22,
