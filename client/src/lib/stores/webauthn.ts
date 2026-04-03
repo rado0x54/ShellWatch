@@ -145,8 +145,8 @@ export async function logout(): Promise<void> {
 export async function checkAuth(): Promise<{ authenticated: boolean }> {
   const base = get(basePath);
   try {
-    const res = await fetch(`${base}/api/sessions`);
-    return { authenticated: res.status !== 401 };
+    const res = await fetch(`${base}/api/auth/me`);
+    return { authenticated: res.ok };
   } catch {
     return { authenticated: false };
   }
