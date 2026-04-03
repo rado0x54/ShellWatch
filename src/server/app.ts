@@ -13,7 +13,6 @@ import {
   endpointKeys,
   endpoints as endpointsTable,
   sessionHistory,
-  sshKeys,
   webauthnCredentials,
 } from "../db/schema.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
@@ -242,7 +241,7 @@ export async function buildApp(params: BuildAppParams) {
           available: k.enabled && available,
           authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
           createdAt: k.createdAt,
-          lastUsedAt: k.updatedAt !== k.createdAt ? k.updatedAt : null,
+          lastUsedAt: null, // TODO: track properly via #28
         };
       }),
     };
@@ -375,15 +374,11 @@ export async function buildApp(params: BuildAppParams) {
       const session = await terminalManager.create(endpointId, "ui");
       uiCreatedSessions.add(session.sessionId);
 
-      // Update lastUsedAt on the assigned key
+      // Update lastUsedAt on the assigned passkey (if it's a webauthn key)
       if (endpoint.keyId && db) {
         db.update(webauthnCredentials)
           .set({ lastUsedAt: new Date().toISOString() })
           .where(eq(webauthnCredentials.id, endpoint.keyId))
-          .run();
-        db.update(sshKeys)
-          .set({ updatedAt: new Date().toISOString() })
-          .where(eq(sshKeys.id, endpoint.keyId))
           .run();
       }
 
