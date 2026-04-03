@@ -25,18 +25,33 @@ export interface AppOptions {
   skipStaticFiles?: boolean;
 }
 
-export async function buildApp(
-  config: Config,
-  terminalManager: TerminalManager,
-  endpointRepo: EndpointRepository,
-  keyRepo: SshKeyRepository,
-  db: ShellWatchDB | null = null,
-  wsExtensions: WsExtension[] = [],
-  keyAvailability: KeyAvailability | null = null,
-  options: AppOptions = {},
-  apiKeyRepo: ApiKeyRepository | null,
-  accountRepo: AccountRepository,
-) {
+export interface BuildAppParams {
+  config: Config;
+  terminalManager: TerminalManager;
+  endpointRepo: EndpointRepository;
+  keyRepo: SshKeyRepository;
+  accountRepo: AccountRepository;
+  db?: ShellWatchDB | null;
+  wsExtensions?: WsExtension[];
+  keyAvailability?: KeyAvailability | null;
+  apiKeyRepo?: ApiKeyRepository | null;
+  options?: AppOptions;
+}
+
+export async function buildApp(params: BuildAppParams) {
+  const {
+    config,
+    terminalManager,
+    endpointRepo,
+    keyRepo,
+    accountRepo,
+    db = null,
+    wsExtensions = [],
+    keyAvailability = null,
+    apiKeyRepo = null,
+    options = {},
+  } = params;
+
   const app = Fastify({ logger: options.logger ?? true });
   const base = config.server.basePath;
 
@@ -53,7 +68,7 @@ export async function buildApp(
   app.decorateRequest("accountId", null);
 
   // Auth gate: require passkey login when passkeys exist
-  registerAuthGate(app, db, base, cookieSecret, accountRepo);
+  registerAuthGate({ app, db, basePath: base, secret: cookieSecret, accountRepo });
 
   // IP allowlist + API key auth for MCP
   registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
@@ -252,17 +267,17 @@ export async function buildApp(
 
   // WebAuthn routes
   if (db) {
-    registerWebAuthnRoutes(
+    registerWebAuthnRoutes({
       app,
       db,
-      base,
-      {
+      accountRepo,
+      basePath: base,
+      proxy: {
         hostHeader: config.server.trustedForwardedHostHeader,
         protoHeader: config.server.trustedForwardedProtoHeader,
       },
-      { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
-      accountRepo,
-    );
+      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+    });
   }
 
   // Client runtime config

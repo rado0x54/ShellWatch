@@ -13,13 +13,15 @@ export function parseCookie(header: string | undefined, name: string): string | 
   return match?.[1];
 }
 
-export function registerAuthGate(
-  app: FastifyInstance,
-  db: ShellWatchDB | null,
-  basePath: string,
-  secret: string,
-  accountRepo: AccountRepository,
-): void {
+export interface AuthGateParams {
+  app: FastifyInstance;
+  db: ShellWatchDB | null;
+  basePath: string;
+  secret: string;
+  accountRepo: AccountRepository;
+}
+
+export function registerAuthGate({ app, db, basePath, secret, accountRepo }: AuthGateParams): void {
   if (!db) return;
   const dbRef = db;
 

@@ -93,18 +93,14 @@ export async function startTestApp(
     },
   );
 
-  const app = await buildApp(
+  const app = await buildApp({
     config,
     terminalManager,
     endpointRepo,
     keyRepo,
-    null,
-    [],
-    null,
-    { logger: false, skipStaticFiles: true },
-    null,
-    new StubAccountRepository(),
-  );
+    accountRepo: new StubAccountRepository(),
+    options: { logger: false, skipStaticFiles: true },
+  });
 
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();

@@ -51,14 +51,17 @@ export interface SessionConfig {
   ttlSeconds: number;
 }
 
-export function registerWebAuthnRoutes(
-  app: FastifyInstance,
-  db: ShellWatchDB,
-  basePath = "",
-  proxy: ProxyHeaderConfig = {},
-  sessionConfig: SessionConfig | undefined,
-  accountRepo: AccountRepository,
-) {
+export interface WebAuthnRoutesParams {
+  app: FastifyInstance;
+  db: ShellWatchDB;
+  accountRepo: AccountRepository;
+  basePath?: string;
+  proxy?: ProxyHeaderConfig;
+  sessionConfig?: SessionConfig;
+}
+
+export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
+  const { app, db, accountRepo, basePath = "", proxy = {}, sessionConfig } = params;
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string } }>(
     `${basePath}/api/webauthn/register/options`,

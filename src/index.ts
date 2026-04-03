@@ -82,18 +82,17 @@ try {
 
   const terminalManager = new TerminalManager(endpointRepo, (id) => sshTransportFactory.create(id));
 
-  const app = await buildApp(
+  const app = await buildApp({
     config,
     terminalManager,
     endpointRepo,
     keyRepo,
-    db,
-    [signingBridge],
-    keyWatcher,
-    {},
-    apiKeyRepo,
     accountRepo,
-  );
+    db,
+    wsExtensions: [signingBridge],
+    keyAvailability: keyWatcher,
+    apiKeyRepo,
+  });
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
 
