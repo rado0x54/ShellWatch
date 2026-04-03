@@ -2,15 +2,20 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
+  import { account } from "$lib/stores/account.js";
 
   let { children } = $props();
 
-  const tabs = [
+  const baseTabs = [
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Keys" },
     { path: "/settings/api-keys", label: "API Keys" },
-  ] as const;
+  ];
+
+  const tabs = $derived(
+    $account?.isAdmin ? [...baseTabs, { path: "/settings/accounts", label: "Accounts" }] : baseTabs,
+  );
 
   const currentPath = $derived($page.url.pathname);
 </script>
