@@ -172,7 +172,7 @@ export async function buildApp(params: BuildAppParams) {
           available: k.enabled && available,
           authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
           createdAt: k.createdAt,
-          lastUsedAt: null,
+          lastUsedAt: k.updatedAt !== k.createdAt ? k.updatedAt : null,
         };
       }),
     };
