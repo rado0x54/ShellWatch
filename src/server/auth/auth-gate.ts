@@ -30,14 +30,13 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
   });
 
   // Paths accessible without any authentication
-  const alwaysExempt = ["/health", "/api/init", "/api/auth/logout", "/config.js"];
+  const alwaysExempt = ["/health", "/api/webauthn/status", "/api/auth/logout", "/config.js"];
 
   // Additional paths accessible during onboarding (system not yet ready)
   const onboardingExempt = [
     "/onboarding",
     "/api/webauthn/register/options",
     "/api/webauthn/register/verify",
-    "/api/webauthn/status",
   ];
 
   // Paths accessible when system is ready but user is not logged in
@@ -45,7 +44,6 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
     "/login",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
-    "/api/webauthn/status",
     "/mcp",
   ];
 

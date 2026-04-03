@@ -85,9 +85,6 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get(`${base}/health`, async () => ({ status: "ok" }));
 
-  // --- Init status ---
-  app.get(`${base}/api/init`, async () => accountRepo.getInitStatus());
-
   // --- Auth: current account ---
   app.get(`${base}/api/auth/me`, async (request, reply) => {
     const accountId = request.accountId;

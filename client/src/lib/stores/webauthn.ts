@@ -127,17 +127,24 @@ export async function logout(): Promise<void> {
   window.location.href = `${base}/login`;
 }
 
-export async function checkAuth(): Promise<{ hasPasskeys: boolean; authenticated: boolean }> {
+export type InitStatus = "setup_required" | "passkey_required" | "ready";
+
+export async function checkAuth(): Promise<{ initStatus: InitStatus; authenticated: boolean }> {
   const base = get(basePath);
   try {
     const res = await fetch(`${base}/api/webauthn/status`);
-    if (!res.ok) return { hasPasskeys: false, authenticated: true };
-    const { hasPasskeys } = await res.json();
-    if (!hasPasskeys) return { hasPasskeys: false, authenticated: true };
+    if (!res.ok) return { initStatus: "setup_required", authenticated: false };
+    const data = await res.json();
+    const initStatus: InitStatus = data.status;
 
+    if (initStatus !== "ready") {
+      return { initStatus, authenticated: false };
+    }
+
+    // System is ready — check if we have a valid session
     const authCheck = await fetch(`${base}/api/sessions`);
-    return { hasPasskeys: true, authenticated: authCheck.status !== 401 };
+    return { initStatus, authenticated: authCheck.status !== 401 };
   } catch {
-    return { hasPasskeys: false, authenticated: true };
+    return { initStatus: "setup_required", authenticated: false };
   }
 }

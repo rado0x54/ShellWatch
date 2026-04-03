@@ -5,7 +5,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { count, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
@@ -256,11 +256,8 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     },
   );
 
-  // --- Auth Status ---
-  app.get(`${basePath}/api/webauthn/status`, async () => {
-    const result = db.select({ count: count() }).from(webauthnCredentials).get();
-    return { hasPasskeys: (result?.count ?? 0) > 0 };
-  });
+  // --- Init / Auth Status ---
+  app.get(`${basePath}/api/webauthn/status`, async () => accountRepo.getInitStatus());
 
   // --- Login (Assertion): Generate Options ---
   app.post(`${basePath}/api/webauthn/login/options`, async (request) => {

@@ -29,8 +29,13 @@
     const isLogin = currentPath.endsWith("/login");
 
     if (!isLogin) {
-      const { hasPasskeys, authenticated } = await checkAuth();
-      if (hasPasskeys && !authenticated) {
+      const { initStatus, authenticated } = await checkAuth();
+      if (initStatus !== "ready") {
+        await goto(resolve("/onboarding"));
+        ready = true;
+        return;
+      }
+      if (!authenticated) {
         await goto(resolve("/login"));
         ready = true;
         return;
