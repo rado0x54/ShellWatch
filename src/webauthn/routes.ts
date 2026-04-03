@@ -5,7 +5,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import { hasPasskeys } from "../db/repositories/credential-queries.js";
@@ -232,8 +232,12 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     },
   );
 
-  // --- List Registered Credentials ---
-  app.get(`${basePath}/api/webauthn/credentials`, async () => {
+  // --- List Registered Credentials (scoped to account) ---
+  app.get(`${basePath}/api/webauthn/credentials`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
     const creds = db
       .select({
         id: webauthnCredentials.id,
@@ -245,6 +249,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         lastUsedAt: webauthnCredentials.lastUsedAt,
       })
       .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.accountId, request.accountId))
       .all();
 
     return {
@@ -262,12 +267,27 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     };
   });
 
-  // --- Delete Credential ---
+  // --- Delete Credential (scoped to account) ---
   app.delete<{ Params: { id: string } }>(
     `${basePath}/api/webauthn/credentials/:id`,
-    async (request) => {
+    async (request, reply) => {
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
       const { id } = request.params;
-      // Remove from both tables
+      // Verify ownership
+      const cred = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(
+          and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
+        )
+        .get();
+      if (!cred) {
+        reply.status(404);
+        return { error: "Credential not found" };
+      }
       db.delete(sshKeys).where(eq(sshKeys.id, id)).run();
       db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, id)).run();
       return { status: "deleted" };
