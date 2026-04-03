@@ -74,15 +74,8 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
     // Exempt paths (login, registration, health, etc.)
     if (isExempt(url)) return;
 
-    // No passkeys registered — open access (bootstrap/onboarding mode)
-    // The admin account is resolved so /api/auth/me works during onboarding
-    if (!hasPasskeys()) {
-      const adminId = accountRepo.getAdminAccountId();
-      if (adminId) {
-        request.accountId = adminId;
-      }
-      return;
-    }
+    // No passkeys registered — open access
+    if (!hasPasskeys()) return;
 
     // System is ready — require session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
