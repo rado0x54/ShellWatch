@@ -5,7 +5,9 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type { Config } from "../config/index.js";
+import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
+import { webauthnCredentials } from "../db/schema.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
@@ -134,12 +136,32 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get(`${base}/api/keys`, async (request) => {
     const allKeys = await keyRepo.findAll();
-    // File-based keys: admin only. Webauthn keys are accessed via /api/webauthn/credentials.
     const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
-    const fileKeys = allKeys.filter((k) => k.type === "file");
+
+    // File-based keys: admin only
+    const fileKeys = isAdmin ? allKeys.filter((k) => k.type === "file") : [];
+
+    // Webauthn SSH keys: scoped to account (look up which credentials belong to this account)
+    let webauthnKeys: typeof allKeys = [];
+    if (request.accountId) {
+      const accountCredIds = new Set(
+        db
+          ? db
+              .select({ id: webauthnCredentials.id })
+              .from(webauthnCredentials)
+              .where(eq(webauthnCredentials.accountId, request.accountId))
+              .all()
+              .map((c) => c.id)
+          : [],
+      );
+      webauthnKeys = allKeys.filter((k) => k.type === "webauthn" && accountCredIds.has(k.id));
+    }
+
+    const visibleKeys = [...webauthnKeys, ...fileKeys];
     return {
-      keys: (isAdmin ? fileKeys : []).map((k) => {
-        const available = keyAvailability?.isAvailable(k.fingerprint) ?? true;
+      keys: visibleKeys.map((k) => {
+        const available =
+          k.type === "webauthn" || (keyAvailability?.isAvailable(k.fingerprint) ?? true);
         return {
           id: k.id,
           label: k.label,
