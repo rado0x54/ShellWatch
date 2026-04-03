@@ -29,84 +29,62 @@ export function registerAuthGate({ app, basePath, secret, accountRepo }: AuthGat
       .send({ status: "logged_out" });
   });
 
-  // Paths accessible without any authentication
-  const alwaysExempt = ["/health", "/api/webauthn/status", "/api/auth/logout", "/config.js"];
-
-  // Additional paths accessible during onboarding (system not yet ready)
-  const onboardingExempt = [
-    "/onboarding",
-    "/api/webauthn/register/options",
-    "/api/webauthn/register/verify",
-  ];
-
-  // Paths accessible when system is ready but user is not logged in
-  const loginExempt = [
-    "/login",
+  // Paths that never require a session
+  const exemptSuffixes = [
+    "/health",
+    "/api/auth/logout",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
+    "/api/webauthn/register/options",
+    "/api/webauthn/register/verify",
+    "/login",
     "/mcp",
+    "/config.js",
   ];
 
-  function isExempt(url: string, suffixes: string[]): boolean {
-    for (const suffix of suffixes) {
+  function isExempt(url: string): boolean {
+    for (const suffix of exemptSuffixes) {
       if (url === `${basePath}${suffix}`) return true;
     }
     return false;
   }
 
-  // Cache init status to avoid DB queries on every request
-  let cachedInitStatus: ReturnType<AccountRepository["getInitStatus"]> | null = null;
+  // Cache passkey count to avoid DB queries on every request
+  let cachedHasPasskeys: boolean | null = null;
   let cacheTime = 0;
   const CACHE_TTL_MS = 5000;
 
-  function getInitStatus() {
+  function hasPasskeys(): boolean {
     const now = Date.now();
-    if (cachedInitStatus !== null && now - cacheTime < CACHE_TTL_MS) return cachedInitStatus;
-    cachedInitStatus = accountRepo.getInitStatus();
+    if (cachedHasPasskeys !== null && now - cacheTime < CACHE_TTL_MS) return cachedHasPasskeys;
+    cachedHasPasskeys = accountRepo.hasPasskeys();
     cacheTime = now;
-    return cachedInitStatus;
+    return cachedHasPasskeys;
   }
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     const url = request.url.split("?")[0];
 
-    // Always-exempt paths
-    if (isExempt(url, alwaysExempt)) return;
-
     // Static assets
     if (url.startsWith(`${basePath}/_app/`)) return;
 
-    // Only apply auth to routes under basePath (root redirect etc. are not our concern)
+    // Only apply auth to routes under basePath
     if (basePath && !url.startsWith(`${basePath}/`) && url !== basePath) return;
 
-    const initStatus = getInitStatus();
+    // Exempt paths (login, registration, health, etc.)
+    if (isExempt(url)) return;
 
-    // --- Onboarding mode: system not yet ready ---
-    if (initStatus.status !== "ready") {
-      // Resolve admin account if it exists (for onboarding passkey registration)
-      if (initStatus.status === "passkey_required") {
-        request.accountId = initStatus.accountId;
-      }
-
-      // Allow onboarding + login pages
-      if (isExempt(url, onboardingExempt) || isExempt(url, loginExempt)) return;
-
-      // Block everything else — redirect to onboarding
-      const isApi = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
-      if (isApi) {
-        reply.status(503).send({ error: "System setup required", initStatus: initStatus.status });
-      } else {
-        reply.redirect(`${basePath}/onboarding`);
+    // No passkeys registered — open access (bootstrap/onboarding mode)
+    // The admin account is resolved so /api/auth/me works during onboarding
+    if (!hasPasskeys()) {
+      const adminId = accountRepo.getAdminAccountId();
+      if (adminId) {
+        request.accountId = adminId;
       }
       return;
     }
 
-    // --- System is ready: normal auth flow ---
-
-    // Login-related paths are exempt
-    if (isExempt(url, loginExempt)) return;
-
-    // Verify session cookie
+    // System is ready — require session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);

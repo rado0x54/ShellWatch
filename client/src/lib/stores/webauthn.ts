@@ -98,6 +98,13 @@ export async function finishPasskeyRegistration(
   await fetchCredentials();
 }
 
+export class NoPasskeysError extends Error {
+  constructor() {
+    super("No passkeys registered");
+    this.name = "NoPasskeysError";
+  }
+}
+
 export async function login(): Promise<void> {
   const base = get(basePath);
 
@@ -106,7 +113,11 @@ export async function login(): Promise<void> {
     const err = await optionsRes.json();
     throw new Error(err.error || "Failed to get login options");
   }
-  const { challengeId, ...options } = await optionsRes.json();
+  const data = await optionsRes.json();
+  if (data.error === "no_passkeys") {
+    throw new NoPasskeysError();
+  }
+  const { challengeId, ...options } = data;
 
   const credential = await startAuthentication({ optionsJSON: options });
 
@@ -127,24 +138,16 @@ export async function logout(): Promise<void> {
   window.location.href = `${base}/login`;
 }
 
-export type InitStatus = "setup_required" | "passkey_required" | "ready";
-
-export async function checkAuth(): Promise<{ initStatus: InitStatus; authenticated: boolean }> {
+/**
+ * Check auth state by probing a protected endpoint.
+ * Returns whether the user has a valid session.
+ */
+export async function checkAuth(): Promise<{ authenticated: boolean }> {
   const base = get(basePath);
   try {
-    const res = await fetch(`${base}/api/webauthn/status`);
-    if (!res.ok) return { initStatus: "setup_required", authenticated: false };
-    const data = await res.json();
-    const initStatus: InitStatus = data.status;
-
-    if (initStatus !== "ready") {
-      return { initStatus, authenticated: false };
-    }
-
-    // System is ready — check if we have a valid session
-    const authCheck = await fetch(`${base}/api/sessions`);
-    return { initStatus, authenticated: authCheck.status !== 401 };
+    const res = await fetch(`${base}/api/sessions`);
+    return { authenticated: res.status !== 401 };
   } catch {
-    return { initStatus: "setup_required", authenticated: false };
+    return { authenticated: false };
   }
 }

@@ -29,12 +29,7 @@
     const isLogin = currentPath.endsWith("/login");
 
     if (!isLogin) {
-      const { initStatus, authenticated } = await checkAuth();
-      if (initStatus !== "ready") {
-        await goto(resolve("/onboarding"));
-        ready = true;
-        return;
-      }
+      const { authenticated } = await checkAuth();
       if (!authenticated) {
         await goto(resolve("/login"));
         ready = true;

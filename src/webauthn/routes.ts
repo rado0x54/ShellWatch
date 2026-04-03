@@ -256,9 +256,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     },
   );
 
-  // --- Init / Auth Status ---
-  app.get(`${basePath}/api/webauthn/status`, async () => accountRepo.getInitStatus());
-
   // --- Login (Assertion): Generate Options ---
   app.post(`${basePath}/api/webauthn/login/options`, async (request) => {
     const { rpId } = getOriginAndRpId(request, proxy);
@@ -269,7 +266,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       .all();
 
     if (creds.length === 0) {
-      return { error: "No passkeys registered" };
+      return { error: "no_passkeys" };
     }
 
     const options = await generateAuthenticationOptions({
