@@ -11,6 +11,7 @@ export interface SshKeyData {
   available: boolean;
   authorizedKeysEntry: string | null;
   createdAt: string;
+  lastUsedAt: string | null;
 }
 
 export interface ApiKeyData {
