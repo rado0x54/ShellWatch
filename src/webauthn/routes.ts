@@ -150,8 +150,8 @@ export function registerWebAuthnRoutes(
 
         // Resolve account: use authenticated session, or create admin on bootstrap
         let accountId: string | null = null;
-        if ((request as { accountId?: string }).accountId) {
-          accountId = (request as { accountId?: string }).accountId!;
+        if (request.accountId) {
+          accountId = request.accountId;
         } else if (accountRepo) {
           const accountCount = accountRepo.count();
           if (accountCount === 0) {

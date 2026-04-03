@@ -49,6 +49,9 @@ export async function buildApp(
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
 
+  // Decorate request with accountId (set by auth gate / API key auth)
+  app.decorateRequest("accountId", null);
+
   // Auth gate: require passkey login when passkeys exist
   registerAuthGate(app, db, base, cookieSecret, accountRepo);
 
@@ -69,7 +72,7 @@ export async function buildApp(
 
   // --- Auth: current account ---
   app.get(`${base}/api/auth/me`, async (request, reply) => {
-    const accountId = (request as { accountId?: string }).accountId;
+    const accountId = request.accountId;
     if (!accountId || !accountRepo) {
       reply.status(401);
       return { error: "Not authenticated" };

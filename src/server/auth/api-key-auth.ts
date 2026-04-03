@@ -33,7 +33,7 @@ export function registerApiKeyAuth(
 
     // Decorate request with account ID
     if (key.accountId) {
-      (request as { accountId?: string }).accountId = key.accountId;
+      request.accountId = key.accountId;
       if (accountRepo) {
         accountRepo.touchLastUsed(key.accountId);
       }

@@ -64,7 +64,7 @@ export function registerAuthGate(
     if (getPasskeyCount() === 0) {
       const admin = dbRef.select({ accountId: adminAccount.accountId }).from(adminAccount).get();
       if (admin) {
-        (request as { accountId?: string }).accountId = admin.accountId;
+        request.accountId = admin.accountId;
       }
       return;
     }
@@ -84,7 +84,7 @@ export function registerAuthGate(
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);
       if (session) {
-        (request as { accountId?: string }).accountId = session.sub;
+        request.accountId = session.sub;
         if (accountRepo && session.sub) {
           accountRepo.touchLastUsed(session.sub);
         }
