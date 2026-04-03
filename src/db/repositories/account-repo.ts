@@ -22,7 +22,10 @@ export interface AccountRepository {
     id: string,
     data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
   ): Promise<void>;
+  /** Mark account as active. Writes are batched — call flushLastUsed() to persist. */
   touchLastUsed(id: string): void;
+  /** Flush pending lastUsedAt updates to DB. Called periodically, not per-request. */
+  flushLastUsed(): void;
   count(): number;
   getAdminAccountId(): string | null;
   setAdmin(accountId: string): void;
@@ -51,6 +54,7 @@ export class StubAccountRepository implements AccountRepository {
   }
   async update(): Promise<void> {}
   touchLastUsed(): void {}
+  flushLastUsed(): void {}
   count(): number {
     return 0;
   }
@@ -63,8 +67,17 @@ export class StubAccountRepository implements AccountRepository {
   }
 }
 
+const FLUSH_INTERVAL_MS = 60_000; // flush every 60 seconds
+
 export class DrizzleAccountRepository implements AccountRepository {
-  constructor(private db: ShellWatchDB) {}
+  private dirtyLastUsed = new Map<string, string>();
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private db: ShellWatchDB) {
+    this.flushTimer = setInterval(() => this.flushLastUsed(), FLUSH_INTERVAL_MS);
+    // Don't keep the process alive just for this timer
+    if (this.flushTimer.unref) this.flushTimer.unref();
+  }
 
   async findById(id: string): Promise<AccountInfo | null> {
     const row = this.db.select().from(accounts).where(eq(accounts.id, id)).get();
@@ -109,11 +122,16 @@ export class DrizzleAccountRepository implements AccountRepository {
   }
 
   touchLastUsed(id: string): void {
-    this.db
-      .update(accounts)
-      .set({ lastUsedAt: new Date().toISOString() })
-      .where(eq(accounts.id, id))
-      .run();
+    this.dirtyLastUsed.set(id, new Date().toISOString());
+  }
+
+  flushLastUsed(): void {
+    if (this.dirtyLastUsed.size === 0) return;
+    const entries = [...this.dirtyLastUsed.entries()];
+    this.dirtyLastUsed.clear();
+    for (const [id, timestamp] of entries) {
+      this.db.update(accounts).set({ lastUsedAt: timestamp }).where(eq(accounts.id, id)).run();
+    }
   }
 
   count(): number {

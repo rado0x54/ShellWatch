@@ -116,6 +116,7 @@ try {
   const shutdown = async () => {
     keyWatcher.stop();
     terminalManager.destroy();
+    accountRepo.flushLastUsed();
     await app.close();
     closeDb();
     process.exit(0);
