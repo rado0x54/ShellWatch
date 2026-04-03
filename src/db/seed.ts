@@ -118,7 +118,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   const endpointCount = db.select({ total: count() }).from(endpoints).get();
   if (!endpointCount || endpointCount.total === 0) {
     const now = new Date().toISOString();
-    for (const server of config.seedServers) {
+    for (const server of config.seedAdminServers) {
       // Only set keyId if the referenced key already exists in the DB
       // (file-based keys are discovered at runtime and linked later)
       let keyId: string | null = null;
@@ -149,8 +149,8 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   }
 
   // Seed API key if configured and not already present
-  if (config.seedApiKey) {
-    const hash = createHash("sha256").update(config.seedApiKey).digest("hex");
+  if (config.seedAdminApiKey) {
+    const hash = createHash("sha256").update(config.seedAdminApiKey).digest("hex");
     const existing = db
       .select({ id: apiKeys.id })
       .from(apiKeys)
@@ -163,7 +163,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           accountId: adminId,
           label: "Seeded from config",
           keyHash: hash,
-          keyPrefix: config.seedApiKey.slice(0, 10),
+          keyPrefix: config.seedAdminApiKey.slice(0, 10),
           scopes: JSON.stringify(["mcp"]),
           endpoints: null,
           enabled: true,
@@ -171,7 +171,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
         })
         .run();
       result.seededApiKey = true;
-      result.apiKeyPrefix = config.seedApiKey.slice(0, 10);
+      result.apiKeyPrefix = config.seedAdminApiKey.slice(0, 10);
     }
   }
 
