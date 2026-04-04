@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -73,20 +72,13 @@ func Run(cfg ProxyConfig) error {
 		os.Remove(cfg.SocketPath)
 	}()
 
-	// WebSocket connection cache (reuse across sequential agent operations)
-	cache := &wsCache{
-		url:    wsURL,
-		apiKey: cfg.ApiKey,
-	}
-	defer cache.Close()
-
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			// Listener closed (shutdown)
 			return nil
 		}
-		go handleConnection(conn, cache)
+		go handleConnection(conn, wsURL, cfg.ApiKey)
 	}
 }
 
@@ -101,10 +93,17 @@ const (
 var agentFailureResponse = []byte{0, 0, 0, 1, sshAgentFailure}
 
 // handleConnection processes one SSH agent client connection.
-// The OpenSSH client opens a new connection per agent operation,
-// so each connection is typically a single request-response pair.
-func handleConnection(conn net.Conn, cache *wsCache) {
+// Each connection gets its own WebSocket to the server, ensuring
+// clean protocol state isolation between concurrent SSH clients.
+func handleConnection(conn net.Conn, wsURL, apiKey string) {
 	defer conn.Close()
+
+	var ws *websocket.Conn
+	defer func() {
+		if ws != nil {
+			ws.Close()
+		}
+	}()
 
 	for {
 		// Read one complete SSH agent protocol frame:
@@ -131,17 +130,18 @@ func handleConnection(conn net.Conn, cache *wsCache) {
 			continue
 		}
 
-		// Get or create a WebSocket connection
-		ws, err := cache.Get()
-		if err != nil {
-			log.Printf("WebSocket connect error: %v", err)
-			return
+		// Lazily dial the WebSocket on first real agent message
+		if ws == nil {
+			ws, err = dialWS(wsURL, apiKey)
+			if err != nil {
+				log.Printf("WebSocket connect error: %v", err)
+				return
+			}
 		}
 
 		// Send frame as binary WebSocket message
 		if err := ws.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 			log.Printf("WebSocket write error: %v", err)
-			cache.Invalidate()
 			return
 		}
 
@@ -149,12 +149,10 @@ func handleConnection(conn net.Conn, cache *wsCache) {
 		msgType, response, err := ws.ReadMessage()
 		if err != nil {
 			log.Printf("WebSocket read error: %v", err)
-			cache.Invalidate()
 			return
 		}
 		if msgType != websocket.BinaryMessage {
 			log.Printf("Unexpected WebSocket message type: %d", msgType)
-			cache.Invalidate()
 			return
 		}
 
@@ -164,6 +162,18 @@ func handleConnection(conn net.Conn, cache *wsCache) {
 			return
 		}
 	}
+}
+
+func dialWS(wsURL, apiKey string) (*websocket.Conn, error) {
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+apiKey)
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+
+	conn, _, err := dialer.Dial(wsURL, header)
+	return conn, err
 }
 
 // readFrame reads one complete SSH agent protocol frame from the connection.
@@ -187,74 +197,6 @@ func readFrame(r io.Reader) ([]byte, error) {
 	}
 
 	return frame, nil
-}
-
-// wsCache provides a reusable WebSocket connection with automatic
-// refresh. Connections are kept alive for 30 seconds to amortize
-// TLS handshake cost across sequential getIdentities → sign calls.
-type wsCache struct {
-	url    string
-	apiKey string
-	mu     sync.Mutex
-	conn   *websocket.Conn
-	timer  *time.Timer
-}
-
-const wsCacheTTL = 30 * time.Second
-
-func (c *wsCache) Get() (*websocket.Conn, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.conn != nil {
-		// Reset TTL
-		if c.timer != nil {
-			c.timer.Reset(wsCacheTTL)
-		}
-		return c.conn, nil
-	}
-
-	// Dial new connection
-	header := http.Header{}
-	header.Set("Authorization", "Bearer "+c.apiKey)
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-	}
-
-	conn, _, err := dialer.Dial(c.url, header)
-	if err != nil {
-		return nil, err
-	}
-
-	c.conn = conn
-	c.timer = time.AfterFunc(wsCacheTTL, func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.conn != nil {
-			c.conn.Close()
-			c.conn = nil
-		}
-	})
-
-	return conn, nil
-}
-
-func (c *wsCache) Invalidate() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
-	if c.timer != nil {
-		c.timer.Stop()
-		c.timer = nil
-	}
-}
-
-func (c *wsCache) Close() {
-	c.Invalidate()
 }
 
 // cleanStaleSocket removes a socket file if it exists but no one is listening.

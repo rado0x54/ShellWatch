@@ -109,10 +109,20 @@ describe("agent-proxy WebSocket endpoint", () => {
       label: "Agent Test Key",
       keyHash: hashApiKey(testApiKey),
       keyPrefix: testApiKey.slice(0, 10),
+      scopes: ["agent"],
+    });
+
+    // Key with mcp scope only (should NOT grant agent access)
+    await apiKeyRepo.create({
+      id: randomUUID(),
+      accountId: testAccountId,
+      label: "MCP Only Key",
+      keyHash: hashApiKey("sw_mcp_only_key_00000000000000000"),
+      keyPrefix: "sw_mcp_on",
       scopes: ["mcp"],
     });
 
-    // Also create a key with no valid scope
+    // Key with no relevant scope
     await apiKeyRepo.create({
       id: randomUUID(),
       accountId: testAccountId,
@@ -175,6 +185,16 @@ describe("agent-proxy WebSocket endpoint", () => {
   it("rejects connections with insufficient scope", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`, {
       headers: { Authorization: "Bearer sw_no_scope_key_0000000000000000" },
+    });
+    const code = await new Promise<number>((resolve) => {
+      ws.on("close", (code) => resolve(code));
+    });
+    expect(code).toBe(4003);
+  });
+
+  it("rejects mcp-only keys (agent scope required)", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`, {
+      headers: { Authorization: "Bearer sw_mcp_only_key_00000000000000000" },
     });
     const code = await new Promise<number>((resolve) => {
       ws.on("close", (code) => resolve(code));
