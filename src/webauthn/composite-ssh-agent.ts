@@ -11,7 +11,7 @@
  */
 
 import ssh2 from "ssh2";
-import { WebAuthnSshAgent, type WebAuthnSshAgentParams } from "./ssh-agent.js";
+import { toPublicKeyBlob, WebAuthnSshAgent, type WebAuthnSshAgentParams } from "./ssh-agent.js";
 
 const { utils } = ssh2;
 
@@ -77,7 +77,8 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
     options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    const fileKey = this.fileKeys.find((fk) => fk.publicKeyBlob.equals(pubKey));
+    const pubKeyBlob = toPublicKeyBlob(pubKey);
+    const fileKey = this.fileKeys.find((fk) => fk.publicKeyBlob.equals(pubKeyBlob));
     if (fileKey) {
       this.signWithFileKey(fileKey, data, options as { hash?: string }, cb);
       return;
