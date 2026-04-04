@@ -29,24 +29,6 @@ function computeFingerprint(coseKey: Buffer): string {
   return `SHA256:${createHash("sha256").update(coseKey).digest("base64url")}`;
 }
 
-interface ProxyHeaderConfig {
-  hostHeader?: string;
-  protoHeader?: string;
-}
-
-function getOriginAndRpId(
-  request: { headers: Record<string, string | string[] | undefined>; protocol: string },
-  proxy: ProxyHeaderConfig,
-) {
-  const forwardedHost = proxy.hostHeader ? request.headers[proxy.hostHeader] : undefined;
-  const forwardedProto = proxy.protoHeader ? request.headers[proxy.protoHeader] : undefined;
-  const host = String(forwardedHost ?? request.headers.host ?? "localhost");
-  const protocol = String(forwardedProto ?? request.protocol);
-  const rpId = host.split(":")[0];
-  const origin = `${protocol}://${host}`;
-  return { rpId, origin };
-}
-
 export interface SessionConfig {
   secret: string;
   ttlSeconds: number;
@@ -56,29 +38,19 @@ export interface WebAuthnRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
   accountRepo: AccountRepository;
+  rpId: string;
+  trustedOrigins: string[];
   basePath?: string;
-  proxy?: ProxyHeaderConfig;
   sessionConfig?: SessionConfig;
-  trustedOrigins?: string[];
 }
 
 export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
-  const {
-    app,
-    db,
-    accountRepo,
-    basePath = "",
-    proxy = {},
-    sessionConfig,
-    trustedOrigins = [],
-  } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, basePath = "", sessionConfig } = params;
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string; name?: string } }>(
     `${basePath}/api/webauthn/register/options`,
     async (request) => {
       const { label, name } = request.body;
-      const { rpId } = getOriginAndRpId(request, proxy);
-
       // Get existing credentials to exclude (prevent re-registration)
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
@@ -125,7 +97,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     `${basePath}/api/webauthn/register/verify`,
     async (request, reply) => {
       const { challengeId, label, credential } = request.body;
-      const { rpId, origin } = getOriginAndRpId(request, proxy);
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
@@ -139,7 +110,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         const verification = await verifyRegistrationResponse({
           response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: [origin, ...trustedOrigins],
+          expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
         });
 
@@ -308,9 +279,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
   );
 
   // --- Login (Assertion): Generate Options ---
-  app.post(`${basePath}/api/webauthn/login/options`, async (request) => {
-    const { rpId } = getOriginAndRpId(request, proxy);
-
+  app.post(`${basePath}/api/webauthn/login/options`, async () => {
     const creds = db
       .select({ credentialId: webauthnCredentials.credentialId })
       .from(webauthnCredentials)
@@ -346,9 +315,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       }
 
       const { challengeId, credential } = request.body;
-      const { rpId, origin } = getOriginAndRpId(request, proxy);
-
-      const expectedOrigins = [origin, ...trustedOrigins];
 
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.expires < Date.now()) {
@@ -395,7 +361,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         const verification = await verifyAuthenticationResponse({
           response: credential as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
           expectedChallenge: pending.challenge,
-          expectedOrigin: expectedOrigins,
+          expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
           credential: {
             id: storedCred.credentialId,
@@ -453,7 +419,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       return { error: "name, challengeId, and credential are required" };
     }
 
-    const { rpId, origin } = getOriginAndRpId(request, proxy);
     const pending = pendingChallenges.get(challengeId);
     if (!pending || pending.expires < Date.now()) {
       pendingChallenges.delete(challengeId);
@@ -466,7 +431,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
       const verification = await verifyRegistrationResponse({
         response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
         expectedChallenge: pending.challenge,
-        expectedOrigin: [origin, ...trustedOrigins],
+        expectedOrigin: trustedOrigins,
         expectedRPID: rpId,
       });
 

@@ -11,8 +11,6 @@
 # server:
 #   port: 3000                                        # HTTP port (default: 3000)
 #   basePath: /shellwatch                             # Serve under a subpath (default: none)
-#   trustedForwardedHostHeader: x-forwarded-host      # Trust proxy host header (default: disabled)
-#   trustedForwardedProtoHeader: x-forwarded-proto    # Trust proxy protocol header (default: disabled)
 
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
@@ -32,6 +30,17 @@ keyDirectory: ./keys
 
 # Security settings
 security:
+  # WebAuthn Relying Party ID — must match the domain passkeys are registered on.
+  # Use "localhost" for local development, or your domain for production.
+  rpId: localhost
+
+  # Allowed origins for WebAuthn registration and authentication.
+  # Only origins listed here will be accepted — no request-derived origins.
+  # Include protocol, host, and port (if non-standard).
+  trustedWebauthnOrigins:
+    - http://localhost:3000
+    - http://localhost:3001
+
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"

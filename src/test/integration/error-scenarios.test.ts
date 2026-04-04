@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
-import { securityDefaults, serverDefaults } from "../../config/index.js";
+import { securityFieldDefaults, serverDefaults } from "../../config/index.js";
 import {
   connectTestWsClient,
   createTestLog,
@@ -123,7 +123,9 @@ describe("Error Scenarios", () => {
       ]);
       // Empty key provider — no files available
       const keyProvider = new InMemoryKeyProvider([]);
-      const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider);
+      const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+        rpId: "localhost",
+      });
       const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
 
       const testSecret = "test-secret";
@@ -137,7 +139,9 @@ describe("Error Scenarios", () => {
         ],
         server: serverDefaults,
         security: {
-          ...securityDefaults,
+          ...securityFieldDefaults,
+          rpId: "localhost",
+          trustedWebauthnOrigins: ["http://localhost"],
           cookieSecret: testSecret,
           allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
         },

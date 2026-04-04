@@ -4,6 +4,6 @@ export {
   ConfigSchema,
   type SeedEndpoint,
   SeedEndpointSchema,
-  securityDefaults,
+  securityFieldDefaults,
   serverDefaults,
 } from "./schema.js";

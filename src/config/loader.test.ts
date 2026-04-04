@@ -21,6 +21,10 @@ describe("loadConfig", () => {
       dir,
       `
 keyDirectory: ./keys
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
 seedAdminEndpoints:
   - label: Test
     address: user@localhost:22
@@ -43,6 +47,10 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
 seedAdminEndpoints:
   - label: Test
     address: example.com
@@ -59,6 +67,10 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
 seedAdminEndpoints:
   - label: Test
     address: localhost
@@ -71,7 +83,10 @@ seedAdminEndpoints:
 
   it("defaults seedAdminEndpoints to empty array", () => {
     const dir = createTempDir();
-    const configPath = writeConfig(dir, "keyDirectory: ./keys\n");
+    const configPath = writeConfig(
+      dir,
+      "keyDirectory: ./keys\nsecurity:\n  rpId: localhost\n  trustedWebauthnOrigins:\n    - http://localhost\n",
+    );
 
     const config = loadConfig(configPath);
     expect(config.seedAdminEndpoints).toEqual([]);
@@ -93,6 +108,10 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
 seedAdminEndpoints:
   - label: test
 `,
@@ -105,6 +124,10 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
 seedAdminEndpoints:
   - label: Server 1
     address: host1.example.com
