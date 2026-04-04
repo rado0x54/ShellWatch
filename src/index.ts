@@ -50,69 +50,74 @@ try {
   // Late-binding logger — set after buildApp(), but only used at session time
   const agentLog: { current?: { error(msg: string): void } } = {};
 
+  /** Register an agent with the signing bridge and return a cleanup function */
+  function registerAgent(prefix: string, agent: WebAuthnSshAgent) {
+    const agentId = `${prefix}_${Date.now()}`;
+    signingBridge.registerAgent(agentId, agent);
+    return {
+      agent,
+      cleanup: () => {
+        signingBridge.unregisterAgent(agentId);
+        agent.destroy();
+      },
+    };
+  }
+
   const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
     findCredential: (id) => findCredentialById(db, id),
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),
+
+    // Single assigned passkey — direct WebAuthn sign, no modal
     createWebAuthnAgent: (credential, rpId) => {
-      if (!signingBridge.hasClients) {
-        return null;
-      }
-      const agent = new WebAuthnSshAgent(
-        credential,
+      if (!signingBridge.hasClients) return null;
+      const agent = new WebAuthnSshAgent({
+        passkeys: [buildPasskeyEntry(credential)!],
         rpId,
-        (request) => {
-          signingBridge.handleSignRequest(request);
-        },
-        agentLog.current,
-      );
-      const agentId = `agent_${Date.now()}`;
-      signingBridge.registerAgent(agentId, agent);
-      return {
-        agent,
-        cleanup: () => {
-          signingBridge.unregisterAgent(agentId);
-          agent.destroy();
-        },
-      };
+        onSignRequest: (request) => signingBridge.handleSignRequest(request),
+        logger: agentLog.current,
+      });
+      return registerAgent("agent", agent);
     },
-    createCompositeAgent: ({ endpoint, fileKeys, passkeys, rpId }) => {
-      // Composite agent needs a browser if there are passkeys to try
+
+    // Auto-negotiate — admin gets CompositeSshAgent, non-admin gets WebAuthnSshAgent
+    createAutoNegotiateAgent: ({ endpoint, fileKeys, passkeys, isAdmin, rpId }) => {
+      // Need a browser if there are passkeys to try
       if (passkeys.length > 0 && !signingBridge.hasClients) {
-        // If we have file keys, we can still try those without a browser
         if (fileKeys.length === 0) return null;
       }
 
-      const fileKeyEntries = fileKeys
-        .map((fk) => buildFileKeyEntry(fk.privateKey))
-        .filter((e) => e !== null);
       const passkeyEntries = signingBridge.hasClients
         ? passkeys.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null)
         : [];
 
-      if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
-
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
-      const agent = new CompositeSshAgent({
-        fileKeys: fileKeyEntries,
+      const baseParams = {
         passkeys: passkeyEntries,
         rpId,
         endpointLabel: endpoint.label,
         endpointAddress: address,
-        onSignRequest: (request) => {
-          signingBridge.handleSignRequest(request);
-        },
+        onSignRequest: (request: import("./webauthn/ssh-agent.js").SignRequest) =>
+          signingBridge.handleSignRequest(request),
         logger: agentLog.current,
-      });
-      const agentId = `composite_${Date.now()}`;
-      signingBridge.registerAgent(agentId, agent);
-      return {
-        agent,
-        cleanup: () => {
-          signingBridge.unregisterAgent(agentId);
-          agent.destroy();
-        },
       };
+
+      if (isAdmin) {
+        // Admin: CompositeSshAgent with file keys + passkeys
+        const fileKeyEntries = fileKeys
+          .map((fk) => buildFileKeyEntry(fk.privateKey))
+          .filter((e) => e !== null);
+
+        if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
+
+        const agent = new CompositeSshAgent({ ...baseParams, fileKeys: fileKeyEntries });
+        return registerAgent("composite", agent);
+      }
+
+      // Non-admin: WebAuthnSshAgent with passkeys only
+      if (passkeyEntries.length === 0) return null;
+      const agent = new WebAuthnSshAgent(baseParams);
+      return registerAgent("agent", agent);
     },
   });
 

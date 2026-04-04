@@ -1,24 +1,19 @@
 /**
- * Composite SSH agent that offers multiple key sources for auto-negotiation.
+ * Composite SSH agent for admin accounts — extends WebAuthnSshAgent with file-based keys.
  *
- * Combines file-based keys (admin only, auto-sign) and passkeys (browser signing).
- * ssh2 probes each key sequentially via publickey probe (RFC 4252 §7).
- * Only keys accepted by the server trigger sign().
+ * Inheritance: CompositeSshAgent → WebAuthnSshAgent → BaseAgent
  *
- * File keys: sign automatically using ssh2's parseKey(pem).sign()
- * Passkeys: delegate to browser via onSignRequest callback (with signing modal)
+ * File keys are offered first (auto-sign, no user interaction), then passkeys
+ * (browser signing with confirmation modal). ssh2 probes keys sequentially
+ * via publickey probe (RFC 4252 §7) and only calls sign() for accepted keys.
+ *
+ * Non-admin accounts use WebAuthnSshAgent directly (passkeys only).
  */
 
 import ssh2 from "ssh2";
-import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import { buildSshSignatureBlob, parseWebAuthnSignature } from "./signature-format.js";
-import { buildPublicKeyBlob } from "./ssh-key-format.js";
-import type { AgentLogger, SignRequest, SignResponse } from "./ssh-agent.js";
+import { WebAuthnSshAgent, type WebAuthnSshAgentParams } from "./ssh-agent.js";
 
 const { utils } = ssh2;
-
-// BaseAgent is exported by ssh2 but not in the type definitions
-const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Record<string, unknown>;
 
 export interface FileKeyEntry {
   /** Raw public key blob (from parseKey().getPublicSSH()) */
@@ -26,24 +21,6 @@ export interface FileKeyEntry {
   /** PEM-encoded private key content */
   privateKey: string;
 }
-
-export interface PasskeyEntry {
-  /** Raw public key blob (from buildPublicKeyBlob()) */
-  publicKeyBlob: Buffer;
-  /** WebAuthn credential info */
-  credential: WebAuthnCredentialInfo;
-}
-
-export interface CompositeSignRequest extends SignRequest {
-  /** Endpoint label for the signing modal */
-  endpointLabel: string;
-  /** Endpoint address (user@host:port) for the signing modal */
-  endpointAddress: string;
-  /** Passkey label for the signing modal */
-  passkeyLabel: string;
-}
-
-type CompositeSignRequestCallback = (request: CompositeSignRequest) => void;
 
 /**
  * Build a FileKeyEntry from a PEM private key string.
@@ -58,101 +35,56 @@ export function buildFileKeyEntry(privateKey: string): FileKeyEntry | null {
   };
 }
 
-/**
- * Build a PasskeyEntry from a WebAuthn credential.
- */
-export function buildPasskeyEntry(credential: WebAuthnCredentialInfo): PasskeyEntry | null {
-  if (!credential.publicKeyOpenSsh) return null;
-  return {
-    publicKeyBlob: buildPublicKeyBlob({ publicKey: credential.publicKeyOpenSsh }),
-    credential,
-  };
-}
-
-export interface CompositeAgentParams {
+export interface CompositeAgentParams extends WebAuthnSshAgentParams {
   fileKeys: FileKeyEntry[];
-  passkeys: PasskeyEntry[];
-  onSignRequest: CompositeSignRequestCallback;
-  rpId: string;
-  endpointLabel: string;
-  endpointAddress: string;
-  logger?: AgentLogger;
 }
 
 /**
- * A composite ssh2 agent that combines file keys and passkeys.
- * File keys are offered first (auto-sign), then passkeys (browser modal).
+ * Admin-only composite ssh2 agent that adds file-based key signing
+ * on top of WebAuthnSshAgent's passkey support.
+ *
+ * File keys are tried first (auto-sign), then passkeys via the inherited
+ * WebAuthn browser signing flow.
  */
-export class CompositeSshAgent extends BaseAgent {
+export class CompositeSshAgent extends WebAuthnSshAgent {
   private fileKeys: FileKeyEntry[];
-  private passkeys: PasskeyEntry[];
-  private onSignRequest: CompositeSignRequestCallback;
-  private rpId: string;
-  private endpointLabel: string;
-  private endpointAddress: string;
-  private log: AgentLogger;
-
-  private pendingSign: Map<
-    string,
-    { cb: (err: Error | null, signature?: Buffer) => void; timeout: ReturnType<typeof setTimeout> }
-  > = new Map();
 
   constructor(params: CompositeAgentParams) {
-    super();
+    super(params);
     this.fileKeys = params.fileKeys;
-    this.passkeys = params.passkeys;
-    this.onSignRequest = params.onSignRequest;
-    this.rpId = params.rpId;
-    this.endpointLabel = params.endpointLabel;
-    this.endpointAddress = params.endpointAddress;
-    this.log = params.logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
 
   /**
-   * Called by ssh2 to get available identities (public keys).
-   * File keys first (auto-sign), then passkeys.
+   * Returns file key blobs first, then passkey blobs from the parent.
    */
-  getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
-    try {
-      const keys: Buffer[] = [];
-      for (const fk of this.fileKeys) {
-        keys.push(fk.publicKeyBlob);
+  override getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
+    super.getIdentities((err, passkeyBlobs) => {
+      if (err) {
+        cb(err);
+        return;
       }
-      for (const pk of this.passkeys) {
-        keys.push(pk.publicKeyBlob);
-      }
-      cb(null, keys);
-    } catch (err) {
-      this.log.error(`[Composite Agent] getIdentities error: ${(err as Error).message}`);
-      cb(err as Error);
-    }
+      const fileKeyBlobs = this.fileKeys.map((fk) => fk.publicKeyBlob);
+      cb(null, [...fileKeyBlobs, ...(passkeyBlobs ?? [])]);
+    });
   }
 
   /**
-   * Called by ssh2 when it needs a signature for a key the server accepted.
-   * Dispatches to file key auto-sign or passkey browser signing.
+   * Tries file keys first (auto-sign), falls back to passkey signing via super.
    */
-  sign(
+  override sign(
     pubKey: Buffer,
     data: Buffer,
-    options: { hash?: string } | unknown,
+    options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    // Try file keys first — auto-sign with no user interaction
     const fileKey = this.fileKeys.find((fk) => fk.publicKeyBlob.equals(pubKey));
     if (fileKey) {
       this.signWithFileKey(fileKey, data, options as { hash?: string }, cb);
       return;
     }
 
-    // Try passkeys — requires browser interaction
-    const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKey));
-    if (passkey) {
-      this.signWithPasskey(passkey, data, cb);
-      return;
-    }
-
-    cb(new Error("No matching key found for signing"));
+    // Not a file key — delegate to WebAuthnSshAgent for passkey signing
+    super.sign(pubKey, data, options, cb);
   }
 
   private signWithFileKey(
@@ -177,75 +109,5 @@ export class CompositeSshAgent extends BaseAgent {
       this.log.error(`[Composite Agent] File key sign error: ${(err as Error).message}`);
       cb(err as Error);
     }
-  }
-
-  private signWithPasskey(
-    passkey: PasskeyEntry,
-    data: Buffer,
-    cb: (err: Error | null, signature?: Buffer) => void,
-  ): void {
-    const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    const timeout = setTimeout(() => {
-      this.log.error(`[Composite Agent] Passkey signing timed out for ${requestId}`);
-      this.pendingSign.delete(requestId);
-      cb(new Error("WebAuthn signing timed out — no response from browser"));
-    }, 60_000);
-
-    this.pendingSign.set(requestId, { cb, timeout });
-
-    this.onSignRequest({
-      requestId,
-      credentialId: passkey.credential.credentialId,
-      dataToSign: data,
-      rpId: this.rpId,
-      endpointLabel: this.endpointLabel,
-      endpointAddress: this.endpointAddress,
-      passkeyLabel: passkey.credential.label,
-    });
-  }
-
-  /**
-   * Called when the browser returns a WebAuthn assertion.
-   */
-  handleSignResponse(response: SignResponse): void {
-    const pending = this.pendingSign.get(response.requestId);
-    if (!pending) return;
-
-    this.pendingSign.delete(response.requestId);
-    clearTimeout(pending.timeout);
-
-    try {
-      const { r, s, flags, counter } = parseWebAuthnSignature(
-        response.authenticatorData,
-        response.signature,
-      );
-
-      const signatureBlob = buildSshSignatureBlob(r, s, flags, counter, response.clientDataJSON);
-      pending.cb(null, signatureBlob);
-    } catch (err) {
-      this.log.error(`[Composite Agent] Signature build error: ${(err as Error).message}`);
-      pending.cb(err as Error);
-    }
-  }
-
-  /**
-   * Called when the browser reports a signing error or the user skips.
-   */
-  handleSignError(requestId: string, error: string): void {
-    const pending = this.pendingSign.get(requestId);
-    if (!pending) return;
-
-    this.pendingSign.delete(requestId);
-    clearTimeout(pending.timeout);
-    pending.cb(new Error(`WebAuthn signing failed: ${error}`));
-  }
-
-  destroy(): void {
-    for (const [_id, { cb, timeout }] of this.pendingSign) {
-      clearTimeout(timeout);
-      cb(new Error("Agent destroyed"));
-    }
-    this.pendingSign.clear();
   }
 }

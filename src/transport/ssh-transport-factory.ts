@@ -1,37 +1,35 @@
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import type { SshKeyInfo, SshKeyRepository } from "../db/repositories/key-repo.js";
+import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
-import type { CompositeSshAgent } from "../webauthn/composite-ssh-agent.js";
 import type { PrivateKeyProvider } from "./key-directory-watcher.js";
 import { connectSsh, connectSshWithAgent } from "./ssh-transport.js";
 
-export interface WebAuthnAgentResult {
+export interface AgentResult {
   agent: WebAuthnSshAgent;
   /** Called when the transport closes — should unregister the agent and clean up */
   cleanup: () => void;
 }
 
-export interface CompositeAgentResult {
-  agent: CompositeSshAgent;
-  /** Called when the transport closes — should unregister the agent and clean up */
-  cleanup: () => void;
-}
-
 export interface WebAuthnAgentFactory {
-  /** Create a WebAuthn agent for the given credential — returns null if no browser is available */
-  (credential: WebAuthnCredentialInfo, rpId: string): WebAuthnAgentResult | null;
+  /** Create a WebAuthn agent for a single assigned passkey — returns null if no browser is available */
+  (credential: WebAuthnCredentialInfo, rpId: string): AgentResult | null;
 }
 
-export interface CompositeAgentFactory {
-  /** Create a composite agent for auto-negotiation — returns null if no browser is available */
+export interface AutoNegotiateAgentFactory {
+  /**
+   * Create an agent for auto-negotiation — returns null if no browser is available.
+   * For admin: returns CompositeSshAgent (file keys + passkeys).
+   * For non-admin: returns WebAuthnSshAgent (passkeys only).
+   */
   (params: {
     endpoint: EndpointInfo;
     fileKeys: Array<{ publicKey: string; privateKey: string }>;
     passkeys: WebAuthnCredentialInfo[];
+    isAdmin: boolean;
     rpId: string;
-  }): CompositeAgentResult | null;
+  }): AgentResult | null;
 }
 
 /** Look up a WebAuthn credential by ID */
@@ -45,7 +43,7 @@ export type AdminCheck = (accountId: string) => boolean;
 
 export interface SshTransportFactoryOptions {
   createWebAuthnAgent?: WebAuthnAgentFactory;
-  createCompositeAgent?: CompositeAgentFactory;
+  createAutoNegotiateAgent?: AutoNegotiateAgentFactory;
   findCredential?: CredentialLookup;
   findCredentialsForAccount?: CredentialsForAccountLookup;
   isAdmin?: AdminCheck;
@@ -56,7 +54,7 @@ export interface SshTransportFactoryOptions {
  *
  * Resolves endpoint config + key material and connects via ssh2,
  * using either file-based keys, a WebAuthn browser-signing agent,
- * or a composite agent that auto-negotiates across all available keys.
+ * or an auto-negotiation agent that tries all available keys.
  */
 export class SshTransportFactory {
   constructor(
@@ -86,8 +84,8 @@ export class SshTransportFactory {
       return this.connectWithFileKey(endpoint, keyInfo);
     }
 
-    // Mode 3: No key assigned — auto-negotiate with composite agent
-    return this.connectWithCompositeAgent(endpoint);
+    // Mode 3: No key assigned — auto-negotiate with all available keys
+    return this.connectWithAutoNegotiate(endpoint);
   }
 
   private async connectWithWebAuthn(endpoint: EndpointInfo): Promise<TerminalTransport> {
@@ -120,7 +118,7 @@ export class SshTransportFactory {
 
   private async connectWithFileKey(
     endpoint: EndpointInfo,
-    keyInfo: SshKeyInfo,
+    keyInfo: import("../db/repositories/key-repo.js").SshKeyInfo,
   ): Promise<TerminalTransport> {
     const privateKey = this.keyProvider.getPrivateKey(keyInfo.fingerprint);
     if (!privateKey) {
@@ -132,9 +130,11 @@ export class SshTransportFactory {
     return connectSsh(endpoint, privateKey);
   }
 
-  private async connectWithCompositeAgent(endpoint: EndpointInfo): Promise<TerminalTransport> {
-    if (!this.options.createCompositeAgent) {
-      throw new Error("No SSH key configured for endpoint and no composite agent factory provided");
+  private async connectWithAutoNegotiate(endpoint: EndpointInfo): Promise<TerminalTransport> {
+    if (!this.options.createAutoNegotiateAgent) {
+      throw new Error(
+        "No SSH key configured for endpoint and no auto-negotiate agent factory provided",
+      );
     }
 
     const isAdmin = this.options.isAdmin?.(endpoint.accountId) ?? false;
@@ -162,19 +162,16 @@ export class SshTransportFactory {
       );
     }
 
-    const result = this.options.createCompositeAgent({
+    const result = this.options.createAutoNegotiateAgent({
       endpoint,
       fileKeys,
       passkeys,
+      isAdmin,
       rpId: "localhost", // TODO: thread actual rpId from config
     });
 
     if (!result) {
-      // No browser available — check if file keys alone can work
       if (fileKeys.length > 0) {
-        // Try file keys only via composite agent without passkeys
-        // (shouldn't happen since composite agent factory checks browser for passkeys,
-        //  but file key signing doesn't need a browser)
         throw new Error(
           "WebAuthn authentication requires a browser session. " +
             "Open ShellWatch in a browser, or assign a file-based key to this endpoint.",
@@ -185,10 +182,7 @@ export class SshTransportFactory {
       );
     }
 
-    const transport = await connectSshWithAgent(
-      endpoint,
-      result.agent as unknown as WebAuthnSshAgent,
-    );
+    const transport = await connectSshWithAgent(endpoint, result.agent);
     transport.on("close", () => result.cleanup());
     return transport;
   }
