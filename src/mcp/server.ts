@@ -150,7 +150,11 @@ export async function createMcpServer(
           host: z.string().optional(),
           port: z.number().optional(),
           username: z.string().optional(),
-          keyId: z.string().optional(),
+          keyId: z.string().optional().describe("File-based SSH key ID"),
+          passkeyId: z
+            .string()
+            .optional()
+            .describe("WebAuthn passkey ID (mutually exclusive with keyId)"),
         })
         .optional()
         .describe("Endpoint data (for create and update)"),
@@ -166,13 +170,14 @@ export async function createMcpServer(
               };
             }
             const all = await endpointRepo.findAllForAccount(accountId);
-            const result = all.map(({ id, label, host, port, username, keyId }) => ({
+            const result = all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
               id,
               label,
               host,
               port,
               username,
               keyId,
+              passkeyId,
             }));
             return {
               content: [{ type: "text", text: JSON.stringify({ endpoints: result }, null, 2) }],
@@ -218,6 +223,7 @@ export async function createMcpServer(
               port: data.port ?? 22,
               username: data.username,
               keyId: data.keyId,
+              passkeyId: data.passkeyId,
             });
             return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
           }

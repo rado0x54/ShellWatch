@@ -86,7 +86,7 @@ export function getSshdConfigLine(): string {
  * This is what the agent returns from getIdentities().
  * ssh2's parseKey() will parse this binary blob into a WebAuthnSKECDSAKey.
  */
-export function buildPublicKeyBlob(keyInfo: { publicKey: string; fingerprint: string }): Buffer {
+export function buildPublicKeyBlob(keyInfo: { publicKey: string }): Buffer {
   // publicKey is in OpenSSH format: "webauthn-sk-ecdsa-sha2-nistp256@openssh.com AAAA..."
   // We need just the base64 blob part, decoded to binary
   const parts = keyInfo.publicKey.split(" ");

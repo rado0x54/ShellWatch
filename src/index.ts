@@ -9,6 +9,7 @@ import {
   runMigrations,
   seedFromConfig,
 } from "./db/index.js";
+import { findCredentialById } from "./db/repositories/credential-queries.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
 import { KeyDirectoryWatcher, SshTransportFactory } from "./transport/index.js";
@@ -37,32 +38,17 @@ try {
   // WebAuthn signing bridge — connects SSH agent to browser
   const signingBridge = new SigningBridge();
 
-  // Look up WebAuthn credential IDs for the agent
-  const { webauthnCredentials: webauthnTable } = await import("./db/schema.js");
-  const { eq } = await import("drizzle-orm");
-
   // Late-binding logger — set after buildApp(), but only used at session time
   const agentLog: { current?: { error(msg: string): void } } = {};
 
   const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
-    createWebAuthnAgent: (keys, rpId) => {
+    findCredential: (id) => findCredentialById(db, id),
+    createWebAuthnAgent: (credential, rpId) => {
       if (!signingBridge.hasClients) {
         return null;
       }
-      // Enrich keys with their actual WebAuthn credential IDs
-      const enrichedKeys = keys.map((k) => {
-        const row = db
-          .select({ credentialId: webauthnTable.credentialId })
-          .from(webauthnTable)
-          .where(eq(webauthnTable.id, k.id))
-          .get();
-        return {
-          ...k,
-          webauthnCredentialId: row?.credentialId ?? k.id,
-        };
-      });
       const agent = new WebAuthnSshAgent(
-        enrichedKeys,
+        credential,
         rpId,
         (request) => {
           signingBridge.handleSignRequest(request);

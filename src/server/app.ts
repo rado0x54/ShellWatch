@@ -207,30 +207,12 @@ export async function buildApp(params: BuildAppParams) {
     const allKeys = await keyRepo.findAll();
     const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
 
-    // File-based keys: admin only
+    // File-based keys only (passkeys are listed via /api/webauthn/credentials)
     const fileKeys = isAdmin ? allKeys.filter((k) => k.type === "file") : [];
 
-    // Webauthn SSH keys: scoped to account (look up which credentials belong to this account)
-    let webauthnKeys: typeof allKeys = [];
-    if (request.accountId) {
-      const accountCredIds = new Set(
-        db
-          ? db
-              .select({ id: webauthnCredentials.id })
-              .from(webauthnCredentials)
-              .where(eq(webauthnCredentials.accountId, request.accountId))
-              .all()
-              .map((c) => c.id)
-          : [],
-      );
-      webauthnKeys = allKeys.filter((k) => k.type === "webauthn" && accountCredIds.has(k.id));
-    }
-
-    const visibleKeys = [...webauthnKeys, ...fileKeys];
     return {
-      keys: visibleKeys.map((k) => {
-        const available =
-          k.type === "webauthn" || (keyAvailability?.isAvailable(k.fingerprint) ?? true);
+      keys: fileKeys.map((k) => {
+        const available = keyAvailability?.isAvailable(k.fingerprint) ?? true;
         return {
           id: k.id,
           label: k.label,
@@ -241,7 +223,7 @@ export async function buildApp(params: BuildAppParams) {
           available: k.enabled && available,
           authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
           createdAt: k.createdAt,
-          lastUsedAt: null, // TODO: track properly via #28
+          lastUsedAt: k.lastUsedAt,
         };
       }),
     };
@@ -256,13 +238,14 @@ export async function buildApp(params: BuildAppParams) {
     }
     const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
-      endpoints: all.map(({ id, label, host, port, username, keyId }) => ({
+      endpoints: all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
         id,
         label,
         host,
         port,
         username,
         keyId,
+        passkeyId,
       })),
     };
   });
@@ -274,6 +257,7 @@ export async function buildApp(params: BuildAppParams) {
       port?: number;
       username?: string;
       keyId?: string;
+      passkeyId?: string;
     };
   }>(`${base}/api/endpoints`, async (request, reply) => {
     if (!request.accountId) {
@@ -281,6 +265,10 @@ export async function buildApp(params: BuildAppParams) {
       return { error: "Not authenticated" };
     }
     try {
+      if (request.body.keyId && request.body.passkeyId) {
+        reply.status(400);
+        return { error: "Cannot set both keyId and passkeyId" };
+      }
       const id = randomUUID();
       await endpointRepo.create({
         id,
@@ -290,9 +278,11 @@ export async function buildApp(params: BuildAppParams) {
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
         keyId: request.body.keyId,
+        passkeyId: request.body.passkeyId,
       });
       return { status: "created", id };
     } catch (err) {
+      app.log.error(err, "request failed");
       reply.status(400);
       return { error: (err as Error).message };
     }
@@ -335,6 +325,7 @@ export async function buildApp(params: BuildAppParams) {
       await endpointRepo.delete(request.params.id, request.accountId);
       return { status: "deleted" };
     } catch (err) {
+      app.log.error(err, "request failed");
       reply.status(400);
       return { error: (err as Error).message };
     }
@@ -374,16 +365,24 @@ export async function buildApp(params: BuildAppParams) {
       const session = await terminalManager.create(endpointId, "ui");
       uiCreatedSessions.add(session.sessionId);
 
-      // Update lastUsedAt on the assigned passkey (if it's a webauthn key)
-      if (endpoint.keyId && db) {
+      // Update lastUsedAt on the assigned key
+      const now = new Date().toISOString();
+      if (endpoint.passkeyId && db) {
         db.update(webauthnCredentials)
-          .set({ lastUsedAt: new Date().toISOString() })
-          .where(eq(webauthnCredentials.id, endpoint.keyId))
+          .set({ lastUsedAt: now })
+          .where(eq(webauthnCredentials.id, endpoint.passkeyId))
+          .run();
+      } else if (endpoint.keyId && db) {
+        const { sshKeys: sshKeysTable } = await import("../db/schema.js");
+        db.update(sshKeysTable)
+          .set({ lastUsedAt: now })
+          .where(eq(sshKeysTable.id, endpoint.keyId))
           .run();
       }
 
       return session;
     } catch (err) {
+      app.log.error(err, "request failed");
       reply.status(400);
       return { error: (err as Error).message };
     }

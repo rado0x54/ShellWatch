@@ -8,6 +8,7 @@ export interface Endpoint {
   port: number;
   username: string;
   keyId?: string | null;
+  passkeyId?: string | null;
 }
 
 export const endpoints = writable<Endpoint[]>([]);
@@ -25,6 +26,7 @@ export async function createEndpoint(body: {
   port: number;
   username: string;
   keyId?: string;
+  passkeyId?: string;
 }): Promise<void> {
   const base = get(basePath);
   const res = await fetch(`${base}/api/endpoints`, {

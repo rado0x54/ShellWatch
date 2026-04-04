@@ -10,7 +10,7 @@ import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import { hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { ShellWatchDB } from "../db/connection.js";
-import { sshKeys, webauthnCredentials } from "../db/schema.js";
+import { webauthnCredentials } from "../db/schema.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
 
 // In-memory challenge store (keyed by challenge ID, expires after 5 minutes)
@@ -203,21 +203,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
           })
           .run();
 
-        // Also register in ssh_keys so endpoints can reference this key via keyId
-        const fingerprint = computeFingerprint(pubKeyBuf);
-        db.insert(sshKeys)
-          .values({
-            id,
-            label: `${label || "Passkey"} (webauthn)`,
-            type: "webauthn",
-            publicKey: authorizedKeysEntry ?? "",
-            fingerprint,
-            enabled: true,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .run();
-
         return {
           verified: true,
           credentialId: cred.id,
@@ -312,14 +297,10 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
         return { error: "Cannot revoke the last active passkey" };
       }
 
-      // Revoke the credential and its ssh_key entry
+      // Revoke the credential
       db.update(webauthnCredentials)
         .set({ revoked: true })
         .where(eq(webauthnCredentials.id, id))
-        .run();
-      db.update(sshKeys)
-        .set({ enabled: false, updatedAt: new Date().toISOString() })
-        .where(eq(sshKeys.id, id))
         .run();
 
       return { status: "revoked" };
@@ -532,21 +513,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
           label: label || "Passkey",
           publicKeyOpenSsh: authorizedKeysEntry,
           createdAt: now,
-        })
-        .run();
-
-      // Register in ssh_keys
-      const fingerprint = computeFingerprint(pubKeyBuf);
-      db.insert(sshKeys)
-        .values({
-          id: credId,
-          label: `${label || "Passkey"} (webauthn)`,
-          type: "webauthn",
-          publicKey: authorizedKeysEntry ?? "",
-          fingerprint,
-          enabled: true,
-          createdAt: now,
-          updatedAt: now,
         })
         .run();
 

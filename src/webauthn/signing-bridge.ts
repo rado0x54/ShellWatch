@@ -13,17 +13,18 @@ import type { WsExtension } from "../server/ws-extension.js";
 import type { SignRequest, SignResponse, WebAuthnSshAgent } from "./ssh-agent.js";
 
 export class SigningBridge implements WsExtension {
-  private clients = new Set<WebSocket>();
+  private clients: WebSocket[] = [];
   private agents = new Map<string, WebAuthnSshAgent>();
 
   // --- WsExtension implementation ---
 
   onConnect(socket: WebSocket): void {
-    this.clients.add(socket);
+    this.clients.push(socket);
   }
 
   onDisconnect(socket: WebSocket): void {
-    this.clients.delete(socket);
+    const idx = this.clients.indexOf(socket);
+    if (idx >= 0) this.clients.splice(idx, 1);
   }
 
   onMessage(msg: Record<string, unknown>, _socket: WebSocket): boolean {
@@ -57,13 +58,16 @@ export class SigningBridge implements WsExtension {
       rpId: request.rpId,
     });
 
-    // Send to ALL open clients — the most recent browser tab will handle it.
-    // Stale connections from HMR/reload may still appear open briefly.
+    // Send to the most recently connected client only — multiple clients
+    // (e.g. Vite dev proxy + direct browser) would each call
+    // navigator.credentials.get(), causing "A request is already pending."
     let sent = false;
-    for (const client of this.clients) {
+    for (let i = this.clients.length - 1; i >= 0; i--) {
+      const client = this.clients[i];
       if (client.readyState === client.OPEN) {
         client.send(msg);
         sent = true;
+        break;
       }
     }
 
@@ -102,9 +106,6 @@ export class SigningBridge implements WsExtension {
   }
 
   get hasClients(): boolean {
-    for (const client of this.clients) {
-      if (client.readyState === client.OPEN) return true;
-    }
-    return false;
+    return this.clients.some((c) => c.readyState === c.OPEN);
   }
 }

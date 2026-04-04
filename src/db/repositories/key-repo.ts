@@ -9,6 +9,7 @@ export interface SshKeyInfo {
   publicKey: string;
   fingerprint: string;
   enabled: boolean;
+  lastUsedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,6 +39,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         publicKey: sshKeys.publicKey,
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
+        lastUsedAt: sshKeys.lastUsedAt,
         createdAt: sshKeys.createdAt,
         updatedAt: sshKeys.updatedAt,
       })
@@ -54,6 +56,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         publicKey: sshKeys.publicKey,
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
+        lastUsedAt: sshKeys.lastUsedAt,
         createdAt: sshKeys.createdAt,
         updatedAt: sshKeys.updatedAt,
       })
@@ -100,8 +103,9 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
 
   constructor(
     initialKeys: Array<
-      Omit<SshKeyInfo, "enabled" | "createdAt" | "updatedAt"> & {
+      Omit<SshKeyInfo, "enabled" | "lastUsedAt" | "createdAt" | "updatedAt"> & {
         enabled?: boolean;
+        lastUsedAt?: string | null;
         createdAt?: string;
         updatedAt?: string;
       }
@@ -111,6 +115,7 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
     this.store = initialKeys.map((k) => ({
       ...k,
       enabled: k.enabled ?? true,
+      lastUsedAt: k.lastUsedAt ?? null,
       createdAt: k.createdAt ?? now,
       updatedAt: k.updatedAt ?? k.createdAt ?? now,
     }));
@@ -139,6 +144,7 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       enabled: true,
+      lastUsedAt: null,
       createdAt: now,
       updatedAt: now,
     });
