@@ -11,3 +11,4 @@ logs/*
 config.yaml
 .env
 client/.svelte-kit/
+agent-client/shellwatch-agent

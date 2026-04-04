@@ -85,6 +85,7 @@ export async function startTestApp(
       allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
     },
     notifications: { mcp: { debounceMs: 50 } },
+    agentSocket: { proxyEnabled: false },
   };
 
   const endpointRepo = new InMemoryEndpointRepository([

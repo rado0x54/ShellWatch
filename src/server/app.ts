@@ -20,11 +20,14 @@ import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
-import type { KeyAvailability } from "../transport/key-directory-watcher.js";
+import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
+import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
-import { registerWebAuthnRoutes } from "../webauthn/index.js";
+import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
+import { registerWebAuthnRoutes, type SigningBridge } from "../webauthn/index.js";
 import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -47,6 +50,12 @@ export interface BuildAppParams {
   keyAvailability?: KeyAvailability | null;
   apiKeyRepo?: ApiKeyRepository | null;
   options?: AppOptions;
+  /** Required when agentSocket.proxyEnabled is true */
+  agentProxy?: {
+    signingBridge: SigningBridge;
+    keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
+    findCredentialsForAccount: (accountId: string) => WebAuthnCredentialInfo[];
+  };
 }
 
 export async function buildApp(params: BuildAppParams) {
@@ -515,6 +524,21 @@ export async function buildApp(params: BuildAppParams) {
       basePath: base,
       sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
     });
+  }
+
+  // Agent proxy WebSocket route (for remote SSH agent clients)
+  if (config.agentSocket.proxyEnabled && params.agentProxy && apiKeyRepo) {
+    registerAgentProxyRoute({
+      app,
+      basePath: base,
+      signingBridge: params.agentProxy.signingBridge,
+      keyProvider: params.agentProxy.keyProvider,
+      findCredentialsForAccount: params.agentProxy.findCredentialsForAccount,
+      rpId: config.security.rpId,
+      apiKeyRepo,
+      accountRepo,
+    });
+    app.log.info(`Agent proxy endpoint enabled at ${base}/agent-proxy`);
   }
 
   // Client runtime config

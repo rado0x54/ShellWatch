@@ -69,6 +69,13 @@ export const SeedAdminPasskeySchema = z.object({
   label: z.string().default("Admin Passkey"),
 });
 
+export const AgentSocketSchema = z.object({
+  /** Enable the WebSocket agent proxy endpoint (/agent-proxy) */
+  proxyEnabled: z.boolean().default(false),
+});
+
+export const agentSocketDefaults = { proxyEnabled: false };
+
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
@@ -77,6 +84,7 @@ export const ConfigSchema = z.object({
   server: ServerSchema.default(serverDefaults),
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
+  agentSocket: AgentSocketSchema.default(agentSocketDefaults),
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;
