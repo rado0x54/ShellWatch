@@ -10,17 +10,32 @@ export const SeedEndpointSchema = z.object({
   passkeyCredentialRef: z.string().optional(), // references a passkey by its credentialId
 });
 
-export const securityDefaults = {
+/** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */
+export const securityFieldDefaults = {
   allowedNetworks: ["127.0.0.1/32", "::1/128"],
   sessionTtlSeconds: 86400,
-  trustedWebauthnOrigins: [] as string[],
 };
 
 export const SecuritySchema = z.object({
-  allowedNetworks: z.array(z.string()).default(securityDefaults.allowedNetworks),
-  sessionTtlSeconds: z.number().int().min(60).default(securityDefaults.sessionTtlSeconds),
+  rpId: z
+    .string()
+    .min(1, "security.rpId is required (e.g., 'localhost' or 'shellwatch.example.com')"),
+  allowedNetworks: z.array(z.string()).default(securityFieldDefaults.allowedNetworks),
+  sessionTtlSeconds: z.number().int().min(60).default(securityFieldDefaults.sessionTtlSeconds),
   cookieSecret: z.string().optional(),
-  trustedWebauthnOrigins: z.array(z.string()).default([]),
+  trustedWebauthnOrigins: z
+    .array(
+      z
+        .string()
+        .refine(
+          (s) => s.startsWith("http://") || s.startsWith("https://"),
+          "Each trustedWebauthnOrigins entry must start with http:// or https:// (e.g., 'https://shellwatch.example.com')",
+        ),
+    )
+    .min(
+      1,
+      "security.trustedWebauthnOrigins requires at least one origin (e.g., 'https://shellwatch.example.com')",
+    ),
 });
 
 const notificationDefaults = { mcp: { debounceMs: 100 } };
@@ -44,8 +59,6 @@ export const ServerSchema = z.object({
     .string()
     .default(serverDefaults.basePath)
     .transform((v) => v.replace(/\/+$/, "")),
-  trustedForwardedHostHeader: z.string().optional(),
-  trustedForwardedProtoHeader: z.string().optional(),
 });
 
 export const SeedAdminPasskeySchema = z.object({
@@ -62,7 +75,7 @@ export const ConfigSchema = z.object({
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskey: SeedAdminPasskeySchema.optional(),
   server: ServerSchema.default(serverDefaults),
-  security: SecuritySchema.default(securityDefaults),
+  security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
 });
 

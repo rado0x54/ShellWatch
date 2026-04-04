@@ -42,6 +42,7 @@ export type CredentialsForAccountLookup = (accountId: string) => WebAuthnCredent
 export type AdminCheck = (accountId: string) => boolean;
 
 export interface SshTransportFactoryOptions {
+  rpId: string;
   createWebAuthnAgent?: WebAuthnAgentFactory;
   createAutoNegotiateAgent?: AutoNegotiateAgentFactory;
   findCredential?: CredentialLookup;
@@ -61,7 +62,7 @@ export class SshTransportFactory {
     private endpointRepo: EndpointRepository,
     private keyRepo: SshKeyRepository,
     private keyProvider: PrivateKeyProvider,
-    private options: SshTransportFactoryOptions = {},
+    private options: SshTransportFactoryOptions,
   ) {}
 
   async create(endpointId: string): Promise<TerminalTransport> {
@@ -104,8 +105,7 @@ export class SshTransportFactory {
       throw new Error(`WebAuthn credential "${endpoint.passkeyId}" has been revoked`);
     }
 
-    // TODO: thread actual rpId from config instead of hardcoding "localhost"
-    const result = this.options.createWebAuthnAgent(credential, "localhost");
+    const result = this.options.createWebAuthnAgent(credential, this.options.rpId);
     if (!result) {
       throw new Error(
         "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
@@ -167,7 +167,7 @@ export class SshTransportFactory {
       fileKeys,
       passkeys,
       isAdmin,
-      rpId: "localhost", // TODO: thread actual rpId from config
+      rpId: this.options.rpId,
     });
 
     if (!result) {

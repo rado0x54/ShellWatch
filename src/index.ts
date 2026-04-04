@@ -64,6 +64,7 @@ try {
   }
 
   const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
+    rpId: config.security.rpId,
     findCredential: (id) => findCredentialById(db, id),
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),
@@ -137,6 +138,8 @@ try {
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
 
+  app.log.info(`WebAuthn rpId: ${config.security.rpId}`);
+  app.log.info(`Trusted origins: ${config.security.trustedWebauthnOrigins.join(", ")}`);
   app.log.info(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
   for (const key of scannedKeys) {
     app.log.info(`  ${key.filename}: ${key.type} (${key.fingerprint})`);

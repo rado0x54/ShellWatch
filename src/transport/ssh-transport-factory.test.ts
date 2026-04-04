@@ -48,6 +48,8 @@ const testScannedKey = {
   privateKeyContent: "-----BEGIN OPENSSH PRIVATE KEY-----\n...",
 };
 
+const testRpId = "test.example.com";
+
 function createMockTransport() {
   return Object.assign(new EventEmitter(), {
     write: vi.fn(),
@@ -63,6 +65,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
+        { rpId: testRpId },
       );
 
       await expect(factory.create("nonexistent")).rejects.toThrow("Unknown endpoint: nonexistent");
@@ -73,6 +76,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([testEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
+        { rpId: testRpId },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow('SSH key "key-1" not found');
@@ -88,6 +92,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([testEndpoint]),
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([testScannedKey]),
+        { rpId: testRpId },
       );
 
       const transport = await factory.create("ep-1");
@@ -104,6 +109,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([testEndpoint]),
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([]), // empty — no scanned keys
+        { rpId: testRpId },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow("is unavailable");
@@ -118,6 +124,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([passkeyEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
+        { rpId: testRpId },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -130,7 +137,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([passkeyEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { findCredential: () => testCredential },
+        { rpId: testRpId, findCredential: () => testCredential },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -144,6 +151,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           findCredential: () => ({ ...testCredential, revoked: true }),
           createWebAuthnAgent: () => null,
         },
@@ -157,7 +165,11 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([passkeyEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { findCredential: () => testCredential, createWebAuthnAgent: () => null },
+        {
+          rpId: testRpId,
+          findCredential: () => testCredential,
+          createWebAuthnAgent: () => null,
+        },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -177,13 +189,13 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([passkeyEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { findCredential: () => testCredential, createWebAuthnAgent },
+        { rpId: testRpId, findCredential: () => testCredential, createWebAuthnAgent },
       );
 
       const transport = await factory.create("ep-1");
 
       expect(transport).toBe(mockTransport);
-      expect(createWebAuthnAgent).toHaveBeenCalledWith(testCredential, "localhost");
+      expect(createWebAuthnAgent).toHaveBeenCalledWith(testCredential, "test.example.com");
       expect(mockConnectSshWithAgent).toHaveBeenCalledWith(
         expect.objectContaining({ host: "example.com" }),
         mockAgent,
@@ -201,6 +213,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           findCredential: () => testCredential,
           createWebAuthnAgent: () => ({ agent: mockAgent, cleanup }),
         },
@@ -226,6 +239,7 @@ describe("SshTransportFactory", () => {
         new InMemoryEndpointRepository([autoEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
+        { rpId: testRpId },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -239,6 +253,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent: () => null,
           findCredentialsForAccount: () => [],
           isAdmin: () => false,
@@ -261,6 +276,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([testScannedKey]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent,
           findCredentialsForAccount: () => [],
           isAdmin: () => true,
@@ -276,7 +292,7 @@ describe("SshTransportFactory", () => {
           ],
           passkeys: [],
           isAdmin: true,
-          rpId: "localhost",
+          rpId: testRpId,
         }),
       );
     });
@@ -294,6 +310,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([testScannedKey]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
@@ -324,6 +341,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
@@ -354,6 +372,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent: () => ({ agent: mockAgent, cleanup }),
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
@@ -373,6 +392,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
+          rpId: testRpId,
           createAutoNegotiateAgent: () => null,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,

@@ -7,7 +7,7 @@ import ssh2 from "ssh2";
 
 const { utils } = ssh2;
 
-import { type Config, securityDefaults, serverDefaults } from "../../config/index.js";
+import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
 import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { InMemoryApiKeyRepository } from "../../db/repositories/api-key-repo.js";
 import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
@@ -78,7 +78,9 @@ export async function startTestApp(
     ],
     server: { ...serverDefaults, basePath: options.basePath ?? "" },
     security: {
-      ...securityDefaults,
+      ...securityFieldDefaults,
+      rpId: "localhost",
+      trustedWebauthnOrigins: ["http://localhost"],
       cookieSecret: testCookieSecret,
       allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
     },
@@ -101,7 +103,9 @@ export async function startTestApp(
   ]);
   const keyProvider = new InMemoryKeyProvider([scannedKey]);
 
-  const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider);
+  const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+    rpId: "localhost",
+  });
   const terminalManager = new TerminalManager(
     endpointRepo,
     (id) => sshTransportFactory.create(id),

@@ -510,13 +510,10 @@ export async function buildApp(params: BuildAppParams) {
       app,
       db,
       accountRepo,
-      basePath: base,
-      proxy: {
-        hostHeader: config.server.trustedForwardedHostHeader,
-        protoHeader: config.server.trustedForwardedProtoHeader,
-      },
-      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      rpId: config.security.rpId,
       trustedOrigins: config.security.trustedWebauthnOrigins,
+      basePath: base,
+      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
     });
   }
 
