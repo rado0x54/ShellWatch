@@ -78,6 +78,7 @@ export class SshTransportFactory {
       throw new Error(`WebAuthn credential "${endpoint.passkeyId}" has been revoked`);
     }
 
+    // TODO: thread actual rpId from config instead of hardcoding "localhost"
     const result = this.options.createWebAuthnAgent(credential, "localhost");
     if (!result) {
       throw new Error(

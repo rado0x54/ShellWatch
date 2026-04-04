@@ -13,6 +13,7 @@ import {
   endpointKeys,
   endpoints as endpointsTable,
   sessionHistory,
+  sshKeys as sshKeysTable,
   webauthnCredentials,
 } from "../db/schema.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
@@ -296,13 +297,19 @@ export async function buildApp(params: BuildAppParams) {
         return { error: "Not authenticated" };
       }
       try {
+        const body = request.body as Record<string, unknown>;
+        if (body.keyId && body.passkeyId) {
+          reply.status(400);
+          return { error: "Cannot set both keyId and passkeyId" };
+        }
         await endpointRepo.update(
           request.params.id,
           request.accountId,
-          request.body as Parameters<EndpointRepository["update"]>[2],
+          body as Parameters<EndpointRepository["update"]>[2],
         );
         return { status: "updated" };
       } catch (err) {
+        app.log.error(err, "request failed");
         reply.status(400);
         return { error: (err as Error).message };
       }
@@ -373,7 +380,6 @@ export async function buildApp(params: BuildAppParams) {
           .where(eq(webauthnCredentials.id, endpoint.passkeyId))
           .run();
       } else if (endpoint.keyId && db) {
-        const { sshKeys: sshKeysTable } = await import("../db/schema.js");
         db.update(sshKeysTable)
           .set({ lastUsedAt: now })
           .where(eq(sshKeysTable.id, endpoint.keyId))

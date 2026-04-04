@@ -19,7 +19,7 @@ export class SigningBridge implements WsExtension {
   // --- WsExtension implementation ---
 
   onConnect(socket: WebSocket): void {
-    this.clients.push(socket);
+    if (!this.clients.includes(socket)) this.clients.push(socket);
   }
 
   onDisconnect(socket: WebSocket): void {
