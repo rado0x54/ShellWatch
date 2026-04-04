@@ -65,7 +65,11 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
         socket.close(4002, "Only binary messages are accepted");
         return;
       }
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      const buf = Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.isBuffer(data)
+          ? data
+          : Buffer.from(data as ArrayBuffer);
       protocol.write(buf);
     });
 
