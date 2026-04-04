@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentSession } from "../agent/index.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { SUPPORTED_KEYS } from "../terminal/index.js";
@@ -10,6 +11,7 @@ export async function createMcpServer(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
   accountId?: string | null,
+  accountRepo?: AccountRepository | null,
 ): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
@@ -215,6 +217,17 @@ export async function createMcpServer(
                 content: [{ type: "text", text: "No account context for endpoint creation" }],
               };
             }
+            if (data.keyId && !(accountRepo?.isAdmin(accountId) ?? false)) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text",
+                    text: "File-based SSH keys can only be assigned by the admin account",
+                  },
+                ],
+              };
+            }
             await endpointRepo.create({
               id,
               accountId,
@@ -233,6 +246,17 @@ export async function createMcpServer(
                 isError: true,
                 content: [{ type: "text", text: "id and data are required" }],
               };
+            if (data.keyId && !(accountRepo?.isAdmin(accountId ?? "") ?? false)) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text",
+                    text: "File-based SSH keys can only be assigned by the admin account",
+                  },
+                ],
+              };
+            }
             if (accountId) {
               await endpointRepo.update(id, accountId, data);
             } else {

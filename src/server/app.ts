@@ -270,6 +270,10 @@ export async function buildApp(params: BuildAppParams) {
         reply.status(400);
         return { error: "Cannot set both keyId and passkeyId" };
       }
+      if (request.body.keyId && !accountRepo.isAdmin(request.accountId)) {
+        reply.status(403);
+        return { error: "File-based SSH keys can only be assigned by the admin account" };
+      }
       const id = randomUUID();
       await endpointRepo.create({
         id,
@@ -301,6 +305,10 @@ export async function buildApp(params: BuildAppParams) {
         if (body.keyId && body.passkeyId) {
           reply.status(400);
           return { error: "Cannot set both keyId and passkeyId" };
+        }
+        if (body.keyId && !accountRepo.isAdmin(request.accountId!)) {
+          reply.status(403);
+          return { error: "File-based SSH keys can only be assigned by the admin account" };
         }
         await endpointRepo.update(
           request.params.id,

@@ -1,3 +1,12 @@
+export {
+  buildFileKeyEntry,
+  buildPasskeyEntry,
+  type CompositeAgentParams,
+  type CompositeSignRequest,
+  CompositeSshAgent,
+  type FileKeyEntry,
+  type PasskeyEntry,
+} from "./composite-ssh-agent.js";
 export { registerWebAuthnRoutes } from "./routes.js";
 export {
   buildSshSignatureBlob,

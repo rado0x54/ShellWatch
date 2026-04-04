@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { account } from "$lib/stores/account.js";
   import {
     createEndpoint,
     deleteEndpoint,
@@ -87,6 +88,7 @@
   }
 
   const activePasskeys = $derived($credentials.filter((c) => !c.revoked));
+  const isAdmin = $derived($account?.isAdmin ?? false);
 </script>
 
 <section>
@@ -110,12 +112,12 @@
               value={buildKeyValue(ep)}
               onchange={(e) => handleKeyChange(ep.id, e.currentTarget.value)}
             >
-              {#if !ep.keyId && !ep.passkeyId}
-                <option value="">No key</option>
+              <option value="">Auto (negotiate)</option>
+              {#if isAdmin}
+                {#each $sshKeys as k (k.id)}
+                  <option value="file:{k.id}">{k.label} (file)</option>
+                {/each}
               {/if}
-              {#each $sshKeys as k (k.id)}
-                <option value="file:{k.id}">{k.label} (file)</option>
-              {/each}
               {#each activePasskeys as c (c.id)}
                 <option value="passkey:{c.id}">{c.label} (passkey)</option>
               {/each}
@@ -138,10 +140,12 @@
       <input type="text" placeholder="Label" bind:value={epLabel} />
       <input type="text" placeholder="user@host:port" bind:value={epAddress} />
       <select bind:value={epKeyValue}>
-        <option value="">No key</option>
-        {#each $sshKeys as k (k.id)}
-          <option value="file:{k.id}">{k.label} (file)</option>
-        {/each}
+        <option value="">Auto (negotiate)</option>
+        {#if isAdmin}
+          {#each $sshKeys as k (k.id)}
+            <option value="file:{k.id}">{k.label} (file)</option>
+          {/each}
+        {/if}
         {#each activePasskeys as c (c.id)}
           <option value="passkey:{c.id}">{c.label} (passkey)</option>
         {/each}
