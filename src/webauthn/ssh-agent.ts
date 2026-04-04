@@ -32,7 +32,7 @@ export function toPublicKeyBlob(pubKey: Buffer | { getPublicSSH?: () => Buffer }
   if (typeof pubKey === "object" && pubKey && "getPublicSSH" in pubKey) {
     return (pubKey as { getPublicSSH: () => Buffer }).getPublicSSH();
   }
-  return Buffer.from(pubKey as unknown as Uint8Array);
+  throw new Error(`Unexpected public key type: ${typeof pubKey}`);
 }
 
 export interface PasskeyEntry {
