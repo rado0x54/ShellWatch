@@ -23,6 +23,18 @@ const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Recor
 
 export { BaseAgent };
 
+/**
+ * ssh2 parses key blobs from getIdentities() into key objects before passing
+ * them to sign(). Extract the raw public key blob for comparison.
+ */
+export function toPublicKeyBlob(pubKey: Buffer | { getPublicSSH?: () => Buffer }): Buffer {
+  if (Buffer.isBuffer(pubKey)) return pubKey;
+  if (typeof pubKey === "object" && pubKey && "getPublicSSH" in pubKey) {
+    return (pubKey as { getPublicSSH: () => Buffer }).getPublicSSH();
+  }
+  return Buffer.from(pubKey as unknown as Uint8Array);
+}
+
 export interface PasskeyEntry {
   /** Raw public key blob (from buildPublicKeyBlob()) */
   publicKeyBlob: Buffer;
@@ -128,7 +140,8 @@ export class WebAuthnSshAgent extends BaseAgent {
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKey));
+    const pubKeyBlob = toPublicKeyBlob(pubKey);
+    const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKeyBlob));
     if (!passkey) {
       cb(new Error("No matching passkey found for signing"));
       return;
