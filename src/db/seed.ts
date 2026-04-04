@@ -142,7 +142,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           label: "Seeded from config",
           keyHash: hash,
           keyPrefix: config.seedAdminApiKey.slice(0, 10),
-          scopes: JSON.stringify(["mcp"]),
+          scopes: JSON.stringify(["mcp", "agent"]),
           endpoints: null,
           enabled: true,
           createdAt: new Date().toISOString(),
