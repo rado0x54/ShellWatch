@@ -229,7 +229,7 @@ describe("SshTransportFactory", () => {
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
-        "No SSH key configured for endpoint and no composite agent factory provided",
+        "No SSH key configured for endpoint and no auto-negotiate agent factory provided",
       );
     });
 
@@ -239,7 +239,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
-          createCompositeAgent: () => null,
+          createAutoNegotiateAgent: () => null,
           findCredentialsForAccount: () => [],
           isAdmin: () => false,
         },
@@ -254,14 +254,14 @@ describe("SshTransportFactory", () => {
       const cleanup = vi.fn();
       mockConnectSshWithAgent.mockResolvedValue(mockTransport);
 
-      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
+      const createAutoNegotiateAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
 
       const factory = new SshTransportFactory(
         new InMemoryEndpointRepository([autoEndpoint]),
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([testScannedKey]),
         {
-          createCompositeAgent,
+          createAutoNegotiateAgent,
           findCredentialsForAccount: () => [],
           isAdmin: () => true,
         },
@@ -269,12 +269,13 @@ describe("SshTransportFactory", () => {
 
       await factory.create("ep-1");
 
-      expect(createCompositeAgent).toHaveBeenCalledWith(
+      expect(createAutoNegotiateAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           fileKeys: [
             { publicKey: testFileKey.publicKey, privateKey: testScannedKey.privateKeyContent },
           ],
           passkeys: [],
+          isAdmin: true,
           rpId: "localhost",
         }),
       );
@@ -286,14 +287,14 @@ describe("SshTransportFactory", () => {
       const cleanup = vi.fn();
       mockConnectSshWithAgent.mockResolvedValue(mockTransport);
 
-      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
+      const createAutoNegotiateAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
 
       const factory = new SshTransportFactory(
         new InMemoryEndpointRepository([autoEndpoint]),
         new InMemorySshKeyRepository([testFileKey]),
         new InMemoryKeyProvider([testScannedKey]),
         {
-          createCompositeAgent,
+          createAutoNegotiateAgent,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
         },
@@ -301,7 +302,7 @@ describe("SshTransportFactory", () => {
 
       await factory.create("ep-1");
 
-      expect(createCompositeAgent).toHaveBeenCalledWith(
+      expect(createAutoNegotiateAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           fileKeys: [],
           passkeys: [testCredential],
@@ -314,14 +315,16 @@ describe("SshTransportFactory", () => {
       const mockAgent = { sign: vi.fn() } as never;
       mockConnectSshWithAgent.mockResolvedValue(mockTransport);
 
-      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup: vi.fn() });
+      const createAutoNegotiateAgent = vi
+        .fn()
+        .mockReturnValue({ agent: mockAgent, cleanup: vi.fn() });
 
       const factory = new SshTransportFactory(
         new InMemoryEndpointRepository([autoEndpoint]),
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
-          createCompositeAgent,
+          createAutoNegotiateAgent,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
         },
@@ -329,7 +332,7 @@ describe("SshTransportFactory", () => {
 
       await factory.create("ep-1");
 
-      expect(createCompositeAgent).toHaveBeenCalledWith(
+      expect(createAutoNegotiateAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           endpoint: expect.objectContaining({
             id: "ep-1",
@@ -351,7 +354,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
-          createCompositeAgent: () => ({ agent: mockAgent, cleanup }),
+          createAutoNegotiateAgent: () => ({ agent: mockAgent, cleanup }),
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
         },
@@ -370,7 +373,7 @@ describe("SshTransportFactory", () => {
         new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
         {
-          createCompositeAgent: () => null,
+          createAutoNegotiateAgent: () => null,
           findCredentialsForAccount: () => [testCredential],
           isAdmin: () => false,
         },

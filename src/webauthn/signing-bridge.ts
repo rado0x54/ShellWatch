@@ -10,15 +10,11 @@
 
 import type { WebSocket } from "ws";
 import type { WsExtension } from "../server/ws-extension.js";
-import type { CompositeSshAgent, CompositeSignRequest } from "./composite-ssh-agent.js";
 import type { SignRequest, SignResponse, WebAuthnSshAgent } from "./ssh-agent.js";
-
-/** Union of agent types that can handle sign responses/errors */
-type SignableAgent = WebAuthnSshAgent | CompositeSshAgent;
 
 export class SigningBridge implements WsExtension {
   private clients: WebSocket[] = [];
-  private agents = new Map<string, SignableAgent>();
+  private agents = new Map<string, WebAuthnSshAgent>();
 
   // --- WsExtension implementation ---
 
@@ -52,13 +48,14 @@ export class SigningBridge implements WsExtension {
     return false;
   }
 
-  /** Register an agent's sign request handler */
-  handleSignRequest(request: SignRequest | CompositeSignRequest): void {
+  /** Forward a sign request from an agent to the browser */
+  handleSignRequest(request: SignRequest): void {
     // IMPORTANT: Use standard base64 (not base64url) — matches what
     // OpenSSH's verifier expects when reconstructing clientDataJSON
     const challenge = request.dataToSign.toString("base64");
 
-    const isComposite = "endpointLabel" in request;
+    // directSign: true when no endpoint context (assigned passkey, skip modal)
+    const directSign = !request.endpointLabel;
 
     const msg = JSON.stringify({
       type: "fido:sign-request",
@@ -66,8 +63,8 @@ export class SigningBridge implements WsExtension {
       credentialId: request.credentialId,
       challenge,
       rpId: request.rpId,
-      directSign: !isComposite,
-      ...(isComposite && {
+      directSign,
+      ...(!directSign && {
         endpointLabel: request.endpointLabel,
         endpointAddress: request.endpointAddress,
         passkeyLabel: request.passkeyLabel,
@@ -113,7 +110,7 @@ export class SigningBridge implements WsExtension {
   }
 
   /** Track an agent so we can route responses to it */
-  registerAgent(id: string, agent: SignableAgent): void {
+  registerAgent(id: string, agent: WebAuthnSshAgent): void {
     this.agents.set(id, agent);
   }
 

@@ -1,6 +1,9 @@
 /**
  * Custom ssh2 agent that delegates signing to the browser via WebAuthn.
  *
+ * Supports single-passkey mode (assigned, direct sign) and multi-passkey mode
+ * (auto-negotiate with signing confirmation modal).
+ *
  * When ssh2 needs to authenticate with a WebAuthn key:
  * 1. getIdentities() returns the registered WebAuthn public keys
  * 2. sign() sends the SSH challenge to the browser via a callback
@@ -18,11 +21,35 @@ import { buildPublicKeyBlob } from "./ssh-key-format.js";
 // BaseAgent is exported by ssh2 but not in the type definitions
 const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Record<string, unknown>;
 
+export { BaseAgent };
+
+export interface PasskeyEntry {
+  /** Raw public key blob (from buildPublicKeyBlob()) */
+  publicKeyBlob: Buffer;
+  /** WebAuthn credential info */
+  credential: WebAuthnCredentialInfo;
+}
+
+/** Build a PasskeyEntry from a WebAuthn credential. Returns null if the credential lacks an OpenSSH public key. */
+export function buildPasskeyEntry(credential: WebAuthnCredentialInfo): PasskeyEntry | null {
+  if (!credential.publicKeyOpenSsh) return null;
+  return {
+    publicKeyBlob: buildPublicKeyBlob({ publicKey: credential.publicKeyOpenSsh }),
+    credential,
+  };
+}
+
 export interface SignRequest {
   requestId: string;
   credentialId: string;
   dataToSign: Buffer;
   rpId: string;
+  /** Endpoint label for the signing modal (present in auto-negotiate mode) */
+  endpointLabel?: string;
+  /** Endpoint address (user@host:port) for the signing modal */
+  endpointAddress?: string;
+  /** Passkey label for the signing modal */
+  passkeyLabel?: string;
 }
 
 export interface SignResponse {
@@ -38,31 +65,44 @@ export interface AgentLogger {
   error(msg: string): void;
 }
 
+export interface WebAuthnSshAgentParams {
+  passkeys: PasskeyEntry[];
+  rpId: string;
+  onSignRequest: SignRequestCallback;
+  /** When set, sign requests include endpoint context (triggers signing modal on client) */
+  endpointLabel?: string;
+  /** Endpoint address for modal display */
+  endpointAddress?: string;
+  logger?: AgentLogger;
+}
+
 /**
  * A custom ssh2 agent backed by WebAuthn credentials.
  * The actual signing happens in the browser — this agent bridges the gap.
+ *
+ * Supports both single-passkey (direct sign, no modal) and multi-passkey
+ * (auto-negotiate with signing confirmation modal) modes.
  */
 export class WebAuthnSshAgent extends BaseAgent {
-  private pendingSign: Map<
+  protected pendingSign: Map<
     string,
     { cb: (err: Error | null, signature?: Buffer) => void; timeout: ReturnType<typeof setTimeout> }
   > = new Map();
-  private onSignRequest: SignRequestCallback;
-  private credential: WebAuthnCredentialInfo;
-  private rpId: string;
-  private log: AgentLogger;
+  protected onSignRequest: SignRequestCallback;
+  protected passkeys: PasskeyEntry[];
+  protected rpId: string;
+  protected endpointLabel?: string;
+  protected endpointAddress?: string;
+  protected log: AgentLogger;
 
-  constructor(
-    credential: WebAuthnCredentialInfo,
-    rpId: string,
-    onSignRequest: SignRequestCallback,
-    logger?: AgentLogger,
-  ) {
+  constructor(params: WebAuthnSshAgentParams) {
     super();
-    this.credential = credential;
-    this.rpId = rpId;
-    this.onSignRequest = onSignRequest;
-    this.log = logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
+    this.passkeys = params.passkeys;
+    this.rpId = params.rpId;
+    this.onSignRequest = params.onSignRequest;
+    this.endpointLabel = params.endpointLabel;
+    this.endpointAddress = params.endpointAddress;
+    this.log = params.logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
 
   /**
@@ -70,12 +110,8 @@ export class WebAuthnSshAgent extends BaseAgent {
    */
   getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
     try {
-      if (!this.credential.publicKeyOpenSsh) {
-        cb(new Error("WebAuthn credential has no OpenSSH public key"));
-        return;
-      }
-      const keyBlob = buildPublicKeyBlob({ publicKey: this.credential.publicKeyOpenSsh });
-      cb(null, [keyBlob]);
+      const keys = this.passkeys.map((pk) => pk.publicKeyBlob);
+      cb(null, keys);
     } catch (err) {
       this.log.error(`[WebAuthn Agent] getIdentities error: ${(err as Error).message}`);
       cb(err as Error);
@@ -84,7 +120,7 @@ export class WebAuthnSshAgent extends BaseAgent {
 
   /**
    * Called by ssh2 when it needs a signature.
-   * We forward the request to the browser and wait for the response.
+   * Matches the public key to the correct passkey and forwards to the browser.
    */
   sign(
     pubKey: Buffer,
@@ -92,6 +128,12 @@ export class WebAuthnSshAgent extends BaseAgent {
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
+    const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKey));
+    if (!passkey) {
+      cb(new Error("No matching passkey found for signing"));
+      return;
+    }
+
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const timeout = setTimeout(() => {
@@ -104,9 +146,14 @@ export class WebAuthnSshAgent extends BaseAgent {
 
     this.onSignRequest({
       requestId,
-      credentialId: this.credential.credentialId,
+      credentialId: passkey.credential.credentialId,
       dataToSign: data,
       rpId: this.rpId,
+      ...(this.endpointLabel && {
+        endpointLabel: this.endpointLabel,
+        endpointAddress: this.endpointAddress,
+        passkeyLabel: passkey.credential.label,
+      }),
     });
   }
 
