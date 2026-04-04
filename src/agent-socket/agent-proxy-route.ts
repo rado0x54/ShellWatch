@@ -10,36 +10,22 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
-import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
-import type { SigningBridge } from "../webauthn/index.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
 import { createAgentHandler } from "./socket-agent-handler.js";
 
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
   basePath: string;
-  signingBridge: SigningBridge;
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
-  findCredentialsForAccount: (accountId: string) => WebAuthnCredentialInfo[];
-  rpId: string;
   apiKeyRepo: ApiKeyRepository;
   accountRepo: AccountRepository;
 }
 
 export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
-  const {
-    app,
-    basePath,
-    signingBridge,
-    keyProvider,
-    findCredentialsForAccount,
-    rpId,
-    apiKeyRepo,
-    accountRepo,
-  } = params;
+  const { app, basePath, keyProvider, apiKeyRepo, accountRepo } = params;
 
   app.get(`${basePath}/agent-proxy`, { websocket: true }, async (socket: WebSocket, request) => {
     // Authenticate via API key
@@ -70,14 +56,7 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
 
     const logger = { error: (msg: string) => app.log.error(msg) };
 
-    const { protocol, cleanup } = createAgentHandler({
-      signingBridge,
-      keyProvider,
-      findCredentialsForAccount,
-      rpId,
-      accountId: key.accountId,
-      logger,
-    });
+    const { protocol, cleanup } = createAgentHandler({ keyProvider, logger });
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
 

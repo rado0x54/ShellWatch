@@ -20,7 +20,6 @@ import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
-import { SigningBridge } from "../../webauthn/index.js";
 import type { FastifyInstance } from "fastify";
 
 const { utils } = ssh2;
@@ -96,8 +95,6 @@ describe("agent-proxy WebSocket endpoint", () => {
       getAvailableKeys: () => [scannedKey],
     });
 
-    const signingBridge = new SigningBridge();
-
     const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
       rpId: "localhost",
     });
@@ -134,9 +131,7 @@ describe("agent-proxy WebSocket endpoint", () => {
       apiKeyRepo,
       options: { logger: false, skipStaticFiles: true },
       agentProxy: {
-        signingBridge,
         keyProvider: extendedKeyProvider,
-        findCredentialsForAccount: () => [], // No passkeys in test
       },
     });
 

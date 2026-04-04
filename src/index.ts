@@ -136,9 +136,7 @@ try {
     apiKeyRepo,
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
-        signingBridge,
         keyProvider: keyWatcher,
-        findCredentialsForAccount: (accountId: string) => findCredentialsForAccount(db, accountId),
       },
     }),
   });

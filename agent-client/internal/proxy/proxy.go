@@ -90,6 +90,16 @@ func Run(cfg ProxyConfig) error {
 	}
 }
 
+// SSH agent protocol message types
+const (
+	sshAgentFailure    = 5
+	sshAgentcExtension = 27
+)
+
+// agentFailureResponse is a pre-built SSH_AGENT_FAILURE frame.
+// Format: uint32(1) + byte(5) = 5 bytes total.
+var agentFailureResponse = []byte{0, 0, 0, 1, sshAgentFailure}
+
 // handleConnection processes one SSH agent client connection.
 // The OpenSSH client opens a new connection per agent operation,
 // so each connection is typically a single request-response pair.
@@ -105,6 +115,20 @@ func handleConnection(conn net.Conn, cache *wsCache) {
 				log.Printf("Read frame error: %v", err)
 			}
 			return
+		}
+
+		// Handle extension messages locally. Newer OpenSSH sends
+		// SSH_AGENTC_EXTENSION (type 27) for session binding before
+		// requesting identities. ssh2's AgentProtocol has a bug where
+		// unknown message types with payloads corrupt the parse buffer.
+		// Respond with FAILURE here (which is the correct response for
+		// unsupported extensions) without forwarding to the server.
+		if len(frame) >= 5 && frame[4] == sshAgentcExtension {
+			if _, err := conn.Write(agentFailureResponse); err != nil {
+				log.Printf("Socket write error: %v", err)
+				return
+			}
+			continue
 		}
 
 		// Get or create a WebSocket connection
