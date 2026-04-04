@@ -10,6 +10,7 @@ export interface EndpointInfo {
   port: number;
   username: string;
   keyId: string | null;
+  passkeyId: string | null;
 }
 
 export interface EndpointRepository {
@@ -29,11 +30,19 @@ export interface EndpointRepository {
     port: number;
     username: string;
     keyId?: string;
+    passkeyId?: string;
   }): Promise<void>;
   update(
     id: string,
     accountId: string,
-    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+    data: Partial<{
+      label: string;
+      host: string;
+      port: number;
+      username: string;
+      keyId: string | null;
+      passkeyId: string | null;
+    }>,
   ): Promise<void>;
   delete(id: string, accountId: string): Promise<void>;
 }
@@ -51,6 +60,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
+        passkeyId: endpoints.passkeyId,
       })
       .from(endpoints)
       .where(and(eq(endpoints.accountId, accountId), eq(endpoints.enabled, true)))
@@ -67,6 +77,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
+        passkeyId: endpoints.passkeyId,
       })
       .from(endpoints)
       .where(eq(endpoints.enabled, true))
@@ -83,6 +94,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
+        passkeyId: endpoints.passkeyId,
       })
       .from(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.accountId, accountId)))
@@ -100,6 +112,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
         port: endpoints.port,
         username: endpoints.username,
         keyId: endpoints.keyId,
+        passkeyId: endpoints.passkeyId,
       })
       .from(endpoints)
       .where(eq(endpoints.id, id))
@@ -115,18 +128,33 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     keyId?: string;
+    passkeyId?: string;
   }): Promise<void> {
     const now = new Date().toISOString();
     this.db
       .insert(endpoints)
-      .values({ ...data, keyId: data.keyId ?? null, enabled: true, createdAt: now, updatedAt: now })
+      .values({
+        ...data,
+        keyId: data.keyId ?? null,
+        passkeyId: data.passkeyId ?? null,
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      })
       .run();
   }
 
   async update(
     id: string,
     accountId: string,
-    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+    data: Partial<{
+      label: string;
+      host: string;
+      port: number;
+      username: string;
+      keyId: string | null;
+      passkeyId: string | null;
+    }>,
   ): Promise<void> {
     this.db
       .update(endpoints)
@@ -149,7 +177,11 @@ export class InMemoryEndpointRepository implements EndpointRepository {
 
   constructor(
     initialEndpoints: Array<
-      Omit<EndpointInfo, "keyId" | "accountId"> & { keyId?: string; accountId?: string }
+      Omit<EndpointInfo, "keyId" | "passkeyId" | "accountId"> & {
+        keyId?: string;
+        passkeyId?: string;
+        accountId?: string;
+      }
     > = [],
     private defaultAccountId = "test-account",
   ) {
@@ -157,6 +189,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       ...e,
       accountId: e.accountId ?? this.defaultAccountId,
       keyId: e.keyId ?? null,
+      passkeyId: e.passkeyId ?? null,
     }));
   }
 
@@ -184,14 +217,22 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     keyId?: string;
+    passkeyId?: string;
   }): Promise<void> {
-    this.store.push({ ...data, keyId: data.keyId ?? null });
+    this.store.push({ ...data, keyId: data.keyId ?? null, passkeyId: data.passkeyId ?? null });
   }
 
   async update(
     id: string,
     accountId: string,
-    data: Partial<{ label: string; host: string; port: number; username: string; keyId: string }>,
+    data: Partial<{
+      label: string;
+      host: string;
+      port: number;
+      username: string;
+      keyId: string | null;
+      passkeyId: string | null;
+    }>,
   ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id && e.accountId === accountId);
     if (idx >= 0) this.store[idx] = { ...this.store[idx], ...data };

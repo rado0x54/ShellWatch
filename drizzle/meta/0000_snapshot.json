@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a2938ac2-c730-4fad-98a4-cb2aed275215",
+  "id": "7b465d1a-a57c-4b70-830e-22db34340d8d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "accounts": {
@@ -369,6 +369,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "passkey_id": {
+          "name": "passkey_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "enabled": {
           "name": "enabled",
           "type": "integer",
@@ -408,6 +415,15 @@
           "tableFrom": "endpoints",
           "tableTo": "ssh_keys",
           "columnsFrom": ["key_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "endpoints_passkey_id_webauthn_credentials_id_fk": {
+          "name": "endpoints_passkey_id_webauthn_credentials_id_fk",
+          "tableFrom": "endpoints",
+          "tableTo": "webauthn_credentials",
+          "columnsFrom": ["passkey_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -692,6 +708,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",

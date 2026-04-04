@@ -8,16 +8,32 @@
     updateEndpoint,
   } from "$lib/stores/endpoints.js";
   import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
+  import { credentials, fetchCredentials } from "$lib/stores/webauthn.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
 
   let epLabel = $state("");
   let epAddress = $state("");
-  let epKeyId = $state("");
+  let epKeyValue = $state("");
 
   onMount(() => {
     fetchEndpoints();
     fetchSshKeys();
+    fetchCredentials();
   });
+
+  /** Parse a combined key value like "file:key-1" or "passkey:cred-1" */
+  function parseKeyValue(value: string): { keyId?: string; passkeyId?: string } {
+    if (!value) return {};
+    if (value.startsWith("passkey:")) return { passkeyId: value.slice(8) };
+    return { keyId: value.startsWith("file:") ? value.slice(5) : value };
+  }
+
+  /** Build a combined key value from an endpoint's keyId/passkeyId */
+  function buildKeyValue(ep: { keyId?: string | null; passkeyId?: string | null }): string {
+    if (ep.passkeyId) return `passkey:${ep.passkeyId}`;
+    if (ep.keyId) return `file:${ep.keyId}`;
+    return "";
+  }
 
   async function handleAdd() {
     if (!epLabel || !epAddress) {
@@ -32,24 +48,29 @@
       return;
     }
     try {
+      const keySelection = parseKeyValue(epKeyValue);
       await createEndpoint({
         label: epLabel,
         host: parsed.host,
         port: parsed.port,
         username: parsed.username,
-        keyId: epKeyId || undefined,
+        ...keySelection,
       });
       epLabel = "";
       epAddress = "";
-      epKeyId = "";
+      epKeyValue = "";
     } catch (err) {
       alert((err as Error).message);
     }
   }
 
-  async function handleKeyChange(id: string, keyId: string) {
+  async function handleKeyChange(id: string, value: string) {
     try {
-      await updateEndpoint(id, { keyId: keyId || null });
+      const selection = parseKeyValue(value);
+      await updateEndpoint(id, {
+        keyId: selection.keyId ?? null,
+        passkeyId: selection.passkeyId ?? null,
+      });
     } catch (err) {
       alert((err as Error).message);
     }
@@ -64,6 +85,8 @@
       }
     }
   }
+
+  const activePasskeys = $derived($credentials.filter((c) => !c.revoked));
 </script>
 
 <section>
@@ -84,14 +107,17 @@
           <td>{formatEndpointAddress(ep)}</td>
           <td>
             <select
-              value={ep.keyId ?? ""}
+              value={buildKeyValue(ep)}
               onchange={(e) => handleKeyChange(ep.id, e.currentTarget.value)}
             >
-              {#if !ep.keyId}
+              {#if !ep.keyId && !ep.passkeyId}
                 <option value="">No key</option>
               {/if}
               {#each $sshKeys as k (k.id)}
-                <option value={k.id}>{k.label} ({k.type})</option>
+                <option value="file:{k.id}">{k.label} (file)</option>
+              {/each}
+              {#each activePasskeys as c (c.id)}
+                <option value="passkey:{c.id}">{c.label} (passkey)</option>
               {/each}
             </select>
           </td>
@@ -111,10 +137,13 @@
     <div class="form-row">
       <input type="text" placeholder="Label" bind:value={epLabel} />
       <input type="text" placeholder="user@host:port" bind:value={epAddress} />
-      <select bind:value={epKeyId}>
+      <select bind:value={epKeyValue}>
         <option value="">No key</option>
         {#each $sshKeys as k (k.id)}
-          <option value={k.id}>{k.label} ({k.type})</option>
+          <option value="file:{k.id}">{k.label} (file)</option>
+        {/each}
+        {#each activePasskeys as c (c.id)}
+          <option value="passkey:{c.id}">{c.label} (passkey)</option>
         {/each}
       </select>
       <button class="btn btn-primary" onclick={handleAdd}>Add</button>

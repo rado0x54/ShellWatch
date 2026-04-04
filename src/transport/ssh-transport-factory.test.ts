@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../db/repositories/key-repo.js";
 import { InMemoryKeyProvider } from "./key-directory-watcher.js";
@@ -33,12 +34,13 @@ const testFileKey = {
   fingerprint: "SHA256:abc123",
 };
 
-const testWebAuthnKey = {
-  id: "key-2",
+const testCredential: WebAuthnCredentialInfo = {
+  id: "cred-1",
+  accountId: "account-1",
+  credentialId: "base64url-credential-id",
   label: "YubiKey",
-  type: "webauthn",
-  publicKey: "webauthn-sk-ecdsa...",
-  fingerprint: "SHA256:xyz789",
+  publicKeyOpenSsh: "webauthn-sk-ecdsa-sha2-nistp256@openssh.com AAAA...",
+  revoked: false,
 };
 
 const testScannedKey = {
@@ -66,7 +68,7 @@ describe("SshTransportFactory", () => {
       await expect(factory.create("nonexistent")).rejects.toThrow("Unknown endpoint: nonexistent");
     });
 
-    it("throws if endpoint has no keyId", async () => {
+    it("throws if endpoint has no keyId or passkeyId", async () => {
       const factory = new SshTransportFactory(
         new InMemoryEndpointRepository([{ ...testEndpoint, keyId: undefined }]),
         new InMemorySshKeyRepository([]),
@@ -118,12 +120,27 @@ describe("SshTransportFactory", () => {
     });
   });
 
-  describe("webauthn key", () => {
+  describe("webauthn key (via passkeyId)", () => {
+    const passkeyEndpoint = { ...testEndpoint, keyId: undefined, passkeyId: "cred-1" };
+
+    it("throws if no credential lookup provided", async () => {
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+      );
+
+      await expect(factory.create("ep-1")).rejects.toThrow(
+        "WebAuthn key configured but no credential lookup provided",
+      );
+    });
+
     it("throws if no agent factory provided", async () => {
       const factory = new SshTransportFactory(
-        new InMemoryEndpointRepository([{ ...testEndpoint, keyId: "key-2" }]),
-        new InMemorySshKeyRepository([testWebAuthnKey]),
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
+        { findCredential: () => testCredential },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -131,12 +148,26 @@ describe("SshTransportFactory", () => {
       );
     });
 
+    it("throws if credential is revoked", async () => {
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+        {
+          findCredential: () => ({ ...testCredential, revoked: true }),
+          createWebAuthnAgent: () => null,
+        },
+      );
+
+      await expect(factory.create("ep-1")).rejects.toThrow("has been revoked");
+    });
+
     it("throws if agent factory returns null (no browser)", async () => {
       const factory = new SshTransportFactory(
-        new InMemoryEndpointRepository([{ ...testEndpoint, keyId: "key-2" }]),
-        new InMemorySshKeyRepository([testWebAuthnKey]),
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { createWebAuthnAgent: () => null },
+        { findCredential: () => testCredential, createWebAuthnAgent: () => null },
       );
 
       await expect(factory.create("ep-1")).rejects.toThrow(
@@ -153,19 +184,16 @@ describe("SshTransportFactory", () => {
       const createWebAuthnAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
 
       const factory = new SshTransportFactory(
-        new InMemoryEndpointRepository([{ ...testEndpoint, keyId: "key-2" }]),
-        new InMemorySshKeyRepository([testWebAuthnKey]),
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { createWebAuthnAgent },
+        { findCredential: () => testCredential, createWebAuthnAgent },
       );
 
       const transport = await factory.create("ep-1");
 
       expect(transport).toBe(mockTransport);
-      expect(createWebAuthnAgent).toHaveBeenCalledWith(
-        [expect.objectContaining(testWebAuthnKey)],
-        "localhost",
-      );
+      expect(createWebAuthnAgent).toHaveBeenCalledWith(testCredential, "localhost");
       expect(mockConnectSshWithAgent).toHaveBeenCalledWith(
         expect.objectContaining({ host: "example.com" }),
         mockAgent,
@@ -179,10 +207,13 @@ describe("SshTransportFactory", () => {
       mockConnectSshWithAgent.mockResolvedValue(mockTransport);
 
       const factory = new SshTransportFactory(
-        new InMemoryEndpointRepository([{ ...testEndpoint, keyId: "key-2" }]),
-        new InMemorySshKeyRepository([testWebAuthnKey]),
+        new InMemoryEndpointRepository([passkeyEndpoint]),
+        new InMemorySshKeyRepository([]),
         new InMemoryKeyProvider([]),
-        { createWebAuthnAgent: () => ({ agent: mockAgent, cleanup }) },
+        {
+          findCredential: () => testCredential,
+          createWebAuthnAgent: () => ({ agent: mockAgent, cleanup }),
+        },
       );
 
       await factory.create("ep-1");

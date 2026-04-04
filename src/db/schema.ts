@@ -47,15 +47,16 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   lastUsedAt: text("last_used_at"),
 });
 
-// --- SSH Keys ---
+// --- SSH Keys (file-based only — passkeys live in webauthn_credentials) ---
 
 export const sshKeys = sqliteTable("ssh_keys", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
-  type: text("type").notNull().default("file"), // "file" | "webauthn"
+  type: text("type").notNull().default("file"), // kept for backward compat; always "file" going forward
   publicKey: text("public_key").notNull(), // OpenSSH format (e.g., "ssh-ed25519 AAAA...")
   fingerprint: text("fingerprint").notNull().unique(), // SHA256:... — used to match runtime key files
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -72,6 +73,7 @@ export const endpoints = sqliteTable("endpoints", {
   port: integer("port").notNull().default(22),
   username: text("username").notNull(),
   keyId: text("key_id").references(() => sshKeys.id),
+  passkeyId: text("passkey_id").references(() => webauthnCredentials.id),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

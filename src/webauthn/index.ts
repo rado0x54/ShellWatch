@@ -9,7 +9,6 @@ export {
   type AgentLogger,
   type SignRequest,
   type SignResponse,
-  type WebAuthnKeyWithCredential,
   WebAuthnSshAgent,
 } from "./ssh-agent.js";
 export {

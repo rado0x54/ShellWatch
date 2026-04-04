@@ -57,11 +57,13 @@ CREATE TABLE `endpoints` (
 	`port` integer DEFAULT 22 NOT NULL,
 	`username` text NOT NULL,
 	`key_id` text,
+	`passkey_id` text,
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`passkey_id`) REFERENCES `webauthn_credentials`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `guardrail_profiles` (
@@ -108,6 +110,7 @@ CREATE TABLE `ssh_keys` (
 	`public_key` text NOT NULL,
 	`fingerprint` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
+	`last_used_at` text,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL
 );

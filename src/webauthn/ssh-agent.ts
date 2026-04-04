@@ -11,7 +11,7 @@
  */
 
 import ssh2 from "ssh2";
-import type { SshKeyInfo } from "../db/repositories/key-repo.js";
+import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import { buildSshSignatureBlob, parseWebAuthnSignature } from "./signature-format.js";
 import { buildPublicKeyBlob } from "./ssh-key-format.js";
 
@@ -42,29 +42,24 @@ export interface AgentLogger {
  * A custom ssh2 agent backed by WebAuthn credentials.
  * The actual signing happens in the browser — this agent bridges the gap.
  */
-export interface WebAuthnKeyWithCredential extends SshKeyInfo {
-  /** The actual WebAuthn credential ID (base64url) — needed for navigator.credentials.get() */
-  webauthnCredentialId: string;
-}
-
 export class WebAuthnSshAgent extends BaseAgent {
   private pendingSign: Map<
     string,
     { cb: (err: Error | null, signature?: Buffer) => void; timeout: ReturnType<typeof setTimeout> }
   > = new Map();
   private onSignRequest: SignRequestCallback;
-  private keys: WebAuthnKeyWithCredential[];
+  private credential: WebAuthnCredentialInfo;
   private rpId: string;
   private log: AgentLogger;
 
   constructor(
-    keys: WebAuthnKeyWithCredential[],
+    credential: WebAuthnCredentialInfo,
     rpId: string,
     onSignRequest: SignRequestCallback,
     logger?: AgentLogger,
   ) {
     super();
-    this.keys = keys;
+    this.credential = credential;
     this.rpId = rpId;
     this.onSignRequest = onSignRequest;
     this.log = logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
@@ -75,8 +70,12 @@ export class WebAuthnSshAgent extends BaseAgent {
    */
   getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
     try {
-      const keyBlobs = this.keys.map((k) => buildPublicKeyBlob(k));
-      cb(null, keyBlobs);
+      if (!this.credential.publicKeyOpenSsh) {
+        cb(new Error("WebAuthn credential has no OpenSSH public key"));
+        return;
+      }
+      const keyBlob = buildPublicKeyBlob({ publicKey: this.credential.publicKeyOpenSsh });
+      cb(null, [keyBlob]);
     } catch (err) {
       this.log.error(`[WebAuthn Agent] getIdentities error: ${(err as Error).message}`);
       cb(err as Error);
@@ -93,12 +92,6 @@ export class WebAuthnSshAgent extends BaseAgent {
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
-    const matchingKey = this.findKeyForPubKey(pubKey);
-    if (!matchingKey) {
-      cb(new Error("No matching WebAuthn credential found for public key"));
-      return;
-    }
-
     const requestId = `sign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const timeout = setTimeout(() => {
@@ -111,7 +104,7 @@ export class WebAuthnSshAgent extends BaseAgent {
 
     this.onSignRequest({
       requestId,
-      credentialId: matchingKey.webauthnCredentialId,
+      credentialId: this.credential.credentialId,
       dataToSign: data,
       rpId: this.rpId,
     });
@@ -151,14 +144,6 @@ export class WebAuthnSshAgent extends BaseAgent {
     this.pendingSign.delete(requestId);
     clearTimeout(pending.timeout);
     pending.cb(new Error(`WebAuthn signing failed: ${error}`));
-  }
-
-  private findKeyForPubKey(_pubKey: Buffer): WebAuthnKeyWithCredential | null {
-    // For now, return the first key — in practice we'd match by comparing
-    // the public key blob. With a single passkey this works fine.
-    // TODO: proper matching when multiple passkeys are registered
-    if (this.keys.length === 0) return null;
-    return this.keys[0];
   }
 
   destroy(): void {

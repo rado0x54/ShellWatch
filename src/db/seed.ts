@@ -3,14 +3,7 @@ import { count, eq } from "drizzle-orm";
 import type { Config } from "../config/index.js";
 import { coseToAuthorizedKeys } from "../webauthn/ssh-key-format.js";
 import type { ShellWatchDB } from "./connection.js";
-import {
-  accounts,
-  adminAccount,
-  apiKeys,
-  endpoints,
-  sshKeys,
-  webauthnCredentials,
-} from "./schema.js";
+import { accounts, adminAccount, apiKeys, endpoints, webauthnCredentials } from "./schema.js";
 
 /**
  * Seed the database with admin account, passkey, endpoints, and API key from config.
@@ -73,7 +66,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       const id = randomUUID();
       const now = new Date().toISOString();
       const pubKeyBuf = Buffer.from(pk.publicKeyHex, "hex");
-      const fingerprint = `SHA256:${createHash("sha256").update(pubKeyBuf).digest("base64url")}`;
 
       // Derive OpenSSH authorized_keys format from COSE key
       let publicKeyOpenSsh: string | null = null;
@@ -97,20 +89,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
         })
         .run();
 
-      // Also register in ssh_keys so endpoints can reference this key via keyId
-      db.insert(sshKeys)
-        .values({
-          id,
-          label: `${pk.label} (webauthn)`,
-          type: "webauthn",
-          publicKey: publicKeyOpenSsh ?? "",
-          fingerprint,
-          enabled: true,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run();
-
       result.seededAdminPasskey = true;
     }
   }
@@ -120,15 +98,15 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   if (!endpointCount || endpointCount.total === 0) {
     const now = new Date().toISOString();
     for (const ep of config.seedAdminEndpoints) {
-      // Resolve passkeyCredentialRef to an actual ssh_keys.id
-      let keyId: string | null = null;
+      // Resolve passkeyCredentialRef to a webauthn_credentials.id
+      let passkeyId: string | null = null;
       if (ep.passkeyCredentialRef) {
         const cred = db
           .select({ id: webauthnCredentials.id })
           .from(webauthnCredentials)
           .where(eq(webauthnCredentials.credentialId, ep.passkeyCredentialRef))
           .get();
-        keyId = cred?.id ?? null;
+        passkeyId = cred?.id ?? null;
       }
 
       db.insert(endpoints)
@@ -139,7 +117,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           host: ep.address.host,
           port: ep.address.port,
           username: ep.address.username,
-          keyId,
+          passkeyId,
           enabled: true,
           createdAt: now,
           updatedAt: now,
