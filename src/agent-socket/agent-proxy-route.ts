@@ -44,10 +44,8 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
       return;
     }
 
-    // Verify the key has agent scope (or mcp scope for backward compatibility)
-    const hasScope = key.scopes.includes("agent") || key.scopes.includes("mcp");
-    if (!hasScope) {
-      socket.close(4003, "API key lacks agent scope");
+    if (!key.scopes.includes("agent")) {
+      socket.close(4003, "API key lacks 'agent' scope");
       return;
     }
 

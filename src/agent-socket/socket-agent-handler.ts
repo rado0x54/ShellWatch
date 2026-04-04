@@ -109,7 +109,11 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
   return null;
 }
 
-/** Build a CompositeSshAgent with file keys only (no passkeys). */
+/**
+ * Build a CompositeSshAgent with file keys only.
+ * Passkeys are intentionally excluded — see #36 for why OpenSSH clients
+ * cannot use webauthn-sk-ecdsa keys through an SSH agent.
+ */
 function buildFileKeyAgent(deps: AgentHandlerDeps): WebAuthnSshAgent & { destroy(): void } {
   const { keyProvider, logger } = deps;
 
