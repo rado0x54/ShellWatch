@@ -45,6 +45,44 @@ func TestReadFrameTooLarge(t *testing.T) {
 	}
 }
 
+func TestReadFrameExtensionType(t *testing.T) {
+	// SSH_AGENTC_EXTENSION (type 27) with an extension name payload
+	extName := []byte("session-bind@openssh.com")
+	payload := append([]byte{27}, extName...) // type 27 + extension name
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.BigEndian, uint32(len(payload)))
+	buf.Write(payload)
+
+	frame, err := readFrame(&buf)
+	if err != nil {
+		t.Fatalf("readFrame: %v", err)
+	}
+
+	// Verify the message type is correctly at frame[4]
+	if frame[4] != 27 {
+		t.Fatalf("expected message type 27, got %d", frame[4])
+	}
+
+	// Verify our extension detection logic works
+	if len(frame) < 5 || frame[4] != sshAgentcExtension {
+		t.Fatal("extension detection failed")
+	}
+}
+
+func TestAgentFailureResponse(t *testing.T) {
+	// Verify the pre-built failure response is well-formed
+	if len(agentFailureResponse) != 5 {
+		t.Fatalf("expected 5 bytes, got %d", len(agentFailureResponse))
+	}
+	payloadLen := binary.BigEndian.Uint32(agentFailureResponse[:4])
+	if payloadLen != 1 {
+		t.Fatalf("expected payload length 1, got %d", payloadLen)
+	}
+	if agentFailureResponse[4] != sshAgentFailure {
+		t.Fatalf("expected type %d, got %d", sshAgentFailure, agentFailureResponse[4])
+	}
+}
+
 func TestBuildWSURL(t *testing.T) {
 	tests := []struct {
 		input string

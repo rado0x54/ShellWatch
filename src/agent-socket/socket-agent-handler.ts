@@ -2,24 +2,23 @@
  * Shared handler logic for SSH agent protocol connections.
  *
  * Creates an AgentProtocol (server mode) and delegates identity/sign
- * requests to a CompositeSshAgent built from current file keys + passkeys.
+ * requests to a CompositeSshAgent built from current file keys.
+ *
+ * Note: WebAuthn passkeys are intentionally excluded from the agent proxy.
+ * OpenSSH internally maps `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` to
+ * `sk-ecdsa-sha2-nistp256@openssh.com` (both are KEY_ECDSA_SK), canonicalizing
+ * the algorithm in SIGN_REQUEST and USERAUTH_REQUEST. The standard sk-ecdsa
+ * verifier on the remote server cannot verify WebAuthn signatures (different
+ * signed data format, rpId mismatch). See #36 for details.
  *
  * Used by both the WebSocket agent proxy and the optional local socket server.
  */
 
 import ssh2 from "ssh2";
 import type { ParsedKey } from "ssh2";
-import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
-import {
-  buildFileKeyEntry,
-  buildPasskeyEntry,
-  CompositeSshAgent,
-  type SignRequest,
-  type SigningBridge,
-  type WebAuthnSshAgent,
-} from "../webauthn/index.js";
+import { buildFileKeyEntry, CompositeSshAgent, type WebAuthnSshAgent } from "../webauthn/index.js";
 
 // AgentProtocol is exported at runtime but not in type definitions
 const AgentProtocol = (ssh2 as Record<string, unknown>).AgentProtocol as new (
@@ -44,16 +43,12 @@ interface AgentProtocolInstance extends NodeJS.ReadWriteStream {
 export { AgentProtocol, type AgentProtocolInstance };
 
 export interface AgentHandlerDeps {
-  signingBridge: SigningBridge;
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
-  findCredentialsForAccount: (accountId: string) => WebAuthnCredentialInfo[];
-  rpId: string;
-  accountId: string;
   logger?: { error(msg: string): void };
 }
 
 /**
- * Create a server-mode AgentProtocol wired to a CompositeSshAgent.
+ * Create a server-mode AgentProtocol wired to file-key-only signing.
  * Returns the protocol stream and a cleanup function.
  */
 export function createAgentHandler(deps: AgentHandlerDeps): {
@@ -62,8 +57,7 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
 } {
   const protocol = new AgentProtocol(false);
 
-  // Build agent from current keys
-  const { agent, agentId } = buildAgentForAccount(deps);
+  const agent = buildFileKeyAgent(deps);
 
   const { utils } = ssh2;
 
@@ -85,7 +79,6 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
 
   // Handle sign requests
   protocol.on("sign", (req, pubKey, data, flags) => {
-    // AgentProtocol parses the key blob — extract it back for matching
     const pubKeyBuf = extractPubKeyBlob(pubKey);
     if (!pubKeyBuf) {
       protocol.failureReply(req);
@@ -102,7 +95,6 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
   });
 
   const cleanup = () => {
-    deps.signingBridge.unregisterAgent(agentId);
     agent.destroy();
   };
 
@@ -117,38 +109,20 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
   return null;
 }
 
-function buildAgentForAccount(deps: AgentHandlerDeps): {
-  agent: WebAuthnSshAgent & { destroy(): void };
-  agentId: string;
-} {
-  const { signingBridge, keyProvider, findCredentialsForAccount, accountId, rpId, logger } = deps;
+/** Build a CompositeSshAgent with file keys only (no passkeys). */
+function buildFileKeyAgent(deps: AgentHandlerDeps): WebAuthnSshAgent & { destroy(): void } {
+  const { keyProvider, logger } = deps;
 
-  // Gather file keys
   const availableKeys = keyProvider.getAvailableKeys();
   const fileKeyEntries = availableKeys
     .map((k) => buildFileKeyEntry(k.privateKeyContent))
     .filter((e) => e !== null);
 
-  // Gather passkeys for this account
-  const credentials = findCredentialsForAccount(accountId);
-  const passkeyEntries = credentials.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null);
-
-  const onSignRequest = (request: SignRequest) => signingBridge.handleSignRequest(request);
-
-  const agent = new CompositeSshAgent({
-    passkeys: passkeyEntries,
+  return new CompositeSshAgent({
+    passkeys: [],
     fileKeys: fileKeyEntries,
-    rpId,
-    onSignRequest,
-    // Agent proxy sign requests always show the modal since
-    // the source is an external SSH client, not ShellWatch itself
-    endpointLabel: "External SSH client",
-    endpointAddress: "agent-proxy",
+    rpId: "",
+    onSignRequest: () => {},
     logger,
   });
-
-  const agentId = `proxy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  signingBridge.registerAgent(agentId, agent);
-
-  return { agent, agentId };
 }

@@ -26,8 +26,7 @@ import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
-import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import { registerWebAuthnRoutes, type SigningBridge } from "../webauthn/index.js";
+import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -52,9 +51,7 @@ export interface BuildAppParams {
   options?: AppOptions;
   /** Required when agentSocket.proxyEnabled is true */
   agentProxy?: {
-    signingBridge: SigningBridge;
     keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
-    findCredentialsForAccount: (accountId: string) => WebAuthnCredentialInfo[];
   };
 }
 
@@ -531,10 +528,7 @@ export async function buildApp(params: BuildAppParams) {
     registerAgentProxyRoute({
       app,
       basePath: base,
-      signingBridge: params.agentProxy.signingBridge,
       keyProvider: params.agentProxy.keyProvider,
-      findCredentialsForAccount: params.agentProxy.findCredentialsForAccount,
-      rpId: config.security.rpId,
       apiKeyRepo,
       accountRepo,
     });
