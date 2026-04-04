@@ -134,6 +134,13 @@ try {
     wsExtensions: [signingBridge],
     keyAvailability: keyWatcher,
     apiKeyRepo,
+    ...(config.agentSocket.proxyEnabled && {
+      agentProxy: {
+        signingBridge,
+        keyProvider: keyWatcher,
+        findCredentialsForAccount: (accountId: string) => findCredentialsForAccount(db, accountId),
+      },
+    }),
   });
 
   agentLog.current = { error: (msg) => app.log.error(msg) };

@@ -146,6 +146,7 @@ describe("Error Scenarios", () => {
           allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
         },
         notifications: { mcp: { debounceMs: 50 } },
+        agentSocket: { proxyEnabled: false },
       };
       const testApiKey = "sw_test_error_scenario_key";
       const errorApiKeyRepo = new InMemoryApiKeyRepository();

@@ -47,6 +47,7 @@ export function registerAuthGate({
     "/login",
     "/register",
     "/mcp",
+    "/agent-proxy",
     "/config.js",
   ];
 
