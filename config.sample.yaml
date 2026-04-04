@@ -44,3 +44,8 @@ security:
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"
+
+# SSH agent proxy — allows system SSH clients to use ShellWatch-managed keys.
+# Requires the shellwatch-agent thin client on the user's workstation.
+# agentSocket:
+#   proxyEnabled: true                                  # Enable /agent-proxy WebSocket endpoint (default: false)
