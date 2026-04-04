@@ -52,7 +52,7 @@ try {
 
   /** Register an agent with the signing bridge and return a cleanup function */
   function registerAgent(prefix: string, agent: WebAuthnSshAgent) {
-    const agentId = `${prefix}_${Date.now()}`;
+    const agentId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     signingBridge.registerAgent(agentId, agent);
     return {
       agent,

@@ -1,6 +1,6 @@
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import type { SshKeyInfo, SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
 import type { PrivateKeyProvider } from "./key-directory-watcher.js";
@@ -118,7 +118,7 @@ export class SshTransportFactory {
 
   private async connectWithFileKey(
     endpoint: EndpointInfo,
-    keyInfo: import("../db/repositories/key-repo.js").SshKeyInfo,
+    keyInfo: SshKeyInfo,
   ): Promise<TerminalTransport> {
     const privateKey = this.keyProvider.getPrivateKey(keyInfo.fingerprint);
     if (!privateKey) {

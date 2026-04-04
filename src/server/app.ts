@@ -306,7 +306,7 @@ export async function buildApp(params: BuildAppParams) {
           reply.status(400);
           return { error: "Cannot set both keyId and passkeyId" };
         }
-        if (body.keyId && !accountRepo.isAdmin(request.accountId!)) {
+        if (body.keyId && !accountRepo.isAdmin(request.accountId)) {
           reply.status(403);
           return { error: "File-based SSH keys can only be assigned by the admin account" };
         }

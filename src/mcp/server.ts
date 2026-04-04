@@ -217,7 +217,7 @@ export async function createMcpServer(
                 content: [{ type: "text", text: "No account context for endpoint creation" }],
               };
             }
-            if (data.keyId && !(accountRepo?.isAdmin(accountId) ?? false)) {
+            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
               return {
                 isError: true,
                 content: [
@@ -246,7 +246,7 @@ export async function createMcpServer(
                 isError: true,
                 content: [{ type: "text", text: "id and data are required" }],
               };
-            if (data.keyId && !(accountRepo?.isAdmin(accountId ?? "") ?? false)) {
+            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
               return {
                 isError: true,
                 content: [

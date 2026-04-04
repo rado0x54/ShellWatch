@@ -49,7 +49,7 @@
       // Handle FIDO signing requests
       onWsMessage((msg) => {
         if (msg.type === "fido:sign-request") {
-          if (msg.directSign !== false) {
+          if (msg.directSign === true) {
             // Direct sign — invoke WebAuthn immediately (assigned passkey)
             handleFidoSignRequest(msg);
           } else {

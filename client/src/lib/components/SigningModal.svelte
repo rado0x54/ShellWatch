@@ -11,6 +11,7 @@
   let { request, onDone }: Props = $props();
   let signing = $state(false);
 
+  // TODO: show error feedback to user instead of silently dismissing (#31)
   async function handleSign() {
     signing = true;
     try {
