@@ -24,6 +24,10 @@ type ServerMessage =
       credentialId: string;
       challenge: string;
       rpId: string;
+      directSign?: boolean;
+      endpointLabel?: string;
+      endpointAddress?: string;
+      passkeyLabel?: string;
     }
   | { type: "error"; message: string };
 

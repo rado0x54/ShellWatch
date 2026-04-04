@@ -5,18 +5,20 @@
   import { page } from "$app/stores";
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import SigningModal from "$lib/components/SigningModal.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
   import { basePath } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
   import { checkAuth } from "$lib/stores/webauthn.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
-  import { handleFidoSignRequest } from "$lib/utils/fido.js";
+  import { handleFidoSignRequest, type FidoSignRequest } from "$lib/utils/fido.js";
 
   let { children } = $props();
 
   let ready = $state(false);
   let mobileMenuOpen = $state(false);
   let sessionModes = $state<Record<string, string>>({});
+  let pendingSignRequest = $state<FidoSignRequest | null>(null);
 
   const isFullscreenPage = $derived(
     $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/register"),
@@ -47,7 +49,13 @@
       // Handle FIDO signing requests
       onWsMessage((msg) => {
         if (msg.type === "fido:sign-request") {
-          handleFidoSignRequest(msg);
+          if (msg.directSign !== false) {
+            // Direct sign — invoke WebAuthn immediately (assigned passkey)
+            handleFidoSignRequest(msg);
+          } else {
+            // Auto-negotiate — show signing confirmation modal
+            pendingSignRequest = msg;
+          }
         }
         if (msg.type === "terminal:mode") {
           sessionModes[msg.sessionId] = msg.mode;
@@ -62,6 +70,10 @@
 <svelte:head>
   <script src="config.js"></script>
 </svelte:head>
+
+{#if pendingSignRequest}
+  <SigningModal request={pendingSignRequest} onDone={() => (pendingSignRequest = null)} />
+{/if}
 
 {#if !ready}
   <div class="loading">

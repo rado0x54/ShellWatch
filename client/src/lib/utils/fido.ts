@@ -9,12 +9,18 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export async function handleFidoSignRequest(request: {
+export interface FidoSignRequest {
   requestId: string;
   credentialId: string;
   challenge: string;
   rpId: string;
-}): Promise<void> {
+  directSign?: boolean;
+  endpointLabel?: string;
+  endpointAddress?: string;
+  passkeyLabel?: string;
+}
+
+export async function handleFidoSignRequest(request: FidoSignRequest): Promise<void> {
   try {
     const decoded = atob(request.challenge);
     const challengeBytes = Uint8Array.from(decoded, (c) => c.charCodeAt(0));

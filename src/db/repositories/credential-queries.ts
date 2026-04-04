@@ -1,4 +1,4 @@
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { webauthnCredentials } from "../schema.js";
 
@@ -15,6 +15,27 @@ export interface WebAuthnCredentialInfo {
   label: string;
   publicKeyOpenSsh: string | null;
   revoked: boolean;
+}
+
+/** Find all non-revoked WebAuthn credentials for an account (for composite agent). */
+export function findCredentialsForAccount(
+  db: ShellWatchDB,
+  accountId: string,
+): WebAuthnCredentialInfo[] {
+  return db
+    .select({
+      id: webauthnCredentials.id,
+      accountId: webauthnCredentials.accountId,
+      credentialId: webauthnCredentials.credentialId,
+      label: webauthnCredentials.label,
+      publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
+      revoked: webauthnCredentials.revoked,
+    })
+    .from(webauthnCredentials)
+    .where(
+      and(eq(webauthnCredentials.accountId, accountId), eq(webauthnCredentials.revoked, false)),
+    )
+    .all();
 }
 
 /** Look up a WebAuthn credential by its ID (for transport factory). */

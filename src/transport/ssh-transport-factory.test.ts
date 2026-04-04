@@ -68,16 +68,6 @@ describe("SshTransportFactory", () => {
       await expect(factory.create("nonexistent")).rejects.toThrow("Unknown endpoint: nonexistent");
     });
 
-    it("throws if endpoint has no keyId or passkeyId", async () => {
-      const factory = new SshTransportFactory(
-        new InMemoryEndpointRepository([{ ...testEndpoint, keyId: undefined }]),
-        new InMemorySshKeyRepository([]),
-        new InMemoryKeyProvider([]),
-      );
-
-      await expect(factory.create("ep-1")).rejects.toThrow("No SSH key configured for endpoint");
-    });
-
     it("throws if key not found in repository", async () => {
       const factory = new SshTransportFactory(
         new InMemoryEndpointRepository([testEndpoint]),
@@ -221,6 +211,174 @@ describe("SshTransportFactory", () => {
       expect(cleanup).not.toHaveBeenCalled();
       (mockTransport as unknown as EventEmitter).emit("close");
       expect(cleanup).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("auto-negotiate (no key assigned)", () => {
+    const autoEndpoint = {
+      ...testEndpoint,
+      keyId: undefined,
+      accountId: "account-1",
+    };
+
+    it("throws if no composite agent factory provided", async () => {
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+      );
+
+      await expect(factory.create("ep-1")).rejects.toThrow(
+        "No SSH key configured for endpoint and no composite agent factory provided",
+      );
+    });
+
+    it("throws if no keys available at all", async () => {
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+        {
+          createCompositeAgent: () => null,
+          findCredentialsForAccount: () => [],
+          isAdmin: () => false,
+        },
+      );
+
+      await expect(factory.create("ep-1")).rejects.toThrow("No SSH keys available");
+    });
+
+    it("gathers file keys for admin accounts", async () => {
+      const mockTransport = createMockTransport();
+      const mockAgent = { sign: vi.fn() } as never;
+      const cleanup = vi.fn();
+      mockConnectSshWithAgent.mockResolvedValue(mockTransport);
+
+      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
+
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([testFileKey]),
+        new InMemoryKeyProvider([testScannedKey]),
+        {
+          createCompositeAgent,
+          findCredentialsForAccount: () => [],
+          isAdmin: () => true,
+        },
+      );
+
+      await factory.create("ep-1");
+
+      expect(createCompositeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileKeys: [
+            { publicKey: testFileKey.publicKey, privateKey: testScannedKey.privateKeyContent },
+          ],
+          passkeys: [],
+          rpId: "localhost",
+        }),
+      );
+    });
+
+    it("excludes file keys for non-admin accounts", async () => {
+      const mockTransport = createMockTransport();
+      const mockAgent = { sign: vi.fn() } as never;
+      const cleanup = vi.fn();
+      mockConnectSshWithAgent.mockResolvedValue(mockTransport);
+
+      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
+
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([testFileKey]),
+        new InMemoryKeyProvider([testScannedKey]),
+        {
+          createCompositeAgent,
+          findCredentialsForAccount: () => [testCredential],
+          isAdmin: () => false,
+        },
+      );
+
+      await factory.create("ep-1");
+
+      expect(createCompositeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileKeys: [],
+          passkeys: [testCredential],
+        }),
+      );
+    });
+
+    it("passes endpoint info to composite agent factory", async () => {
+      const mockTransport = createMockTransport();
+      const mockAgent = { sign: vi.fn() } as never;
+      mockConnectSshWithAgent.mockResolvedValue(mockTransport);
+
+      const createCompositeAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup: vi.fn() });
+
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+        {
+          createCompositeAgent,
+          findCredentialsForAccount: () => [testCredential],
+          isAdmin: () => false,
+        },
+      );
+
+      await factory.create("ep-1");
+
+      expect(createCompositeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: expect.objectContaining({
+            id: "ep-1",
+            host: "example.com",
+            label: "Test Server",
+          }),
+        }),
+      );
+    });
+
+    it("calls cleanup when transport closes", async () => {
+      const mockTransport = createMockTransport();
+      const mockAgent = { sign: vi.fn() } as never;
+      const cleanup = vi.fn();
+      mockConnectSshWithAgent.mockResolvedValue(mockTransport);
+
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+        {
+          createCompositeAgent: () => ({ agent: mockAgent, cleanup }),
+          findCredentialsForAccount: () => [testCredential],
+          isAdmin: () => false,
+        },
+      );
+
+      await factory.create("ep-1");
+
+      expect(cleanup).not.toHaveBeenCalled();
+      (mockTransport as unknown as EventEmitter).emit("close");
+      expect(cleanup).toHaveBeenCalledOnce();
+    });
+
+    it("throws if composite factory returns null (no browser, no file keys)", async () => {
+      const factory = new SshTransportFactory(
+        new InMemoryEndpointRepository([autoEndpoint]),
+        new InMemorySshKeyRepository([]),
+        new InMemoryKeyProvider([]),
+        {
+          createCompositeAgent: () => null,
+          findCredentialsForAccount: () => [testCredential],
+          isAdmin: () => false,
+        },
+      );
+
+      await expect(factory.create("ep-1")).rejects.toThrow(
+        "WebAuthn authentication requires a browser session",
+      );
     });
   });
 });
