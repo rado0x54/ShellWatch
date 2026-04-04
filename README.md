@@ -85,16 +85,17 @@ The production server auto-detects the built client in `dist/client/` and serves
 
 ### All endpoints on a single port
 
-| Path          | Interface                                               |
-| ------------- | ------------------------------------------------------- |
-| `/`           | Web UI — Terminal view                                  |
-| `/observer`   | Web UI — Multi-session grid                             |
-| `/settings/*` | Web UI — Settings (endpoints, keys, passkeys, API keys) |
-| `/login`      | Web UI — WebAuthn login                                 |
-| `/api/*`      | REST API                                                |
-| `/ws`         | WebSocket (terminal I/O + events)                       |
-| `/mcp`        | MCP (streamable HTTP)                                   |
-| `/health`     | Health check                                            |
+| Path           | Interface                                               |
+| -------------- | ------------------------------------------------------- |
+| `/`            | Web UI — Terminal view                                  |
+| `/observer`    | Web UI — Multi-session grid                             |
+| `/settings/*`  | Web UI — Settings (endpoints, keys, passkeys, API keys) |
+| `/login`       | Web UI — WebAuthn login                                 |
+| `/api/*`       | REST API                                                |
+| `/ws`          | WebSocket (terminal I/O + events)                       |
+| `/mcp`         | MCP (streamable HTTP)                                   |
+| `/agent-proxy` | SSH agent proxy (WebSocket, API key auth)               |
+| `/health`      | Health check                                            |
 
 ## Web UI
 
@@ -140,6 +141,33 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
   }
 }
 ```
+
+## SSH Agent Proxy
+
+ShellWatch can act as an SSH agent for system SSH clients (`ssh`, `scp`, `git`). This allows your local `ssh` command to authenticate using keys managed by ShellWatch — even when ShellWatch runs on a remote server.
+
+Enable in `config.yaml`:
+
+```yaml
+agentSocket:
+  proxyEnabled: true
+```
+
+Then run the [`shellwatch-agent`](./agent-client/) thin client on your workstation:
+
+```bash
+cd agent-client && go build -o shellwatch-agent ./cmd/shellwatch-agent/
+./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+
+# In your shell profile:
+export SSH_AUTH_SOCK=/tmp/shellwatch-agent-<uid>.sock
+```
+
+The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this scope automatically.
+
+Currently only file-based keys are exposed through the agent proxy. WebAuthn passkeys are not yet supported due to an [OpenSSH algorithm canonicalization issue](https://github.com/rado0x54/ShellWatch/issues/36).
+
+See the [agent-client README](./agent-client/README.md) for full usage and configuration.
 
 ## Scripts
 
