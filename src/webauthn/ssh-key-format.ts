@@ -96,4 +96,31 @@ export function buildPublicKeyBlob(keyInfo: { publicKey: string }): Buffer {
   return Buffer.from(parts[1], "base64");
 }
 
+/**
+ * Extract the key material portion of an SSH public key blob, skipping the
+ * algorithm name string. This allows comparing keys regardless of whether the
+ * algorithm is "webauthn-sk-ecdsa-sha2-nistp256@openssh.com" or the
+ * canonicalized "sk-ecdsa-sha2-nistp256@openssh.com" — the key material
+ * (curve, EC point, application) is identical in both cases.
+ */
+export function skKeyMaterial(blob: Buffer): Buffer {
+  if (blob.length < 4) return blob;
+  const algoLen = blob.readUInt32BE(0);
+  const offset = 4 + algoLen;
+  if (offset > blob.length) return blob;
+  return blob.subarray(offset);
+}
+
+/**
+ * Compare two SK key blobs by material only (ignoring algorithm name).
+ * Falls back to exact comparison for non-SK keys.
+ */
+export function matchesSkKeyBlob(stored: Buffer, incoming: Buffer): boolean {
+  if (stored.equals(incoming)) return true;
+  // Try material-only comparison for SK keys where the algorithm name may differ
+  const storedMaterial = skKeyMaterial(stored);
+  const incomingMaterial = skKeyMaterial(incoming);
+  return storedMaterial.length > 0 && storedMaterial.equals(incomingMaterial);
+}
+
 export { ALGORITHM as WEBAUTHN_SSH_ALGORITHM };

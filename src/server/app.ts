@@ -52,6 +52,11 @@ export interface BuildAppParams {
   /** Required when agentSocket.proxyEnabled is true */
   agentProxy?: {
     keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
+    signingBridge?: import("../webauthn/signing-bridge.js").SigningBridge;
+    findCredentialsForAccount?: (
+      accountId: string,
+    ) => import("../db/repositories/credential-queries.js").WebAuthnCredentialInfo[];
+    rpId?: string;
   };
 }
 
@@ -531,6 +536,9 @@ export async function buildApp(params: BuildAppParams) {
       keyProvider: params.agentProxy.keyProvider,
       apiKeyRepo,
       accountRepo,
+      signingBridge: params.agentProxy.signingBridge,
+      findCredentialsForAccount: params.agentProxy.findCredentialsForAccount,
+      rpId: params.agentProxy.rpId,
     });
     app.log.info(`Agent proxy endpoint enabled at ${base}/agent-proxy`);
   }

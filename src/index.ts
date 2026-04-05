@@ -137,6 +137,9 @@ try {
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
         keyProvider: keyWatcher,
+        signingBridge,
+        findCredentialsForAccount: (accountId: string) => findCredentialsForAccount(db, accountId),
+        rpId: config.security.rpId,
       },
     }),
   });
