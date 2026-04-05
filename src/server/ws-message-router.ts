@@ -13,7 +13,7 @@ export interface WsRouterDeps {
   uiCreatedSessions: Set<string>;
 }
 
-export function getModeForSession(
+function getModeForSession(
   sessionId: string,
   terminalManager: TerminalManager,
   uiCreatedSessions: Set<string>,

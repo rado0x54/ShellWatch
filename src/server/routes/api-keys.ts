@@ -1,13 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { AccountRepository, ApiKeyRepository } from "../../db/index.js";
+import type { ApiKeyRepository } from "../../db/index.js";
 import { hashApiKey } from "../auth/api-key-auth.js";
 
 export interface ApiKeyRoutesParams {
   app: FastifyInstance;
   basePath: string;
   apiKeyRepo: ApiKeyRepository;
-  accountRepo: AccountRepository;
 }
 
 export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {

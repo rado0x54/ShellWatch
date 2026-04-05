@@ -131,7 +131,7 @@ export async function buildApp(params: BuildAppParams) {
   });
 
   if (apiKeyRepo) {
-    registerApiKeyRoutes({ app, basePath: base, apiKeyRepo, accountRepo });
+    registerApiKeyRoutes({ app, basePath: base, apiKeyRepo });
   }
 
   // MCP server over streamable HTTP at /mcp
