@@ -50,7 +50,10 @@ export async function createTestMcpClient(
 
   return {
     client,
-    async callTool(name: string, args: Record<string, unknown> = {}) {
+    async callTool(
+      name: string,
+      args: Record<string, unknown> = {},
+    ): Promise<{ content: string; isError: boolean | undefined }> {
       log.add("mcp-client", `calling tool: ${name}`, args);
       const result = await client.callTool({ name, arguments: args });
       const content = (result.content as { type: string; text: string }[])[0].text;

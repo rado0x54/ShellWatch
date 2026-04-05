@@ -9,9 +9,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import type { AccountRepository } from "../db/repositories/account-repo.js";
+import type { AccountRepository, ApiKeyRepository } from "../db/index.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";

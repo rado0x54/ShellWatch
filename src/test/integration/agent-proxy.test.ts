@@ -10,10 +10,12 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
 import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
-import { StubAccountRepository } from "../../db/repositories/account-repo.js";
-import { InMemoryApiKeyRepository } from "../../db/repositories/api-key-repo.js";
-import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
-import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
+import {
+  StubAccountRepository,
+  InMemoryApiKeyRepository,
+  InMemoryEndpointRepository,
+  InMemorySshKeyRepository,
+} from "../../db/index.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";

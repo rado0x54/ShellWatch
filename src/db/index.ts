@@ -5,22 +5,17 @@ export {
   type AccountRepository,
   DrizzleAccountRepository,
   StubAccountRepository,
-} from "./repositories/account-repo.js";
-export {
   type ApiKeyInfo,
   type ApiKeyRepository,
   DrizzleApiKeyRepository,
-} from "./repositories/api-key-repo.js";
-export {
+  InMemoryApiKeyRepository,
   DrizzleEndpointRepository,
   type EndpointInfo,
   type EndpointRepository,
   InMemoryEndpointRepository,
-} from "./repositories/endpoint-repo.js";
-export {
   DrizzleSshKeyRepository,
   InMemorySshKeyRepository,
   type SshKeyInfo,
   type SshKeyRepository,
-} from "./repositories/key-repo.js";
+} from "./repositories/index.js";
 export { seedFromConfig, type SeedResult } from "./seed.js";

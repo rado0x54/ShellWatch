@@ -3,21 +3,22 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
-import type { AccountRepository } from "../db/repositories/account-repo.js";
-import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
-import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { attachMcpNotifications } from "./notifications.js";
 import { createMcpServer } from "./server.js";
 
-export async function registerMcpHttpTransport(
-  app: FastifyInstance,
-  config: Config,
-  terminalManager: TerminalManager,
-  endpointRepo: EndpointRepository,
-  keyRepo: SshKeyRepository,
-  accountRepo: AccountRepository,
-) {
+export interface McpHttpTransportOptions {
+  app: FastifyInstance;
+  config: Config;
+  terminalManager: TerminalManager;
+  endpointRepo: EndpointRepository;
+  keyRepo: SshKeyRepository;
+  accountRepo: AccountRepository;
+}
+
+export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
+  const { app, config, terminalManager, endpointRepo, keyRepo, accountRepo } = opts;
   interface ManagedTransport {
     transport: StreamableHTTPServerTransport;
     agentSession: AgentSession;

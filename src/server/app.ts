@@ -16,10 +16,12 @@ import {
   sshKeys as sshKeysTable,
   webauthnCredentials,
 } from "../db/schema.js";
-import type { AccountRepository } from "../db/repositories/account-repo.js";
-import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
-import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
-import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import type {
+  AccountRepository,
+  ApiKeyRepository,
+  EndpointRepository,
+  SshKeyRepository,
+} from "../db/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { TerminalManager } from "../terminal/index.js";
@@ -513,7 +515,14 @@ export async function buildApp(params: BuildAppParams) {
   const { uiCreatedSessions } = wsHandler;
 
   // MCP server over streamable HTTP at /mcp
-  await registerMcpHttpTransport(app, config, terminalManager, endpointRepo, keyRepo, accountRepo);
+  await registerMcpHttpTransport({
+    app,
+    config,
+    terminalManager,
+    endpointRepo,
+    keyRepo,
+    accountRepo,
+  });
 
   // WebAuthn routes
   if (db) {

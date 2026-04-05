@@ -26,7 +26,9 @@ export class AgentSession {
     return this.ownedSessions;
   }
 
-  async listEndpoints() {
+  async listEndpoints(): Promise<
+    { id: string; label: string; host: string; port: number; username: string }[]
+  > {
     const endpoints = await this.endpointRepo.findAll();
     return endpoints.map(({ id, label, host, port, username }) => ({
       id,

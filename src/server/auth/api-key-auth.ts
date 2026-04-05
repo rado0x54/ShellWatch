@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { AccountRepository } from "../../db/repositories/account-repo.js";
-import type { ApiKeyRepository } from "../../db/repositories/api-key-repo.js";
+import type { AccountRepository, ApiKeyRepository } from "../../db/index.js";
 
 export function hashApiKey(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");

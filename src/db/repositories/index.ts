@@ -4,6 +4,12 @@ export {
   DrizzleAccountRepository,
   StubAccountRepository,
 } from "./account-repo.js";
+export {
+  type ApiKeyInfo,
+  type ApiKeyRepository,
+  DrizzleApiKeyRepository,
+  InMemoryApiKeyRepository,
+} from "./api-key-repo.js";
 export { hasPasskeys } from "./credential-queries.js";
 export {
   DrizzleEndpointRepository,

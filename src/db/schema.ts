@@ -9,8 +9,6 @@ export const accounts = sqliteTable("accounts", {
   type: text("type").notNull(), // "human" | "agent"
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
-  guardrailProfileId: text("guardrail_profile_id"),
-  recoveryCodeHash: text("recovery_code_hash"),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -105,44 +103,6 @@ export const sessionHistory = sqliteTable("session_history", {
   createdAt: text("created_at").notNull(),
   closedAt: text("closed_at"),
   durationMs: integer("duration_ms"),
-});
-
-// --- Audit Events (placeholder for #16) ---
-
-export const auditEvents = sqliteTable("audit_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  timestamp: text("timestamp").notNull(),
-  sessionId: text("session_id"),
-  accountId: text("account_id"),
-  eventType: text("event_type").notNull(),
-  data: text("data"),
-});
-
-// --- Guardrail Profiles ---
-
-export const guardrailProfiles = sqliteTable("guardrail_profiles", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull().unique(), // "strict", "moderate", "relaxed"
-  description: text("description"),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
-
-// --- Guardrail Rules ---
-
-export const guardrailRules = sqliteTable("guardrail_rules", {
-  id: text("id").primaryKey(),
-  profileId: text("profile_id").references(() => guardrailProfiles.id),
-  name: text("name").notNull().unique(),
-  pattern: text("pattern").notNull(),
-  action: text("action").notNull(), // "block" | "warn" | "terminate"
-  message: text("message"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  priority: integer("priority").notNull().default(0),
-  endpointId: text("endpoint_id"),
-  source: text("source"),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
 });
 
 // --- API Keys ---

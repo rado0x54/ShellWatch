@@ -177,12 +177,12 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
             conn.end();
           }
         },
-        async close() {
+        async close(): Promise<void> {
           for (const stream of activeStreams) {
             stream.close();
           }
           activeStreams.clear();
-          return new Promise<void>((res) => server.close(() => res()));
+          await new Promise<void>((res) => server.close(() => res()));
         },
       });
     });

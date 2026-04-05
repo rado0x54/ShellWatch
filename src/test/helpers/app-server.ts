@@ -8,10 +8,12 @@ import ssh2 from "ssh2";
 const { utils } = ssh2;
 
 import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
-import { StubAccountRepository } from "../../db/repositories/account-repo.js";
-import { InMemoryApiKeyRepository } from "../../db/repositories/api-key-repo.js";
-import { InMemoryEndpointRepository } from "../../db/repositories/endpoint-repo.js";
-import { InMemorySshKeyRepository } from "../../db/repositories/key-repo.js";
+import {
+  StubAccountRepository,
+  InMemoryApiKeyRepository,
+  InMemoryEndpointRepository,
+  InMemorySshKeyRepository,
+} from "../../db/index.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { buildApp } from "../../server/app.js";
 import { createSessionCookie } from "../../server/auth/session-cookie.js";
@@ -159,7 +161,7 @@ export async function startTestApp(
       headers.set("cookie", sessionCookie);
       return fetch(`${baseUrl}${path}`, { ...init, headers });
     },
-    async close() {
+    async close(): Promise<void> {
       terminalManager.destroy();
       await app.close();
       log.add("app-server", "closed");
