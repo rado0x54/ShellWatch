@@ -115,10 +115,11 @@ export async function buildApp(params: BuildAppParams) {
   registerSshKeyRoutes({ app, basePath: base, keyRepo, accountRepo, keyAvailability });
   registerEndpointRoutes({ app, basePath: base, endpointRepo, accountRepo, terminalManager });
 
-  // WebSocket for terminal I/O (must register before session routes for uiCreatedSessions)
-  const wsHandler = registerWebSocket(app, terminalManager, base);
+  // Shared set tracking UI-created sessions (used by both WS handler and session routes)
+  const uiCreatedSessions = new Set<string>();
+
+  const wsHandler = registerWebSocket(app, terminalManager, uiCreatedSessions, base);
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
-  const { uiCreatedSessions } = wsHandler;
 
   registerSessionRoutes({
     app,
