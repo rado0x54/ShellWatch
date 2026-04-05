@@ -8,19 +8,16 @@ import { parseClientMessage, type ServerMessage } from "./ws-protocol.js";
 export interface WsHandler {
   /** Register an extension that hooks into WS lifecycle events. */
   addExtension(extension: WsExtension): void;
-  /** Track sessions created via the UI (for control mode). */
-  uiCreatedSessions: Set<string>;
 }
 
 export function registerWebSocket(
   app: FastifyInstance,
   terminalManager: TerminalManager,
+  uiCreatedSessions: Set<string>,
   basePath = "",
 ): WsHandler {
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
-  // Track which sessions were created via the UI (across all WS clients)
-  const uiCreatedSessions = new Set<string>();
 
   // Per-client metadata
   const clientMeta = new Map<
@@ -121,6 +118,5 @@ export function registerWebSocket(
     addExtension(extension: WsExtension) {
       extensions.push(extension);
     },
-    uiCreatedSessions,
   };
 }
