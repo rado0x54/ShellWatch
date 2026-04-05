@@ -16,7 +16,7 @@
 import ssh2 from "ssh2";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import { buildSshSignatureBlob, parseWebAuthnSignature } from "./signature-format.js";
-import { buildPublicKeyBlob } from "./ssh-key-format.js";
+import { buildPublicKeyBlob, matchesSkKeyBlob } from "./ssh-key-format.js";
 
 // BaseAgent is exported by ssh2 but not in the type definitions
 const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Record<string, unknown>;
@@ -141,7 +141,11 @@ export class WebAuthnSshAgent extends BaseAgent {
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
     const pubKeyBlob = toPublicKeyBlob(pubKey);
-    const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKeyBlob));
+    // Use material-based comparison: OpenSSH 10.3 canonicalizes
+    // "webauthn-sk-ecdsa" to "sk-ecdsa" in SIGN_REQUEST, so the algorithm
+    // name in the incoming blob differs from our stored blob. The key
+    // material (curve, EC point, application) is identical. See #36.
+    const passkey = this.passkeys.find((pk) => matchesSkKeyBlob(pk.publicKeyBlob, pubKeyBlob));
     if (!passkey) {
       cb(new Error("No matching passkey found for signing"));
       return;

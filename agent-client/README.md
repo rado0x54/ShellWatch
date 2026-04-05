@@ -68,7 +68,7 @@ The default socket path is `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, othe
 ssh client ──► Unix socket ──► shellwatch-agent ──WSS──► ShellWatch /agent-proxy
                                                           │
                                                           ├─ file keys (auto-sign)
-                                                          └─ passkeys (not yet supported, see #36)
+                                                          └─ passkeys (browser-signed via WebAuthn)
 ```
 
 1. SSH client connects to `SSH_AUTH_SOCK` and sends agent protocol messages
@@ -78,13 +78,24 @@ ssh client ──► Unix socket ──► shellwatch-agent ──WSS──► S
 
 Each Unix socket connection gets its own WebSocket, ensuring clean state isolation between concurrent SSH clients.
 
+### WebAuthn passkey support
+
+Passkeys registered in ShellWatch are exposed alongside file keys. When the SSH client requests a signature for a passkey, ShellWatch forwards the challenge to a connected browser session via the signing bridge. The user confirms by touching their security key (YubiKey, etc.), and the WebAuthn assertion flows back through the agent proxy to the SSH client.
+
+**Requires OpenSSH 10.3+** on the client. Earlier versions canonicalize `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` to `sk-ecdsa-sha2-nistp256@openssh.com` and reject the mismatched signature type from the agent. OpenSSH 10.3 ([released 2026-04-02](https://www.openssh.com/releasenotes.html)) relaxes the signature type check for FIDO keys, allowing the webauthn signature format to pass through. See [#36](https://github.com/rado0x54/ShellWatch/issues/36) for the full analysis.
+
+The **server** does not need 10.3 for plain (non-cert) webauthn keys — the verifier already reads the algorithm from the signature blob and dispatches to the webauthn path.
+
+A browser session must be open in ShellWatch for passkey signing to work. If no browser is connected, only file keys are available.
+
 ### OpenSSH extension handling
 
 Newer OpenSSH sends `SSH_AGENTC_EXTENSION` (type 27) for session binding before requesting identities. The Go proxy handles these locally (responds with `SSH_AGENT_FAILURE`) without forwarding to the server, working around a parse bug in ssh2's `AgentProtocol` for unknown message types with payloads.
 
 ## Known limitations
 
-- **WebAuthn passkeys are not supported** through the agent proxy. OpenSSH internally canonicalizes `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` to `sk-ecdsa-sha2-nistp256@openssh.com`, making the signature format incompatible. See [#36](https://github.com/rado0x54/ShellWatch/issues/36) for details.
+- **OpenSSH 10.3+ required for passkeys.** Earlier clients reject the webauthn signature format returned by the agent. See [#36](https://github.com/rado0x54/ShellWatch/issues/36).
+- **Browser session required for passkeys.** If no browser is connected to ShellWatch, passkey sign requests will fail. File keys continue to work without a browser.
 - **API key must have `agent` scope.** Keys created via the UI currently only get `mcp` scope. Use the `seedAdminApiKey` config option or update the key's scopes in the database.
 
 ## Tests

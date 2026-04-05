@@ -10,11 +10,13 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
+import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { ApiKeyRepository } from "../db/repositories/api-key-repo.js";
 import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
+import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
-import { createAgentHandler } from "./socket-agent-handler.js";
+import { createAgentHandler, rewriteSkEcdsaSignRequest } from "./socket-agent-handler.js";
 
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
@@ -22,10 +24,25 @@ export interface AgentProxyRouteParams {
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
   apiKeyRepo: ApiKeyRepository;
   accountRepo: AccountRepository;
+  /** Signing bridge for WebAuthn passkey support through the agent proxy */
+  signingBridge?: SigningBridge;
+  /** Look up passkeys for an account */
+  findCredentialsForAccount?: (accountId: string) => WebAuthnCredentialInfo[];
+  /** WebAuthn relying party ID */
+  rpId?: string;
 }
 
 export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
-  const { app, basePath, keyProvider, apiKeyRepo, accountRepo } = params;
+  const {
+    app,
+    basePath,
+    keyProvider,
+    apiKeyRepo,
+    accountRepo,
+    signingBridge,
+    findCredentialsForAccount,
+    rpId,
+  } = params;
 
   app.get(`${basePath}/agent-proxy`, { websocket: true }, async (socket: WebSocket, request) => {
     // Authenticate via API key
@@ -52,9 +69,21 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // Touch last-used timestamp
     accountRepo.touchLastUsed(key.accountId);
 
-    const logger = { error: (msg: string) => app.log.error(msg) };
+    const logger = {
+      error: (msg: string) => app.log.error(msg),
+      debug: (msg: string) => app.log.debug(msg),
+    };
 
-    const { protocol, cleanup } = createAgentHandler({ keyProvider, logger });
+    // Look up passkeys for the authenticated account
+    const passkeys = findCredentialsForAccount?.(key.accountId) ?? [];
+
+    const { protocol, cleanup } = createAgentHandler({
+      keyProvider,
+      logger,
+      passkeys,
+      signingBridge,
+      rpId,
+    });
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
 
@@ -65,11 +94,14 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
         socket.close(4002, "Only binary messages are accepted");
         return;
       }
-      const buf = Array.isArray(data)
+      let buf = Array.isArray(data)
         ? Buffer.concat(data)
         : Buffer.isBuffer(data)
           ? data
           : Buffer.from(data as ArrayBuffer);
+      // Rewrite sk-ecdsa → webauthn-sk-ecdsa in SIGN_REQUEST so ssh2's
+      // parseKey() can recognize the key type. See #36.
+      buf = rewriteSkEcdsaSignRequest(buf);
       protocol.write(buf);
     });
 
