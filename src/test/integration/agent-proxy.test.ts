@@ -142,6 +142,7 @@ describe("agent-proxy WebSocket endpoint", () => {
       options: { logger: false, skipStaticFiles: true },
       agentProxy: {
         keyProvider: extendedKeyProvider,
+        rpId: "localhost",
       },
     });
 

@@ -70,7 +70,7 @@ export interface AgentHandlerDeps {
   /** Signing bridge for forwarding WebAuthn sign requests to the browser */
   signingBridge?: SigningBridge;
   /** Relying party ID for WebAuthn (e.g. "localhost") */
-  rpId?: string;
+  rpId: string;
 }
 
 /**
@@ -157,7 +157,7 @@ function buildAgent(deps: AgentHandlerDeps): {
   agent: WebAuthnSshAgent & { destroy(): void };
   agentId: string | null;
 } {
-  const { keyProvider, logger, signingBridge, rpId = "" } = deps;
+  const { keyProvider, logger, signingBridge, rpId } = deps;
 
   const availableKeys = keyProvider.getAvailableKeys();
   const fileKeyEntries = availableKeys
