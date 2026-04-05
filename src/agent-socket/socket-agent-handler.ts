@@ -164,7 +164,18 @@ function buildAgent(deps: AgentHandlerDeps): {
     .map((k) => buildFileKeyEntry(k.privateKeyContent))
     .filter((e) => e !== null);
 
-  // Include passkeys if we have a signing bridge with a connected browser
+  // Include passkeys if we have a signing bridge with a connected browser.
+  //
+  // NOTE: hasClients is checked once at agent build time (per WS connection).
+  // The identity list is frozen — if the browser disconnects after this point,
+  // passkey sign requests will fail at the signing bridge ("no browser session").
+  // If a browser connects later, passkeys won't appear until the SSH client
+  // reconnects. This is intentional: the SSH agent protocol caches identities
+  // per connection, so dynamic changes mid-connection would be inconsistent.
+  //
+  // A future notification system (see #38) will decouple signing from requiring
+  // a pre-existing browser session — sign requests will be delivered via push
+  // notification, allowing the user to open a signing view on demand.
   const passkeyEntries: PasskeyEntry[] = [];
   if (deps.passkeys && signingBridge?.hasClients) {
     for (const cred of deps.passkeys) {
