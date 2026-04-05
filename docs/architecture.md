@@ -1,4 +1,4 @@
-ok# ShellWatch Architecture
+# ShellWatch Architecture
 
 ## Overview
 
@@ -9,14 +9,14 @@ ShellWatch is an SSH session broker that sits between clients (humans and AI age
 │                     ShellWatch                          │
 │                                                         │
 │  ┌──────────┐   ┌──────────┐   ┌──────────┐            │
-│  │ Web UI   │   │ MCP      │   │ SSH Srv  │  (planned) │
-│  │ (browser)│   │ (agents) │   │ (agents) │            │
+│  │ Web UI   │   │ MCP      │   │ Agent    │            │
+│  │ (browser)│   │ (agents) │   │ Proxy    │            │
 │  └────┬─────┘   └────┬─────┘   └────┬─────┘            │
 │       │              │              │                   │
-│       │         ┌────┴─────┐   ┌────┴─────┐            │
-│       │         │ Agent    │   │ Agent    │             │
-│       │         │ Session  │   │ Session  │             │
-│       │         └────┬─────┘   └────┬─────┘            │
+│       │         ┌────┴─────┐        │                   │
+│       │         │ Agent    │        │                   │
+│       │         │ Session  │        │                   │
+│       │         └────┬─────┘        │                   │
 │       │              │              │                   │
 │       └──────────────┼──────────────┘                   │
 │                      │                                  │
@@ -27,7 +27,14 @@ ShellWatch is an SSH session broker that sits between clients (humans and AI age
 │                      │                                  │
 │              ┌───────┴────────┐                         │
 │              │ SSH Transport  │                         │
-│              │ (ssh2)         │                         │
+│              │ Factory        │                         │
+│              │ ┌────────────┐ │                         │
+│              │ │ File keys  │ │                         │
+│              │ │ (auto-sign)│ │                         │
+│              │ ├────────────┤ │                         │
+│              │ │ Passkeys   │ │                         │
+│              │ │ (WebAuthn) │ │                         │
+│              │ └────────────┘ │                         │
 │              └───────┬────────┘                         │
 │                      │                                  │
 └──────────────────────┼──────────────────────────────────┘
@@ -82,14 +89,85 @@ interface TerminalTransport extends EventEmitter {
 }
 ```
 
+### SshTransportFactory (`src/transport/ssh-transport-factory.ts`)
+
+Resolves endpoint configuration and key material to establish SSH connections. Supports three authentication modes:
+
+1. **File key** — auto-sign with a PEM key from the key directory (no user interaction)
+2. **Passkey** — browser-based WebAuthn signing via the signing bridge
+3. **Auto-negotiate** — tries all available keys (file keys first, then passkeys)
+
+For admin accounts, auto-negotiate uses `CompositeSshAgent` (file keys + passkeys). For non-admin accounts, `WebAuthnSshAgent` (passkeys only).
+
 ### SshTransport (`src/transport/ssh-transport.ts`)
 
-ssh2-based implementation of `TerminalTransport`. Connects to a remote host, authenticates via private key, allocates a PTY, and opens an interactive shell.
+ssh2-based implementation of `TerminalTransport`. Connects to a remote host, authenticates via private key or WebAuthn agent, allocates a PTY, and opens an interactive shell.
 
 - PTY: xterm-256color, 80x24 default
 - Connection timeout: 10 seconds
 - Resize via `setWindow()`
 - Handles unexpected disconnects gracefully
+
+### KeyDirectoryWatcher (`src/transport/key-directory-watcher.ts`)
+
+Watches the key directory for SSH private key files. Auto-discovers keys on startup and monitors for changes (additions, removals, modifications).
+
+- Scans for `.pem` files, extracts fingerprints and public keys
+- Provides `PrivateKeyProvider` interface for runtime key lookup by fingerprint
+- Registers discovered keys in the database via `SshKeyRepository`
+
+## Authentication & WebAuthn
+
+### WebAuthn / Passkeys (`src/webauthn/`)
+
+ShellWatch uses WebAuthn passkeys (e.g., YubiKeys, platform authenticators) for both user authentication and SSH key signing.
+
+**Key types:**
+
+- `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` — custom OpenSSH algorithm for browser-registered FIDO2 credentials
+- Standard file-based keys (ed25519, RSA, ECDSA) — auto-sign, no user interaction
+
+**Components:**
+
+| File                     | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `ssh-agent.ts`           | `WebAuthnSshAgent` — custom ssh2 agent that delegates signing to the browser     |
+| `composite-ssh-agent.ts` | `CompositeSshAgent` — extends WebAuthnSshAgent with file key support             |
+| `signing-bridge.ts`      | `SigningBridge` — bridges sign requests between agents and browser via WebSocket |
+| `signature-format.ts`    | Converts WebAuthn assertions to SSH signature wire format (PROTOCOL.u2f)         |
+| `ssh-key-format.ts`      | Converts COSE public keys to OpenSSH authorized_keys format                      |
+| `routes.ts`              | WebAuthn registration and authentication HTTP routes                             |
+
+**Signing flow (browser-based SSH auth):**
+
+```
+1. ssh2 needs auth → calls WebAuthnSshAgent.sign(challenge)
+2. Agent sends sign request to SigningBridge
+3. SigningBridge forwards fido:sign-request to browser via WebSocket
+4. Browser shows signing modal (or auto-signs for assigned passkeys)
+5. User touches security key → navigator.credentials.get()
+6. Browser returns fido:sign-response with WebAuthn assertion
+7. SigningBridge routes response to the waiting agent
+8. Agent converts assertion to SSH signature (PROTOCOL.u2f format)
+9. ssh2 completes authentication
+```
+
+### Account System (`src/db/repositories/account-repo.ts`)
+
+- Admin account (single, created on first passkey registration)
+- Non-admin accounts (created via WebAuthn registration)
+- Passkey-first authentication — no passwords
+- Session cookies (configurable TTL) for browser sessions
+- Inactive account cleanup (90+ days, admin exempt)
+
+### API Key Authentication (`src/server/auth/api-key-auth.ts`)
+
+Bearer token authentication for MCP and agent proxy endpoints.
+
+- Keys stored as SHA-256 hashes in the database
+- Scoped access: `mcp`, `agent`, `api`
+- Key prefix stored for identification in logs
+- `seedAdminApiKey` config option for bootstrapping
 
 ## Client Interfaces
 
@@ -105,7 +183,7 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 | `/settings/endpoints` | SSH endpoint CRUD |
 | `/settings/keys` | SSH key listing |
 | `/settings/passkeys` | WebAuthn passkey management |
-| `/settings/api-keys` | MCP API key management |
+| `/settings/api-keys` | API key management |
 | `/login` | WebAuthn passkey login |
 
 **Communication:**
@@ -118,10 +196,12 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 ```
 Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
                  terminal:take-control, terminal:release-control,
-                 fido:sign-response, fido:sign-error
+                 fido:sign-response, fido:sign-error, fido:sign-skip
 Server → Client: terminal:output, terminal:status, terminal:closed, terminal:mode,
                  sessions:changed, fido:sign-request, error
 ```
+
+**WebSocket extensions (`src/server/ws-extension.ts`):** Pluggable message interceptors. The `SigningBridge` implements `WsExtension` to intercept `fido:*` messages before the default terminal handler processes them.
 
 **State management:** Svelte stores provide reactive state shared across components:
 
@@ -139,17 +219,18 @@ The web UI sees ALL sessions (admin view) regardless of source. Sessions are dis
 
 ### MCP Server (`src/mcp/`)
 
-Streamable HTTP MCP endpoint at `/mcp`. Each MCP client connection gets its own stateful transport (per the MCP spec for streamable HTTP).
+Streamable HTTP MCP endpoint at `/mcp`. Each MCP client connection gets its own stateful transport (per the MCP spec for streamable HTTP). Requires API key with `mcp` scope.
 
 **Tools:**
 | Tool | Description |
 |------|-------------|
-| `shellwatch_list_endpoints` | List configured SSH endpoints |
 | `shellwatch_create_session` | Create a terminal session |
 | `shellwatch_list_sessions` | List this agent's sessions |
 | `shellwatch_send_keys` | Send keystrokes/text to a session |
 | `shellwatch_read_output` | Read session output (with offset) |
 | `shellwatch_close_session` | Close a session |
+| `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints |
+| `shellwatch_manage_keys` | List available SSH keys |
 
 **Notifications (server → client):**
 | Notification | When | Contains |
@@ -161,9 +242,33 @@ Notifications are debounced (configurable `debounceMs`, default 100ms) and scope
 
 **Session lifecycle:** MCP client connection creates an `AgentSession`. When the MCP transport disconnects, `AgentSession.destroy()` closes all owned terminal sessions.
 
-### SSH Server Interface (planned, #12)
+### SSH Agent Proxy (`src/agent-socket/`)
 
-An ssh2 `Server` that allows agents to connect via standard SSH. Username-based endpoint routing (`ssh dev-box@shellwatch:2222`). Creates an `AgentSession("ssh")` per client — same isolation model as MCP.
+WebSocket endpoint at `/agent-proxy` that bridges the SSH agent protocol for remote clients. A thin Go client ([`shellwatch-agent`](../agent-client/)) on the user's workstation relays SSH agent protocol frames over WebSocket.
+
+**Components:**
+
+| File                      | Purpose                                                        |
+| ------------------------- | -------------------------------------------------------------- |
+| `agent-proxy-route.ts`    | WebSocket endpoint — auth, credential lookup, protocol wiring  |
+| `socket-agent-handler.ts` | Builds `CompositeSshAgent` and wires to ssh2's `AgentProtocol` |
+
+**Flow:**
+
+```
+ssh client → Unix socket → shellwatch-agent (Go) → WSS → ShellWatch /agent-proxy
+                                                          │
+                                                          ├─ file keys (auto-sign)
+                                                          └─ passkeys (browser-signed via WebAuthn)
+```
+
+- Each WebSocket connection gets its own `AgentProtocol` instance
+- File keys are signed server-side (no user interaction)
+- Passkey sign requests are forwarded to the browser via the `SigningBridge`
+- Requires API key with `agent` scope
+- Requires OpenSSH 10.3+ on the client for passkey support (see [#36](https://github.com/rado0x54/ShellWatch/issues/36))
+
+**OpenSSH 10.3 canonicalization:** OpenSSH canonicalizes `webauthn-sk-ecdsa` to `sk-ecdsa` in agent protocol messages. The ssh2 fork handles this by checking the key's application field (`"ssh:"` = standard FIDO2, web domain = webauthn) and using the correct PROTOCOL.u2f wire format in `signReply`. See [rado0x54/ssh2#1](https://github.com/rado0x54/ssh2/pull/1).
 
 ## Agent Layer (`src/agent/`)
 
@@ -189,43 +294,88 @@ class AgentSession {
 
 **Not used by the web UI** — the UI uses the REST API and WebSocket which operate directly on the TerminalManager (admin-level access, sees all sessions).
 
+## Persistence (`src/db/`)
+
+### SQLite Database
+
+Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM. WAL mode for concurrent reads.
+
+**Schema (`src/db/schema.ts`):**
+
+| Table                  | Purpose                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `accounts`             | User/agent accounts (admin flag, session limits, last used)                        |
+| `webauthn_credentials` | Passkey credentials (COSE public key, OpenSSH public key, label)                   |
+| `ssh_keys`             | File-based SSH key metadata (fingerprint, public key — private keys on filesystem) |
+| `endpoints`            | SSH target configuration (host, port, username, key/passkey assignment)            |
+| `api_keys`             | API key hashes, scopes, labels                                                     |
+| `session_history`      | Session audit log (endpoint, account, source, timestamps)                          |
+
+**Repositories (`src/db/repositories/`):**
+
+| Repository              | Scope                                                 |
+| ----------------------- | ----------------------------------------------------- |
+| `account-repo.ts`       | Account CRUD, admin check, activity tracking, cleanup |
+| `endpoint-repo.ts`      | Endpoint CRUD with key/passkey assignment             |
+| `key-repo.ts`           | SSH key registration and lookup                       |
+| `api-key-repo.ts`       | API key creation, hash-based lookup, scope validation |
+| `credential-queries.ts` | WebAuthn credential lookup for signing                |
+
+**Migrations:** Auto-run at startup from `drizzle/` directory.
+
 ## Security
 
-### IP Allowlist (`src/server/ip-allowlist.ts`)
+### IP Allowlist (`src/server/auth/ip-allowlist.ts`)
 
-CIDR-based network filter applied to the MCP endpoint. Configured via `security.allowedNetworks` in config. Defaults to localhost only (`127.0.0.1/32`, `::1/128`).
+CIDR-based network filter applied to MCP and agent proxy endpoints. Configured via `security.allowedNetworks` in config. Defaults to localhost only (`127.0.0.1/32`, `::1/128`).
 
 Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`).
 
-### Planned (see tickets)
+### Auth Gate (`src/server/auth/auth-gate.ts`)
 
-- API keys for agents (#15)
-- Passkey/WebAuthn for admin (#20)
-- Guardrails — input filtering (#13)
-- Human-in-the-loop approvals (#19)
+Session-based authentication for the web UI. Protects REST API and WebSocket routes. Passkey login creates a signed session cookie.
+
+### API Key Auth (`src/server/auth/api-key-auth.ts`)
+
+Bearer token authentication for MCP and agent proxy. Keys are stored as SHA-256 hashes. Each key has scopes (`mcp`, `agent`, `api`) that control which interfaces it can access.
 
 ## Configuration
 
 ```yaml
-servers: # SSH endpoints
-  - id: dev-box
-    label: Dev Box
-    host: dev.example.com
-    port: 22
-    username: ubuntu
-    privateKeyPath: ./keys/dev-box.pem
+keyDirectory: ./keys # SSH key auto-discovery directory
 
 security:
-  allowedNetworks: # CIDR allowlist for MCP
+  rpId: localhost # WebAuthn Relying Party ID (required)
+  trustedWebauthnOrigins: # Allowed origins for WebAuthn (required)
+    - http://localhost:3000
+  allowedNetworks: # CIDR allowlist for MCP/agent proxy
     - 127.0.0.1/32
     - "::1/128"
+  cookieSecret: hex_string # Session signing (randomized if not set)
+  sessionTtlSeconds: 86400 # Session cookie TTL (default: 24h)
+
+server:
+  port: 3000 # HTTP port
+  basePath: /shellwatch # Optional subpath
+
+agentSocket:
+  proxyEnabled: true # Enable /agent-proxy WebSocket endpoint
 
 notifications:
   mcp:
     debounceMs: 100 # output_available debounce
+
+# Seeding (first run only)
+seedAdminApiKey: sw_... # Static API key for admin account
+seedAdminEndpoints: # Pre-seed SSH endpoints
+  - label: Dev Box
+    address: ubuntu@dev.example.com
+seedAdminPasskey: # Pre-seed admin passkey (for testing)
+  credentialId: base64url...
+  publicKey: base64url...
 ```
 
-Config is validated at startup via zod. Private key files are verified accessible.
+Config is validated at startup via Zod. See `config.sample.yaml` for all options.
 
 ## Process Model
 
@@ -239,12 +389,22 @@ Everything runs in a single Node.js process:
 │    ├── REST API routes (/api/*)         │
 │    ├── WebSocket handler (/ws)          │
 │    ├── MCP streamable HTTP (/mcp)       │
-│    └── Static files (/ — SvelteKit SPA)  │
+│    ├── Agent proxy WebSocket            │
+│    │   (/agent-proxy)                   │
+│    ├── WebAuthn routes (/api/webauthn)  │
+│    ├── Health check (/health)           │
+│    └── Static files (/ — SvelteKit SPA) │
 │                                         │
 │  TerminalManager                        │
 │    └── SSH connections (ssh2)           │
 │                                         │
-│  [Future: ssh2 Server (:2222)]          │
+│  SigningBridge                          │
+│    └── WebAuthn ↔ browser relay         │
+│                                         │
+│  KeyDirectoryWatcher                    │
+│    └── SSH key auto-discovery           │
+│                                         │
+│  SQLite (better-sqlite3, WAL mode)      │
 │                                         │
 └─────────────────────────────────────────┘
 ```
@@ -279,6 +439,22 @@ Everything runs in a single Node.js process:
 7. Browser user clicks session → terminal:attach → receives buffered output
 ```
 
+### SSH via agent proxy with passkey signing
+
+```
+1. ssh client connects to shellwatch-agent Unix socket
+2. shellwatch-agent opens WSS to ShellWatch /agent-proxy
+3. SSH client sends SSH_AGENTC_REQUEST_IDENTITIES
+4. AgentProtocol returns file keys + passkeys
+5. SSH client sends SSH_AGENTC_SIGN_REQUEST for a passkey
+6. CompositeSshAgent delegates to WebAuthnSshAgent
+7. WebAuthnSshAgent sends sign request via SigningBridge → browser
+8. Browser shows signing modal → user touches security key
+9. WebAuthn assertion flows back → converted to SSH signature
+10. Signature returned to SSH client via agent proxy
+11. SSH client authenticates with remote server
+```
+
 ## File Structure
 
 ```
@@ -286,14 +462,27 @@ src/
   index.ts                      # Entry point — config, TerminalManager, Fastify
   agent/
     agent-session.ts            # Session ownership and isolation per agent
+  agent-socket/
+    agent-proxy-route.ts        # WebSocket endpoint for SSH agent proxy
+    socket-agent-handler.ts     # AgentProtocol wiring to CompositeSshAgent
+  cli/
+    keys.ts                     # CLI for API key management
   config/
     schema.ts                   # Zod schemas for config validation
-    loader.ts                   # YAML config loading and key file verification
+    loader.ts                   # YAML config loading
+  db/
+    connection.ts               # SQLite connection setup
+    schema.ts                   # Drizzle table definitions
+    repositories/               # Data access layer (accounts, keys, endpoints, etc.)
   server/
     app.ts                      # Fastify app — routes, WebSocket, MCP, static files
     ws-handler.ts               # WebSocket protocol handler
+    ws-extension.ts             # Pluggable WS message interceptor interface
     ws-protocol.ts              # WebSocket message type definitions
-    ip-allowlist.ts             # CIDR-based IP filtering
+    auth/
+      api-key-auth.ts           # Bearer token authentication
+      auth-gate.ts              # Session-based auth for web UI
+      ip-allowlist.ts           # CIDR-based IP filtering
   terminal/
     terminal-manager.ts         # Central session registry and lifecycle
     output-buffer.ts            # Append-only output buffer with offsets
@@ -302,10 +491,20 @@ src/
     types.ts                    # TerminalSession, status, events
   transport/
     ssh-transport.ts            # ssh2 implementation of TerminalTransport
+    ssh-transport-factory.ts    # Resolves auth mode (file key / passkey / auto)
+    key-directory-watcher.ts    # Filesystem key discovery and watching
+    key-scanner.ts              # PEM key parsing and fingerprinting
   mcp/
     server.ts                   # MCP tool definitions (delegates to AgentSession)
     http-transport.ts           # Streamable HTTP transport wiring
     notifications.ts            # Debounced MCP notification dispatcher
+  webauthn/
+    ssh-agent.ts                # WebAuthnSshAgent — browser-delegated signing
+    composite-ssh-agent.ts      # CompositeSshAgent — file keys + passkeys
+    signing-bridge.ts           # SigningBridge — agent ↔ browser relay
+    signature-format.ts         # WebAuthn → SSH signature conversion
+    ssh-key-format.ts           # COSE → OpenSSH key format conversion
+    routes.ts                   # WebAuthn registration/auth HTTP routes
   test/
     helpers/                    # In-process test infrastructure
     integration/                # End-to-end tests across all actors
@@ -315,7 +514,7 @@ client/                           # SvelteKit frontend (adapter-static)
     app.css                     # Global styles (CSS variables, shared classes)
     lib/
       stores/                   # Svelte stores (ws, endpoints, keys, webauthn)
-      components/               # Reusable components (Terminal, Sidebar)
+      components/               # Reusable components (Terminal, Sidebar, SigningModal)
       utils/                    # Utilities (FIDO signing)
     routes/
       +layout.svelte            # Root layout (sidebar + mobile nav)
@@ -324,6 +523,11 @@ client/                           # SvelteKit frontend (adapter-static)
       observer/                 # Multi-session grid view
       settings/                 # Settings with tab sub-routes
   svelte.config.js              # SvelteKit config (adapter-static)
+agent-client/                     # Go thin client for SSH agent proxy
+  cmd/shellwatch-agent/         # CLI entry point
+  internal/
+    config/                     # Flag/env config parsing
+    proxy/                      # WebSocket relay + SSH agent protocol
 ```
 
 ## Planned Architecture Extensions
@@ -333,6 +537,6 @@ See individual tickets for details:
 - **Guardrails (#13)** — input filtering layer in TerminalManager, before `sendInput()`
 - **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
 - **Audit Log (#16)** — subscribes to TerminalManager events, persists to database
-- **Multi-tenant (#17)** — user accounts, agent identities, scoped access
-- **Human-in-the-loop (#19)** — Web Push (PWA) notifications and interactive approvals
-- **SSH Agent Socket (#22)** — expose keys to system SSH clients via Unix domain socket
+- **Unified notifications (#38)** — PendingAction store + NotificationDispatcher (WebSocket toast, Web Push, Telegram) for all human-in-the-loop interactions
+- **Release pipeline (#40)** — Docker image, GitHub Actions CI/CD, Proxmox deployment
+- **Agent client distribution (#35)** — goreleaser, Homebrew tap, install script
