@@ -98,6 +98,25 @@ Newer OpenSSH sends `SSH_AGENTC_EXTENSION` (type 27) for session binding before 
 - **Browser session required for passkeys.** If no browser is connected to ShellWatch, passkey sign requests will fail. File keys continue to work without a browser.
 - **API key must have `agent` scope.** Keys created via the UI currently only get `mcp` scope. Use the `seedAdminApiKey` config option or update the key's scopes in the database.
 
+## Troubleshooting
+
+### `agent key returned incorrect signature type` / `signature algorithm not supported`
+
+```
+agent key ECDSA-SK SHA256:... returned incorrect signature type
+sign_and_send_pubkey: signing failed for ECDSA-SK "" from agent: signature algorithm not supported
+```
+
+Your SSH client is older than 10.3. Pre-10.3 OpenSSH rejects the `webauthn-sk-ecdsa` signature returned by the agent because it expects `sk-ecdsa` (due to internal algorithm canonicalization). The client may prompt for your security key **twice** before failing — the agent protocol has no way to detect the client version, so both attempts complete the full WebAuthn flow before the client rejects the response.
+
+**Fix:** upgrade to OpenSSH 10.3+. Check your version with `ssh -V`. On macOS, `/usr/bin/ssh` ships an older version — use the Homebrew version (`brew install openssh`) which is 10.3+.
+
+File-based keys are unaffected and work with any OpenSSH version.
+
+### `No browser session available for WebAuthn signing`
+
+The agent proxy needs a browser tab open in ShellWatch to forward passkey signing requests. Open the ShellWatch UI, then retry.
+
 ## Tests
 
 ```bash
