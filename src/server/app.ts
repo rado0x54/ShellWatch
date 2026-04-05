@@ -1,21 +1,11 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type { Config } from "../config/index.js";
-import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
-import {
-  accounts as accountsTable,
-  apiKeys as apiKeysTable,
-  endpointKeys,
-  endpoints as endpointsTable,
-  sessionHistory,
-  sshKeys as sshKeysTable,
-  webauthnCredentials,
-} from "../db/schema.js";
 import type {
   AccountRepository,
   ApiKeyRepository,
@@ -29,9 +19,14 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
-import { hashApiKey, registerApiKeyAuth } from "./auth/api-key-auth.js";
+import { registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
+import { registerAccountRoutes } from "./routes/accounts.js";
+import { registerApiKeyRoutes } from "./routes/api-keys.js";
+import { registerEndpointRoutes } from "./routes/endpoints.js";
+import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerSshKeyRoutes } from "./routes/ssh-keys.js";
 import type { WsExtension } from "./ws-extension.js";
 import { registerWebSocket } from "./ws-handler.js";
 
@@ -115,404 +110,29 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get(`${base}/health`, async () => ({ status: "ok" }));
 
-  // --- Auth: current account ---
-  app.get(`${base}/api/auth/me`, async (request, reply) => {
-    const accountId = request.accountId;
-    if (!accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const account = await accountRepo.findById(accountId);
-    if (!account) {
-      reply.status(401);
-      return { error: "Account not found" };
-    }
-    return {
-      id: account.id,
-      name: account.name,
-      type: account.type,
-      isAdmin: account.isAdmin,
-    };
-  });
+  // --- REST API routes ---
+  registerAccountRoutes({ app, basePath: base, accountRepo, db });
+  registerSshKeyRoutes({ app, basePath: base, keyRepo, accountRepo, keyAvailability });
+  registerEndpointRoutes({ app, basePath: base, endpointRepo, accountRepo, terminalManager });
 
-  app.put<{ Body: { name?: string } }>(`${base}/api/auth/me`, async (request, reply) => {
-    const accountId = request.accountId;
-    if (!accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const { name } = request.body;
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        reply.status(400);
-        return { error: "Name cannot be empty" };
-      }
-      await accountRepo.update(accountId, { name: trimmed });
-    }
-    return { status: "updated" };
-  });
-
-  // --- Account Management (admin only) ---
-
-  app.get(`${base}/api/accounts`, async (request, reply) => {
-    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
-      reply.status(403);
-      return { error: "Admin access required" };
-    }
-    const all = await accountRepo.findAll();
-    return {
-      accounts: all.map((a) => ({
-        id: a.id,
-        name: a.name,
-        type: a.type,
-        isAdmin: a.isAdmin,
-        enabled: a.enabled,
-        maxSessions: a.maxSessions,
-        lastUsedAt: a.lastUsedAt,
-        createdAt: a.createdAt,
-      })),
-    };
-  });
-
-  app.delete<{ Params: { id: string } }>(`${base}/api/accounts/:id`, async (request, reply) => {
-    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
-      reply.status(403);
-      return { error: "Admin access required" };
-    }
-    const targetId = request.params.id;
-
-    // Cannot delete yourself
-    if (targetId === request.accountId) {
-      reply.status(400);
-      return { error: "Cannot delete your own account" };
-    }
-
-    // Cannot delete the admin account
-    if (accountRepo.isAdmin(targetId)) {
-      reply.status(400);
-      return { error: "Cannot delete the admin account" };
-    }
-
-    // Hard-delete: cascade all owned data (order matters for FK constraints)
-    if (db) {
-      // Get the account's endpoint IDs for junction table cleanup
-      const accountEndpoints = db
-        .select({ id: endpointsTable.id })
-        .from(endpointsTable)
-        .where(eq(endpointsTable.accountId, targetId))
-        .all();
-      for (const ep of accountEndpoints) {
-        db.delete(endpointKeys).where(eq(endpointKeys.endpointId, ep.id)).run();
-      }
-      db.delete(sessionHistory).where(eq(sessionHistory.accountId, targetId)).run();
-      db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
-      db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
-      db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();
-      db.delete(accountsTable).where(eq(accountsTable.id, targetId)).run();
-    }
-
-    return { status: "deleted" };
-  });
-
-  // --- SSH Keys API ---
-
-  app.get(`${base}/api/keys`, async (request) => {
-    const allKeys = await keyRepo.findAll();
-    const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
-
-    // File-based keys only (passkeys are listed via /api/webauthn/credentials)
-    const fileKeys = isAdmin ? allKeys.filter((k) => k.type === "file") : [];
-
-    return {
-      keys: fileKeys.map((k) => {
-        const available = keyAvailability?.isAvailable(k.fingerprint) ?? true;
-        return {
-          id: k.id,
-          label: k.label,
-          type: k.type,
-          algorithm: k.publicKey.split(" ")[0] ?? "unknown",
-          fingerprint: k.fingerprint,
-          revoked: !k.enabled,
-          available: k.enabled && available,
-          authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
-          createdAt: k.createdAt,
-          lastUsedAt: k.lastUsedAt,
-        };
-      }),
-    };
-  });
-
-  // --- Endpoint API (scoped to account) ---
-
-  app.get(`${base}/api/endpoints`, async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const all = await endpointRepo.findAllForAccount(request.accountId);
-    return {
-      endpoints: all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
-        id,
-        label,
-        host,
-        port,
-        username,
-        keyId,
-        passkeyId,
-      })),
-    };
-  });
-
-  app.post<{
-    Body: {
-      label: string;
-      host: string;
-      port?: number;
-      username?: string;
-      keyId?: string;
-      passkeyId?: string;
-    };
-  }>(`${base}/api/endpoints`, async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    try {
-      if (request.body.keyId && request.body.passkeyId) {
-        reply.status(400);
-        return { error: "Cannot set both keyId and passkeyId" };
-      }
-      if (request.body.keyId && !accountRepo.isAdmin(request.accountId)) {
-        reply.status(403);
-        return { error: "File-based SSH keys can only be assigned by the admin account" };
-      }
-      const id = randomUUID();
-      await endpointRepo.create({
-        id,
-        accountId: request.accountId,
-        label: request.body.label,
-        host: request.body.host,
-        port: request.body.port ?? 22,
-        username: request.body.username ?? "shellwatch",
-        keyId: request.body.keyId,
-        passkeyId: request.body.passkeyId,
-      });
-      return { status: "created", id };
-    } catch (err) {
-      app.log.error(err, "request failed");
-      reply.status(400);
-      return { error: (err as Error).message };
-    }
-  });
-
-  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    `${base}/api/endpoints/:id`,
-    async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-      try {
-        const body = request.body as Record<string, unknown>;
-        if (body.keyId && body.passkeyId) {
-          reply.status(400);
-          return { error: "Cannot set both keyId and passkeyId" };
-        }
-        if (body.keyId && !accountRepo.isAdmin(request.accountId)) {
-          reply.status(403);
-          return { error: "File-based SSH keys can only be assigned by the admin account" };
-        }
-        await endpointRepo.update(
-          request.params.id,
-          request.accountId,
-          body as Parameters<EndpointRepository["update"]>[2],
-        );
-        return { status: "updated" };
-      } catch (err) {
-        app.log.error(err, "request failed");
-        reply.status(400);
-        return { error: (err as Error).message };
-      }
-    },
-  );
-
-  app.delete<{ Params: { id: string } }>(`${base}/api/endpoints/:id`, async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    try {
-      const activeSessions = terminalManager
-        .listSessions()
-        .filter((s) => s.endpointId === request.params.id);
-      if (activeSessions.length > 0) {
-        reply.status(409);
-        return { error: "Cannot delete endpoint with active sessions" };
-      }
-      await endpointRepo.delete(request.params.id, request.accountId);
-      return { status: "deleted" };
-    } catch (err) {
-      app.log.error(err, "request failed");
-      reply.status(400);
-      return { error: (err as Error).message };
-    }
-  });
-
-  // --- Session API ---
-
-  app.post<{ Body: { endpointId: string } }>(`${base}/api/sessions`, async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    try {
-      // Enforce per-account session limit (scoped to this account's endpoints)
-      const account = await accountRepo.findById(request.accountId);
-      if (account) {
-        const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
-        const accountEndpointIds = new Set(accountEndpoints.map((e) => e.id));
-        const activeSessions = terminalManager.listSessions();
-        const accountSessions = activeSessions.filter(
-          (s) => accountEndpointIds.has(s.endpointId) && s.status === "open",
-        );
-        if (accountSessions.length >= account.maxSessions) {
-          reply.status(429);
-          return {
-            error: `Maximum concurrent sessions (${account.maxSessions}) reached`,
-          };
-        }
-      }
-
-      const { endpointId } = request.body;
-      const endpoint = await endpointRepo.findByIdForAccount(endpointId, request.accountId);
-      if (!endpoint) {
-        reply.status(404);
-        return { error: "Endpoint not found" };
-      }
-      const session = await terminalManager.create(endpointId, "ui");
-      uiCreatedSessions.add(session.sessionId);
-
-      // Update lastUsedAt on the assigned key
-      const now = new Date().toISOString();
-      if (endpoint.passkeyId && db) {
-        db.update(webauthnCredentials)
-          .set({ lastUsedAt: now })
-          .where(eq(webauthnCredentials.id, endpoint.passkeyId))
-          .run();
-      } else if (endpoint.keyId && db) {
-        db.update(sshKeysTable)
-          .set({ lastUsedAt: now })
-          .where(eq(sshKeysTable.id, endpoint.keyId))
-          .run();
-      }
-
-      return session;
-    } catch (err) {
-      app.log.error(err, "request failed");
-      reply.status(400);
-      return { error: (err as Error).message };
-    }
-  });
-
-  app.get(`${base}/api/sessions`, async (request) => {
-    if (!request.accountId) return { sessions: [] };
-    // Only show sessions on endpoints owned by this account
-    const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
-    const endpointIds = new Set(accountEndpoints.map((e) => e.id));
-    const sessions = terminalManager.listSessions().filter((s) => endpointIds.has(s.endpointId));
-    return { sessions };
-  });
-
-  app.delete<{ Params: { sessionId: string } }>(
-    `${base}/api/sessions/:sessionId`,
-    async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-      const session = terminalManager.getSession(request.params.sessionId);
-      if (!session) {
-        reply.status(404);
-        return { error: "Session not found" };
-      }
-      // Verify the session's endpoint belongs to this account
-      const endpoint = await endpointRepo.findByIdForAccount(session.endpointId, request.accountId);
-      if (!endpoint) {
-        reply.status(403);
-        return { error: "Access denied" };
-      }
-      terminalManager.close(request.params.sessionId);
-      return { status: "closed" };
-    },
-  );
-
-  // --- API Keys (scoped to account) ---
-
-  if (apiKeyRepo) {
-    app.get(`${base}/api/keys/api`, async (request) => {
-      if (!request.accountId) return { keys: [] };
-      const keys = await apiKeyRepo.findAll();
-      return {
-        keys: keys
-          .filter((k) => k.accountId === request.accountId)
-          .map((k) => ({
-            id: k.id,
-            label: k.label,
-            keyPrefix: k.keyPrefix,
-            scopes: k.scopes,
-            enabled: k.enabled,
-            createdAt: k.createdAt,
-          })),
-      };
-    });
-
-    app.post<{ Body: { label: string } }>(`${base}/api/keys/api`, async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-      const { label } = request.body;
-      if (!label) {
-        reply.status(400);
-        return { error: "Label is required" };
-      }
-      const raw = `sw_${randomBytes(24).toString("hex")}`;
-      const keyHash = hashApiKey(raw);
-      const keyPrefix = raw.slice(0, 10);
-      const id = randomUUID();
-      await apiKeyRepo.create({
-        id,
-        accountId: request.accountId,
-        label,
-        keyHash,
-        keyPrefix,
-        scopes: ["mcp"],
-      });
-      return { id, label, keyPrefix, key: raw };
-    });
-
-    app.delete<{ Params: { id: string } }>(`${base}/api/keys/api/:id`, async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-      // Verify ownership before revoking
-      const keys = await apiKeyRepo.findAll();
-      const key = keys.find((k) => k.id === request.params.id && k.accountId === request.accountId);
-      if (!key) {
-        reply.status(404);
-        return { error: "API key not found" };
-      }
-      await apiKeyRepo.revoke(request.params.id);
-      return { status: "revoked" };
-    });
-  }
-
-  // WebSocket for terminal I/O
+  // WebSocket for terminal I/O (must register before session routes for uiCreatedSessions)
   const wsHandler = registerWebSocket(app, terminalManager, base);
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
   const { uiCreatedSessions } = wsHandler;
+
+  registerSessionRoutes({
+    app,
+    basePath: base,
+    endpointRepo,
+    accountRepo,
+    terminalManager,
+    uiCreatedSessions,
+    db,
+  });
+
+  if (apiKeyRepo) {
+    registerApiKeyRoutes({ app, basePath: base, apiKeyRepo, accountRepo });
+  }
 
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport({
@@ -558,7 +178,7 @@ export async function buildApp(params: BuildAppParams) {
     return `window.__BASE_PATH__=${JSON.stringify(base)};`;
   });
 
-  // Static client files (built by SvelteKit adapter-static → dist/client/)
+  // Static client files (built by SvelteKit adapter-static -> dist/client/)
   if (!options.skipStaticFiles) {
     const clientDist = resolve(process.cwd(), "dist/client");
     await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
