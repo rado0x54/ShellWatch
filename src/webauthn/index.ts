@@ -24,6 +24,5 @@ export {
   buildPublicKeyBlob,
   coseToAuthorizedKeys,
   getSshdConfigLine,
-  matchesSkKeyBlob,
   WEBAUTHN_SSH_ALGORITHM,
 } from "./ssh-key-format.js";
