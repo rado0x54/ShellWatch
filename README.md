@@ -30,26 +30,29 @@ pnpm install
 cp config.sample.yaml config.yaml
 ```
 
-Edit `config.yaml` with your SSH targets:
+Edit `config.yaml`. See `config.sample.yaml` for all options. Minimal example:
 
 ```yaml
 keyDirectory: ./keys
 
-servers:
-  - id: dev-box
-    label: Dev Box
-    host: dev.example.com
-    port: 22
-    username: ubuntu
-    keyId: dev-box # matches ./keys/dev-box.pem
-
 security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost:3000
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"
+
+# Optional: seed endpoints for the admin account on first run
+# seedAdminEndpoints:
+#   - label: Dev Box
+#     address: ubuntu@dev.example.com
+
+# Optional: seed a known API key for MCP / agent proxy
+# seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
 ```
 
-Endpoints and keys can also be managed dynamically via the web UI or REST API — changes are persisted in SQLite.
+Endpoints, keys, and passkeys are managed dynamically via the web UI or REST API — changes are persisted in SQLite. The config file is only for initial seeding and security settings.
 
 ### SSH key setup
 
@@ -60,7 +63,8 @@ ssh-keygen -t ed25519 -f ./keys/dev-box.pem -C "shellwatch"
 ssh-copy-id -i ./keys/dev-box.pem.pub ubuntu@dev.example.com
 ```
 
-- Keys are matched to endpoints by `keyId` (filename without `.pem` extension)
+- Keys are auto-discovered by scanning the key directory — no config needed
+- Keys are assigned to endpoints via the web UI after discovery
 - Key files must be readable by the current user (`chmod 600`)
 - The `keys/` directory is gitignored
 
@@ -113,14 +117,15 @@ Open `http://localhost:3000` in your browser.
 
 ShellWatch exposes an MCP server over streamable HTTP at `/mcp`:
 
-| Tool                        | Description                       |
-| --------------------------- | --------------------------------- |
-| `shellwatch_list_endpoints` | List configured SSH endpoints     |
-| `shellwatch_create_session` | Create a new terminal session     |
-| `shellwatch_list_sessions`  | List this agent's active sessions |
-| `shellwatch_send_keys`      | Send keystrokes/text to a session |
-| `shellwatch_read_output`    | Read session output (with offset) |
-| `shellwatch_close_session`  | Close a session                   |
+| Tool                          | Description                                   |
+| ----------------------------- | --------------------------------------------- |
+| `shellwatch_create_session`   | Create a new terminal session                 |
+| `shellwatch_list_sessions`    | List this agent's active sessions             |
+| `shellwatch_send_keys`        | Send keystrokes/text to a session             |
+| `shellwatch_read_output`      | Read session output (with offset)             |
+| `shellwatch_close_session`    | Close a session                               |
+| `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints |
+| `shellwatch_manage_keys`      | List available SSH keys                       |
 
 Each MCP client gets an isolated `AgentSession` — agents can only see and control their own sessions. The web UI (admin view) sees all sessions regardless of source.
 
@@ -136,15 +141,20 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
   "mcpServers": {
     "shellwatch": {
       "type": "streamable-http",
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer sw_your_api_key_here"
+      }
     }
   }
 }
 ```
 
+The API key must have `mcp` scope. Use `seedAdminApiKey` in config to seed a known key, or create one via the web UI under Settings → API Keys.
+
 ## SSH Agent Proxy
 
-ShellWatch can act as an SSH agent for system SSH clients (`ssh`, `scp`, `git`). This allows your local `ssh` command to authenticate using keys managed by ShellWatch — even when ShellWatch runs on a remote server.
+ShellWatch can act as an SSH agent for system SSH clients (`ssh`, `scp`, `git`). This allows your local `ssh` command to authenticate using keys managed by ShellWatch — including WebAuthn passkeys — even when ShellWatch runs on a remote server.
 
 Enable in `config.yaml`:
 
@@ -165,9 +175,7 @@ export SSH_AUTH_SOCK=/tmp/shellwatch-agent-<uid>.sock
 
 The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this scope automatically.
 
-Currently only file-based keys are exposed through the agent proxy. WebAuthn passkeys are not yet supported due to an [OpenSSH algorithm canonicalization issue](https://github.com/rado0x54/ShellWatch/issues/36).
-
-See the [agent-client README](./agent-client/README.md) for full usage and configuration.
+Both file-based keys (auto-sign) and WebAuthn passkeys (browser-signed) are supported. Passkeys require **OpenSSH 10.3+** on the client and a browser session open in ShellWatch for signing. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
 
 ## Scripts
 
