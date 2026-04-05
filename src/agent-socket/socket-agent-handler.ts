@@ -139,10 +139,21 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
    *
    * The caller MUST use this on every protocol `data` event before
    * sending to the client.
+   *
+   * Safety: this cannot accidentally swap a legitimate FAILURE because:
+   * - AgentProtocol processes messages sequentially (one at a time)
+   * - The queue push + failureReply happen in the same tick
+   * - Other FAILURE sources (parseKey errors, unknown message types)
+   *   are synchronous and cannot interleave with our async sign callback
+   *
+   * ssh2's AgentProtocol (server mode) only handles two message types:
+   * - SSH_AGENTC_REQUEST_IDENTITIES (11) → emits 'identities'
+   * - SSH_AGENTC_SIGN_REQUEST (13) → emits 'sign'
+   * All others (add/remove/lock/unlock) get failureReply from the
+   * default case. SSH_AGENTC_EXTENSION (27) is handled locally by the
+   * Go proxy and never reaches AgentProtocol.
    */
   function interceptResponse(frame: Buffer): Buffer {
-    // Check: is this a FAILURE frame (5 bytes: uint32(1) + byte(5)) that
-    // we should swap with a queued webauthn response?
     if (webauthnResponseQueue.length > 0 && frame.length === 5 && frame[4] === SSH_AGENT_FAILURE) {
       return webauthnResponseQueue.shift()!;
     }
@@ -260,6 +271,11 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
 // This function rewrites the algorithm name in the raw frame so parseKey
 // recognizes it. The rest of the frame (key material, data-to-sign, flags)
 // is NOT modified — only the algorithm string and the affected length fields.
+//
+// Safe for non-passkey sk-ecdsa keys (e.g., regular FIDO2 with app="ssh:"):
+// parseKey will succeed (creating a WebAuthnSKECDSAKey), but the sign handler
+// won't find a matching passkey → failureReply is sent. This is the same
+// outcome as without the rewrite (parseKey would have failed → failureReply).
 //
 // Frame layout (all uint32 are big-endian):
 //   [0..3]   uint32  total_payload_length
