@@ -7,34 +7,20 @@
  * Passkeys require OpenSSH 10.3+ on the client and a browser session connected
  * to ShellWatch for WebAuthn signing. See #36 for the full analysis.
  *
- * ## WebAuthn signature wire format workaround
- *
- * ssh2's AgentProtocol has two issues with webauthn-sk-ecdsa keys coming
- * from OpenSSH 10.3 clients via the agent proxy:
- *
- * **1. parseKey rejects canonicalized algorithm names (INBOUND)**
+ * ## OpenSSH 10.3 canonicalization
  *
  * OpenSSH canonicalizes `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` to
- * `sk-ecdsa-sha2-nistp256@openssh.com` in SIGN_REQUEST key blobs. Our ssh2
- * fork's parseKey only recognizes the `webauthn-` prefix, so it rejects the
- * key and sends SSH_AGENT_FAILURE without emitting the `sign` event.
+ * `sk-ecdsa-sha2-nistp256@openssh.com` in SIGN_REQUEST key blobs. Both issues
+ * this causes are handled in the ssh2 fork (rado0x54/ssh2#1):
  *
- * Fix: `rewriteSkEcdsaSignRequest()` rewrites the algorithm name in the raw
- * frame before it reaches AgentProtocol.
+ * - **parseKey** accepts `sk-ecdsa` blobs as WebAuthnSKECDSAKey when the
+ *   application field is not `"ssh:"` (web domain = webauthn, `"ssh:"` =
+ *   standard FIDO2). getPublicSSH() always returns the `webauthn-` prefixed
+ *   blob, so Buffer.equals() comparisons with stored passkey blobs work.
  *
- * **2. signReply wraps with wrong wire format (OUTBOUND)**
- *
- * ssh2's signReply wraps signatures as `sshString(algo) + sshString(sig)`,
- * but PROTOCOL.u2f requires `sshString(algo) + <raw sig bytes>` for webauthn
- * signatures. The extra string wrapper causes the remote server's sshbuf_froms
- * to consume the entire compound blob as the ECDSA signature sub-buffer,
- * leaving nothing for flags/counter/origin/clientData/extensions.
- * See rado0x54/ssh2#1 (Protocol.js change) for the equivalent fix.
- *
- * Fix: for passkey sign responses, we call `failureReply` to keep the protocol
- * state machine consistent (marking the request as responded), then intercept
- * the FAILURE frame in `interceptResponse()` and swap it with a correctly
- * formatted response built by `buildWebauthnSignResponse()`.
+ * - **signReply** uses the correct PROTOCOL.u2f wire format for webauthn
+ *   signatures (raw sig bytes after the algorithm string, no extra sshString
+ *   wrapper).
  *
  * Used by both the WebSocket agent proxy and the optional local socket server.
  */
@@ -47,7 +33,6 @@ import {
   buildFileKeyEntry,
   buildPasskeyEntry,
   CompositeSshAgent,
-  matchesSkKeyBlob,
   type PasskeyEntry,
   type SignRequest,
   type WebAuthnSshAgent,
@@ -90,75 +75,18 @@ export interface AgentHandlerDeps {
 
 /**
  * Create a server-mode AgentProtocol wired to file key + passkey signing.
- *
- * Returns:
- * - `protocol` — the AgentProtocol stream (pipe incoming frames in, read outgoing frames out)
- * - `interceptResponse` — **must** be called on every outgoing frame from the protocol
- *   before sending to the client. Swaps FAILURE frames with correctly-formatted webauthn
- *   sign responses when needed. For non-webauthn responses, returns the frame unchanged.
- * - `cleanup` — call on disconnect to unregister from the signing bridge and destroy the agent
+ * Returns the protocol stream and a cleanup function.
  */
 export function createAgentHandler(deps: AgentHandlerDeps): {
   protocol: AgentProtocolInstance;
-  interceptResponse: (frame: Buffer) => Buffer;
   cleanup: () => void;
 } {
   const protocol = new AgentProtocol(false);
   const debug = deps.logger?.debug ?? (() => {});
 
-  const { agent, agentId, passkeyEntries } = buildAgent(deps);
+  const { agent, agentId } = buildAgent(deps);
 
   const { utils } = ssh2;
-
-  // ── WebAuthn sign response queue ──────────────────────────────────
-  //
-  // When a passkey sign request completes, we can't use signReply because
-  // it wraps the signature with an extra sshString that breaks the
-  // PROTOCOL.u2f wire format (see module docstring).
-  //
-  // Instead, we:
-  //   1. Build the correctly-formatted response frame
-  //   2. Push it onto this queue
-  //   3. Call failureReply(req) to keep AgentProtocol's internal state
-  //      machine happy — this marks the request as responded and allows
-  //      subsequent requests to be processed
-  //   4. failureReply emits a FAILURE frame on the protocol's data stream
-  //   5. interceptResponse() catches that FAILURE, pops our queued frame,
-  //      and returns it instead
-  //
-  // This keeps the protocol state consistent (no stuck requests) while
-  // producing the correct wire format for the SSH client.
-  const webauthnResponseQueue: Buffer[] = [];
-
-  /**
-   * Intercept outgoing frames from the AgentProtocol stream.
-   *
-   * For most frames, returns the frame unchanged. When a webauthn sign
-   * response is queued, swaps the dummy FAILURE frame (emitted by our
-   * failureReply call) with the correctly-formatted webauthn response.
-   *
-   * The caller MUST use this on every protocol `data` event before
-   * sending to the client.
-   *
-   * Safety: this cannot accidentally swap a legitimate FAILURE because:
-   * - AgentProtocol processes messages sequentially (one at a time)
-   * - The queue push + failureReply happen in the same tick
-   * - Other FAILURE sources (parseKey errors, unknown message types)
-   *   are synchronous and cannot interleave with our async sign callback
-   *
-   * ssh2's AgentProtocol (server mode) only handles two message types:
-   * - SSH_AGENTC_REQUEST_IDENTITIES (11) → emits 'identities'
-   * - SSH_AGENTC_SIGN_REQUEST (13) → emits 'sign'
-   * All others (add/remove/lock/unlock) get failureReply from the
-   * default case. SSH_AGENTC_EXTENSION (27) is handled locally by the
-   * Go proxy and never reaches AgentProtocol.
-   */
-  function interceptResponse(frame: Buffer): Buffer {
-    if (webauthnResponseQueue.length > 0 && frame.length === 5 && frame[4] === SSH_AGENT_FAILURE) {
-      return webauthnResponseQueue.shift()!;
-    }
-    return frame;
-  }
 
   // Handle identity requests
   protocol.on("identities", (req) => {
@@ -187,11 +115,8 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
       return;
     }
 
-    // Determine if this key is a passkey — affects response wire format
-    const isPasskey = passkeyEntries.some((pk) => matchesSkKeyBlob(pk.publicKeyBlob, pubKeyBuf));
-
     debug(
-      `[Agent Proxy] sign request: key=${pubKeyBuf.subarray(0, 20).toString("hex")}… len=${data.length} passkey=${isPasskey}`,
+      `[Agent Proxy] sign request: key=${pubKeyBuf.subarray(0, 20).toString("hex")}… len=${data.length}`,
     );
 
     agent.sign(pubKeyBuf, data, flags, (err, signature) => {
@@ -200,23 +125,8 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
         protocol.failureReply(req);
         return;
       }
-      debug(`[Agent Proxy] sign success: ${signature.length} bytes passkey=${isPasskey}`);
-
-      if (isPasskey) {
-        // ── Webauthn sign response bypass ─────────────────────────
-        //
-        // Build the response with correct PROTOCOL.u2f wire format,
-        // queue it, then call failureReply to flush the protocol's
-        // request queue. interceptResponse() will swap the FAILURE
-        // frame with our queued response before it reaches the client.
-        const frame = buildWebauthnSignResponse(signature);
-        debug(`[Agent Proxy] webauthn response frame: ${frame.length} bytes`);
-        webauthnResponseQueue.push(frame);
-        protocol.failureReply(req);
-      } else {
-        // File key — standard format, signReply is correct
-        protocol.signReply(req, signature);
-      }
+      debug(`[Agent Proxy] sign success: ${signature.length} bytes`);
+      protocol.signReply(req, signature);
     });
   });
 
@@ -227,29 +137,7 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
     agent.destroy();
   };
 
-  return { protocol, interceptResponse, cleanup };
-}
-
-// ── SSH agent protocol constants ──────────────────────────────────────
-
-const SSH_AGENTC_SIGN_REQUEST = 13;
-const SSH_AGENT_SIGN_RESPONSE = 14;
-const SSH_AGENT_FAILURE = 5;
-const SK_ECDSA = "sk-ecdsa-sha2-nistp256@openssh.com";
-const WEBAUTHN_SK_ECDSA = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
-const SK_ECDSA_BUF = Buffer.from(SK_ECDSA);
-const WEBAUTHN_SK_ECDSA_BUF = Buffer.from(WEBAUTHN_SK_ECDSA);
-const ALGO_LEN_DIFF = WEBAUTHN_SK_ECDSA_BUF.length - SK_ECDSA_BUF.length; // 9 bytes
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
-/** Encode a value as SSH wire string (uint32 length + data) */
-function sshString(data: Buffer | string): Buffer {
-  const payload = typeof data === "string" ? Buffer.from(data) : data;
-  const buf = Buffer.alloc(4 + payload.length);
-  buf.writeUInt32BE(payload.length, 0);
-  payload.copy(buf, 4);
-  return buf;
+  return { protocol, cleanup };
 }
 
 function extractPubKeyBlob(pubKey: unknown): Buffer | null {
@@ -260,118 +148,6 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
   return null;
 }
 
-// ── Inbound: SIGN_REQUEST algorithm rewrite ───────────────────────────
-//
-// OpenSSH 10.3 canonicalizes the algorithm name in SIGN_REQUEST key blobs
-// from `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` to the shorter
-// `sk-ecdsa-sha2-nistp256@openssh.com`. Our ssh2 fork's parseKey() only
-// recognizes the `webauthn-` prefixed variant — if it sees `sk-ecdsa`, it
-// returns an error and AgentProtocol sends FAILURE without emitting `sign`.
-//
-// This function rewrites the algorithm name in the raw frame so parseKey
-// recognizes it. The rest of the frame (key material, data-to-sign, flags)
-// is NOT modified — only the algorithm string and the affected length fields.
-//
-// Safe for non-passkey sk-ecdsa keys (e.g., regular FIDO2 with app="ssh:"):
-// parseKey will succeed (creating a WebAuthnSKECDSAKey), but the sign handler
-// won't find a matching passkey → failureReply is sent. This is the same
-// outcome as without the rewrite (parseKey would have failed → failureReply).
-//
-// Frame layout (all uint32 are big-endian):
-//   [0..3]   uint32  total_payload_length
-//   [4]      byte    message_type (13 = SIGN_REQUEST)
-//   [5..8]   uint32  key_blob_length
-//   [9..12]  uint32  algo_name_length  (inside key_blob)
-//   [13..]   bytes   algo_name
-//   ...      rest of key_blob + data + flags
-
-export function rewriteSkEcdsaSignRequest(frame: Buffer): Buffer {
-  if (frame.length < 13 + SK_ECDSA_BUF.length) return frame;
-  if (frame[4] !== SSH_AGENTC_SIGN_REQUEST) return frame;
-
-  const algoLen = frame.readUInt32BE(9);
-  if (algoLen !== SK_ECDSA_BUF.length) return frame;
-
-  const algoSlice = frame.subarray(13, 13 + algoLen);
-  if (!algoSlice.equals(SK_ECDSA_BUF)) return frame;
-
-  // Build new frame: same content but with "webauthn-" prefix on the algo name
-  const header = frame.subarray(0, 9);
-  const afterAlgo = frame.subarray(13 + algoLen);
-
-  const newFrame = Buffer.alloc(frame.length + ALGO_LEN_DIFF);
-  let offset = 0;
-
-  header.copy(newFrame, offset);
-  offset += header.length;
-
-  newFrame.writeUInt32BE(WEBAUTHN_SK_ECDSA_BUF.length, offset);
-  offset += 4;
-
-  WEBAUTHN_SK_ECDSA_BUF.copy(newFrame, offset);
-  offset += WEBAUTHN_SK_ECDSA_BUF.length;
-
-  afterAlgo.copy(newFrame, offset);
-
-  // Update length fields to account for the longer algorithm name
-  newFrame.writeUInt32BE(frame.readUInt32BE(0) + ALGO_LEN_DIFF, 0); // total payload
-  newFrame.writeUInt32BE(frame.readUInt32BE(5) + ALGO_LEN_DIFF, 5); // key blob
-
-  return newFrame;
-}
-
-// ── Outbound: WebAuthn sign response builder ──────────────────────────
-//
-// ssh2's signReply produces:
-//
-//   string  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
-//   string  <entire buildSshSignatureBlob output>
-//            ↑ WRONG — extra sshString wrapper
-//
-// But PROTOCOL.u2f (and what OpenSSH's sshd expects) is:
-//
-//   string  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
-//   string  ecdsa_signature  ← only R+S (server reads via sshbuf_froms)
-//   byte    flags            ← flat in outer buffer
-//   uint32  counter          ← flat in outer buffer
-//   string  origin           ← flat in outer buffer
-//   string  clientDataJSON   ← flat in outer buffer
-//   string  extensions       ← flat in outer buffer
-//
-// buildSshSignatureBlob() already produces the correct compound format
-// (sshString(ecdsaSig) + flags + counter + ...). We just need to write it
-// RAW after the algorithm name — no extra sshString wrapper.
-//
-// See rado0x54/ssh2#1 (Protocol.js change) for the equivalent fix in the
-// ssh2 fork's direct-connection code path.
-
-export function buildWebauthnSignResponse(signature: Buffer): Buffer {
-  const algoStr = sshString(WEBAUTHN_SK_ECDSA);
-
-  // The "signature" field in the agent response is:
-  //   sshString(algo) + <raw sig bytes>
-  // (NOT sshString(algo) + sshString(sig) — that's what signReply does wrong)
-  const innerLen = algoStr.length + signature.length;
-
-  // Full frame: uint32(payloadLen) + byte(type) + sshString(inner)
-  const payloadLen = 1 + 4 + innerLen;
-  const frame = Buffer.alloc(4 + payloadLen);
-  let offset = 0;
-
-  frame.writeUInt32BE(payloadLen, offset);
-  offset += 4;
-  frame[offset++] = SSH_AGENT_SIGN_RESPONSE;
-  frame.writeUInt32BE(innerLen, offset);
-  offset += 4;
-  algoStr.copy(frame, offset);
-  offset += algoStr.length;
-  signature.copy(frame, offset);
-
-  return frame;
-}
-
-// ── Agent builder ─────────────────────────────────────────────────────
-
 /**
  * Build a CompositeSshAgent with file keys and (optionally) passkeys.
  * Passkeys require a signing bridge with a connected browser and OpenSSH 10.3+
@@ -380,7 +156,6 @@ export function buildWebauthnSignResponse(signature: Buffer): Buffer {
 function buildAgent(deps: AgentHandlerDeps): {
   agent: WebAuthnSshAgent & { destroy(): void };
   agentId: string | null;
-  passkeyEntries: PasskeyEntry[];
 } {
   const { keyProvider, logger, signingBridge, rpId = "" } = deps;
 
@@ -426,5 +201,5 @@ function buildAgent(deps: AgentHandlerDeps): {
     signingBridge.registerAgent(agentId, agent);
   }
 
-  return { agent, agentId, passkeyEntries };
+  return { agent, agentId };
 }

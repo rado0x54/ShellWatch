@@ -49,7 +49,7 @@ importers:
         version: 5.8.4
       ssh2:
         specifier: github:rado0x54/ssh2#feat/webauthn-sk-ecdsa
-        version: https://codeload.github.com/rado0x54/ssh2/tar.gz/175fa1837a1b84ceefe1f4aa3ac35843c22e956b
+        version: https://codeload.github.com/rado0x54/ssh2/tar.gz/a9c47aa614789dda47f48093bb75b312ef71525e
       ws:
         specifier: ^8.20.0
         version: 8.20.0
@@ -2607,8 +2607,8 @@ packages:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
 
-  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/175fa1837a1b84ceefe1f4aa3ac35843c22e956b:
-    resolution: {tarball: https://codeload.github.com/rado0x54/ssh2/tar.gz/175fa1837a1b84ceefe1f4aa3ac35843c22e956b}
+  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/a9c47aa614789dda47f48093bb75b312ef71525e:
+    resolution: {tarball: https://codeload.github.com/rado0x54/ssh2/tar.gz/a9c47aa614789dda47f48093bb75b312ef71525e}
     version: 1.17.0
     engines: {node: '>=10.16.0'}
 
@@ -5309,7 +5309,7 @@ snapshots:
 
   split2@4.2.0: {}
 
-  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/175fa1837a1b84ceefe1f4aa3ac35843c22e956b:
+  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/a9c47aa614789dda47f48093bb75b312ef71525e:
     dependencies:
       asn1: 0.2.6
       bcrypt-pbkdf: 1.0.2

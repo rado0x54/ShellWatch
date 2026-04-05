@@ -16,7 +16,7 @@ import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
-import { createAgentHandler, rewriteSkEcdsaSignRequest } from "./socket-agent-handler.js";
+import { createAgentHandler } from "./socket-agent-handler.js";
 
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
@@ -77,7 +77,7 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // Look up passkeys for the authenticated account
     const passkeys = findCredentialsForAccount?.(key.accountId) ?? [];
 
-    const { protocol, interceptResponse, cleanup } = createAgentHandler({
+    const { protocol, cleanup } = createAgentHandler({
       keyProvider,
       logger,
       passkeys,
@@ -99,19 +99,13 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
         : Buffer.isBuffer(data)
           ? data
           : Buffer.from(data as ArrayBuffer);
-
-      // Rewrite sk-ecdsa → webauthn-sk-ecdsa in SIGN_REQUEST so ssh2's
-      // parseKey() can recognize the key type. See #36.
-      protocol.write(rewriteSkEcdsaSignRequest(buf));
+      protocol.write(buf);
     });
 
-    // Outgoing: protocol stream → intercept → send as binary WS message
-    // interceptResponse swaps FAILURE frames with queued webauthn sign
-    // responses when applicable (see socket-agent-handler.ts for details).
+    // Outgoing: protocol stream → send as binary WS message
     protocol.on("data", (chunk: Buffer) => {
-      const response = interceptResponse(chunk);
       if (socket.readyState === socket.OPEN) {
-        socket.send(response);
+        socket.send(chunk);
       }
     });
 
