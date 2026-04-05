@@ -56,7 +56,7 @@ export interface BuildAppParams {
     findCredentialsForAccount?: (
       accountId: string,
     ) => import("../db/repositories/credential-queries.js").WebAuthnCredentialInfo[];
-    rpId?: string;
+    rpId: string;
   };
 }
 

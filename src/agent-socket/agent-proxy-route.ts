@@ -29,7 +29,7 @@ export interface AgentProxyRouteParams {
   /** Look up passkeys for an account */
   findCredentialsForAccount?: (accountId: string) => WebAuthnCredentialInfo[];
   /** WebAuthn relying party ID */
-  rpId?: string;
+  rpId: string;
 }
 
 export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
