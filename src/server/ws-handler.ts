@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { TerminalManager } from "../terminal/index.js";
+import { buildSessionList, routeMessage } from "./ws-message-router.js";
 import type { WsExtension } from "./ws-extension.js";
-import { parseClientMessage, type ServerMessage, type SessionMode } from "./ws-protocol.js";
+import { parseClientMessage, type ServerMessage } from "./ws-protocol.js";
 
 export interface WsHandler {
   /** Register an extension that hooks into WS lifecycle events. */
@@ -21,26 +22,11 @@ export function registerWebSocket(
   // Track which sessions were created via the UI (across all WS clients)
   const uiCreatedSessions = new Set<string>();
 
-  function getModeForSession(sessionId: string): SessionMode {
-    const session = terminalManager.getSession(sessionId);
-    if (!session) return "observer";
-    // UI-created sessions get control, everything else starts as observer
-    return uiCreatedSessions.has(sessionId) ? "control" : "observer";
-  }
-
-  function buildSessionList(controlledSessions: Set<string>): ServerMessage {
-    return {
-      type: "sessions:changed",
-      sessions: terminalManager.listSessions().map((s) => ({
-        sessionId: s.sessionId,
-        endpointId: s.endpointId,
-        status: s.status,
-        createdAt: s.createdAt.toISOString(),
-        source: s.source,
-        mode: controlledSessions.has(s.sessionId) ? "control" : getModeForSession(s.sessionId),
-      })),
-    };
-  }
+  // Per-client metadata
+  const clientMeta = new Map<
+    WebSocket,
+    { attachedSessions: Set<string>; controlledSessions: Set<string> }
+  >();
 
   // Broadcast session list changes to ALL connected clients
   terminalManager.on("status-change", () => {
@@ -49,17 +35,15 @@ export function registerWebSocket(
       if (client.readyState === client.OPEN) {
         const meta = clientMeta.get(client);
         if (meta) {
-          client.send(JSON.stringify(buildSessionList(meta.controlledSessions)));
+          client.send(
+            JSON.stringify(
+              buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions),
+            ),
+          );
         }
       }
     }
   });
-
-  // Per-client metadata
-  const clientMeta = new Map<
-    WebSocket,
-    { attachedSessions: Set<string>; controlledSessions: Set<string> }
-  >();
 
   app.get(`${basePath}/ws`, { websocket: true }, (socket: WebSocket) => {
     clients.add(socket);
@@ -78,12 +62,11 @@ export function registerWebSocket(
       send({ type: "error", message });
     }
 
-    function hasControl(sessionId: string): boolean {
-      return controlledSessions.has(sessionId) || uiCreatedSessions.has(sessionId);
-    }
+    const ctx = { attachedSessions, controlledSessions, send, sendError };
+    const deps = { terminalManager, uiCreatedSessions };
 
     // Send current session list on connect
-    send(buildSessionList(controlledSessions));
+    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions));
 
     // Listeners for terminal events — scoped per attached session
     function onOutput({ sessionId, data }: { sessionId: string; data: string }) {
@@ -117,66 +100,7 @@ export function registerWebSocket(
       if (handled) return;
 
       try {
-        switch (msg.type) {
-          case "terminal:attach": {
-            const session = terminalManager.getSession(msg.sessionId);
-            if (!session) {
-              sendError(`Session not found: ${msg.sessionId}`);
-              return;
-            }
-            attachedSessions.add(msg.sessionId);
-            const mode: SessionMode = hasControl(msg.sessionId) ? "control" : "observer";
-            send({ type: "terminal:status", sessionId: msg.sessionId, status: session.status });
-            send({ type: "terminal:mode", sessionId: msg.sessionId, mode });
-
-            // Send any buffered output so the client catches up
-            const buffered = terminalManager.readOutput(msg.sessionId);
-            if (buffered.data.length > 0) {
-              send({ type: "terminal:output", sessionId: msg.sessionId, data: buffered.data });
-            }
-            break;
-          }
-
-          case "terminal:input": {
-            if (!hasControl(msg.sessionId)) {
-              sendError("Observer mode: take control first to send input");
-              return;
-            }
-            terminalManager.sendInput(msg.sessionId, msg.data);
-            break;
-          }
-
-          case "terminal:resize": {
-            if (!hasControl(msg.sessionId)) {
-              return; // Silently ignore resize in observer mode
-            }
-            terminalManager.resize(msg.sessionId, msg.cols, msg.rows);
-            break;
-          }
-
-          case "terminal:close": {
-            terminalManager.close(msg.sessionId);
-            uiCreatedSessions.delete(msg.sessionId);
-            break;
-          }
-
-          case "terminal:take-control": {
-            const session = terminalManager.getSession(msg.sessionId);
-            if (!session) {
-              sendError(`Session not found: ${msg.sessionId}`);
-              return;
-            }
-            controlledSessions.add(msg.sessionId);
-            send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "control" });
-            break;
-          }
-
-          case "terminal:release-control": {
-            controlledSessions.delete(msg.sessionId);
-            send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "observer" });
-            break;
-          }
-        }
+        routeMessage(msg, ctx, deps);
       } catch (err) {
         sendError((err as Error).message);
       }

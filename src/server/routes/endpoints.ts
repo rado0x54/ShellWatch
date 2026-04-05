@@ -1,0 +1,130 @@
+import { randomUUID } from "node:crypto";
+import type { FastifyInstance } from "fastify";
+import type { AccountRepository, EndpointRepository } from "../../db/index.js";
+import type { TerminalManager } from "../../terminal/index.js";
+
+export interface EndpointRoutesParams {
+  app: FastifyInstance;
+  basePath: string;
+  endpointRepo: EndpointRepository;
+  accountRepo: AccountRepository;
+  terminalManager: TerminalManager;
+}
+
+export function registerEndpointRoutes(params: EndpointRoutesParams) {
+  const { app, basePath: base, endpointRepo, accountRepo, terminalManager } = params;
+
+  app.get(`${base}/api/endpoints`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const all = await endpointRepo.findAllForAccount(request.accountId);
+    return {
+      endpoints: all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
+        id,
+        label,
+        host,
+        port,
+        username,
+        keyId,
+        passkeyId,
+      })),
+    };
+  });
+
+  app.post<{
+    Body: {
+      label: string;
+      host: string;
+      port?: number;
+      username?: string;
+      keyId?: string;
+      passkeyId?: string;
+    };
+  }>(`${base}/api/endpoints`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    try {
+      if (request.body.keyId && request.body.passkeyId) {
+        reply.status(400);
+        return { error: "Cannot set both keyId and passkeyId" };
+      }
+      if (request.body.keyId && !accountRepo.isAdmin(request.accountId)) {
+        reply.status(403);
+        return { error: "File-based SSH keys can only be assigned by the admin account" };
+      }
+      const id = randomUUID();
+      await endpointRepo.create({
+        id,
+        accountId: request.accountId,
+        label: request.body.label,
+        host: request.body.host,
+        port: request.body.port ?? 22,
+        username: request.body.username ?? "shellwatch",
+        keyId: request.body.keyId,
+        passkeyId: request.body.passkeyId,
+      });
+      return { status: "created", id };
+    } catch (err) {
+      app.log.error(err, "request failed");
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
+
+  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    `${base}/api/endpoints/:id`,
+    async (request, reply) => {
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
+      try {
+        const body = request.body as Record<string, unknown>;
+        if (body.keyId && body.passkeyId) {
+          reply.status(400);
+          return { error: "Cannot set both keyId and passkeyId" };
+        }
+        if (body.keyId && !accountRepo.isAdmin(request.accountId)) {
+          reply.status(403);
+          return { error: "File-based SSH keys can only be assigned by the admin account" };
+        }
+        await endpointRepo.update(
+          request.params.id,
+          request.accountId,
+          body as Parameters<EndpointRepository["update"]>[2],
+        );
+        return { status: "updated" };
+      } catch (err) {
+        app.log.error(err, "request failed");
+        reply.status(400);
+        return { error: (err as Error).message };
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(`${base}/api/endpoints/:id`, async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    try {
+      const activeSessions = terminalManager
+        .listSessions()
+        .filter((s) => s.endpointId === request.params.id);
+      if (activeSessions.length > 0) {
+        reply.status(409);
+        return { error: "Cannot delete endpoint with active sessions" };
+      }
+      await endpointRepo.delete(request.params.id, request.accountId);
+      return { status: "deleted" };
+    } catch (err) {
+      app.log.error(err, "request failed");
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
+}

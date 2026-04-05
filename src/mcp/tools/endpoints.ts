@@ -1,0 +1,157 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import type { AccountRepository } from "../../db/repositories/account-repo.js";
+import type { EndpointRepository } from "../../db/repositories/endpoint-repo.js";
+
+export function registerEndpointTools(
+  mcpServer: McpServer,
+  endpointRepo: EndpointRepository,
+  accountId?: string | null,
+  accountRepo?: AccountRepository | null,
+) {
+  mcpServer.tool(
+    "shellwatch_manage_endpoints",
+    "Manage SSH endpoints. Actions: list, read, create, update, delete.",
+    {
+      action: z.enum(["list", "read", "create", "update", "delete"]).describe("Action to perform"),
+      id: z.string().optional().describe("Endpoint ID (required for read, update, delete)"),
+      data: z
+        .object({
+          label: z.string().optional(),
+          host: z.string().optional(),
+          port: z.number().optional(),
+          username: z.string().optional(),
+          keyId: z.string().optional().describe("File-based SSH key ID"),
+          passkeyId: z
+            .string()
+            .optional()
+            .describe("WebAuthn passkey ID (mutually exclusive with keyId)"),
+        })
+        .optional()
+        .describe("Endpoint data (for create and update)"),
+    },
+    async ({ action, id, data }) => {
+      try {
+        switch (action) {
+          case "list": {
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context" }],
+              };
+            }
+            const all = await endpointRepo.findAllForAccount(accountId);
+            const result = all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
+              id,
+              label,
+              host,
+              port,
+              username,
+              keyId,
+              passkeyId,
+            }));
+            return {
+              content: [{ type: "text", text: JSON.stringify({ endpoints: result }, null, 2) }],
+            };
+          }
+          case "read": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context" }],
+              };
+            }
+            const ep = await endpointRepo.findByIdForAccount(id, accountId);
+            if (!ep)
+              return {
+                isError: true,
+                content: [{ type: "text", text: `Endpoint not found: ${id}` }],
+              };
+            const safe = ep;
+            return { content: [{ type: "text", text: JSON.stringify(safe, null, 2) }] };
+          }
+          case "create": {
+            if (!id || !data?.label || !data?.host || !data?.username) {
+              return {
+                isError: true,
+                content: [
+                  { type: "text", text: "id, data.label, data.host, data.username are required" },
+                ],
+              };
+            }
+            if (!accountId) {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint creation" }],
+              };
+            }
+            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text",
+                    text: "File-based SSH keys can only be assigned by the admin account",
+                  },
+                ],
+              };
+            }
+            await endpointRepo.create({
+              id,
+              accountId,
+              label: data.label,
+              host: data.host,
+              port: data.port ?? 22,
+              username: data.username,
+              keyId: data.keyId,
+              passkeyId: data.passkeyId,
+            });
+            return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
+          }
+          case "update": {
+            if (!id || !data)
+              return {
+                isError: true,
+                content: [{ type: "text", text: "id and data are required" }],
+              };
+            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text",
+                    text: "File-based SSH keys can only be assigned by the admin account",
+                  },
+                ],
+              };
+            }
+            if (accountId) {
+              await endpointRepo.update(id, accountId, data);
+            } else {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint update" }],
+              };
+            }
+            return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id }) }] };
+          }
+          case "delete": {
+            if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
+            if (accountId) {
+              await endpointRepo.delete(id, accountId);
+            } else {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "No account context for endpoint deletion" }],
+              };
+            }
+            return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
+          }
+        }
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
+      }
+    },
+  );
+}
