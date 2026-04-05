@@ -87,8 +87,6 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
 
-    let frameSeq = 0;
-
     // Wire WebSocket ↔ AgentProtocol
     // Incoming: binary WS messages → write to protocol stream
     socket.on("message", (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
@@ -102,22 +100,9 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
           ? data
           : Buffer.from(data as ArrayBuffer);
 
-      const seq = frameSeq++;
-      const msgType = buf.length >= 5 ? buf[4] : -1;
-      app.log.info(
-        `[Agent Proxy] req #${seq} type=${msgType} len=${buf.length}\n` + buf.toString("hex"),
-      );
-
       // Rewrite sk-ecdsa → webauthn-sk-ecdsa in SIGN_REQUEST so ssh2's
       // parseKey() can recognize the key type. See #36.
-      const rewritten = rewriteSkEcdsaSignRequest(buf);
-      if (rewritten !== buf) {
-        app.log.info(
-          `[Agent Proxy] req #${seq} rewritten (sk-ecdsa → webauthn-sk-ecdsa)\n` +
-            rewritten.toString("hex"),
-        );
-      }
-      protocol.write(rewritten);
+      protocol.write(rewriteSkEcdsaSignRequest(buf));
     });
 
     // Outgoing: protocol stream → intercept → send as binary WS message
@@ -125,10 +110,6 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // responses when applicable (see socket-agent-handler.ts for details).
     protocol.on("data", (chunk: Buffer) => {
       const response = interceptResponse(chunk);
-      const msgType = response.length >= 5 ? response[4] : -1;
-      app.log.info(
-        `[Agent Proxy] res type=${msgType} len=${response.length}\n` + response.toString("hex"),
-      );
       if (socket.readyState === socket.OPEN) {
         socket.send(response);
       }
