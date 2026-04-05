@@ -77,15 +77,31 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // Look up passkeys for the authenticated account
     const passkeys = findCredentialsForAccount?.(key.accountId) ?? [];
 
-    const { protocol, cleanup } = createAgentHandler({
-      keyProvider,
-      logger,
-      passkeys,
-      signingBridge,
-      rpId,
-    });
+    // onWebauthnSignResponse: bypass AgentProtocol's signReply for webauthn
+    // signatures and send the correctly-formatted frame directly to the client.
+    const { protocol, cleanup } = createAgentHandler(
+      {
+        keyProvider,
+        logger,
+        passkeys,
+        signingBridge,
+        rpId,
+      },
+      (frame) => {
+        const msgType = frame.length >= 5 ? frame[4] : -1;
+        app.log.info(
+          `[Agent Proxy] res type=${msgType} len=${frame.length} (webauthn direct)\n` +
+            frame.toString("hex"),
+        );
+        if (socket.readyState === socket.OPEN) {
+          socket.send(frame);
+        }
+      },
+    );
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
+
+    let frameSeq = 0;
 
     // Wire WebSocket ↔ AgentProtocol
     // Incoming: binary WS messages → write to protocol stream
@@ -94,19 +110,36 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
         socket.close(4002, "Only binary messages are accepted");
         return;
       }
-      let buf = Array.isArray(data)
+      const buf = Array.isArray(data)
         ? Buffer.concat(data)
         : Buffer.isBuffer(data)
           ? data
           : Buffer.from(data as ArrayBuffer);
+
+      const seq = frameSeq++;
+      const msgType = buf.length >= 5 ? buf[4] : -1;
+      app.log.info(
+        `[Agent Proxy] req #${seq} type=${msgType} len=${buf.length}\n` + buf.toString("hex"),
+      );
+
       // Rewrite sk-ecdsa → webauthn-sk-ecdsa in SIGN_REQUEST so ssh2's
       // parseKey() can recognize the key type. See #36.
-      buf = rewriteSkEcdsaSignRequest(buf);
-      protocol.write(buf);
+      const rewritten = rewriteSkEcdsaSignRequest(buf);
+      if (rewritten !== buf) {
+        app.log.info(
+          `[Agent Proxy] req #${seq} rewritten (sk-ecdsa → webauthn-sk-ecdsa)\n` +
+            rewritten.toString("hex"),
+        );
+      }
+      protocol.write(rewritten);
     });
 
     // Outgoing: protocol stream → send as binary WS message
     protocol.on("data", (chunk: Buffer) => {
+      const msgType = chunk.length >= 5 ? chunk[4] : -1;
+      app.log.info(
+        `[Agent Proxy] res type=${msgType} len=${chunk.length}\n` + chunk.toString("hex"),
+      );
       if (socket.readyState === socket.OPEN) {
         socket.send(chunk);
       }
