@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-// In-memory challenge store (keyed by challenge ID, expires after 5 minutes)
+// In-memory challenge store (keyed by challenge ID, expires after 5 minutes).
+// For multi-instance deployment this needs to move into a shared cache.
 const pendingChallenges = new Map<string, { challenge: string; expires: number }>();
 
 /** Store a challenge and return its ID */
