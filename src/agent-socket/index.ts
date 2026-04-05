@@ -2,7 +2,6 @@ export { registerAgentProxyRoute, type AgentProxyRouteParams } from "./agent-pro
 export {
   createAgentHandler,
   rewriteSkEcdsaSignRequest,
-  buildWebauthnSignResponse,
   AgentProtocol,
   type AgentProtocolInstance,
   type AgentHandlerDeps,

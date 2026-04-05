@@ -77,27 +77,13 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // Look up passkeys for the authenticated account
     const passkeys = findCredentialsForAccount?.(key.accountId) ?? [];
 
-    // onWebauthnSignResponse: bypass AgentProtocol's signReply for webauthn
-    // signatures and send the correctly-formatted frame directly to the client.
-    const { protocol, cleanup } = createAgentHandler(
-      {
-        keyProvider,
-        logger,
-        passkeys,
-        signingBridge,
-        rpId,
-      },
-      (frame) => {
-        const msgType = frame.length >= 5 ? frame[4] : -1;
-        app.log.info(
-          `[Agent Proxy] res type=${msgType} len=${frame.length} (webauthn direct)\n` +
-            frame.toString("hex"),
-        );
-        if (socket.readyState === socket.OPEN) {
-          socket.send(frame);
-        }
-      },
-    );
+    const { protocol, interceptResponse, cleanup } = createAgentHandler({
+      keyProvider,
+      logger,
+      passkeys,
+      signingBridge,
+      rpId,
+    });
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
 
@@ -134,14 +120,17 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
       protocol.write(rewritten);
     });
 
-    // Outgoing: protocol stream → send as binary WS message
+    // Outgoing: protocol stream → intercept → send as binary WS message
+    // interceptResponse swaps FAILURE frames with queued webauthn sign
+    // responses when applicable (see socket-agent-handler.ts for details).
     protocol.on("data", (chunk: Buffer) => {
-      const msgType = chunk.length >= 5 ? chunk[4] : -1;
+      const response = interceptResponse(chunk);
+      const msgType = response.length >= 5 ? response[4] : -1;
       app.log.info(
-        `[Agent Proxy] res type=${msgType} len=${chunk.length}\n` + chunk.toString("hex"),
+        `[Agent Proxy] res type=${msgType} len=${response.length}\n` + response.toString("hex"),
       );
       if (socket.readyState === socket.OPEN) {
-        socket.send(chunk);
+        socket.send(response);
       }
     });
 
