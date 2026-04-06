@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { FastifyInstance } from "fastify";
-import { deduplicateLabel } from "../db/repositories/credential-queries.js";
+import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
@@ -55,17 +55,24 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
       const { credential: cred, aaguid } = verification.registrationInfo;
       const baseLabel = lookupAAGUID(aaguid) || "Passkey";
 
-      // Create account — first account becomes admin
-      const account = await accountRepo.create({
-        id: randomUUID(),
-        name,
-        type: "human",
-      });
-      // First account becomes admin. setAdmin uses INSERT OR IGNORE —
-      // first writer wins. Concurrent registrations can't create duplicate
-      // admins (singleton CHECK constraint), and the second call is a no-op.
-      if (!accountRepo.getAdminAccountId()) {
-        accountRepo.setAdmin(account.id);
+      // During onboarding (no passkeys yet), adopt the seeded admin account
+      // rather than creating a duplicate. Outside onboarding, create a new account.
+      let account: { id: string };
+      const existingAdminId = accountRepo.getAdminAccountId();
+      if (!hasPasskeys(db) && existingAdminId) {
+        account = { id: existingAdminId };
+      } else {
+        account = await accountRepo.create({
+          id: randomUUID(),
+          name,
+          type: "human",
+        });
+        // First account becomes admin. setAdmin uses INSERT OR IGNORE —
+        // first writer wins. Concurrent registrations can't create duplicate
+        // admins (singleton CHECK constraint), and the second call is a no-op.
+        if (!existingAdminId) {
+          accountRepo.setAdmin(account.id);
+        }
       }
 
       const label = deduplicateLabel(db, account.id, baseLabel);

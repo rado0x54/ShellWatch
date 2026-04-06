@@ -139,13 +139,19 @@
         servers through a unified interface. Authentication is passkey-only — no passwords, no
         emails.
       </p>
-      <p class="hint">
-        Choose a name for your account. This does not need to contain personal information — it is
-        written into your passkey to help identify the account. You can change it later in Settings
-        (existing passkeys are not updated).
-      </p>
-      <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
-      <button class="btn-primary" disabled={!accountName.trim()} onclick={() => (currentStep = 1)}>
+      {#if !isAdminSetup}
+        <p class="hint">
+          Choose a name for your account. This does not need to contain personal information — it is
+          written into your passkey to help identify the account. You can change it later in
+          Settings (existing passkeys are not updated).
+        </p>
+        <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
+      {/if}
+      <button
+        class="btn-primary"
+        disabled={!isAdminSetup && !accountName.trim()}
+        onclick={() => (currentStep = 1)}
+      >
         Get Started
       </button>
 
