@@ -10,6 +10,15 @@
   const sessionId = $derived($page.params.id);
   const session = $derived($sessions.find((s) => s.sessionId === sessionId));
 
+  // Clean up stale mode entries when navigating away from a session
+  let prevSessionId = $state<string | null>(null);
+  $effect(() => {
+    if (prevSessionId && prevSessionId !== sessionId) {
+      delete modes[prevSessionId];
+    }
+    prevSessionId = sessionId;
+  });
+
   // Navigate home when session is removed from the list
   let wasFound = $state(false);
   $effect(() => {

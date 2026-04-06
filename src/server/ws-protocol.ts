@@ -3,6 +3,7 @@ import type { TerminalStatus } from "../terminal/index.js";
 // Client -> Server messages
 export type ClientMessage =
   | { type: "terminal:attach"; sessionId: string }
+  | { type: "terminal:detach"; sessionId: string }
   | { type: "terminal:input"; sessionId: string; data: string }
   | { type: "terminal:resize"; sessionId: string; cols: number; rows: number }
   | { type: "terminal:close"; sessionId: string }
