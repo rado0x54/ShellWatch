@@ -30,8 +30,10 @@
   }
 
   async function handleRevoke(id: string) {
+    // TODO: use basePath store instead of window.__BASE_PATH__ (applies to this fn and handleRevokeFileKey)
     const activeCount = $credentials.filter((c) => !c.revoked).length;
     if (activeCount <= 1) {
+      // Client-side guard for UX; also enforced server-side in the revoke endpoint
       alert("Cannot revoke the last active passkey.");
       return;
     }
@@ -93,9 +95,12 @@
     pendingCredentialId = null;
   }
 
-  function handleCancel() {
+  async function handleCancel() {
+    // Credential is already stored server-side — just close the modal.
+    // Refresh the list so the user sees the passkey with its default label.
     showModal = false;
     pendingCredentialId = null;
+    await fetchCredentials();
   }
 
   function handleModalKeydown(e: KeyboardEvent) {
@@ -259,7 +264,7 @@
           style="width: 100%; margin-bottom: 1rem"
         />
         <div class="modal-actions">
-          <button class="btn btn-secondary" onclick={handleCancel}>Cancel</button>
+          <button class="btn btn-secondary" onclick={handleCancel}>Skip</button>
           <button class="btn btn-primary" onclick={handleSave}>Save</button>
         </div>
       </div>

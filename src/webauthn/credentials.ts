@@ -80,7 +80,9 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
 
       db.update(webauthnCredentials)
         .set({ label: label.trim() })
-        .where(eq(webauthnCredentials.id, id))
+        .where(
+          and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
+        )
         .run();
 
       return { status: "updated" };

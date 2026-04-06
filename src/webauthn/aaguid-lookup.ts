@@ -1,7 +1,5 @@
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const aaguidNames: Record<string, string> = require("./aaguid-names.json");
+// @ts-expect-error — Node 22+ supports JSON import attributes; tsc needs verbatimModuleSyntax for `with`
+import aaguidNames from "./aaguid-names.json" with { type: "json" };
 
 /**
  * Look up a human-friendly authenticator name by AAGUID.
@@ -9,5 +7,5 @@ const aaguidNames: Record<string, string> = require("./aaguid-names.json");
  */
 export function lookupAAGUID(aaguid: string): string | undefined {
   if (!aaguid || aaguid === "00000000-0000-0000-0000-000000000000") return undefined;
-  return aaguidNames[aaguid];
+  return (aaguidNames as Record<string, string>)[aaguid];
 }
