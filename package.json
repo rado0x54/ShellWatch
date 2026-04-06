@@ -16,6 +16,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude 'src/test/integration/**'",
+    "test:integration": "vitest run src/test/integration",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "keys:generate": "tsx src/cli/manage-keys.ts generate",
@@ -26,6 +28,9 @@
     "db:studio": "drizzle-kit studio",
     "update:aaguids": "tsx scripts/update-aaguids.ts",
     "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "keywords": [],
   "author": "",

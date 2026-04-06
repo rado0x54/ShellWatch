@@ -64,7 +64,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm vitest run --exclude 'src/test/integration/**'
+      - run: pnpm test:unit
 
   integration-tests:
     name: Integration Tests (Node ${{ matrix.node-version }})
@@ -80,4 +80,4 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm vitest run src/test/integration
+      - run: pnpm test:integration
