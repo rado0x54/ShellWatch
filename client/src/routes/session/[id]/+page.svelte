@@ -23,13 +23,15 @@
 
 <div class="terminal-page">
   {#if session}
-    <Terminal
-      sessionId={session.sessionId}
-      mode={modes[session.sessionId] ?? session.mode}
-      onModeChange={(mode) => {
-        modes[session.sessionId] = mode;
-      }}
-    />
+    {#key session.sessionId}
+      <Terminal
+        sessionId={session.sessionId}
+        mode={modes[session.sessionId] ?? session.mode}
+        onModeChange={(mode) => {
+          modes[session.sessionId] = mode;
+        }}
+      />
+    {/key}
   {:else}
     <div class="placeholder">
       <p>Session not found</p>
