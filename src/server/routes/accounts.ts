@@ -36,7 +36,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     return {
       id: account.id,
       name: account.name,
-      type: account.type,
       isAdmin: account.isAdmin,
     };
   });
@@ -71,7 +70,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       accounts: all.map((a) => ({
         id: a.id,
         name: a.name,
-        type: a.type,
         isAdmin: a.isAdmin,
         enabled: a.enabled,
         maxSessions: a.maxSessions,

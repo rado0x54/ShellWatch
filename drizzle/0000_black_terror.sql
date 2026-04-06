@@ -1,7 +1,6 @@
 CREATE TABLE `accounts` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
-	`type` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`max_sessions` integer DEFAULT 5 NOT NULL,
 	`last_used_at` text,

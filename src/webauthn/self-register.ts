@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
-import { webauthnCredentials } from "../db/schema.js";
+import { accounts, webauthnCredentials } from "../db/schema.js";
 import { consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
@@ -55,27 +55,6 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
       const { credential: cred, aaguid } = verification.registrationInfo;
       const baseLabel = lookupAAGUID(aaguid) || "Passkey";
 
-      // During onboarding (no passkeys yet), adopt the seeded admin account
-      // rather than creating a duplicate. Outside onboarding, create a new account.
-      let account: { id: string };
-      const existingAdminId = accountRepo.getAdminAccountId();
-      if (!hasPasskeys(db) && existingAdminId) {
-        account = { id: existingAdminId };
-      } else {
-        account = await accountRepo.create({
-          id: randomUUID(),
-          name,
-          type: "human",
-        });
-        // First account becomes admin. setAdmin uses INSERT OR IGNORE —
-        // first writer wins. Concurrent registrations can't create duplicate
-        // admins (singleton CHECK constraint), and the second call is a no-op.
-        if (!existingAdminId) {
-          accountRepo.setAdmin(account.id);
-        }
-      }
-
-      const label = deduplicateLabel(db, account.id, baseLabel);
       const credId = randomUUID();
       const now = new Date().toISOString();
       const pubKeyBuf = Buffer.from(cred.publicKey);
@@ -87,20 +66,56 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         // Non-fatal
       }
 
-      // Create passkey
-      db.insert(webauthnCredentials)
-        .values({
-          id: credId,
-          accountId: account.id,
-          credentialId: cred.id,
-          publicKey: pubKeyBuf,
-          counter: cred.counter,
-          transports: JSON.stringify(cred.transports ?? []),
-          label,
-          publicKeyOpenSsh: authorizedKeysEntry,
-          createdAt: now,
-        })
-        .run();
+      // Wrap account resolution + credential insert in a transaction so two
+      // concurrent first-time registrations can't both see hasPasskeys()=false
+      // and silently share the admin account.
+      const account = db.transaction((tx) => {
+        const existingAdminId = accountRepo.getAdminAccountId();
+        let accountId: string;
+
+        if (!hasPasskeys(tx) && existingAdminId) {
+          // Onboarding: adopt seeded admin — name from request is intentionally
+          // ignored since the seeded account already has the canonical name.
+          accountId = existingAdminId;
+        } else {
+          accountId = randomUUID();
+          const accountNow = new Date().toISOString();
+          tx.insert(accounts)
+            .values({
+              id: accountId,
+              name,
+              enabled: true,
+              maxSessions: 5,
+              lastUsedAt: accountNow,
+              createdAt: accountNow,
+              updatedAt: accountNow,
+            })
+            .run();
+          // First account becomes admin. setAdmin uses INSERT OR IGNORE —
+          // first writer wins via singleton CHECK constraint.
+          if (!existingAdminId) {
+            accountRepo.setAdmin(accountId);
+          }
+        }
+
+        const label = deduplicateLabel(tx, accountId, baseLabel);
+
+        tx.insert(webauthnCredentials)
+          .values({
+            id: credId,
+            accountId,
+            credentialId: cred.id,
+            publicKey: pubKeyBuf,
+            counter: cred.counter,
+            transports: JSON.stringify(cred.transports ?? []),
+            label,
+            publicKeyOpenSsh: authorizedKeysEntry,
+            createdAt: now,
+          })
+          .run();
+
+        return { id: accountId, label };
+      });
 
       // Auto-login: set session cookie
       if (sessionConfig) {
@@ -117,7 +132,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         );
       }
 
-      return { verified: true, accountId: account.id, credentialId: credId, label };
+      return { verified: true, accountId: account.id, credentialId: credId, label: account.label };
     } catch (err) {
       reply.status(400);
       return { error: (err as Error).message };

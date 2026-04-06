@@ -6,7 +6,7 @@ import { blob, check, integer, primaryKey, sqliteTable, text } from "drizzle-orm
 export const accounts = sqliteTable("accounts", {
   id: text("id").primaryKey(), // UUIDv4
   name: text("name").notNull(),
-  type: text("type").notNull(), // "human" | "agent"
+
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
   lastUsedAt: text("last_used_at"),

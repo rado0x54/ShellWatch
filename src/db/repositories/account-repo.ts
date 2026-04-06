@@ -5,7 +5,6 @@ import { accounts, adminAccount } from "../schema.js";
 export interface AccountInfo {
   id: string;
   name: string;
-  type: "human" | "agent";
   isAdmin: boolean;
   enabled: boolean;
   maxSessions: number;
@@ -17,7 +16,7 @@ export interface AccountInfo {
 export interface AccountRepository {
   findById(id: string): Promise<AccountInfo | null>;
   findAll(): Promise<AccountInfo[]>;
-  create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo>;
+  create(data: { id: string; name: string }): Promise<AccountInfo>;
   update(
     id: string,
     data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
@@ -41,7 +40,7 @@ export class StubAccountRepository implements AccountRepository {
   async findAll(): Promise<AccountInfo[]> {
     return [];
   }
-  async create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo> {
+  async create(data: { id: string; name: string }): Promise<AccountInfo> {
     const now = new Date().toISOString();
     return {
       ...data,
@@ -96,7 +95,7 @@ export class DrizzleAccountRepository implements AccountRepository {
     })) as AccountInfo[];
   }
 
-  async create(data: { id: string; name: string; type: "human" | "agent" }): Promise<AccountInfo> {
+  async create(data: { id: string; name: string }): Promise<AccountInfo> {
     const now = new Date().toISOString();
     this.db
       .insert(accounts)

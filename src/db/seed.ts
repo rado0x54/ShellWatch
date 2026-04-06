@@ -34,8 +34,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
     db.insert(accounts)
       .values({
         id: adminId,
-        name: "Admin",
-        type: "human",
+        name: "admin",
         enabled: true,
         maxSessions: 5,
         lastUsedAt: now,

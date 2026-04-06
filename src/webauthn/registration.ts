@@ -100,8 +100,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           } else {
             const admin = await accountRepo.create({
               id: randomUUID(),
-              name: "Admin",
-              type: "human",
+              name: "admin",
             });
             accountRepo.setAdmin(admin.id);
             accountId = admin.id;
