@@ -7,6 +7,7 @@ import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
+import { lookupAAGUID } from "./aaguid-lookup.js";
 
 export interface RegistrationRoutesParams {
   app: FastifyInstance;
@@ -56,10 +57,10 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
   );
 
   // --- Registration: Verify Response ---
-  app.post<{ Body: { challengeId: string; label: string; credential: unknown } }>(
+  app.post<{ Body: { challengeId: string; credential: unknown } }>(
     `${basePath}/api/webauthn/register/verify`,
     async (request, reply) => {
-      const { challengeId, label, credential } = request.body;
+      const { challengeId, credential } = request.body;
 
       const challenge = consumeChallenge(challengeId);
       if (!challenge) {
@@ -80,7 +81,9 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           return { error: "Verification failed" };
         }
 
-        const { credential: cred } = verification.registrationInfo;
+        const { credential: cred, aaguid } = verification.registrationInfo;
+        const suggestedLabel = lookupAAGUID(aaguid);
+        const label = suggestedLabel || "Passkey";
 
         const id = randomUUID();
         const now = new Date().toISOString();
@@ -108,7 +111,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           } else {
             const admin = await accountRepo.create({
               id: randomUUID(),
-              name: label || "Admin",
+              name: "Admin",
               type: "human",
             });
             accountRepo.setAdmin(admin.id);
@@ -129,7 +132,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
             publicKey: pubKeyBuf,
             counter: cred.counter,
             transports: JSON.stringify(cred.transports ?? []),
-            label: label || "Passkey",
+            label,
             publicKeyOpenSsh: authorizedKeysEntry,
             createdAt: now,
           })
@@ -139,6 +142,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           verified: true,
           credentialId: cred.id,
           id,
+          suggestedLabel,
           authorizedKeysEntry,
           sshdConfig: authorizedKeysEntry ? getSshdConfigLine() : null,
         };

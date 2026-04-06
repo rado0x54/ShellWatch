@@ -24,37 +24,36 @@ export async function fetchCredentials(): Promise<void> {
   credentials.set(data.credentials);
 }
 
+/**
+ * Client-side fallback for passkey label suggestion based on
+ * authenticator transport hints. Used when the server cannot
+ * resolve an AAGUID-based name.
+ */
 function suggestLabel(credential: RegistrationResponseJSON): string {
-  const transports = credential.response.transports ?? [];
   const attachment = credential.authenticatorAttachment;
+  const transports = credential.response.transports ?? [];
 
-  const displayName = (credential.clientExtensionResults as Record<string, unknown>)?.credProps as
-    | { authenticatorDisplayName?: string }
-    | undefined;
-  if (displayName?.authenticatorDisplayName) {
-    return displayName.authenticatorDisplayName;
+  if (attachment === "platform" || transports.includes("internal")) {
+    return "Built-in passkey";
   }
 
-  if (attachment === "platform") {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("iphone") || ua.includes("ipad")) return "iPhone/iPad";
-    if (ua.includes("mac")) return "Mac Touch ID";
-    if (ua.includes("android")) return "Android";
-    if (ua.includes("windows")) return "Windows Hello";
-    return "Built-in Passkey";
-  }
+  if (transports.includes("hybrid")) return "Phone/tablet passkey";
+  if (transports.includes("usb")) return "Security key (USB)";
+  if (transports.includes("nfc")) return "Security key (NFC)";
+  if (transports.includes("ble")) return "Security key (BLE)";
 
-  if (transports.includes("usb")) return "Security Key (USB)";
-  if (transports.includes("nfc")) return "Security Key (NFC)";
-  if (transports.includes("ble")) return "Security Key (BLE)";
-  if (transports.includes("hybrid")) return "Phone/Tablet Passkey";
+  if (attachment === "cross-platform") return "External security key";
 
   return "Passkey";
 }
 
+/**
+ * Register a new passkey for an existing (authenticated) account.
+ * Triggers browser prompt, verifies + stores server-side with AAGUID-based
+ * label, and returns the credential ID and suggested label for renaming.
+ */
 export async function startPasskeyRegistration(name?: string): Promise<{
-  challengeId: string;
-  credential: RegistrationResponseJSON;
+  credentialId: string;
   suggestedLabel: string;
 }> {
   const base = get(basePath);
@@ -71,48 +70,81 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   const { challengeId, ...registrationOptions } = options;
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
+  const clientLabel = suggestLabel(credential);
 
-  return { challengeId, credential, suggestedLabel: suggestLabel(credential) };
-}
-
-export async function finishPasskeyRegistration(
-  challengeId: string,
-  credential: RegistrationResponseJSON,
-  label: string,
-): Promise<void> {
-  const base = get(basePath);
   const verifyRes = await fetch(`${base}/api/webauthn/register/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ challengeId, label, credential }),
+    body: JSON.stringify({ challengeId, credential }),
   });
   if (!verifyRes.ok) {
     const err = await verifyRes.json();
     throw new Error(err.error || "Verification failed");
+  }
+  const result = await verifyRes.json();
+
+  return {
+    credentialId: result.id,
+    suggestedLabel: result.suggestedLabel || clientLabel,
+  };
+}
+
+/**
+ * Update a credential's label after registration.
+ */
+export async function renamePasskey(credentialId: string, label: string): Promise<void> {
+  const base = get(basePath);
+  const res = await fetch(`${base}/api/webauthn/credentials/${credentialId}/label`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to update label");
   }
   await fetchCredentials();
 }
 
 /**
  * Register a new account with a passkey (atomic: creates account + passkey + session).
- * Used for both admin onboarding and user self-registration.
+ * Triggers browser prompt, creates account server-side with AAGUID-based label,
+ * and returns the credential ID and suggested label for renaming.
  */
-export async function registerAccount(
-  name: string,
-  challengeId: string,
-  credential: RegistrationResponseJSON,
-  label: string,
-): Promise<void> {
+export async function registerAccount(accountName: string): Promise<{
+  credentialId: string;
+  suggestedLabel: string;
+}> {
   const base = get(basePath);
+  const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: "pending", name: accountName }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json();
+    throw new Error(err.error || "Failed to get registration options");
+  }
+  const options = await optionsRes.json();
+  const { challengeId, ...registrationOptions } = options;
+
+  const credential = await startRegistration({ optionsJSON: registrationOptions });
+  const clientLabel = suggestLabel(credential);
+
   const res = await fetch(`${base}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, challengeId, label, credential }),
+    body: JSON.stringify({ name: accountName, challengeId, credential }),
   });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || "Registration failed");
   }
+  const data = await res.json();
+  return {
+    credentialId: data.credentialId,
+    suggestedLabel: data.suggestedLabel || clientLabel,
+  };
 }
 
 export class NoPasskeysError extends Error {

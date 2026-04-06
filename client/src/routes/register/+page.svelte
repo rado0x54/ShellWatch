@@ -5,7 +5,7 @@
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
-  import { registerAccount, startPasskeyRegistration } from "$lib/stores/webauthn.js";
+  import { registerAccount, renamePasskey } from "$lib/stores/webauthn.js";
 
   let isAdminSetup = $state(false);
   let loading = $state(false);
@@ -38,8 +38,7 @@
 
   // --- Passkey step ---
   let registrationStep = $state<null | {
-    challengeId: string;
-    credential: unknown;
+    credentialId: string;
     suggestedLabel: string;
   }>(null);
   let labelInput = $state("");
@@ -49,7 +48,7 @@
     error = "";
     status = "Waiting for passkey...";
     try {
-      const result = await startPasskeyRegistration(accountName);
+      const result = await registerAccount(accountName);
       registrationStep = result;
       labelInput = result.suggestedLabel;
       status = "";
@@ -64,15 +63,10 @@
     if (!registrationStep) return;
     loading = true;
     error = "";
-    status = "Creating account...";
+    status = "Saving label...";
     try {
-      const passkeyLabel = labelInput || registrationStep.suggestedLabel;
-      await registerAccount(
-        accountName,
-        registrationStep.challengeId,
-        registrationStep.credential as Parameters<typeof registerAccount>[2],
-        passkeyLabel,
-      );
+      const label = labelInput.trim() || registrationStep.suggestedLabel;
+      await renamePasskey(registrationStep.credentialId, label);
       registrationStep = null;
       status = "";
       currentStep = 2;

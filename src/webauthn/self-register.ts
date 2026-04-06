@@ -6,6 +6,7 @@ import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
+import { lookupAAGUID } from "./aaguid-lookup.js";
 import type { SessionConfig } from "./routes.js";
 
 export interface SelfRegisterRoutesParams {
@@ -23,9 +24,9 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
 
   // --- Self-Registration: Create account + passkey atomically ---
   app.post<{
-    Body: { name: string; challengeId: string; label: string; credential: unknown };
+    Body: { name: string; challengeId: string; credential: unknown };
   }>(`${basePath}/api/auth/register`, async (request, reply) => {
-    const { name, challengeId, label, credential } = request.body;
+    const { name, challengeId, credential } = request.body;
     if (!name || !challengeId || !credential) {
       reply.status(400);
       return { error: "name, challengeId, and credential are required" };
@@ -50,7 +51,9 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         return { error: "Verification failed" };
       }
 
-      const { credential: cred } = verification.registrationInfo;
+      const { credential: cred, aaguid } = verification.registrationInfo;
+      const suggestedLabel = lookupAAGUID(aaguid);
+      const label = suggestedLabel || "Passkey";
 
       // Create account — first account becomes admin
       const account = await accountRepo.create({
@@ -71,7 +74,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
 
       let authorizedKeysEntry: string | null = null;
       try {
-        authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+        authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, name);
       } catch {
         // Non-fatal
       }
@@ -85,7 +88,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           publicKey: pubKeyBuf,
           counter: cred.counter,
           transports: JSON.stringify(cred.transports ?? []),
-          label: label || "Passkey",
+          label,
           publicKeyOpenSsh: authorizedKeysEntry,
           createdAt: now,
         })
@@ -106,7 +109,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         );
       }
 
-      return { verified: true, accountId: account.id };
+      return { verified: true, accountId: account.id, credentialId: credId, suggestedLabel };
     } catch (err) {
       reply.status(400);
       return { error: (err as Error).message };

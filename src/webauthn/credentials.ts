@@ -51,6 +51,42 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
     };
   });
 
+  // --- Rename Credential ---
+  app.patch<{ Params: { id: string }; Body: { label: string } }>(
+    `${basePath}/api/webauthn/credentials/:id/label`,
+    async (request, reply) => {
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
+      const { id } = request.params;
+      const { label } = request.body;
+      if (!label?.trim()) {
+        reply.status(400);
+        return { error: "Label is required" };
+      }
+
+      const cred = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(
+          and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
+        )
+        .get();
+      if (!cred) {
+        reply.status(404);
+        return { error: "Credential not found" };
+      }
+
+      db.update(webauthnCredentials)
+        .set({ label: label.trim() })
+        .where(eq(webauthnCredentials.id, id))
+        .run();
+
+      return { status: "updated" };
+    },
+  );
+
   // --- Revoke Credential (permanent, scoped to account) ---
   app.post<{ Params: { id: string } }>(
     `${basePath}/api/webauthn/credentials/:id/revoke`,
