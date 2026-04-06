@@ -22,15 +22,13 @@
       const data = await res.json();
       if (data.error === "no_passkeys") {
         isAdminSetup = true;
-        const domain = window.location.host;
-        const path = get(basePath);
-        accountName = `Admin (${domain}${path || ""})`;
+        accountName = "admin";
       } else {
         accountName = "ShellWatch Account";
       }
     } catch {
       isAdminSetup = true;
-      accountName = `Admin (${window.location.host})`;
+      accountName = "admin";
     }
   });
 
