@@ -8,6 +8,7 @@ import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
+import type { RateLimitConfig } from "./routes.js";
 
 export interface RegistrationRoutesParams {
   app: FastifyInstance;
@@ -16,14 +17,23 @@ export interface RegistrationRoutesParams {
   rpId: string;
   trustedOrigins: string[];
   basePath: string;
+  rateLimitConfig: RateLimitConfig;
 }
 
 export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, basePath } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, basePath, rateLimitConfig } = params;
 
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string; name?: string } }>(
     `${basePath}/api/webauthn/register/options`,
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.passkeyRegister.max,
+          timeWindow: `${rateLimitConfig.passkeyRegister.windowMinutes} minutes`,
+        },
+      },
+    },
     async (request) => {
       const { label, name } = request.body;
       // Get existing credentials to exclude (prevent re-registration)
@@ -59,6 +69,14 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
   // --- Registration: Verify Response ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
     `${basePath}/api/webauthn/register/verify`,
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.passkeyRegister.max,
+          timeWindow: `${rateLimitConfig.passkeyRegister.windowMinutes} minutes`,
+        },
+      },
+    },
     async (request, reply) => {
       const { challengeId, credential } = request.body;
 

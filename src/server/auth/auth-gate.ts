@@ -40,7 +40,7 @@ export function registerAuthGate({
   const alwaysExempt = [
     "/health",
     "/api/auth/logout",
-    "/api/auth/register", // TODO: add rate limiting, config toggle to disable self-registration
+    "/api/auth/register",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
     "/api/webauthn/register/options",
