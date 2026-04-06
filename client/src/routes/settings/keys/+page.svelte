@@ -19,10 +19,19 @@
     fetchSshKeys();
   });
 
+  function sanitizeSegment(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+  }
+
   function sshComment(label: string): string {
-    const host = window.location.hostname;
-    const name = $account?.name ?? "unknown";
-    return `${host}-${name}-${label}`;
+    const host = sanitizeSegment(window.location.hostname);
+    const name = sanitizeSegment($account?.name ?? "unknown");
+    const key = sanitizeSegment(label);
+    return `${host}-${name}-${key}`;
   }
 
   function copyKey(key: string, btn: HTMLButtonElement) {
