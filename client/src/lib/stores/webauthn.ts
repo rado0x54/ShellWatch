@@ -1,4 +1,3 @@
-import type { RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { get, writable } from "svelte/store";
 import { basePath } from "./connection.js";
@@ -24,38 +23,14 @@ export async function fetchCredentials(): Promise<void> {
   credentials.set(data.credentials);
 }
 
-function suggestLabel(credential: RegistrationResponseJSON): string {
-  const transports = credential.response.transports ?? [];
-  const attachment = credential.authenticatorAttachment;
-
-  const displayName = (credential.clientExtensionResults as Record<string, unknown>)?.credProps as
-    | { authenticatorDisplayName?: string }
-    | undefined;
-  if (displayName?.authenticatorDisplayName) {
-    return displayName.authenticatorDisplayName;
-  }
-
-  if (attachment === "platform") {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("iphone") || ua.includes("ipad")) return "iPhone/iPad";
-    if (ua.includes("mac")) return "Mac Touch ID";
-    if (ua.includes("android")) return "Android";
-    if (ua.includes("windows")) return "Windows Hello";
-    return "Built-in Passkey";
-  }
-
-  if (transports.includes("usb")) return "Security Key (USB)";
-  if (transports.includes("nfc")) return "Security Key (NFC)";
-  if (transports.includes("ble")) return "Security Key (BLE)";
-  if (transports.includes("hybrid")) return "Phone/Tablet Passkey";
-
-  return "Passkey";
-}
-
+/**
+ * Register a new passkey for an existing (authenticated) account.
+ * Triggers browser prompt, verifies + stores server-side with AAGUID-based
+ * label, and returns the credential ID and suggested label for renaming.
+ */
 export async function startPasskeyRegistration(name?: string): Promise<{
-  challengeId: string;
-  credential: RegistrationResponseJSON;
-  suggestedLabel: string;
+  credentialId: string;
+  label: string;
 }> {
   const base = get(basePath);
   const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
@@ -72,47 +47,77 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  return { challengeId, credential, suggestedLabel: suggestLabel(credential) };
-}
-
-export async function finishPasskeyRegistration(
-  challengeId: string,
-  credential: RegistrationResponseJSON,
-  label: string,
-): Promise<void> {
-  const base = get(basePath);
   const verifyRes = await fetch(`${base}/api/webauthn/register/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ challengeId, label, credential }),
+    body: JSON.stringify({ challengeId, credential }),
   });
   if (!verifyRes.ok) {
     const err = await verifyRes.json();
     throw new Error(err.error || "Verification failed");
+  }
+  const result = await verifyRes.json();
+
+  return {
+    credentialId: result.id,
+    label: result.label,
+  };
+}
+
+/**
+ * Update a credential's label after registration.
+ */
+export async function renamePasskey(credentialId: string, label: string): Promise<void> {
+  const base = get(basePath);
+  const res = await fetch(`${base}/api/webauthn/credentials/${credentialId}/label`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to update label");
   }
   await fetchCredentials();
 }
 
 /**
  * Register a new account with a passkey (atomic: creates account + passkey + session).
- * Used for both admin onboarding and user self-registration.
+ * Triggers browser prompt, creates account server-side with AAGUID-based label.
  */
-export async function registerAccount(
-  name: string,
-  challengeId: string,
-  credential: RegistrationResponseJSON,
-  label: string,
-): Promise<void> {
+export async function registerAccount(accountName: string): Promise<{
+  credentialId: string;
+  label: string;
+}> {
   const base = get(basePath);
+  const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: "pending", name: accountName }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json();
+    throw new Error(err.error || "Failed to get registration options");
+  }
+  const options = await optionsRes.json();
+  const { challengeId, ...registrationOptions } = options;
+
+  const credential = await startRegistration({ optionsJSON: registrationOptions });
+
   const res = await fetch(`${base}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, challengeId, label, credential }),
+    body: JSON.stringify({ name: accountName, challengeId, credential }),
   });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || "Registration failed");
   }
+  const data = await res.json();
+  return {
+    credentialId: data.credentialId,
+    label: data.label,
+  };
 }
 
 export class NoPasskeysError extends Error {

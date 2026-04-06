@@ -70,7 +70,7 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
       // Derive OpenSSH authorized_keys format from COSE key
       let publicKeyOpenSsh: string | null = null;
       try {
-        publicKeyOpenSsh = coseToAuthorizedKeys(pubKeyBuf, "localhost", pk.label);
+        publicKeyOpenSsh = coseToAuthorizedKeys(pubKeyBuf, "localhost");
       } catch {
         // Non-fatal: key may not be convertible (e.g. unsupported algorithm)
       }

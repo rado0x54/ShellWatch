@@ -5,7 +5,7 @@
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
-  import { registerAccount, startPasskeyRegistration } from "$lib/stores/webauthn.js";
+  import { registerAccount } from "$lib/stores/webauthn.js";
 
   let isAdminSetup = $state(false);
   let loading = $state(false);
@@ -37,43 +37,12 @@
   const steps = ["Welcome", "Passkey", "Endpoints", "MCP"] as const;
 
   // --- Passkey step ---
-  let registrationStep = $state<null | {
-    challengeId: string;
-    credential: unknown;
-    suggestedLabel: string;
-  }>(null);
-  let labelInput = $state("");
-
   async function handleRegisterPasskey() {
     loading = true;
     error = "";
     status = "Waiting for passkey...";
     try {
-      const result = await startPasskeyRegistration(accountName);
-      registrationStep = result;
-      labelInput = result.suggestedLabel;
-      status = "";
-    } catch (err) {
-      error = (err as Error).message;
-      status = "";
-    }
-    loading = false;
-  }
-
-  async function handleFinishPasskey() {
-    if (!registrationStep) return;
-    loading = true;
-    error = "";
-    status = "Creating account...";
-    try {
-      const passkeyLabel = labelInput || registrationStep.suggestedLabel;
-      await registerAccount(
-        accountName,
-        registrationStep.challengeId,
-        registrationStep.credential as Parameters<typeof registerAccount>[2],
-        passkeyLabel,
-      );
-      registrationStep = null;
+      await registerAccount(accountName);
       status = "";
       currentStep = 2;
       await fetchEndpoints();
@@ -185,26 +154,13 @@
       <!-- Step 2: Passkey -->
     {:else if currentStep === 1}
       <h1>Register a Passkey</h1>
-      {#if registrationStep}
-        <p class="description">Name your passkey so you can identify it later.</p>
-        <input
-          type="text"
-          class="input"
-          bind:value={labelInput}
-          placeholder="e.g. MacBook Touch ID"
-        />
-        <button class="btn-primary" disabled={loading} onclick={handleFinishPasskey}>
-          Save & Continue
-        </button>
-      {:else}
-        <p class="description">
-          This will be your primary authentication method. You can add more passkeys later in
-          settings.
-        </p>
-        <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
-          Register Passkey
-        </button>
-      {/if}
+      <p class="description">
+        This will be your primary authentication method. You can add more passkeys later in
+        settings.
+      </p>
+      <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
+        Register Passkey
+      </button>
 
       <!-- Step 3: Endpoints (admin only) -->
     {:else if currentStep === 2}
