@@ -1,12 +1,15 @@
 # ssh2 Fork: WebAuthn SK Key Support
 
 ## Goal
+
 Add support for the custom `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` key algorithm to ssh2, enabling ShellWatch to authenticate to SSH servers using WebAuthn credentials via a custom agent that delegates signing to the browser.
 
 ## Reference Implementation
+
 The [ssheasy](https://github.com/hullarb/ssheasy) project (Go) implements this exact protocol. The wire formats below are based on their implementation.
 
 ## Algorithm Name
+
 ```
 webauthn-sk-ecdsa-sha2-nistp256@openssh.com
 ```
@@ -14,7 +17,9 @@ webauthn-sk-ecdsa-sha2-nistp256@openssh.com
 This is NOT the standard `sk-ecdsa-sha2-nistp256@openssh.com` (which uses rp.id `"ssh:"`). The `webauthn-` prefix indicates the credential was created via the browser WebAuthn API with a web origin as the relying party.
 
 ## Server Requirement
+
 The remote SSH server must have this in `sshd_config`:
+
 ```
 PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
 ```
@@ -32,13 +37,13 @@ PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
 ```js
 // Around line 64-76
 const DEFAULT_SERVER_HOST_KEY = [
-  'ecdsa-sha2-nistp256',
-  'ecdsa-sha2-nistp384',
-  'ecdsa-sha2-nistp521',
-  'rsa-sha2-512',
-  'rsa-sha2-256',
-  'ssh-rsa',
-  'webauthn-sk-ecdsa-sha2-nistp256@openssh.com',  // ADD THIS
+  "ecdsa-sha2-nistp256",
+  "ecdsa-sha2-nistp384",
+  "ecdsa-sha2-nistp521",
+  "rsa-sha2-512",
+  "rsa-sha2-256",
+  "ssh-rsa",
+  "webauthn-sk-ecdsa-sha2-nistp256@openssh.com", // ADD THIS
 ];
 ```
 
@@ -60,6 +65,7 @@ string  application                              (rp.id, e.g., "localhost")
 ```
 
 **How:** Add a new key class (similar to the existing ECDSA key classes) that:
+
 - Has `type` = `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`
 - Stores the EC point (x, y) and the application string
 - Implements `getPublicSSH()` returning the wire-format blob above
@@ -69,6 +75,7 @@ string  application                              (rp.id, e.g., "localhost")
 **Concrete approach:** Hook into the existing binary parsing flow at line ~1456.
 
 The existing code already does:
+
 ```js
 if (origBuffer) {
   binaryKeyParser.init(origBuffer, 0);
@@ -76,7 +83,7 @@ if (origBuffer) {
   if (type !== undefined) {
     data = binaryKeyParser.readRaw();
     if (data !== undefined) {
-      ret = parseDER(data, type, '', type);
+      ret = parseDER(data, type, "", type);
       // ...
     }
   }
@@ -92,21 +99,21 @@ if (origBuffer) {
   const type = binaryKeyParser.readString(true);
   if (type !== undefined) {
     // --- ADD: WebAuthn SK key handling ---
-    if (type === 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com') {
-      const curve = binaryKeyParser.readString(true);   // "nistp256"
-      const ecPoint = binaryKeyParser.readString();       // 0x04 || X || Y (65 bytes)
+    if (type === "webauthn-sk-ecdsa-sha2-nistp256@openssh.com") {
+      const curve = binaryKeyParser.readString(true); // "nistp256"
+      const ecPoint = binaryKeyParser.readString(); // 0x04 || X || Y (65 bytes)
       const application = binaryKeyParser.readString(true); // rp.id
       binaryKeyParser.clear();
-      if (curve === 'nistp256' && ecPoint && ecPoint.length === 65 && ecPoint[0] === 0x04) {
+      if (curve === "nistp256" && ecPoint && ecPoint.length === 65 && ecPoint[0] === 0x04) {
         return new WebAuthnSKECDSAKey(ecPoint, application);
       }
-      return new Error('Invalid WebAuthn SK ECDSA key format');
+      return new Error("Invalid WebAuthn SK ECDSA key format");
     }
     // --- END ADD ---
 
     data = binaryKeyParser.readRaw();
     if (data !== undefined) {
-      ret = parseDER(data, type, '', type);
+      ret = parseDER(data, type, "", type);
       // ...
     }
   }
@@ -115,6 +122,7 @@ if (origBuffer) {
 ```
 
 This is clean because:
+
 - The existing `binaryKeyParser.init()` and `readString(true)` already happened
 - We intercept when `type` matches our algorithm name
 - We read the remaining fields using the same `binaryKeyParser`
@@ -127,51 +135,58 @@ This is clean because:
 class WebAuthnSKECDSAKey {
   constructor(ecPoint, application) {
     this[SYM_DECRYPTED] = true;
-    this.type = 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com';
-    this._ecPoint = ecPoint;      // Buffer: 0x04 || X || Y
+    this.type = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+    this._ecPoint = ecPoint; // Buffer: 0x04 || X || Y
     this._application = application; // String: rp.id
   }
 
   getPublicSSH() {
     // Wire format: string type || string curve || string ecPoint || string application
-    const algo = Buffer.from('webauthn-sk-ecdsa-sha2-nistp256@openssh.com');
-    const curve = Buffer.from('nistp256');
+    const algo = Buffer.from("webauthn-sk-ecdsa-sha2-nistp256@openssh.com");
+    const curve = Buffer.from("nistp256");
     const app = Buffer.from(this._application);
 
     const buf = Buffer.allocUnsafe(
-      4 + algo.length + 4 + curve.length + 4 + this._ecPoint.length + 4 + app.length
+      4 + algo.length + 4 + curve.length + 4 + this._ecPoint.length + 4 + app.length,
     );
     let offset = 0;
 
-    buf.writeUInt32BE(algo.length, offset); offset += 4;
-    algo.copy(buf, offset); offset += algo.length;
+    buf.writeUInt32BE(algo.length, offset);
+    offset += 4;
+    algo.copy(buf, offset);
+    offset += algo.length;
 
-    buf.writeUInt32BE(curve.length, offset); offset += 4;
-    curve.copy(buf, offset); offset += curve.length;
+    buf.writeUInt32BE(curve.length, offset);
+    offset += 4;
+    curve.copy(buf, offset);
+    offset += curve.length;
 
-    buf.writeUInt32BE(this._ecPoint.length, offset); offset += 4;
-    this._ecPoint.copy(buf, offset); offset += this._ecPoint.length;
+    buf.writeUInt32BE(this._ecPoint.length, offset);
+    offset += 4;
+    this._ecPoint.copy(buf, offset);
+    offset += this._ecPoint.length;
 
-    buf.writeUInt32BE(app.length, offset); offset += 4;
+    buf.writeUInt32BE(app.length, offset);
+    offset += 4;
     app.copy(buf, offset);
 
     return buf;
   }
 
   getPublicPEM() {
-    throw new Error('PEM export not supported for WebAuthn SK keys');
+    throw new Error("PEM export not supported for WebAuthn SK keys");
   }
 
   getPrivatePEM() {
-    throw new Error('WebAuthn SK keys have no exportable private key');
+    throw new Error("WebAuthn SK keys have no exportable private key");
   }
 
   sign() {
-    throw new Error('WebAuthn SK keys must be signed via agent');
+    throw new Error("WebAuthn SK keys must be signed via agent");
   }
 
   verify() {
-    throw new Error('Verification not implemented for WebAuthn SK keys');
+    throw new Error("Verification not implemented for WebAuthn SK keys");
   }
 
   isPrivateKey() {
@@ -200,10 +215,10 @@ function getKeyAlgos(client, key, serverSigAlgs) {
   switch (key.type) {
     // ... existing cases ...
 
-    case 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com':
+    case "webauthn-sk-ecdsa-sha2-nistp256@openssh.com":
       // Return the algorithm as-is — no algorithm negotiation needed
       // The hash is always SHA-256 for P-256
-      return [['webauthn-sk-ecdsa-sha2-nistp256@openssh.com', 'sha256']];
+      return [["webauthn-sk-ecdsa-sha2-nistp256@openssh.com", "sha256"]];
   }
 }
 ```
@@ -277,11 +292,13 @@ The ECDSA signature (R, S) comes from the WebAuthn response's `signature` field,
 ## What ShellWatch Does (not in the fork)
 
 The fork ONLY adds:
+
 - Key format recognition (parsing)
 - Algorithm acceptance (auth flow gate)
 - Signature passthrough
 
 ShellWatch handles:
+
 - Creating the custom agent that delegates `sign()` to the browser via WebSocket
 - The WebAuthn `navigator.credentials.get()` flow in the browser
 - Wrapping the WebAuthn response in the SSH signature wire format
@@ -291,11 +308,11 @@ ShellWatch handles:
 
 ## Files Changed Summary
 
-| File | Change | Lines |
-|------|--------|-------|
-| `lib/protocol/constants.js` | Add algorithm to key algo list | ~1 line |
+| File                        | Change                                         | Lines     |
+| --------------------------- | ---------------------------------------------- | --------- |
+| `lib/protocol/constants.js` | Add algorithm to key algo list                 | ~1 line   |
 | `lib/protocol/keyParser.js` | Add `WebAuthnSKECDSAKey` class + binary parser | ~60 lines |
-| `lib/client.js` | Add case in `getKeyAlgos()` | ~3 lines |
-| `lib/protocol/utils.js` | Verify passthrough (likely no change needed) | 0 lines |
+| `lib/client.js`             | Add case in `getKeyAlgos()`                    | ~3 lines  |
+| `lib/protocol/utils.js`     | Verify passthrough (likely no change needed)   | 0 lines   |
 
 **Total: ~65 lines of new code.**
