@@ -1,4 +1,3 @@
-import type { RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { get, writable } from "svelte/store";
 import { basePath } from "./connection.js";
@@ -25,36 +24,13 @@ export async function fetchCredentials(): Promise<void> {
 }
 
 /**
- * Client-side fallback for passkey label suggestion based on
- * authenticator transport hints. Used when the server cannot
- * resolve an AAGUID-based name.
- */
-function suggestLabel(credential: RegistrationResponseJSON): string {
-  const attachment = credential.authenticatorAttachment;
-  const transports = credential.response.transports ?? [];
-
-  if (attachment === "platform" || transports.includes("internal")) {
-    return "Built-in passkey";
-  }
-
-  if (transports.includes("hybrid")) return "Phone/tablet passkey";
-  if (transports.includes("usb")) return "Security key (USB)";
-  if (transports.includes("nfc")) return "Security key (NFC)";
-  if (transports.includes("ble")) return "Security key (BLE)";
-
-  if (attachment === "cross-platform") return "External security key";
-
-  return "Passkey";
-}
-
-/**
  * Register a new passkey for an existing (authenticated) account.
  * Triggers browser prompt, verifies + stores server-side with AAGUID-based
  * label, and returns the credential ID and suggested label for renaming.
  */
 export async function startPasskeyRegistration(name?: string): Promise<{
   credentialId: string;
-  suggestedLabel: string;
+  label: string;
 }> {
   const base = get(basePath);
   const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
@@ -70,7 +46,6 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   const { challengeId, ...registrationOptions } = options;
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
-  const clientLabel = suggestLabel(credential);
 
   const verifyRes = await fetch(`${base}/api/webauthn/register/verify`, {
     method: "POST",
@@ -85,7 +60,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   return {
     credentialId: result.id,
-    suggestedLabel: result.suggestedLabel || clientLabel,
+    label: result.label,
   };
 }
 
@@ -108,12 +83,11 @@ export async function renamePasskey(credentialId: string, label: string): Promis
 
 /**
  * Register a new account with a passkey (atomic: creates account + passkey + session).
- * Triggers browser prompt, creates account server-side with AAGUID-based label,
- * and returns the credential ID and suggested label for renaming.
+ * Triggers browser prompt, creates account server-side with AAGUID-based label.
  */
 export async function registerAccount(accountName: string): Promise<{
   credentialId: string;
-  suggestedLabel: string;
+  label: string;
 }> {
   const base = get(basePath);
   const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
@@ -129,7 +103,6 @@ export async function registerAccount(accountName: string): Promise<{
   const { challengeId, ...registrationOptions } = options;
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
-  const clientLabel = suggestLabel(credential);
 
   const res = await fetch(`${base}/api/auth/register`, {
     method: "POST",
@@ -143,7 +116,7 @@ export async function registerAccount(accountName: string): Promise<{
   const data = await res.json();
   return {
     credentialId: data.credentialId,
-    suggestedLabel: data.suggestedLabel || clientLabel,
+    label: data.label,
   };
 }
 

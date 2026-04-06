@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { FastifyInstance } from "fastify";
+import { deduplicateLabel } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
@@ -52,8 +53,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
       }
 
       const { credential: cred, aaguid } = verification.registrationInfo;
-      const suggestedLabel = lookupAAGUID(aaguid);
-      const label = suggestedLabel || "Passkey";
+      const baseLabel = lookupAAGUID(aaguid) || "Passkey";
 
       // Create account — first account becomes admin
       const account = await accountRepo.create({
@@ -68,6 +68,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         accountRepo.setAdmin(account.id);
       }
 
+      const label = deduplicateLabel(db, account.id, baseLabel);
       const credId = randomUUID();
       const now = new Date().toISOString();
       const pubKeyBuf = Buffer.from(cred.publicKey);
@@ -109,7 +110,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         );
       }
 
-      return { verified: true, accountId: account.id, credentialId: credId, suggestedLabel };
+      return { verified: true, accountId: account.id, credentialId: credId, label };
     } catch (err) {
       reply.status(400);
       return { error: (err as Error).message };

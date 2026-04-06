@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
@@ -78,8 +78,27 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         return { error: "Credential not found" };
       }
 
+      const trimmed = label.trim();
+
+      // Enforce unique label within account
+      const conflict = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, request.accountId),
+            eq(webauthnCredentials.label, trimmed),
+            ne(webauthnCredentials.id, id),
+          ),
+        )
+        .get();
+      if (conflict) {
+        reply.status(409);
+        return { error: "A passkey with this label already exists" };
+      }
+
       db.update(webauthnCredentials)
-        .set({ label: label.trim() })
+        .set({ label: trimmed })
         .where(
           and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
         )

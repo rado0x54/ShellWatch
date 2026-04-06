@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { FastifyInstance } from "fastify";
-import { hasPasskeys } from "../db/repositories/credential-queries.js";
+import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
@@ -82,22 +82,11 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         }
 
         const { credential: cred, aaguid } = verification.registrationInfo;
-        const suggestedLabel = lookupAAGUID(aaguid);
-        const label = suggestedLabel || "Passkey";
+        const baseLabel = lookupAAGUID(aaguid) || "Passkey";
 
         const id = randomUUID();
         const now = new Date().toISOString();
         const pubKeyBuf = Buffer.from(cred.publicKey);
-
-        // Convert to OpenSSH authorized_keys format
-        let authorizedKeysEntry: string | null = null;
-        try {
-          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
-        } catch (convErr) {
-          app.log.error(
-            `Failed to convert COSE key to OpenSSH format: ${(convErr as Error).message}`,
-          );
-        }
 
         // Resolve account: use authenticated session, or bootstrap admin
         let accountId: string | undefined;
@@ -124,6 +113,18 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           return { error: "No account associated with this registration" };
         }
 
+        const label = deduplicateLabel(db, accountId, baseLabel);
+
+        // Convert to OpenSSH authorized_keys format
+        let authorizedKeysEntry: string | null = null;
+        try {
+          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+        } catch (convErr) {
+          app.log.error(
+            `Failed to convert COSE key to OpenSSH format: ${(convErr as Error).message}`,
+          );
+        }
+
         db.insert(webauthnCredentials)
           .values({
             id,
@@ -142,7 +143,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           verified: true,
           credentialId: cred.id,
           id,
-          suggestedLabel,
+          label,
           authorizedKeysEntry,
           sshdConfig: authorizedKeysEntry ? getSshdConfigLine() : null,
         };

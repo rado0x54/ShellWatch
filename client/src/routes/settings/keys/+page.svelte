@@ -9,11 +9,10 @@
     startPasskeyRegistration,
   } from "$lib/stores/webauthn.js";
 
-  let showModal = $state(false);
-  let modalLabel = $state("");
-  let modalDesc = $state("");
   let revoking = $state(false);
-  let pendingCredentialId: string | null = null;
+  let registering = $state(false);
+  let editingId = $state<string | null>(null);
+  let editLabel = $state("");
 
   onMount(() => {
     fetchCredentials();
@@ -71,41 +70,41 @@
   }
 
   async function handleRegister() {
+    registering = true;
     try {
       const result = await startPasskeyRegistration($account?.name);
-      pendingCredentialId = result.credentialId;
-      modalLabel = result.suggestedLabel;
-      modalDesc = `Detected: ${result.suggestedLabel}. Change the label if you like.`;
-      showModal = true;
+      await fetchCredentials();
+      // Start inline rename on the newly registered passkey
+      editingId = result.credentialId;
+      editLabel = result.label;
     } catch (err) {
       alert(`Registration failed: ${(err as Error).message}`);
     }
+    registering = false;
   }
 
-  async function handleSave() {
-    if (!pendingCredentialId) return;
-    const label = modalLabel.trim();
-    if (!label) return;
+  function startRename(id: string, currentLabel: string) {
+    editingId = id;
+    editLabel = currentLabel;
+  }
+
+  async function saveRename() {
+    if (!editingId || !editLabel.trim()) return;
     try {
-      await renamePasskey(pendingCredentialId, label);
+      await renamePasskey(editingId, editLabel.trim());
     } catch (err) {
-      alert(`Failed to save label: ${(err as Error).message}`);
+      alert((err as Error).message);
     }
-    showModal = false;
-    pendingCredentialId = null;
+    editingId = null;
   }
 
-  async function handleCancel() {
-    // Credential is already stored server-side — just close the modal.
-    // Refresh the list so the user sees the passkey with its default label.
-    showModal = false;
-    pendingCredentialId = null;
-    await fetchCredentials();
+  function cancelRename() {
+    editingId = null;
   }
 
-  function handleModalKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") handleSave();
-    if (e.key === "Escape") handleCancel();
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") saveRename();
+    if (e.key === "Escape") cancelRename();
   }
 
   function shortFingerprint(fp: string): string {
@@ -139,7 +138,26 @@
     <tbody>
       {#each $credentials as pk (pk.id)}
         <tr class:revoked={pk.revoked}>
-          <td>{pk.label}</td>
+          <td>
+            {#if editingId === pk.id}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="inline-rename"
+                bind:value={editLabel}
+                onkeydown={handleRenameKeydown}
+                onblur={cancelRename}
+                autofocus
+              />
+            {:else}
+              <button
+                class="label-btn"
+                title="Rename"
+                disabled={pk.revoked}
+                onclick={() => startRename(pk.id, pk.label)}
+              >{pk.label}</button>
+            {/if}
+          </td>
           <td>{pk.algorithm}</td>
           <td class="fingerprint">{shortFingerprint(pk.fingerprint)}</td>
           <td>
@@ -177,7 +195,9 @@
   </table>
 
   <div class="register-section">
-    <button class="btn btn-primary" onclick={handleRegister}>Register New Passkey</button>
+    <button class="btn btn-primary" disabled={registering} onclick={handleRegister}>
+      {registering ? "Waiting for passkey..." : "Register New Passkey"}
+    </button>
   </div>
 
   {#if hasAuthorizedKeys}
@@ -245,31 +265,6 @@
     </table>
   {/if}
 
-  {#if showModal}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-overlay" onclick={handleCancel}>
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
-        <h3>Name Your Passkey</h3>
-        <p class="modal-desc">{modalDesc}</p>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          type="text"
-          bind:value={modalLabel}
-          placeholder="e.g., YubiKey 5 NFC"
-          onkeydown={handleModalKeydown}
-          autofocus
-          style="width: 100%; margin-bottom: 1rem"
-        />
-        <div class="modal-actions">
-          <button class="btn btn-secondary" onclick={handleCancel}>Skip</button>
-          <button class="btn btn-primary" onclick={handleSave}>Save</button>
-        </div>
-      </div>
-    </div>
-  {/if}
 </section>
 
 <style>
@@ -342,15 +337,33 @@
     margin-top: 1rem;
   }
 
-  .modal-desc {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin: 0.75rem 0;
+  .label-btn {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    text-align: left;
   }
 
-  .modal-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
+  .label-btn:hover:not(:disabled) {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .label-btn:disabled {
+    cursor: default;
+  }
+
+  .inline-rename {
+    width: 100%;
+    padding: 0.15rem 0.3rem;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.85rem;
   }
 </style>
