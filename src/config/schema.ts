@@ -11,9 +11,18 @@ export const SeedEndpointSchema = z.object({
 });
 
 /** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */
+export const rateLimitDefaults = {
+  selfRegister: { max: 5, windowMinutes: 15 },
+  passkeyRegister: { max: 10, windowMinutes: 15 },
+  loginOptions: { max: 20, windowMinutes: 15 },
+  loginVerify: { max: 10, windowMinutes: 15 },
+};
+
 export const securityFieldDefaults = {
   allowedNetworks: ["127.0.0.1/32", "::1/128"],
   sessionTtlSeconds: 86400,
+  selfRegistrationEnabled: false,
+  rateLimit: rateLimitDefaults,
 };
 
 export const SecuritySchema = z.object({
@@ -23,6 +32,51 @@ export const SecuritySchema = z.object({
   allowedNetworks: z.array(z.string()).default(securityFieldDefaults.allowedNetworks),
   sessionTtlSeconds: z.number().int().min(60).default(securityFieldDefaults.sessionTtlSeconds),
   cookieSecret: z.string().optional(),
+  selfRegistrationEnabled: z.boolean().default(securityFieldDefaults.selfRegistrationEnabled),
+  rateLimit: z
+    .object({
+      selfRegister: z
+        .object({
+          max: z.number().int().min(1).default(rateLimitDefaults.selfRegister.max),
+          windowMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .default(rateLimitDefaults.selfRegister.windowMinutes),
+        })
+        .default(rateLimitDefaults.selfRegister),
+      passkeyRegister: z
+        .object({
+          max: z.number().int().min(1).default(rateLimitDefaults.passkeyRegister.max),
+          windowMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .default(rateLimitDefaults.passkeyRegister.windowMinutes),
+        })
+        .default(rateLimitDefaults.passkeyRegister),
+      loginOptions: z
+        .object({
+          max: z.number().int().min(1).default(rateLimitDefaults.loginOptions.max),
+          windowMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .default(rateLimitDefaults.loginOptions.windowMinutes),
+        })
+        .default(rateLimitDefaults.loginOptions),
+      loginVerify: z
+        .object({
+          max: z.number().int().min(1).default(rateLimitDefaults.loginVerify.max),
+          windowMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .default(rateLimitDefaults.loginVerify.windowMinutes),
+        })
+        .default(rateLimitDefaults.loginVerify),
+    })
+    .default(rateLimitDefaults),
   trustedWebauthnOrigins: z
     .array(
       z

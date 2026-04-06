@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
+import type { Config } from "../config/index.js";
 import { registerCredentialRoutes } from "./credentials.js";
 import { registerLoginRoutes } from "./login.js";
 import { registerRegistrationRoutes } from "./registration.js";
@@ -11,6 +12,8 @@ export interface SessionConfig {
   ttlSeconds: number;
 }
 
+export type RateLimitConfig = Config["security"]["rateLimit"];
+
 export interface WebAuthnRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
@@ -19,14 +22,43 @@ export interface WebAuthnRoutesParams {
   trustedOrigins: string[];
   basePath?: string;
   sessionConfig?: SessionConfig;
+  selfRegistrationEnabled: boolean;
+  rateLimitConfig: RateLimitConfig;
 }
 
 export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, basePath = "", sessionConfig } = params;
+  const {
+    app,
+    db,
+    accountRepo,
+    rpId,
+    trustedOrigins,
+    basePath = "",
+    sessionConfig,
+    selfRegistrationEnabled,
+    rateLimitConfig,
+  } = params;
 
-  registerRegistrationRoutes({ app, db, accountRepo, rpId, trustedOrigins, basePath });
+  registerRegistrationRoutes({
+    app,
+    db,
+    accountRepo,
+    rpId,
+    trustedOrigins,
+    basePath,
+    rateLimitConfig,
+  });
   registerCredentialRoutes({ app, db, basePath });
-  registerLoginRoutes({ app, db, accountRepo, rpId, trustedOrigins, basePath, sessionConfig });
+  registerLoginRoutes({
+    app,
+    db,
+    accountRepo,
+    rpId,
+    trustedOrigins,
+    basePath,
+    sessionConfig,
+    rateLimitConfig,
+  });
   registerSelfRegisterRoutes({
     app,
     db,
@@ -35,5 +67,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     trustedOrigins,
     basePath,
     sessionConfig,
+    selfRegistrationEnabled,
+    rateLimitConfig,
   });
 }

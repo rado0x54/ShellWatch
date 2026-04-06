@@ -8,7 +8,7 @@ import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
-import type { SessionConfig } from "./routes.js";
+import type { RateLimitConfig, SessionConfig } from "./routes.js";
 
 export interface LoginRoutesParams {
   app: FastifyInstance;
@@ -18,36 +18,57 @@ export interface LoginRoutesParams {
   trustedOrigins: string[];
   basePath: string;
   sessionConfig?: SessionConfig;
+  rateLimitConfig: RateLimitConfig;
 }
 
 export function registerLoginRoutes(params: LoginRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, basePath, sessionConfig } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, basePath, sessionConfig, rateLimitConfig } =
+    params;
 
   // --- Login (Assertion): Generate Options ---
-  app.post(`${basePath}/api/webauthn/login/options`, async () => {
-    const creds = db
-      .select({ credentialId: webauthnCredentials.credentialId })
-      .from(webauthnCredentials)
-      .where(eq(webauthnCredentials.revoked, false))
-      .all();
+  app.post(
+    `${basePath}/api/webauthn/login/options`,
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.loginOptions.max,
+          timeWindow: `${rateLimitConfig.loginOptions.windowMinutes} minutes`,
+        },
+      },
+    },
+    async () => {
+      const creds = db
+        .select({ credentialId: webauthnCredentials.credentialId })
+        .from(webauthnCredentials)
+        .where(eq(webauthnCredentials.revoked, false))
+        .all();
 
-    if (creds.length === 0) {
-      return { error: "no_passkeys" };
-    }
+      if (creds.length === 0) {
+        return { error: "no_passkeys" };
+      }
 
-    const options = await generateAuthenticationOptions({
-      rpID: rpId,
-      userVerification: "preferred",
-      allowCredentials: creds.map((c) => ({ id: c.credentialId })),
-    });
+      const options = await generateAuthenticationOptions({
+        rpID: rpId,
+        userVerification: "preferred",
+        allowCredentials: creds.map((c) => ({ id: c.credentialId })),
+      });
 
-    const challengeId = storeChallenge(options.challenge);
-    return { ...options, challengeId };
-  });
+      const challengeId = storeChallenge(options.challenge);
+      return { ...options, challengeId };
+    },
+  );
 
   // --- Login (Assertion): Verify ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
     `${basePath}/api/webauthn/login/verify`,
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.loginVerify.max,
+          timeWindow: `${rateLimitConfig.loginVerify.windowMinutes} minutes`,
+        },
+      },
+    },
     async (request, reply) => {
       if (!sessionConfig) {
         reply.status(500);

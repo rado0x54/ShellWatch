@@ -41,6 +41,24 @@ security:
     - http://localhost:3000
     - http://localhost:3001
 
+  # selfRegistrationEnabled: false                     # Set to true to allow self-service account creation
+  #                                                     # (first-user bootstrap always works regardless of this setting)
+
+  # Per-endpoint rate limiting (per IP, in-memory store)
+  # rateLimit:
+  #   selfRegister:                                     # POST /api/auth/register (unauthenticated self-registration)
+  #     max: 5                                          # requests per window (default: 5)
+  #     windowMinutes: 15                               # window size in minutes (default: 15)
+  #   passkeyRegister:                                  # POST /api/webauthn/register/* (authenticated passkey enrollment)
+  #     max: 10
+  #     windowMinutes: 15
+  #   loginOptions:                                     # POST /api/webauthn/login/options
+  #     max: 20
+  #     windowMinutes: 15
+  #   loginVerify:                                      # POST /api/webauthn/login/verify
+  #     max: 10
+  #     windowMinutes: 15
+
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"

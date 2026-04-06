@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
+import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
@@ -81,6 +82,7 @@ export async function buildApp(params: BuildAppParams) {
   }
 
   await app.register(fastifyCors, { origin: true });
+  await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyWebsocket);
 
   // Decorate request with accountId (set by auth gate / API key auth)
@@ -155,6 +157,8 @@ export async function buildApp(params: BuildAppParams) {
       trustedOrigins: config.security.trustedWebauthnOrigins,
       basePath: base,
       sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      selfRegistrationEnabled: config.security.selfRegistrationEnabled,
+      rateLimitConfig: config.security.rateLimit,
     });
   }
 
