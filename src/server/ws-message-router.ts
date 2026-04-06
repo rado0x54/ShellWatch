@@ -71,6 +71,12 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
       break;
     }
 
+    case "terminal:detach": {
+      attachedSessions.delete(msg.sessionId);
+      controlledSessions.delete(msg.sessionId);
+      break;
+    }
+
     case "terminal:input": {
       if (!hasControl(msg.sessionId)) {
         sendError("Observer mode: take control first to send input");

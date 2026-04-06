@@ -7,6 +7,7 @@
     onWsMessage,
     type SessionMode,
     wsAttach,
+    wsDetach,
     wsSendInput,
     wsSendResize,
   } from "$lib/stores/ws.js";
@@ -91,6 +92,7 @@
   });
 
   onDestroy(() => {
+    wsDetach(sessionId);
     unsubscribe?.();
     resizeObserver?.disconnect();
     terminal?.dispose();

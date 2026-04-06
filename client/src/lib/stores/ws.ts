@@ -81,6 +81,10 @@ export function wsAttach(sessionId: string): void {
   wsSend({ type: "terminal:attach", sessionId });
 }
 
+export function wsDetach(sessionId: string): void {
+  wsSend({ type: "terminal:detach", sessionId });
+}
+
 export function wsSendInput(sessionId: string, data: string): void {
   wsSend({ type: "terminal:input", sessionId, data });
 }
