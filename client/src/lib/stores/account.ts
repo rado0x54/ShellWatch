@@ -4,7 +4,6 @@ import { basePath } from "./connection.js";
 export interface AccountData {
   id: string;
   name: string;
-  type: "human" | "agent";
   isAdmin: boolean;
 }
 

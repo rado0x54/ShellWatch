@@ -21,13 +21,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "enabled": {
           "name": "enabled",
           "type": "integer",

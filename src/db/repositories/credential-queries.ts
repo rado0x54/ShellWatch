@@ -1,11 +1,11 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { webauthnCredentials } from "../schema.js";
 
 /** Check if any passkeys are registered in the system. */
 export function hasPasskeys(db: ShellWatchDB): boolean {
-  const result = db.select({ total: count() }).from(webauthnCredentials).get();
-  return (result?.total ?? 0) > 0;
+  const row = db.select({ id: webauthnCredentials.id }).from(webauthnCredentials).limit(1).get();
+  return row !== undefined;
 }
 
 export interface WebAuthnCredentialInfo {

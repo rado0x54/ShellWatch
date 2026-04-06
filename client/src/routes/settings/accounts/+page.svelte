@@ -8,7 +8,6 @@
   interface AccountEntry {
     id: string;
     name: string;
-    type: string;
     isAdmin: boolean;
     enabled: boolean;
     maxSessions: number;
@@ -65,7 +64,6 @@
         <tr>
           <th></th>
           <th>Name</th>
-          <th>Type</th>
           <th>Role</th>
           <th>Max Sessions</th>
           <th>Created</th>
@@ -78,7 +76,6 @@
           <tr>
             <td><Identicon uuid={acct.id} size={28} /></td>
             <td>{acct.name}</td>
-            <td>{acct.type}</td>
             <td>
               {#if acct.isAdmin}
                 <span class="badge badge-admin">admin</span>
