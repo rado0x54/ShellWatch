@@ -75,7 +75,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
 
       let authorizedKeysEntry: string | null = null;
       try {
-        authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+        authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId);
       } catch {
         // Non-fatal
       }

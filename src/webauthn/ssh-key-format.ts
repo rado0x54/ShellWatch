@@ -55,7 +55,7 @@ function extractP256FromCose(coseKey: Buffer): { x: Buffer; y: Buffer } {
  * Convert a WebAuthn COSE public key to OpenSSH authorized_keys format.
  * Returns the full authorized_keys line.
  */
-export function coseToAuthorizedKeys(coseKey: Buffer, rpId: string, comment?: string): string {
+export function coseToAuthorizedKeys(coseKey: Buffer, rpId: string): string {
   const { x, y } = extractP256FromCose(coseKey);
 
   // Uncompressed EC point: 0x04 || X || Y
@@ -70,8 +70,7 @@ export function coseToAuthorizedKeys(coseKey: Buffer, rpId: string, comment?: st
   ]);
 
   const b64 = keyBlob.toString("base64");
-  const suffix = comment ? ` ${comment}` : "";
-  return `${ALGORITHM} ${b64}${suffix}`;
+  return `${ALGORITHM} ${b64}`;
 }
 
 /**

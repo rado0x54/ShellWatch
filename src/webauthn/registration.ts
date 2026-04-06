@@ -118,7 +118,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         // Convert to OpenSSH authorized_keys format
         let authorizedKeysEntry: string | null = null;
         try {
-          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId, label);
+          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId);
         } catch (convErr) {
           app.log.error(
             `Failed to convert COSE key to OpenSSH format: ${(convErr as Error).message}`,

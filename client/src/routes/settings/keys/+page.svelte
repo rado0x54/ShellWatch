@@ -19,6 +19,12 @@
     fetchSshKeys();
   });
 
+  function sshComment(label: string): string {
+    const host = window.location.hostname;
+    const name = $account?.name ?? "unknown";
+    return `${host}-${name}-${label}`;
+  }
+
   function copyKey(key: string, btn: HTMLButtonElement) {
     navigator.clipboard.writeText(key);
     const original = btn.innerHTML;
@@ -175,7 +181,7 @@
                 class="btn-icon"
                 title="Copy SSH public key"
                 onclick={(e) =>
-                  copyKey(pk.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
+                  copyKey(`${pk.authorizedKeysEntry} ${sshComment(pk.label)}`, e.currentTarget as HTMLButtonElement)}
               >&#128203; SSH PubKey</button>
             {/if}
             {#if !pk.revoked}
