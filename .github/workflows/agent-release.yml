@@ -1,0 +1,104 @@
+name: Agent Release
+
+on:
+  push:
+    tags: ["agent/v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release Agent
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent-client/go.mod
+          cache-dependency-path: agent-client/go.sum
+
+      - name: Build
+        working-directory: agent-client
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION=${GITHUB_REF_NAME#agent/}
+          BINARY="shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "../${BINARY}" ./cmd/shellwatch-agent
+          cd ..
+          sha256sum "${BINARY}" > "${BINARY}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            shellwatch-agent-*
+            !agent-client/
+
+  publish:
+    name: Publish Release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#agent/}
+          gh release create "$GITHUB_REF_NAME" \
+            --title "ShellWatch Agent ${VERSION}" \
+            --generate-notes \
+            artifacts/shellwatch-agent-*
+
+      - name: Update agent CHANGELOG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#agent/}
+          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+
+          ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
+          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
+
+          CHANGELOG="agent-client/CHANGELOG.md"
+          if [ -f "$CHANGELOG" ]; then
+            echo -e "${NEW_CONTENT}\n\n$(cat $CHANGELOG)" > "$CHANGELOG"
+          else
+            echo -e "# Changelog\n\n${NEW_CONTENT}" > "$CHANGELOG"
+          fi
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add agent-client/CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}"
+          git push origin main

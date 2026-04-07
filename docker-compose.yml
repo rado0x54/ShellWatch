@@ -1,0 +1,12 @@
+services:
+  shellwatch:
+    image: ghcr.io/rado0x54/shellwatch:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./keys:/app/keys
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - HOST=0.0.0.0
+    restart: unless-stopped
