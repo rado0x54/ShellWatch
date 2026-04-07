@@ -17,7 +17,7 @@
   let deleting = $state(false);
 
   async function fetchAccounts() {
-    const res = await fetch(`/api/accounts`);
+    const res = await fetch("/api/accounts");
     if (res.ok) {
       const data = await res.json();
       accounts = data.accounts;
