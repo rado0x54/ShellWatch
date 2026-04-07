@@ -1,5 +1,4 @@
-import { get, writable } from "svelte/store";
-import { basePath } from "./connection.js";
+import { writable } from "svelte/store";
 
 export interface SshKeyData {
   id: string;
@@ -27,16 +26,14 @@ export const sshKeys = writable<SshKeyData[]>([]);
 export const apiKeys = writable<ApiKeyData[]>([]);
 
 export async function fetchSshKeys(): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/keys`);
+  const res = await fetch("/api/keys");
   const data = await res.json();
   sshKeys.set(data.keys);
 }
 
 export async function fetchApiKeys(): Promise<void> {
-  const base = get(basePath);
   try {
-    const res = await fetch(`${base}/api/keys/api`);
+    const res = await fetch("/api/keys/api");
     if (!res.ok) {
       apiKeys.set([]);
       return;
@@ -49,8 +46,7 @@ export async function fetchApiKeys(): Promise<void> {
 }
 
 export async function generateApiKey(label: string): Promise<string> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/keys/api`, {
+  const res = await fetch("/api/keys/api", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -65,7 +61,6 @@ export async function generateApiKey(label: string): Promise<string> {
 }
 
 export async function revokeApiKey(id: string): Promise<void> {
-  const base = get(basePath);
-  await fetch(`${base}/api/keys/api/${id}`, { method: "DELETE" });
+  await fetch(`/api/keys/api/${id}`, { method: "DELETE" });
   await fetchApiKeys();
 }

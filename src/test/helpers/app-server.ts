@@ -38,15 +38,7 @@ export interface TestAppServer {
   close(): Promise<void>;
 }
 
-export interface TestAppOptions {
-  basePath?: string;
-}
-
-export async function startTestApp(
-  sshServer: TestSshServer,
-  log: TestLog,
-  options: TestAppOptions = {},
-): Promise<TestAppServer> {
+export async function startTestApp(sshServer: TestSshServer, log: TestLog): Promise<TestAppServer> {
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -78,7 +70,7 @@ export async function startTestApp(
         address: { username: "testuser", host: sshServer.host, port: sshServer.port },
       },
     ],
-    server: { ...serverDefaults, basePath: options.basePath ?? "" },
+    server: { ...serverDefaults },
     security: {
       ...securityFieldDefaults,
       rpId: "localhost",

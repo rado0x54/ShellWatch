@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { get } from "svelte/store";
   import Identicon from "$lib/components/Identicon.svelte";
   import { account } from "$lib/stores/account.js";
-  import { basePath } from "$lib/stores/connection.js";
 
   interface AccountEntry {
     id: string;
@@ -19,8 +17,7 @@
   let deleting = $state(false);
 
   async function fetchAccounts() {
-    const base = get(basePath);
-    const res = await fetch(`${base}/api/accounts`);
+    const res = await fetch("/api/accounts");
     if (res.ok) {
       const data = await res.json();
       accounts = data.accounts;
@@ -37,8 +34,7 @@
     )
       return;
     deleting = true;
-    const base = get(basePath);
-    const res = await fetch(`${base}/api/accounts/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/accounts/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const err = await res.json();
       alert(err.error || "Failed to delete account");

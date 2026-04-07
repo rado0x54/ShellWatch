@@ -8,14 +8,13 @@ import { getSshdConfigLine } from "./ssh-key-format.js";
 export interface CredentialRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
-  basePath: string;
 }
 
 export function registerCredentialRoutes(params: CredentialRoutesParams) {
-  const { app, db, basePath } = params;
+  const { app, db } = params;
 
   // --- List Registered Credentials (scoped to account) ---
-  app.get(`${basePath}/api/webauthn/credentials`, async (request, reply) => {
+  app.get("/api/webauthn/credentials", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
@@ -53,7 +52,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
 
   // --- Rename Credential ---
   app.patch<{ Params: { id: string }; Body: { label: string } }>(
-    `${basePath}/api/webauthn/credentials/:id/label`,
+    "/api/webauthn/credentials/:id/label",
     async (request, reply) => {
       if (!request.accountId) {
         reply.status(401);
@@ -110,7 +109,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
 
   // --- Revoke Credential (permanent, scoped to account) ---
   app.post<{ Params: { id: string } }>(
-    `${basePath}/api/webauthn/credentials/:id/revoke`,
+    "/api/webauthn/credentials/:id/revoke",
     async (request, reply) => {
       if (!request.accountId) {
         reply.status(401);

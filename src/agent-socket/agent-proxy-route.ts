@@ -19,7 +19,6 @@ import { createAgentHandler } from "./socket-agent-handler.js";
 
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
-  basePath: string;
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
   apiKeyRepo: ApiKeyRepository;
   accountRepo: AccountRepository;
@@ -34,7 +33,6 @@ export interface AgentProxyRouteParams {
 export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
   const {
     app,
-    basePath,
     keyProvider,
     apiKeyRepo,
     accountRepo,
@@ -43,7 +41,7 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     rpId,
   } = params;
 
-  app.get(`${basePath}/agent-proxy`, { websocket: true }, async (socket: WebSocket, request) => {
+  app.get("/agent-proxy", { websocket: true }, async (socket: WebSocket, request) => {
     // Authenticate via API key
     const auth = request.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {

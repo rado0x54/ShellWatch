@@ -7,7 +7,6 @@ import type { TerminalManager } from "../../terminal/index.js";
 
 export interface SessionRoutesParams {
   app: FastifyInstance;
-  basePath: string;
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
   terminalManager: TerminalManager;
@@ -16,17 +15,9 @@ export interface SessionRoutesParams {
 }
 
 export function registerSessionRoutes(params: SessionRoutesParams) {
-  const {
-    app,
-    basePath: base,
-    endpointRepo,
-    accountRepo,
-    terminalManager,
-    uiCreatedSessions,
-    db = null,
-  } = params;
+  const { app, endpointRepo, accountRepo, terminalManager, uiCreatedSessions, db = null } = params;
 
-  app.post<{ Body: { endpointId: string } }>(`${base}/api/sessions`, async (request, reply) => {
+  app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
@@ -80,7 +71,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
     }
   });
 
-  app.get(`${base}/api/sessions`, async (request) => {
+  app.get("/api/sessions", async (request) => {
     if (!request.accountId) return { sessions: [] };
     // Only show sessions on endpoints owned by this account
     const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
@@ -90,7 +81,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
   });
 
   app.delete<{ Params: { sessionId: string } }>(
-    `${base}/api/sessions/:sessionId`,
+    "/api/sessions/:sessionId",
     async (request, reply) => {
       if (!request.accountId) {
         reply.status(401);

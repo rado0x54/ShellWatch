@@ -16,16 +16,16 @@ export interface RegistrationRoutesParams {
   accountRepo: AccountRepository;
   rpId: string;
   trustedOrigins: string[];
-  basePath: string;
+
   rateLimitConfig: RateLimitConfig;
 }
 
 export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, basePath, rateLimitConfig } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, rateLimitConfig } = params;
 
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string; name?: string } }>(
-    `${basePath}/api/webauthn/register/options`,
+    "/api/webauthn/register/options",
     {
       config: {
         rateLimit: {
@@ -68,7 +68,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
 
   // --- Registration: Verify Response ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
-    `${basePath}/api/webauthn/register/verify`,
+    "/api/webauthn/register/verify",
     {
       config: {
         rateLimit: {

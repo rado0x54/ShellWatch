@@ -1,8 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { get } from "svelte/store";
-  import { basePath, selfRegistrationEnabled } from "$lib/stores/connection.js";
+  import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
   let loading = $state(false);
@@ -16,8 +15,7 @@
 
     try {
       await login();
-      const base = get(basePath);
-      window.location.href = `${base}/`;
+      window.location.href = "/";
     } catch (err) {
       if (err instanceof NoPasskeysError) {
         await goto(resolve("/register"));

@@ -115,9 +115,8 @@ try {
   process.on("SIGTERM", shutdown);
 
   await app.listen({ port: PORT, host: HOST });
-  const base = config.server.basePath || "";
-  app.log.info(`ShellWatch server listening on http://${HOST}:${PORT}${base}`);
-  app.log.info(`MCP endpoint available at http://${HOST}:${PORT}${base}/mcp`);
+  app.log.info(`ShellWatch server listening on http://${HOST}:${PORT}`);
+  app.log.info(`MCP endpoint available at http://${HOST}:${PORT}/mcp`);
 } catch (err) {
   // Fatal startup error — app may not exist yet, use stderr directly
   process.stderr.write(`Failed to start ShellWatch: ${(err as Error).message}\n`);

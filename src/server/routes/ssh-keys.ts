@@ -4,16 +4,15 @@ import type { KeyAvailability } from "../../transport/key-directory-watcher.js";
 
 export interface SshKeyRoutesParams {
   app: FastifyInstance;
-  basePath: string;
   keyRepo: SshKeyRepository;
   accountRepo: AccountRepository;
   keyAvailability?: KeyAvailability | null;
 }
 
 export function registerSshKeyRoutes(params: SshKeyRoutesParams) {
-  const { app, basePath: base, keyRepo, accountRepo, keyAvailability = null } = params;
+  const { app, keyRepo, accountRepo, keyAvailability = null } = params;
 
-  app.get(`${base}/api/keys`, async (request) => {
+  app.get("/api/keys", async (request) => {
     const allKeys = await keyRepo.findAll();
     const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
 

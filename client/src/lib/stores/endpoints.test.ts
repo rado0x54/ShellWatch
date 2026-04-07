@@ -1,11 +1,9 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { basePath } from "./connection.js";
 import { createEndpoint, deleteEndpoint, endpoints, fetchEndpoints } from "./endpoints.js";
 
 describe("endpoints store", () => {
   beforeEach(() => {
-    basePath.set("");
     endpoints.set([]);
   });
 
@@ -25,17 +23,6 @@ describe("endpoints store", () => {
 
     expect(get(endpoints)).toEqual(mockEndpoints);
     expect(fetch).toHaveBeenCalledWith("/api/endpoints");
-  });
-
-  it("fetchEndpoints uses basePath", async () => {
-    basePath.set("/shellwatch");
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ endpoints: [] })),
-    );
-
-    await fetchEndpoints();
-
-    expect(fetch).toHaveBeenCalledWith("/shellwatch/api/endpoints");
   });
 
   it("createEndpoint sends POST and refreshes", async () => {

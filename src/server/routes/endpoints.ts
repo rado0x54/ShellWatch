@@ -5,16 +5,15 @@ import type { TerminalManager } from "../../terminal/index.js";
 
 export interface EndpointRoutesParams {
   app: FastifyInstance;
-  basePath: string;
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
   terminalManager: TerminalManager;
 }
 
 export function registerEndpointRoutes(params: EndpointRoutesParams) {
-  const { app, basePath: base, endpointRepo, accountRepo, terminalManager } = params;
+  const { app, endpointRepo, accountRepo, terminalManager } = params;
 
-  app.get(`${base}/api/endpoints`, async (request, reply) => {
+  app.get("/api/endpoints", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
@@ -42,7 +41,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       keyId?: string;
       passkeyId?: string;
     };
-  }>(`${base}/api/endpoints`, async (request, reply) => {
+  }>("/api/endpoints", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
@@ -76,7 +75,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
   });
 
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    `${base}/api/endpoints/:id`,
+    "/api/endpoints/:id",
     async (request, reply) => {
       if (!request.accountId) {
         reply.status(401);
@@ -106,7 +105,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     },
   );
 
-  app.delete<{ Params: { id: string } }>(`${base}/api/endpoints/:id`, async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };

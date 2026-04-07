@@ -5,14 +5,13 @@ import { hashApiKey } from "../auth/api-key-auth.js";
 
 export interface ApiKeyRoutesParams {
   app: FastifyInstance;
-  basePath: string;
   apiKeyRepo: ApiKeyRepository;
 }
 
 export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
-  const { app, basePath: base, apiKeyRepo } = params;
+  const { app, apiKeyRepo } = params;
 
-  app.get(`${base}/api/keys/api`, async (request) => {
+  app.get("/api/keys/api", async (request) => {
     if (!request.accountId) return { keys: [] };
     const keys = await apiKeyRepo.findAll();
     return {
@@ -29,7 +28,7 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
     };
   });
 
-  app.post<{ Body: { label: string } }>(`${base}/api/keys/api`, async (request, reply) => {
+  app.post<{ Body: { label: string } }>("/api/keys/api", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
@@ -54,7 +53,7 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
     return { id, label, keyPrefix, key: raw };
   });
 
-  app.delete<{ Params: { id: string } }>(`${base}/api/keys/api/:id`, async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/keys/api/:id", async (request, reply) => {
     if (!request.accountId) {
       reply.status(401);
       return { error: "Not authenticated" };
