@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  push:
+    branches: [develop, main]
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/rado0x54/shellwatch
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  docker:
+    name: Docker
+    needs: ci
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute tags
+        id: tags
+        run: |
+          SHA_SHORT=$(git rev-parse --short HEAD)
+          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
+
+          BRANCH=${GITHUB_REF_NAME}
+          if [ "$BRANCH" = "develop" ]; then
+            echo "tags=${{ env.IMAGE }}:develop,${{ env.IMAGE }}:sha-${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          elif [ "$BRANCH" = "main" ]; then
+            echo "tags=${{ env.IMAGE }}:stable,${{ env.IMAGE }}:sha-${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  retag:
+    name: Retag Docker image
+    needs: ci
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Retag image
+        run: |
+          SHA_SHORT=$(git rev-parse --short HEAD)
+          VERSION=${GITHUB_REF_NAME#v}
+          MINOR=${VERSION%.*}
+
+          SRC="${{ env.IMAGE }}:sha-${SHA_SHORT}"
+
+          echo "Checking for source image: $SRC"
+          if ! crane manifest "$SRC" > /dev/null 2>&1; then
+            echo "::error::Image $SRC not found. Push the tagged commit to main or develop first to trigger a Docker build."
+            exit 1
+          fi
+
+          echo "Retagging $SRC → :${VERSION}, :${MINOR}, :latest"
+          crane tag "$SRC" "${VERSION}"
+          crane tag "$SRC" "${MINOR}"
+          crane tag "$SRC" "latest"
+
+  release:
+    name: GitHub Release
+    needs: [ci, retag]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Build standalone tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          STAGING="shellwatch-${VERSION}"
+          mkdir "$STAGING"
+          cp -r dist drizzle package.json pnpm-lock.yaml pnpm-workspace.yaml config.sample.yaml "$STAGING/"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          sha256sum "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" \
+            --title "ShellWatch v${VERSION}" \
+            --generate-notes \
+            shellwatch-${VERSION}.tar.gz \
+            shellwatch-${VERSION}.tar.gz.sha256
+
+      - name: Update CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+
+          ENTRY="## v${VERSION} ($(date -u +%Y-%m-%d))"
+          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
+
+          if [ -f CHANGELOG.md ]; then
+            echo -e "${NEW_CONTENT}\n\n$(cat CHANGELOG.md)" > CHANGELOG.md
+          else
+            echo -e "# Changelog\n\n${NEW_CONTENT}" > CHANGELOG.md
+          fi
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}"
+          git push origin main

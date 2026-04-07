@@ -1,6 +1,6 @@
 {
   "name": "shellwatch",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "SSH session broker with browser UI and MCP interface",
   "type": "module",
   "scripts": {
