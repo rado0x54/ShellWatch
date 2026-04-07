@@ -133,9 +133,10 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
 
     const adminId = request.accountId;
 
-    // Fetch non-revoked passkeys
+    // Fetch non-revoked passkeys (include internal id for endpoint cross-reference)
     const passkeys = db
       .select({
+        id: webauthnCredentials.id,
         credentialId: webauthnCredentials.credentialId,
         publicKey: webauthnCredentials.publicKey,
         counter: webauthnCredentials.counter,
@@ -161,25 +162,29 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       .where(eq(endpointsTable.accountId, adminId))
       .all();
 
-    // Build passkey ID → credentialId lookup for endpoint references
+    // Build passkey internal ID → credentialId lookup for endpoint references
     const passkeyIdToCredentialId = new Map<string, string>();
     for (const pk of passkeys) {
-      // We need the internal ID too — query it
-      const row = db
-        .select({ id: webauthnCredentials.id })
-        .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.credentialId, pk.credentialId))
-        .get();
-      if (row) passkeyIdToCredentialId.set(row.id, pk.credentialId);
+      passkeyIdToCredentialId.set(pk.id, pk.credentialId);
     }
 
-    const seedPasskeys = passkeys.map((pk) => ({
-      credentialId: pk.credentialId,
-      publicKeyHex: pk.publicKey.toString("hex"),
-      counter: pk.counter,
-      transports: pk.transports ? JSON.parse(pk.transports) : [],
-      label: pk.label,
-    }));
+    const seedPasskeys = passkeys.map((pk) => {
+      let transports: string[] = [];
+      if (pk.transports) {
+        try {
+          transports = JSON.parse(pk.transports);
+        } catch {
+          // Malformed JSON — skip transports
+        }
+      }
+      return {
+        credentialId: pk.credentialId,
+        publicKeyHex: pk.publicKey.toString("hex"),
+        counter: pk.counter,
+        transports,
+        label: pk.label,
+      };
+    });
 
     const seedEndpoints = eps.map((ep) => {
       const address = formatEndpointAddress({

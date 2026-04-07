@@ -17,31 +17,40 @@
   let exportLoading = $state(false);
   let copied = $state(false);
 
+  /** Escape a string for use as a double-quoted YAML value */
+  function yamlEscape(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+  }
+
+  function yamlStr(value: string): string {
+    return `"${yamlEscape(value)}"`;
+  }
+
   function toYaml(passkeys: SeedPasskey[], endpoints: SeedEndpoint[]): string {
     const lines: string[] = [];
 
     if (passkeys.length > 0) {
       const pk = passkeys[0];
       lines.push("seedAdminPasskey:");
-      lines.push(`  credentialId: "${pk.credentialId}"`);
-      lines.push(`  publicKeyHex: "${pk.publicKeyHex}"`);
+      lines.push(`  credentialId: ${yamlStr(pk.credentialId)}`);
+      lines.push(`  publicKeyHex: ${yamlStr(pk.publicKeyHex)}`);
       lines.push(`  counter: ${pk.counter}`);
       if (pk.transports.length > 0) {
-        lines.push(`  transports: [${pk.transports.map((t) => `"${t}"`).join(", ")}]`);
+        lines.push(`  transports: [${pk.transports.map((t) => yamlStr(t)).join(", ")}]`);
       } else {
         lines.push("  transports: []");
       }
-      lines.push(`  label: "${pk.label}"`);
+      lines.push(`  label: ${yamlStr(pk.label)}`);
     }
 
     if (endpoints.length > 0) {
       if (lines.length > 0) lines.push("");
       lines.push("seedAdminEndpoints:");
       for (const ep of endpoints) {
-        lines.push(`  - label: "${ep.label}"`);
-        lines.push(`    address: "${ep.address}"`);
+        lines.push(`  - label: ${yamlStr(ep.label)}`);
+        lines.push(`    address: ${yamlStr(ep.address)}`);
         if (ep.passkeyCredentialRef) {
-          lines.push(`    passkeyCredentialRef: "${ep.passkeyCredentialRef}"`);
+          lines.push(`    passkeyCredentialRef: ${yamlStr(ep.passkeyCredentialRef)}`);
         }
       }
     }
