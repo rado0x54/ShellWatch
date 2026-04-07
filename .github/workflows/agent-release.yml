@@ -82,8 +82,11 @@ jobs:
             NOTES="* Initial release"
           fi
 
-          # Convert full GitHub URLs to short references
-          NOTES=$(echo "$NOTES" | sed -E 's|https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|#\1|g')
+          # Convert PR references to clickable markdown links
+          # First: bare (#N) from commit messages → clickable
+          NOTES=$(echo "$NOTES" | sed -E 's|\(#([0-9]+)\)|([#\1](https://github.com/rado0x54/ShellWatch/pull/\1))|g')
+          # Then: any remaining full URLs → clickable (safety net)
+          NOTES=$(echo "$NOTES" | sed -E 's|([^(])https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|\1[#\2](https://github.com/rado0x54/ShellWatch/pull/\2)|g')
 
           # Write to file for multi-line output
           echo "$NOTES" > /tmp/release-notes.md

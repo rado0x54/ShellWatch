@@ -140,7 +140,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
           # Convert full GitHub URLs to short references
-          NOTES=$(echo "$NOTES" | sed -E 's|https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|#\1|g')
+          NOTES=$(echo "$NOTES" | sed -E 's|https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|[#\1](https://github.com/rado0x54/ShellWatch/pull/\1)|g')
 
           ENTRY="## v${VERSION} ($(date -u +%Y-%m-%d))"
           NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
