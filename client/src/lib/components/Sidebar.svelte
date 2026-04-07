@@ -151,6 +151,15 @@
     >
       Settings
     </button>
+    {#if $account?.isAdmin}
+      <button
+        class="btn-nav"
+        class:active={currentPath.startsWith("/admin")}
+        onclick={() => navTo("/admin")}
+      >
+        Admin
+      </button>
+    {/if}
     <button class="btn-nav btn-logout" onclick={logout}> Sign Out </button>
   </div>
 </nav>

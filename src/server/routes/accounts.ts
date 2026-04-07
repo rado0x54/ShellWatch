@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../../db/connection.js";
 import type { AccountRepository } from "../../db/index.js";
@@ -10,6 +10,7 @@ import {
   sessionHistory,
   webauthnCredentials,
 } from "../../db/schema.js";
+import { formatEndpointAddress } from "../../utils/endpoint-address.js";
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
@@ -116,5 +117,87 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     }
 
     return { status: "deleted" };
+  });
+
+  // --- Export seed config (admin only) ---
+
+  app.get("/api/accounts/export-seed", async (request, reply) => {
+    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+      reply.status(403);
+      return { error: "Admin access required" };
+    }
+    if (!db) {
+      reply.status(500);
+      return { error: "Database not available" };
+    }
+
+    const adminId = request.accountId;
+
+    // Fetch non-revoked passkeys
+    const passkeys = db
+      .select({
+        credentialId: webauthnCredentials.credentialId,
+        publicKey: webauthnCredentials.publicKey,
+        counter: webauthnCredentials.counter,
+        transports: webauthnCredentials.transports,
+        label: webauthnCredentials.label,
+      })
+      .from(webauthnCredentials)
+      .where(
+        and(eq(webauthnCredentials.accountId, adminId), eq(webauthnCredentials.revoked, false)),
+      )
+      .all();
+
+    // Fetch endpoints
+    const eps = db
+      .select({
+        label: endpointsTable.label,
+        host: endpointsTable.host,
+        port: endpointsTable.port,
+        username: endpointsTable.username,
+        passkeyId: endpointsTable.passkeyId,
+      })
+      .from(endpointsTable)
+      .where(eq(endpointsTable.accountId, adminId))
+      .all();
+
+    // Build passkey ID → credentialId lookup for endpoint references
+    const passkeyIdToCredentialId = new Map<string, string>();
+    for (const pk of passkeys) {
+      // We need the internal ID too — query it
+      const row = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(eq(webauthnCredentials.credentialId, pk.credentialId))
+        .get();
+      if (row) passkeyIdToCredentialId.set(row.id, pk.credentialId);
+    }
+
+    const seedPasskeys = passkeys.map((pk) => ({
+      credentialId: pk.credentialId,
+      publicKeyHex: pk.publicKey.toString("hex"),
+      counter: pk.counter,
+      transports: pk.transports ? JSON.parse(pk.transports) : [],
+      label: pk.label,
+    }));
+
+    const seedEndpoints = eps.map((ep) => {
+      const address = formatEndpointAddress({
+        username: ep.username,
+        host: ep.host,
+        port: ep.port,
+      });
+      const result: { label: string; address: string; passkeyCredentialRef?: string } = {
+        label: ep.label,
+        address,
+      };
+      if (ep.passkeyId) {
+        const credId = passkeyIdToCredentialId.get(ep.passkeyId);
+        if (credId) result.passkeyCredentialRef = credId;
+      }
+      return result;
+    });
+
+    return { passkeys: seedPasskeys, endpoints: seedEndpoints };
   });
 }
