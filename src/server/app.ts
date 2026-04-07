@@ -73,7 +73,6 @@ export async function buildApp(params: BuildAppParams) {
   } = params;
 
   const app = Fastify({ logger: options.logger ?? true });
-  const base = config.server.basePath;
 
   // Cookie secret for session signing
   const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");
@@ -91,41 +90,32 @@ export async function buildApp(params: BuildAppParams) {
   // Auth gate: onboarding + login enforcement
   registerAuthGate({
     app,
-    basePath: base,
     secret: cookieSecret,
     accountRepo,
     checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
   });
 
   // IP allowlist + API key auth for MCP
-  registerIpAllowlist(app, config.security.allowedNetworks, [`${base}/mcp`]);
+  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
   if (apiKeyRepo) {
-    registerApiKeyAuth(app, apiKeyRepo, `${base}/mcp`, accountRepo);
+    registerApiKeyAuth(app, apiKeyRepo, "/mcp", accountRepo);
   }
 
-  // Redirect root to basePath when basePath is set
-  if (base) {
-    app.get("/", async (_request, reply) => {
-      reply.redirect(`${base}/`);
-    });
-  }
-
-  app.get(`${base}/health`, async () => ({ status: "ok" }));
+  app.get("/health", async () => ({ status: "ok" }));
 
   // --- REST API routes ---
-  registerAccountRoutes({ app, basePath: base, accountRepo, db });
-  registerSshKeyRoutes({ app, basePath: base, keyRepo, accountRepo, keyAvailability });
-  registerEndpointRoutes({ app, basePath: base, endpointRepo, accountRepo, terminalManager });
+  registerAccountRoutes({ app, accountRepo, db });
+  registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
+  registerEndpointRoutes({ app, endpointRepo, accountRepo, terminalManager });
 
   // Shared set tracking UI-created sessions (used by both WS handler and session routes)
   const uiCreatedSessions = new Set<string>();
 
-  const wsHandler = registerWebSocket(app, terminalManager, uiCreatedSessions, base);
+  const wsHandler = registerWebSocket(app, terminalManager, uiCreatedSessions);
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
 
   registerSessionRoutes({
     app,
-    basePath: base,
     endpointRepo,
     accountRepo,
     terminalManager,
@@ -134,7 +124,7 @@ export async function buildApp(params: BuildAppParams) {
   });
 
   if (apiKeyRepo) {
-    registerApiKeyRoutes({ app, basePath: base, apiKeyRepo });
+    registerApiKeyRoutes({ app, apiKeyRepo });
   }
 
   // MCP server over streamable HTTP at /mcp
@@ -155,7 +145,6 @@ export async function buildApp(params: BuildAppParams) {
       accountRepo,
       rpId: config.security.rpId,
       trustedOrigins: config.security.trustedWebauthnOrigins,
-      basePath: base,
       sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
       selfRegistrationEnabled: config.security.selfRegistrationEnabled,
       rateLimitConfig: config.security.rateLimit,
@@ -166,7 +155,6 @@ export async function buildApp(params: BuildAppParams) {
   if (config.agentSocket.proxyEnabled && params.agentProxy && apiKeyRepo) {
     registerAgentProxyRoute({
       app,
-      basePath: base,
       keyProvider: params.agentProxy.keyProvider,
       apiKeyRepo,
       accountRepo,
@@ -174,22 +162,19 @@ export async function buildApp(params: BuildAppParams) {
       findCredentialsForAccount: params.agentProxy.findCredentialsForAccount,
       rpId: params.agentProxy.rpId,
     });
-    app.log.info(`Agent proxy endpoint enabled at ${base}/agent-proxy`);
+    app.log.info("Agent proxy endpoint enabled at /agent-proxy");
   }
 
   // Client runtime config
-  app.get(`${base}/config.js`, async (_request, reply) => {
+  app.get("/config.js", async (_request, reply) => {
     reply.type("application/javascript");
-    return [
-      `window.__BASE_PATH__=${JSON.stringify(base)};`,
-      `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`,
-    ].join("\n");
+    return `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`;
   });
 
   // Static client files (built by SvelteKit adapter-static -> dist/client/)
   if (!options.skipStaticFiles) {
     const clientDist = resolve(process.cwd(), "dist/client");
-    await app.register(fastifyStatic, { root: clientDist, prefix: `${base}/` });
+    await app.register(fastifyStatic, { root: clientDist, prefix: "/" });
 
     // SPA fallback: serve index.html for client-side routing
     app.setNotFoundHandler((_request, reply) => {

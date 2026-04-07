@@ -104,15 +104,10 @@ export const NotificationsSchema = z.object({
 
 export const serverDefaults = {
   port: 3000,
-  basePath: "",
 };
 
 export const ServerSchema = z.object({
   port: z.number().int().min(1).max(65535).default(serverDefaults.port),
-  basePath: z
-    .string()
-    .default(serverDefaults.basePath)
-    .transform((v) => v.replace(/\/+$/, "")),
 });
 
 export const SeedAdminPasskeySchema = z.object({

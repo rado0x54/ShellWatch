@@ -35,7 +35,6 @@ describe("self-register guard", () => {
       accountRepo: new StubAccountRepository(),
       rpId: "localhost",
       trustedOrigins: ["http://localhost"],
-      basePath: "",
       selfRegistrationEnabled,
       rateLimitConfig: rateLimitDefaults,
     });

@@ -1,5 +1,4 @@
-import { get, writable } from "svelte/store";
-import { basePath } from "./connection.js";
+import { writable } from "svelte/store";
 
 export interface Endpoint {
   id: string;
@@ -14,8 +13,7 @@ export interface Endpoint {
 export const endpoints = writable<Endpoint[]>([]);
 
 export async function fetchEndpoints(): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/endpoints`);
+  const res = await fetch("/api/endpoints");
   const data = await res.json();
   endpoints.set(data.endpoints);
 }
@@ -28,8 +26,7 @@ export async function createEndpoint(body: {
   keyId?: string;
   passkeyId?: string;
 }): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/endpoints`, {
+  const res = await fetch("/api/endpoints", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -45,8 +42,7 @@ export async function updateEndpoint(
   id: string,
   body: Partial<Omit<Endpoint, "id">>,
 ): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/endpoints/${id}`, {
+  const res = await fetch(`/api/endpoints/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -59,8 +55,7 @@ export async function updateEndpoint(
 }
 
 export async function deleteEndpoint(id: string): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/endpoints/${id}`, { method: "DELETE" });
+  const res = await fetch(`/api/endpoints/${id}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || "Failed to delete endpoint");

@@ -34,7 +34,7 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     managed.notifications.destroy();
   }
 
-  const mcpPath = `${config.server.basePath}/mcp`;
+  const mcpPath = "/mcp";
 
   app.addHook("onRequest", async (request, reply) => {
     if (request.url !== mcpPath) return;

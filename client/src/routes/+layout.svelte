@@ -7,7 +7,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import SigningModal from "$lib/components/SigningModal.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
-  import { basePath, selfRegistrationEnabled } from "$lib/stores/connection.js";
+  import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
   import { checkAuth } from "$lib/stores/webauthn.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
@@ -27,11 +27,8 @@
   onMount(async () => {
     // Initialize runtime config from server-injected config.js
     const win = window as unknown as {
-      __BASE_PATH__?: string;
       __SELF_REGISTRATION_ENABLED__?: boolean;
     };
-    const base = win.__BASE_PATH__ ?? "";
-    basePath.set(base);
     selfRegistrationEnabled.set(win.__SELF_REGISTRATION_ENABLED__ ?? false);
 
     const currentPath = window.location.pathname;

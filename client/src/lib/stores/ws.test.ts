@@ -1,6 +1,5 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { basePath } from "./connection.js";
 import {
   connectWs,
   onWsMessage,
@@ -43,7 +42,6 @@ describe("ws store", () => {
   let originalWebSocket: typeof globalThis.WebSocket;
 
   beforeEach(() => {
-    basePath.set("");
     sessions.set([]);
     MockWebSocket.instances = [];
     originalWebSocket = globalThis.WebSocket;
@@ -62,12 +60,6 @@ describe("ws store", () => {
     connectWs();
     expect(MockWebSocket.instances).toHaveLength(1);
     expect(MockWebSocket.instances[0].url).toBe("ws://localhost:3000/ws");
-  });
-
-  it("connectWs uses basePath", () => {
-    basePath.set("/shellwatch");
-    connectWs();
-    expect(MockWebSocket.instances[0].url).toBe("ws://localhost:3000/shellwatch/ws");
   });
 
   it("sessions:changed updates the sessions store", () => {

@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { get } from "svelte/store";
-  import { basePath, selfRegistrationEnabled } from "$lib/stores/connection.js";
+  import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
@@ -18,9 +18,8 @@
 
   // Detect mode on mount: try login/options — if no_passkeys, this is admin setup
   onMount(async () => {
-    const base = get(basePath);
     try {
-      const res = await fetch(`${base}/api/webauthn/login/options`, { method: "POST" });
+      const res = await fetch(`/api/webauthn/login/options`, { method: "POST" });
       const data = await res.json();
       if (data.error === "no_passkeys") {
         isAdminSetup = true;
@@ -95,7 +94,7 @@
   let apiKeyLabel = $state("");
   let generatedKey = $state("");
 
-  const mcpUrl = $derived(`${window.location.origin}${get(basePath)}/mcp`);
+  const mcpUrl = $derived(`${window.location.origin}/mcp`);
 
   async function handleGenerateApiKey() {
     if (!apiKeyLabel) {
@@ -114,8 +113,7 @@
   }
 
   function finish() {
-    const base = get(basePath);
-    window.location.href = `${base}/`;
+    window.location.href = "/";
   }
 </script>
 

@@ -1,12 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { basePath } from "./connection.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeSession, createSession } from "./sessions-api.js";
 
 describe("sessions-api store", () => {
-  beforeEach(() => {
-    basePath.set("");
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -55,16 +50,5 @@ describe("sessions-api store", () => {
     await closeSession("sess-1");
 
     expect(fetch).toHaveBeenCalledWith("/api/sessions/sess-1", { method: "DELETE" });
-  });
-
-  it("uses basePath prefix", async () => {
-    basePath.set("/sw");
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "closed" })),
-    );
-
-    await closeSession("sess-1");
-
-    expect(fetch).toHaveBeenCalledWith("/sw/api/sessions/sess-1", { method: "DELETE" });
   });
 });

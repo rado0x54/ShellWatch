@@ -356,7 +356,6 @@ security:
 
 server:
   port: 3000 # HTTP port
-  basePath: /shellwatch # Optional subpath
 
 agentSocket:
   proxyEnabled: true # Enable /agent-proxy WebSocket endpoint

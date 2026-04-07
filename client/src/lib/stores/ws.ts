@@ -1,5 +1,4 @@
-import { get, writable } from "svelte/store";
-import { basePath } from "./connection.js";
+import { writable } from "svelte/store";
 
 export type SessionMode = "control" | "observer";
 
@@ -39,9 +38,8 @@ let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
 
 export function connectWs(): void {
-  const base = get(basePath);
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}${base}/ws`;
+  const url = `${proto}//${location.host}/ws`;
 
   ws = new WebSocket(url);
 

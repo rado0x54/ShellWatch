@@ -12,7 +12,6 @@ export function parseCookie(header: string | undefined, name: string): string | 
 
 export interface AuthGateParams {
   app: FastifyInstance;
-  basePath: string;
   secret: string;
   accountRepo: AccountRepository;
   checkHasPasskeys: () => boolean;
@@ -20,24 +19,23 @@ export interface AuthGateParams {
 
 export function registerAuthGate({
   app,
-  basePath,
   secret,
   accountRepo,
   checkHasPasskeys,
 }: AuthGateParams): void {
   // Logout: clear session cookie
-  app.post(`${basePath}/api/auth/logout`, async (request, reply) => {
+  app.post("/api/auth/logout", async (request, reply) => {
     const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
     reply
       .header(
         "Set-Cookie",
-        `${COOKIE_NAME}=; Path=${basePath || "/"}; Max-Age=0; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict`,
+        `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict`,
       )
       .send({ status: "logged_out" });
   });
 
   // Paths that never require a session
-  const alwaysExempt = [
+  const alwaysExempt = new Set([
     "/health",
     "/api/auth/logout",
     "/api/auth/register",
@@ -49,17 +47,10 @@ export function registerAuthGate({
     "/mcp",
     "/agent-proxy",
     "/config.js",
-  ];
+  ]);
 
   // Only exempt during onboarding (no passkeys registered yet — admin bootstrap)
-  const onboardingOnly = ["/api/webauthn/register/verify"];
-
-  function isExempt(url: string, suffixes: string[]): boolean {
-    for (const suffix of suffixes) {
-      if (url === `${basePath}${suffix}`) return true;
-    }
-    return false;
-  }
+  const onboardingOnly = new Set(["/api/webauthn/register/verify"]);
 
   // Cache passkey count to avoid DB queries on every request
   let cachedHasPasskeys: boolean | null = null;
@@ -78,17 +69,14 @@ export function registerAuthGate({
     const url = request.url.split("?")[0];
 
     // Static assets
-    if (url.startsWith(`${basePath}/_app/`)) return;
-
-    // Only apply auth to routes under basePath
-    if (basePath && !url.startsWith(`${basePath}/`) && url !== basePath) return;
+    if (url.startsWith("/_app/")) return;
 
     // Always-exempt paths
-    if (isExempt(url, alwaysExempt)) return;
+    if (alwaysExempt.has(url)) return;
 
     // Onboarding-only paths (registration, /onboarding) — exempt only when no passkeys exist
     if (!hasPasskeys()) {
-      if (isExempt(url, onboardingOnly)) return;
+      if (onboardingOnly.has(url)) return;
       // No passkeys — allow all other routes too (bootstrap mode)
       return;
     }
@@ -107,11 +95,11 @@ export function registerAuthGate({
     }
 
     // Not authenticated
-    const isApi = url.startsWith(`${basePath}/api/`) || url === `${basePath}/ws`;
+    const isApi = url.startsWith("/api/") || url === "/ws";
     if (isApi) {
       reply.status(401).send({ error: "Authentication required" });
     } else {
-      reply.redirect(`${basePath}/login`);
+      reply.redirect("/login");
     }
   });
 }

@@ -13,16 +13,15 @@ import {
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
-  basePath: string;
   accountRepo: AccountRepository;
   db?: ShellWatchDB | null;
 }
 
 export function registerAccountRoutes(params: AccountRoutesParams) {
-  const { app, basePath: base, accountRepo, db = null } = params;
+  const { app, accountRepo, db = null } = params;
 
   // --- Auth: current account ---
-  app.get(`${base}/api/auth/me`, async (request, reply) => {
+  app.get("/api/auth/me", async (request, reply) => {
     const accountId = request.accountId;
     if (!accountId) {
       reply.status(401);
@@ -40,7 +39,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     };
   });
 
-  app.put<{ Body: { name?: string } }>(`${base}/api/auth/me`, async (request, reply) => {
+  app.put<{ Body: { name?: string } }>("/api/auth/me", async (request, reply) => {
     const accountId = request.accountId;
     if (!accountId) {
       reply.status(401);
@@ -60,7 +59,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
 
   // --- Account Management (admin only) ---
 
-  app.get(`${base}/api/accounts`, async (request, reply) => {
+  app.get("/api/accounts", async (request, reply) => {
     if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
       reply.status(403);
       return { error: "Admin access required" };
@@ -79,7 +78,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     };
   });
 
-  app.delete<{ Params: { id: string } }>(`${base}/api/accounts/:id`, async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/accounts/:id", async (request, reply) => {
     if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
       reply.status(403);
       return { error: "Admin access required" };

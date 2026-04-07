@@ -20,7 +20,7 @@ export interface WebAuthnRoutesParams {
   accountRepo: AccountRepository;
   rpId: string;
   trustedOrigins: string[];
-  basePath?: string;
+
   sessionConfig?: SessionConfig;
   selfRegistrationEnabled: boolean;
   rateLimitConfig: RateLimitConfig;
@@ -33,7 +33,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     accountRepo,
     rpId,
     trustedOrigins,
-    basePath = "",
+
     sessionConfig,
     selfRegistrationEnabled,
     rateLimitConfig,
@@ -45,17 +45,15 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     accountRepo,
     rpId,
     trustedOrigins,
-    basePath,
     rateLimitConfig,
   });
-  registerCredentialRoutes({ app, db, basePath });
+  registerCredentialRoutes({ app, db });
   registerLoginRoutes({
     app,
     db,
     accountRepo,
     rpId,
     trustedOrigins,
-    basePath,
     sessionConfig,
     rateLimitConfig,
   });
@@ -65,7 +63,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     accountRepo,
     rpId,
     trustedOrigins,
-    basePath,
     sessionConfig,
     selfRegistrationEnabled,
     rateLimitConfig,

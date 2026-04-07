@@ -1,6 +1,5 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import { get, writable } from "svelte/store";
-import { basePath } from "./connection.js";
+import { writable } from "svelte/store";
 
 export interface WebAuthnCredential {
   id: string;
@@ -17,8 +16,7 @@ export interface WebAuthnCredential {
 export const credentials = writable<WebAuthnCredential[]>([]);
 
 export async function fetchCredentials(): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/webauthn/credentials`);
+  const res = await fetch("/api/webauthn/credentials");
   const data = await res.json();
   credentials.set(data.credentials);
 }
@@ -32,8 +30,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   credentialId: string;
   label: string;
 }> {
-  const base = get(basePath);
-  const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
+  const optionsRes = await fetch("/api/webauthn/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label: "pending", name }),
@@ -47,7 +44,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const verifyRes = await fetch(`${base}/api/webauthn/register/verify`, {
+  const verifyRes = await fetch("/api/webauthn/register/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, credential }),
@@ -68,8 +65,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
  * Update a credential's label after registration.
  */
 export async function renamePasskey(credentialId: string, label: string): Promise<void> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/webauthn/credentials/${credentialId}/label`, {
+  const res = await fetch(`/api/webauthn/credentials/${credentialId}/label`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -89,8 +85,7 @@ export async function registerAccount(accountName: string): Promise<{
   credentialId: string;
   label: string;
 }> {
-  const base = get(basePath);
-  const optionsRes = await fetch(`${base}/api/webauthn/register/options`, {
+  const optionsRes = await fetch("/api/webauthn/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label: "pending", name: accountName }),
@@ -104,7 +99,7 @@ export async function registerAccount(accountName: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const res = await fetch(`${base}/api/auth/register`, {
+  const res = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: accountName, challengeId, credential }),
@@ -128,9 +123,7 @@ export class NoPasskeysError extends Error {
 }
 
 export async function login(): Promise<void> {
-  const base = get(basePath);
-
-  const optionsRes = await fetch(`${base}/api/webauthn/login/options`, { method: "POST" });
+  const optionsRes = await fetch("/api/webauthn/login/options", { method: "POST" });
   if (!optionsRes.ok) {
     const err = await optionsRes.json();
     throw new Error(err.error || "Failed to get login options");
@@ -143,7 +136,7 @@ export async function login(): Promise<void> {
 
   const credential = await startAuthentication({ optionsJSON: options });
 
-  const verifyRes = await fetch(`${base}/api/webauthn/login/verify`, {
+  const verifyRes = await fetch("/api/webauthn/login/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, credential }),
@@ -155,9 +148,8 @@ export async function login(): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
-  const base = get(basePath);
-  await fetch(`${base}/api/auth/logout`, { method: "POST" });
-  window.location.href = `${base}/login`;
+  await fetch("/api/auth/logout", { method: "POST" });
+  window.location.href = "/login";
 }
 
 /**
@@ -165,9 +157,8 @@ export async function logout(): Promise<void> {
  * Returns whether the user has a valid session.
  */
 export async function checkAuth(): Promise<{ authenticated: boolean }> {
-  const base = get(basePath);
   try {
-    const res = await fetch(`${base}/api/auth/me`);
+    const res = await fetch("/api/auth/me");
     return { authenticated: res.ok };
   } catch {
     return { authenticated: false };

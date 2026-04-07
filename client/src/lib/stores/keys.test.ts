@@ -1,6 +1,5 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { basePath } from "./connection.js";
 import {
   apiKeys,
   fetchApiKeys,
@@ -12,7 +11,6 @@ import {
 
 describe("keys store", () => {
   beforeEach(() => {
-    basePath.set("");
     sshKeys.set([]);
     apiKeys.set([]);
   });

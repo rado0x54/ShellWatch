@@ -16,18 +16,17 @@ export interface LoginRoutesParams {
   accountRepo: AccountRepository;
   rpId: string;
   trustedOrigins: string[];
-  basePath: string;
+
   sessionConfig?: SessionConfig;
   rateLimitConfig: RateLimitConfig;
 }
 
 export function registerLoginRoutes(params: LoginRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, basePath, sessionConfig, rateLimitConfig } =
-    params;
+  const { app, db, accountRepo, rpId, trustedOrigins, sessionConfig, rateLimitConfig } = params;
 
   // --- Login (Assertion): Generate Options ---
   app.post(
-    `${basePath}/api/webauthn/login/options`,
+    "/api/webauthn/login/options",
     {
       config: {
         rateLimit: {
@@ -60,7 +59,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
   // --- Login (Assertion): Verify ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
-    `${basePath}/api/webauthn/login/verify`,
+    "/api/webauthn/login/verify",
     {
       config: {
         rateLimit: {
@@ -157,7 +156,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
         reply.header(
           "Set-Cookie",
-          `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=${basePath || "/"}; Max-Age=${sessionConfig.ttlSeconds}`,
+          `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${sessionConfig.ttlSeconds}`,
         );
 
         return { verified: true };

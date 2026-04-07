@@ -1,6 +1,3 @@
-import { get } from "svelte/store";
-import { basePath } from "./connection.js";
-
 export interface TerminalSession {
   sessionId: string;
   endpointId: string;
@@ -10,8 +7,7 @@ export interface TerminalSession {
 }
 
 export async function createSession(endpointId: string): Promise<TerminalSession> {
-  const base = get(basePath);
-  const res = await fetch(`${base}/api/sessions`, {
+  const res = await fetch("/api/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpointId }),
@@ -24,6 +20,5 @@ export async function createSession(endpointId: string): Promise<TerminalSession
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
-  const base = get(basePath);
-  await fetch(`${base}/api/sessions/${sessionId}`, { method: "DELETE" });
+  await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
 }

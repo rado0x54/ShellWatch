@@ -16,7 +16,7 @@ export interface SelfRegisterRoutesParams {
   accountRepo: AccountRepository;
   rpId: string;
   trustedOrigins: string[];
-  basePath: string;
+
   sessionConfig?: SessionConfig;
   selfRegistrationEnabled: boolean;
   rateLimitConfig: RateLimitConfig;
@@ -29,7 +29,6 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
     accountRepo,
     rpId,
     trustedOrigins,
-    basePath,
     sessionConfig,
     selfRegistrationEnabled,
     rateLimitConfig,
@@ -39,7 +38,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
   app.post<{
     Body: { name: string; challengeId: string; credential: unknown };
   }>(
-    `${basePath}/api/auth/register`,
+    "/api/auth/register",
     {
       config: {
         rateLimit: {
@@ -172,7 +171,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
           reply.header(
             "Set-Cookie",
-            `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=${basePath || "/"}; Max-Age=${sessionConfig.ttlSeconds}`,
+            `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${sessionConfig.ttlSeconds}`,
           );
         }
 
