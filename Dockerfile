@@ -27,6 +27,9 @@ RUN pnpm prune --prod --ignore-scripts
 # Stage 3 — Runtime
 FROM node:24-bookworm-slim AS runtime
 
+LABEL org.opencontainers.image.source="https://github.com/rado0x54/ShellWatch"
+LABEL org.opencontainers.image.description="SSH session broker with browser UI and MCP interface"
+
 RUN groupadd --system shellwatch && \
     useradd --system --gid shellwatch --no-create-home shellwatch
 

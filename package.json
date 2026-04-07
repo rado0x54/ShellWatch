@@ -34,7 +34,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "packageManager": "pnpm@10.11.1",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
