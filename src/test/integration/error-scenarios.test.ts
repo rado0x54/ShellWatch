@@ -137,6 +137,7 @@ describe("Error Scenarios", () => {
             address: { username: "test", host: "localhost", port: 22 },
           },
         ],
+        seedAdminPasskeys: [],
         server: serverDefaults,
         security: {
           ...securityFieldDefaults,

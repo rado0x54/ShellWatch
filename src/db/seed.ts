@@ -53,9 +53,8 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
     adminId = admin.accountId;
   }
 
-  // Seed admin passkey (endpoints may reference it via keyRef → credentialId)
-  if (config.seedAdminPasskey) {
-    const pk = config.seedAdminPasskey;
+  // Seed admin passkeys (endpoints may reference them via keyRef → credentialId)
+  for (const pk of config.seedAdminPasskeys) {
     const existing = db
       .select({ id: webauthnCredentials.id })
       .from(webauthnCredentials)

@@ -68,6 +68,7 @@ describe("agent-proxy WebSocket endpoint", () => {
     const config: Config = {
       keyDirectory: "/tmp",
       seedAdminEndpoints: [],
+      seedAdminPasskeys: [],
       server: { ...serverDefaults },
       security: {
         ...securityFieldDefaults,

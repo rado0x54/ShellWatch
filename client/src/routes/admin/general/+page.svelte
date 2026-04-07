@@ -30,17 +30,18 @@
     const lines: string[] = [];
 
     if (passkeys.length > 0) {
-      const pk = passkeys[0];
-      lines.push("seedAdminPasskey:");
-      lines.push(`  credentialId: ${yamlStr(pk.credentialId)}`);
-      lines.push(`  publicKeyHex: ${yamlStr(pk.publicKeyHex)}`);
-      lines.push(`  counter: ${pk.counter}`);
-      if (pk.transports.length > 0) {
-        lines.push(`  transports: [${pk.transports.map((t) => yamlStr(t)).join(", ")}]`);
-      } else {
-        lines.push("  transports: []");
+      lines.push("seedAdminPasskeys:");
+      for (const pk of passkeys) {
+        lines.push(`  - credentialId: ${yamlStr(pk.credentialId)}`);
+        lines.push(`    publicKeyHex: ${yamlStr(pk.publicKeyHex)}`);
+        lines.push(`    counter: ${pk.counter}`);
+        if (pk.transports.length > 0) {
+          lines.push(`    transports: [${pk.transports.map((t) => yamlStr(t)).join(", ")}]`);
+        } else {
+          lines.push("    transports: []");
+        }
+        lines.push(`    label: ${yamlStr(pk.label)}`);
       }
-      lines.push(`  label: ${yamlStr(pk.label)}`);
     }
 
     if (endpoints.length > 0) {
@@ -64,6 +65,7 @@
       const res = await fetch("/api/accounts/export-seed");
       if (!res.ok) {
         const err = await res.json();
+        // TODO: replace alert() with inline error / toast notification
         alert(err.error || "Failed to export seed config");
         return;
       }
