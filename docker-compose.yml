@@ -9,4 +9,6 @@ services:
       - ./config.yaml:/app/config.yaml:ro
     environment:
       - HOST=0.0.0.0
+      # - PUID=1000
+      # - PGID=1000
     restart: unless-stopped
