@@ -61,11 +61,13 @@ docker run -d \
 
 ### Environment variables
 
-| Variable            | Default                       | Description                |
-| ------------------- | ----------------------------- | -------------------------- |
-| `HOST`              | `0.0.0.0`                     | Bind address               |
-| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string |
-| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path           |
+| Variable            | Default                       | Description                                 |
+| ------------------- | ----------------------------- | ------------------------------------------- |
+| `HOST`              | `0.0.0.0`                     | Bind address                                |
+| `PUID`              | `1000`                        | UID the app runs as (match your host user)  |
+| `PGID`              | `1000`                        | GID the app runs as (match your host group) |
+| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string                  |
+| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path                            |
 
 ## Standalone tarball
 
