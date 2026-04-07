@@ -180,7 +180,10 @@ export async function buildApp(params: BuildAppParams) {
   // Client runtime config
   app.get(`${base}/config.js`, async (_request, reply) => {
     reply.type("application/javascript");
-    return `window.__BASE_PATH__=${JSON.stringify(base)};`;
+    return [
+      `window.__BASE_PATH__=${JSON.stringify(base)};`,
+      `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`,
+    ].join("\n");
   });
 
   // Static client files (built by SvelteKit adapter-static -> dist/client/)

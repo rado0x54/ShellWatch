@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { get } from "svelte/store";
-  import { basePath } from "$lib/stores/connection.js";
+  import { basePath, selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
   let loading = $state(false);
@@ -43,9 +43,11 @@
     {#if status}
       <p class="status">{status}</p>
     {/if}
-    <p class="register-link">
-      <a href={resolve("/register")}>Create new account</a>
-    </p>
+    {#if $selfRegistrationEnabled}
+      <p class="register-link">
+        <a href={resolve("/register")}>Create new account</a>
+      </p>
+    {/if}
   </div>
 </div>
 
