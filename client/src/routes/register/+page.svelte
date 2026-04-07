@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { get } from "svelte/store";
-  import { basePath } from "$lib/stores/connection.js";
+  import { basePath, selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
@@ -24,6 +26,11 @@
         isAdminSetup = true;
         accountName = "admin";
       } else {
+        // System is bootstrapped — check if self-registration is allowed
+        if (!get(selfRegistrationEnabled)) {
+          await goto(resolve("/login"));
+          return;
+        }
         accountName = "ShellWatch Account";
       }
     } catch {
