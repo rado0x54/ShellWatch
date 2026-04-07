@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Identicon from "$lib/components/Identicon.svelte";
-  import { account } from "$lib/stores/account.js";
 
   interface AccountEntry {
     id: string;
@@ -52,55 +51,51 @@
 <section>
   <h2>Accounts</h2>
 
-  {#if !$account?.isAdmin}
-    <p class="no-access">Admin access required.</p>
-  {:else}
-    <table class="settings-table">
-      <thead>
+  <table class="settings-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Name</th>
+        <th>Role</th>
+        <th>Max Sessions</th>
+        <th>Created</th>
+        <th>Last Active</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each accounts as acct (acct.id)}
         <tr>
-          <th></th>
-          <th>Name</th>
-          <th>Role</th>
-          <th>Max Sessions</th>
-          <th>Created</th>
-          <th>Last Active</th>
-          <th></th>
+          <td><Identicon uuid={acct.id} size={28} /></td>
+          <td>{acct.name}</td>
+          <td>
+            {#if acct.isAdmin}
+              <span class="badge badge-admin">admin</span>
+            {:else}
+              <span class="badge badge-user">user</span>
+            {/if}
+          </td>
+          <td class="muted">{acct.maxSessions}</td>
+          <td>{formatDate(acct.createdAt)}</td>
+          <td>{formatDate(acct.lastUsedAt)}</td>
+          <td>
+            {#if !acct.isAdmin}
+              <button
+                class="btn btn-secondary btn-sm"
+                disabled={deleting}
+                onclick={() => handleDelete(acct.id, acct.name)}
+              >
+                Delete
+              </button>
+            {/if}
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        {#each accounts as acct (acct.id)}
-          <tr>
-            <td><Identicon uuid={acct.id} size={28} /></td>
-            <td>{acct.name}</td>
-            <td>
-              {#if acct.isAdmin}
-                <span class="badge badge-admin">admin</span>
-              {:else}
-                <span class="badge badge-user">user</span>
-              {/if}
-            </td>
-            <td class="muted">{acct.maxSessions}</td>
-            <td>{formatDate(acct.createdAt)}</td>
-            <td>{formatDate(acct.lastUsedAt)}</td>
-            <td>
-              {#if !acct.isAdmin}
-                <button
-                  class="btn btn-secondary btn-sm"
-                  disabled={deleting}
-                  onclick={() => handleDelete(acct.id, acct.name)}
-                >
-                  Delete
-                </button>
-              {/if}
-            </td>
-          </tr>
-        {/each}
-        {#if accounts.length === 0}
-          <tr><td colspan="8" class="empty">No accounts found</td></tr>
-        {/if}
-      </tbody>
-    </table>
-  {/if}
+      {/each}
+      {#if accounts.length === 0}
+        <tr><td colspan="7" class="empty">No accounts found</td></tr>
+      {/if}
+    </tbody>
+  </table>
 </section>
 
 <style>
@@ -135,10 +130,5 @@
 
   .empty {
     color: #555;
-  }
-
-  .no-access {
-    color: var(--text-muted);
-    font-size: 0.85rem;
   }
 </style>

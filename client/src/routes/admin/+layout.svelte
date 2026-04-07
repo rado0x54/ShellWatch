@@ -2,14 +2,13 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
+  import { account } from "$lib/stores/account.js";
 
   let { children } = $props();
 
   const tabs = [
-    { path: "/settings/general", label: "General" },
-    { path: "/settings/endpoints", label: "Endpoints" },
-    { path: "/settings/keys", label: "Keys" },
-    { path: "/settings/api-keys", label: "API Keys" },
+    { path: "/admin/general", label: "General" },
+    { path: "/admin/accounts", label: "Accounts" },
   ];
 
   const currentPath = $derived($page.url.pathname);
@@ -17,24 +16,28 @@
 
 <div class="settings-page">
   <div class="settings-header">
-    <h1>Settings</h1>
+    <h1>Admin</h1>
   </div>
 
-  <nav class="settings-tabs">
-    {#each tabs as tab (tab.path)}
-      <button
-        class="tab"
-        class:active={currentPath === tab.path}
-        onclick={() => goto(resolve(tab.path))}
-      >
-        {tab.label}
-      </button>
-    {/each}
-  </nav>
+  {#if !$account?.isAdmin}
+    <p class="no-access">Admin access required.</p>
+  {:else}
+    <nav class="settings-tabs">
+      {#each tabs as tab (tab.path)}
+        <button
+          class="tab"
+          class:active={currentPath === tab.path}
+          onclick={() => goto(resolve(tab.path))}
+        >
+          {tab.label}
+        </button>
+      {/each}
+    </nav>
 
-  <div class="settings-content">
-    {@render children()}
-  </div>
+    <div class="settings-content">
+      {@render children()}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -86,13 +89,14 @@
     min-height: 0;
   }
 
+  .no-access {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
   @media (max-width: 768px) {
     .settings-page {
       padding: 1rem;
-    }
-
-    .settings-tabs {
-      gap: 0;
     }
 
     .tab {

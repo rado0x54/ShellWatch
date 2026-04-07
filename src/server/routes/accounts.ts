@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../../db/connection.js";
 import type { AccountRepository } from "../../db/index.js";
@@ -10,6 +10,7 @@ import {
   sessionHistory,
   webauthnCredentials,
 } from "../../db/schema.js";
+import { formatEndpointAddress } from "../../utils/endpoint-address.js";
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
@@ -116,5 +117,92 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     }
 
     return { status: "deleted" };
+  });
+
+  // --- Export seed config (admin only) ---
+
+  app.get("/api/accounts/export-seed", async (request, reply) => {
+    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+      reply.status(403);
+      return { error: "Admin access required" };
+    }
+    if (!db) {
+      reply.status(500);
+      return { error: "Database not available" };
+    }
+
+    const adminId = request.accountId;
+
+    // Fetch non-revoked passkeys (include internal id for endpoint cross-reference)
+    const passkeys = db
+      .select({
+        id: webauthnCredentials.id,
+        credentialId: webauthnCredentials.credentialId,
+        publicKey: webauthnCredentials.publicKey,
+        counter: webauthnCredentials.counter,
+        transports: webauthnCredentials.transports,
+        label: webauthnCredentials.label,
+      })
+      .from(webauthnCredentials)
+      .where(
+        and(eq(webauthnCredentials.accountId, adminId), eq(webauthnCredentials.revoked, false)),
+      )
+      .all();
+
+    // Fetch endpoints
+    const eps = db
+      .select({
+        label: endpointsTable.label,
+        host: endpointsTable.host,
+        port: endpointsTable.port,
+        username: endpointsTable.username,
+        passkeyId: endpointsTable.passkeyId,
+      })
+      .from(endpointsTable)
+      .where(eq(endpointsTable.accountId, adminId))
+      .all();
+
+    // Build passkey internal ID → credentialId lookup for endpoint references
+    const passkeyIdToCredentialId = new Map<string, string>();
+    for (const pk of passkeys) {
+      passkeyIdToCredentialId.set(pk.id, pk.credentialId);
+    }
+
+    const seedPasskeys = passkeys.map((pk) => {
+      let transports: string[] = [];
+      if (pk.transports) {
+        try {
+          transports = JSON.parse(pk.transports);
+        } catch {
+          // Malformed JSON — skip transports
+        }
+      }
+      return {
+        credentialId: pk.credentialId,
+        publicKeyHex: pk.publicKey.toString("hex"),
+        counter: pk.counter,
+        transports,
+        label: pk.label,
+      };
+    });
+
+    const seedEndpoints = eps.map((ep) => {
+      const address = formatEndpointAddress({
+        username: ep.username,
+        host: ep.host,
+        port: ep.port,
+      });
+      const result: { label: string; address: string; passkeyCredentialRef?: string } = {
+        label: ep.label,
+        address,
+      };
+      if (ep.passkeyId) {
+        const credId = passkeyIdToCredentialId.get(ep.passkeyId);
+        if (credId) result.passkeyCredentialRef = credId;
+      }
+      return result;
+    });
+
+    return { passkeys: seedPasskeys, endpoints: seedEndpoints };
   });
 }

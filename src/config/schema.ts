@@ -129,7 +129,7 @@ export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
-  seedAdminPasskey: SeedAdminPasskeySchema.optional(),
+  seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
   server: ServerSchema.default(serverDefaults),
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),

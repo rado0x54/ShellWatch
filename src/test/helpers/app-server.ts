@@ -70,6 +70,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
         address: { username: "testuser", host: sshServer.host, port: sshServer.port },
       },
     ],
+    seedAdminPasskeys: [],
     server: { ...serverDefaults },
     security: {
       ...securityFieldDefaults,

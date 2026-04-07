@@ -90,7 +90,8 @@ try {
     app.log.info(`Seeded admin account (${seedResult.seededAdminId})`);
   }
   if (seedResult.seededAdminPasskey) {
-    app.log.info(`Seeded admin passkey (${config.seedAdminPasskey?.label ?? "Admin Passkey"})`);
+    const labels = config.seedAdminPasskeys.map((pk) => pk.label).join(", ");
+    app.log.info(`Seeded admin passkey(s): ${labels}`);
   }
 
   const endpoints = await endpointRepo.findAll();
