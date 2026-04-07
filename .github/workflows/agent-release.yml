@@ -65,6 +65,29 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Find the previous agent tag
+          PREV_TAG=$(git tag --list 'agent/v*' --sort=-v:refname | grep -v "$GITHUB_REF_NAME" | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
+          else
+            RANGE="$GITHUB_REF_NAME"
+          fi
+
+          # Generate notes from commits touching agent-client/ only
+          NOTES=$(git log "$RANGE" --pretty=format:"* %s (%h)" -- agent-client/)
+          if [ -z "$NOTES" ]; then
+            NOTES="* Initial release"
+          fi
+
+          # Convert full GitHub URLs to short references
+          NOTES=$(echo "$NOTES" | sed -E 's|https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|#\1|g')
+
+          # Write to file for multi-line output
+          echo "$NOTES" > /tmp/release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,15 +95,13 @@ jobs:
           VERSION=${GITHUB_REF_NAME#agent/}
           gh release create "$GITHUB_REF_NAME" \
             --title "ShellWatch Agent ${VERSION}" \
-            --generate-notes \
+            --notes-file /tmp/release-notes.md \
             artifacts/shellwatch-agent-*
 
       - name: Update agent CHANGELOG
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#agent/}
-          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          NOTES=$(cat /tmp/release-notes.md)
 
           ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
           NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
@@ -96,9 +117,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
+          git fetch origin main develop
           git checkout main
           git add agent-client/CHANGELOG.md
           git diff --cached --quiet && exit 0
           git commit -m "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}"
+          COMMIT=$(git rev-parse HEAD)
           git push origin main
+          # Sync changelog to develop
+          git checkout develop
+          git cherry-pick "$COMMIT" || git cherry-pick --abort
+          git push origin develop || true

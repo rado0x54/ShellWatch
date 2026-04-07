@@ -139,6 +139,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          # Convert full GitHub URLs to short references
+          NOTES=$(echo "$NOTES" | sed -E 's|https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|#\1|g')
 
           ENTRY="## v${VERSION} ($(date -u +%Y-%m-%d))"
           NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
@@ -153,9 +155,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
+          git fetch origin main develop
           git checkout main
           git add CHANGELOG.md
           git diff --cached --quiet && exit 0
           git commit -m "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}"
+          COMMIT=$(git rev-parse HEAD)
           git push origin main
+          # Sync changelog to develop
+          git checkout develop
+          git cherry-pick "$COMMIT" || git cherry-pick --abort
+          git push origin develop || true
