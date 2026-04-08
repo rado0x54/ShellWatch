@@ -3,8 +3,14 @@ import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queri
 import type { SshKeyInfo, SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
+import type { ForwardingAgent } from "./forwarding-agent.js";
 import type { PrivateKeyProvider } from "./key-directory-watcher.js";
-import { connectSsh, connectSshWithAgent, type AgentForwardOptions } from "./ssh-transport.js";
+import {
+  connectSsh,
+  connectSshWithAgent,
+  type AgentForwardOptions,
+  type AgentConnectOptions,
+} from "./ssh-transport.js";
 
 export interface AgentResult {
   agent: WebAuthnSshAgent;
@@ -42,7 +48,7 @@ export type CredentialsForAccountLookup = (accountId: string) => WebAuthnCredent
 export type AdminCheck = (accountId: string) => boolean;
 
 export interface ForwardingAgentResult {
-  agent: WebAuthnSshAgent;
+  agent: ForwardingAgent;
   cleanup: () => void;
 }
 
@@ -125,8 +131,22 @@ export class SshTransportFactory {
         "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
       );
     }
-    const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
-    transport.on("close", () => result.cleanup());
+
+    const connectOpts: AgentConnectOptions = { agentForward };
+    let fwdCleanup: (() => void) | undefined;
+    if (agentForward) {
+      const fwdResult = this.options.createForwardingAgent?.(endpoint.accountId);
+      if (fwdResult) {
+        connectOpts.forwardingAgent = fwdResult.agent;
+        fwdCleanup = fwdResult.cleanup;
+      }
+    }
+
+    const transport = await connectSshWithAgent(endpoint, result.agent, connectOpts);
+    transport.on("close", () => {
+      result.cleanup();
+      fwdCleanup?.();
+    });
     return transport;
   }
 
@@ -214,8 +234,21 @@ export class SshTransportFactory {
       );
     }
 
-    const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
-    transport.on("close", () => result.cleanup());
+    const connectOpts: AgentConnectOptions = { agentForward };
+    let fwdCleanup: (() => void) | undefined;
+    if (agentForward) {
+      const fwdResult = this.options.createForwardingAgent?.(endpoint.accountId);
+      if (fwdResult) {
+        connectOpts.forwardingAgent = fwdResult.agent;
+        fwdCleanup = fwdResult.cleanup;
+      }
+    }
+
+    const transport = await connectSshWithAgent(endpoint, result.agent, connectOpts);
+    transport.on("close", () => {
+      result.cleanup();
+      fwdCleanup?.();
+    });
     return transport;
   }
 }

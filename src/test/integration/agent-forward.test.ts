@@ -6,6 +6,7 @@ const { utils } = ssh2;
 
 import { InMemoryEndpointRepository, InMemorySshKeyRepository } from "../../db/index.js";
 import { TerminalManager } from "../../terminal/index.js";
+import { ForwardingAgent } from "../../transport/forwarding-agent.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
@@ -75,13 +76,14 @@ describe("SSH Agent Forwarding", () => {
       createForwardingAgent: () => {
         const fileKeyEntry = buildFileKeyEntry(sshServer.clientPrivateKey);
         if (!fileKeyEntry) return null;
-        const agent = new CompositeSshAgent({
+        const baseAgent = new CompositeSshAgent({
           passkeys: [],
           fileKeys: [fileKeyEntry],
           rpId: "localhost",
           onSignRequest: () => {},
         });
-        return { agent, cleanup: () => agent.destroy() };
+        const fwdAgent = new ForwardingAgent(baseAgent);
+        return { agent: fwdAgent, cleanup: () => fwdAgent.destroy() };
       },
     });
 

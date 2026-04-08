@@ -9,6 +9,7 @@ import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoi
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
+import type { ForwardingAgent } from "./forwarding-agent.js";
 import type { KeyStore } from "./key-scanner.js";
 
 const CONNECTION_TIMEOUT = 10_000;
@@ -76,8 +77,8 @@ class SshTransport extends EventEmitter implements TerminalTransport {
 export interface AgentForwardOptions {
   /** Enable SSH agent forwarding (ssh -A) */
   agentForward?: boolean;
-  /** Agent to forward to the remote host — required when agentForward is true */
-  forwardingAgent?: WebAuthnSshAgent;
+  /** Agent to forward to the remote host — must implement getStream() for forwarding */
+  forwardingAgent?: ForwardingAgent;
 }
 
 export function connectSsh(
@@ -139,10 +140,16 @@ export function connectSsh(
 
 const WEBAUTHN_CONNECTION_TIMEOUT = 90_000; // 90s — allows time for user to touch the key
 
+export interface AgentConnectOptions {
+  agentForward?: boolean;
+  /** When agentForward is true, wrap the auth agent in a ForwardingAgent for getStream() support */
+  forwardingAgent?: ForwardingAgent;
+}
+
 export function connectSshWithAgent(
   endpoint: EndpointInfo,
   agent: WebAuthnSshAgent,
-  options?: Pick<AgentForwardOptions, "agentForward">,
+  options?: AgentConnectOptions,
 ): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
@@ -179,11 +186,17 @@ export function connectSshWithAgent(
       );
     });
 
+    // When agent forwarding is enabled and a ForwardingAgent is provided,
+    // use it as the agent — it delegates auth to the underlying agent and
+    // provides getStream() for ssh2's auth-agent channel handler.
+    const effectiveAgent =
+      options?.agentForward && options.forwardingAgent ? options.forwardingAgent : agent;
+
     client.connect({
       host: endpoint.host,
       port: endpoint.port,
       username: endpoint.username,
-      agent: agent as unknown as string, // BaseAgent instance — ssh2's isAgent() will accept this
+      agent: effectiveAgent as unknown as string, // BaseAgent/ForwardingAgent — ssh2's isAgent() accepts this
       agentForward: options?.agentForward ?? false,
       readyTimeout: WEBAUTHN_CONNECTION_TIMEOUT,
     });

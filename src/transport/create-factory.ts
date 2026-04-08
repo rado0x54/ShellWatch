@@ -12,6 +12,7 @@ import {
   WebAuthnSshAgent,
   type SignRequest,
 } from "../webauthn/index.js";
+import { ForwardingAgent } from "./forwarding-agent.js";
 import type { KeyDirectoryWatcher } from "./key-directory-watcher.js";
 import { SshTransportFactory } from "./ssh-transport-factory.js";
 
@@ -80,7 +81,7 @@ export function createSshTransportFactoryFromConfig(
           ? (request: SignRequest) => signingBridge.handleSignRequest(request)
           : () => {};
 
-      const agent = new CompositeSshAgent({
+      const baseAgent = new CompositeSshAgent({
         passkeys: passkeyEntries,
         fileKeys: fileKeyEntries,
         rpId,
@@ -88,8 +89,17 @@ export function createSshTransportFactoryFromConfig(
         logger: agentLog.current,
       });
 
-      const result = registerAgent("fwd", agent);
-      return { agent: result.agent, cleanup: result.cleanup };
+      const agentId = `fwd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      signingBridge.registerAgent(agentId, baseAgent);
+
+      const fwdAgent = new ForwardingAgent(baseAgent);
+      return {
+        agent: fwdAgent,
+        cleanup: () => {
+          signingBridge.unregisterAgent(agentId);
+          fwdAgent.destroy();
+        },
+      };
     },
 
     // Single assigned passkey — direct WebAuthn sign, no modal
