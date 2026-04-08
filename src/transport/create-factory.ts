@@ -92,7 +92,7 @@ export function createSshTransportFactoryFromConfig(
       const agentId = `fwd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       signingBridge.registerAgent(agentId, baseAgent);
 
-      const fwdAgent = new ForwardingAgent(baseAgent);
+      const fwdAgent = new ForwardingAgent(baseAgent, agentLog.current);
       return {
         agent: fwdAgent,
         cleanup: () => {
