@@ -37,26 +37,33 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       id: account.id,
       name: account.name,
       isAdmin: account.isAdmin,
+      agentForward: account.agentForward,
     };
   });
 
-  app.put<{ Body: { name?: string } }>("/api/auth/me", async (request, reply) => {
-    const accountId = request.accountId;
-    if (!accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const { name } = request.body;
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        reply.status(400);
-        return { error: "Name cannot be empty" };
+  app.put<{ Body: { name?: string; agentForward?: boolean } }>(
+    "/api/auth/me",
+    async (request, reply) => {
+      const accountId = request.accountId;
+      if (!accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
       }
-      await accountRepo.update(accountId, { name: trimmed });
-    }
-    return { status: "updated" };
-  });
+      const { name, agentForward } = request.body;
+      if (name !== undefined) {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          reply.status(400);
+          return { error: "Name cannot be empty" };
+        }
+        await accountRepo.update(accountId, { name: trimmed });
+      }
+      if (agentForward !== undefined) {
+        await accountRepo.update(accountId, { agentForward });
+      }
+      return { status: "updated" };
+    },
+  );
 
   // --- Account Management (admin only) ---
 
@@ -73,6 +80,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         isAdmin: a.isAdmin,
         enabled: a.enabled,
         maxSessions: a.maxSessions,
+        agentForward: a.agentForward,
         lastUsedAt: a.lastUsedAt,
         createdAt: a.createdAt,
       })),

@@ -18,11 +18,21 @@ keyDirectory: ./keys
 # Useful for local dev so .mcp.json can reference a known key.
 # seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
 
+# Optional: seed passkeys for the admin account on first run.
+# Export from Admin > General in the web UI, or provide manually.
+# seedAdminPasskeys:
+#   - credentialId: "base64url-encoded-credential-id"
+#     publicKeyHex: "cose-public-key-as-hex"
+#     counter: 0
+#     transports: []
+#     label: "Admin Passkey"
+
 # Optional: seed endpoints for the admin account on first run (keys are assigned via UI)
 # Format: [user@]host[:port] — defaults: user=shellwatch, port=22
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
+#     passkeyCredentialRef: "credential-id-from-seedAdminPasskeys"
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222

@@ -101,6 +101,7 @@ describe("SshTransportFactory", () => {
       expect(mockConnectSsh).toHaveBeenCalledWith(
         expect.objectContaining({ host: "example.com", port: 22, username: "user" }),
         testScannedKey.privateKeyContent,
+        {},
       );
     });
 
@@ -199,6 +200,7 @@ describe("SshTransportFactory", () => {
       expect(mockConnectSshWithAgent).toHaveBeenCalledWith(
         expect.objectContaining({ host: "example.com" }),
         mockAgent,
+        { agentForward: false },
       );
     });
 

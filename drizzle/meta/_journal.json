@@ -8,6 +8,13 @@
       "when": 1775417169976,
       "tag": "0000_black_terror",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775630779253,
+      "tag": "0001_fearless_lady_bullseye",
+      "breakpoints": true
     }
   ]
 }

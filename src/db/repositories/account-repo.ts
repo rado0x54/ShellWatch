@@ -8,6 +8,7 @@ export interface AccountInfo {
   isAdmin: boolean;
   enabled: boolean;
   maxSessions: number;
+  agentForward: boolean;
   lastUsedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -19,7 +20,7 @@ export interface AccountRepository {
   create(data: { id: string; name: string }): Promise<AccountInfo>;
   update(
     id: string,
-    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
+    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "agentForward">>,
   ): Promise<void>;
   /** Mark account as active. Writes are batched — call flushLastUsed() to persist. */
   touchLastUsed(id: string): void;
@@ -47,6 +48,7 @@ export class StubAccountRepository implements AccountRepository {
       isAdmin: false,
       enabled: true,
       maxSessions: 5,
+      agentForward: false,
       lastUsedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -113,7 +115,7 @@ export class DrizzleAccountRepository implements AccountRepository {
 
   async update(
     id: string,
-    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions">>,
+    data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "agentForward">>,
   ): Promise<void> {
     this.db
       .update(accounts)

@@ -4,7 +4,7 @@ import type { SshKeyInfo, SshKeyRepository } from "../db/repositories/key-repo.j
 import type { TerminalTransport } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
 import type { PrivateKeyProvider } from "./key-directory-watcher.js";
-import { connectSsh, connectSshWithAgent } from "./ssh-transport.js";
+import { connectSsh, connectSshWithAgent, type AgentForwardOptions } from "./ssh-transport.js";
 
 export interface AgentResult {
   agent: WebAuthnSshAgent;
@@ -41,6 +41,11 @@ export type CredentialsForAccountLookup = (accountId: string) => WebAuthnCredent
 /** Check if an account is the admin account */
 export type AdminCheck = (accountId: string) => boolean;
 
+export interface ForwardingAgentResult {
+  agent: WebAuthnSshAgent;
+  cleanup: () => void;
+}
+
 export interface SshTransportFactoryOptions {
   rpId: string;
   createWebAuthnAgent?: WebAuthnAgentFactory;
@@ -48,6 +53,10 @@ export interface SshTransportFactoryOptions {
   findCredential?: CredentialLookup;
   findCredentialsForAccount?: CredentialsForAccountLookup;
   isAdmin?: AdminCheck;
+  /** Look up whether agent forwarding is enabled for a given account */
+  getAgentForward?: (accountId: string) => Promise<boolean>;
+  /** Build an agent containing all available keys for forwarding to the remote host */
+  createForwardingAgent?: (accountId: string) => ForwardingAgentResult | null;
 }
 
 /**
@@ -71,9 +80,11 @@ export class SshTransportFactory {
       throw new Error(`Unknown endpoint: ${endpointId}`);
     }
 
+    const agentForward = (await this.options.getAgentForward?.(endpoint.accountId)) ?? false;
+
     // Mode 1: Passkey-based endpoint — use WebAuthn browser signing (direct, no modal)
     if (endpoint.passkeyId) {
-      return this.connectWithWebAuthn(endpoint);
+      return this.connectWithWebAuthn(endpoint, agentForward);
     }
 
     // Mode 2: File-based key
@@ -82,14 +93,17 @@ export class SshTransportFactory {
       if (!keyInfo) {
         throw new Error(`SSH key "${endpoint.keyId}" not found`);
       }
-      return this.connectWithFileKey(endpoint, keyInfo);
+      return this.connectWithFileKey(endpoint, keyInfo, agentForward);
     }
 
     // Mode 3: No key assigned — auto-negotiate with all available keys
-    return this.connectWithAutoNegotiate(endpoint);
+    return this.connectWithAutoNegotiate(endpoint, agentForward);
   }
 
-  private async connectWithWebAuthn(endpoint: EndpointInfo): Promise<TerminalTransport> {
+  private async connectWithWebAuthn(
+    endpoint: EndpointInfo,
+    agentForward: boolean,
+  ): Promise<TerminalTransport> {
     if (!this.options.findCredential) {
       throw new Error("WebAuthn key configured but no credential lookup provided");
     }
@@ -111,7 +125,7 @@ export class SshTransportFactory {
         "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
       );
     }
-    const transport = await connectSshWithAgent(endpoint, result.agent);
+    const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
     transport.on("close", () => result.cleanup());
     return transport;
   }
@@ -119,6 +133,7 @@ export class SshTransportFactory {
   private async connectWithFileKey(
     endpoint: EndpointInfo,
     keyInfo: SshKeyInfo,
+    agentForward: boolean,
   ): Promise<TerminalTransport> {
     const privateKey = this.keyProvider.getPrivateKey(keyInfo.fingerprint);
     if (!privateKey) {
@@ -127,10 +142,27 @@ export class SshTransportFactory {
           "Ensure the corresponding .pem file is in the key directory.",
       );
     }
-    return connectSsh(endpoint, privateKey);
+
+    const fwdOpts: AgentForwardOptions = {};
+    let fwdCleanup: (() => void) | undefined;
+    if (agentForward) {
+      const fwdResult = this.options.createForwardingAgent?.(endpoint.accountId);
+      if (fwdResult) {
+        fwdOpts.agentForward = true;
+        fwdOpts.forwardingAgent = fwdResult.agent;
+        fwdCleanup = fwdResult.cleanup;
+      }
+    }
+
+    const transport = await connectSsh(endpoint, privateKey, fwdOpts);
+    if (fwdCleanup) transport.on("close", fwdCleanup);
+    return transport;
   }
 
-  private async connectWithAutoNegotiate(endpoint: EndpointInfo): Promise<TerminalTransport> {
+  private async connectWithAutoNegotiate(
+    endpoint: EndpointInfo,
+    agentForward: boolean,
+  ): Promise<TerminalTransport> {
     if (!this.options.createAutoNegotiateAgent) {
       throw new Error(
         "No SSH key configured for endpoint and no auto-negotiate agent factory provided",
@@ -182,7 +214,7 @@ export class SshTransportFactory {
       );
     }
 
-    const transport = await connectSshWithAgent(endpoint, result.agent);
+    const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
     transport.on("close", () => result.cleanup());
     return transport;
   }

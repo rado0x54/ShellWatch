@@ -73,7 +73,18 @@ class SshTransport extends EventEmitter implements TerminalTransport {
   }
 }
 
-export function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<TerminalTransport> {
+export interface AgentForwardOptions {
+  /** Enable SSH agent forwarding (ssh -A) */
+  agentForward?: boolean;
+  /** Agent to forward to the remote host — required when agentForward is true */
+  forwardingAgent?: WebAuthnSshAgent;
+}
+
+export function connectSsh(
+  endpoint: EndpointInfo,
+  privateKey: string,
+  options?: AgentForwardOptions,
+): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
 
@@ -109,13 +120,20 @@ export function connectSsh(endpoint: EndpointInfo, privateKey: string): Promise<
       );
     });
 
-    client.connect({
+    const connectOpts: Record<string, unknown> = {
       host: endpoint.host,
       port: endpoint.port,
       username: endpoint.username,
       privateKey,
       readyTimeout: CONNECTION_TIMEOUT,
-    });
+    };
+
+    if (options?.agentForward && options.forwardingAgent) {
+      connectOpts.agent = options.forwardingAgent;
+      connectOpts.agentForward = true;
+    }
+
+    client.connect(connectOpts as Parameters<typeof client.connect>[0]);
   });
 }
 
@@ -124,6 +142,7 @@ const WEBAUTHN_CONNECTION_TIMEOUT = 90_000; // 90s — allows time for user to t
 export function connectSshWithAgent(
   endpoint: EndpointInfo,
   agent: WebAuthnSshAgent,
+  options?: Pick<AgentForwardOptions, "agentForward">,
 ): Promise<TerminalTransport> {
   return new Promise((resolve, reject) => {
     const client = new Client();
@@ -165,6 +184,7 @@ export function connectSshWithAgent(
       port: endpoint.port,
       username: endpoint.username,
       agent: agent as unknown as string, // BaseAgent instance — ssh2's isAgent() will accept this
+      agentForward: options?.agentForward ?? false,
       readyTimeout: WEBAUTHN_CONNECTION_TIMEOUT,
     });
   });

@@ -18,6 +18,8 @@ export interface TestSshServer {
   pushOutput(data: string): void;
   /** Simulate server disconnect — forcefully close all client connections */
   disconnectAll(): void;
+  /** Whether the last session requested agent forwarding */
+  agentForwardRequested: boolean;
   close(): Promise<void>;
 }
 
@@ -74,6 +76,7 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
 
   const activeStreams = new Set<ServerChannel>();
   const activeConnections = new Set<Connection>();
+  let agentForwardRequested = false;
 
   const server = new Server({ hostKeys: [hostKeyPair.privateKey] }, (client) => {
     log.add("ssh-server", "client connected");
@@ -94,6 +97,12 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
 
       client.on("session", (accept) => {
         const session = accept();
+
+        session.on("auth-agent", (accept) => {
+          log.add("ssh-server", "agent forwarding requested");
+          agentForwardRequested = true;
+          accept();
+        });
 
         session.on("pty", (accept) => {
           log.add("ssh-server", "pty requested");
@@ -165,6 +174,9 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
         hostKey: hostKeyPair.privateKey,
         clientPublicKey: clientKeyPair.publicKey,
         clientPrivateKey: clientKeyPair.privateKey,
+        get agentForwardRequested() {
+          return agentForwardRequested;
+        },
         pushOutput(data: string) {
           log.add("ssh-server", "pushing output", data);
           for (const stream of activeStreams) {

@@ -9,6 +9,7 @@ export const accounts = sqliteTable("accounts", {
 
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
+  agentForward: integer("agent_forward", { mode: "boolean" }).notNull().default(false),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

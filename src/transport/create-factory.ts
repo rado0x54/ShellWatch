@@ -51,6 +51,47 @@ export function createSshTransportFactoryFromConfig(
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),
 
+    getAgentForward: async (accountId) => {
+      const account = await accountRepo.findById(accountId);
+      return account?.agentForward ?? false;
+    },
+
+    createForwardingAgent: (accountId) => {
+      const isAdmin = accountRepo.isAdmin(accountId);
+
+      // Gather file keys (admin gets all, non-admin gets none for now)
+      const fileKeyEntries = isAdmin
+        ? keyWatcher
+            .getAvailableKeys()
+            .map((k) => buildFileKeyEntry(k.privateKeyContent))
+            .filter((e) => e !== null)
+        : [];
+
+      // Gather passkeys if browser is connected
+      const passkeys = findCredentialsForAccount(db, accountId);
+      const passkeyEntries = signingBridge.hasClients
+        ? passkeys.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null)
+        : [];
+
+      if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
+
+      const onSignRequest =
+        passkeyEntries.length > 0 && signingBridge
+          ? (request: SignRequest) => signingBridge.handleSignRequest(request)
+          : () => {};
+
+      const agent = new CompositeSshAgent({
+        passkeys: passkeyEntries,
+        fileKeys: fileKeyEntries,
+        rpId,
+        onSignRequest,
+        logger: agentLog.current,
+      });
+
+      const result = registerAgent("fwd", agent);
+      return { agent: result.agent, cleanup: result.cleanup };
+    },
+
     // Single assigned passkey — direct WebAuthn sign, no modal
     createWebAuthnAgent: (credential, rpId) => {
       if (!signingBridge.hasClients) return null;
