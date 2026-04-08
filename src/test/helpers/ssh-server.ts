@@ -20,6 +20,8 @@ export interface TestSshServer {
   disconnectAll(): void;
   /** Whether the last session requested agent forwarding */
   agentForwardRequested: boolean;
+  /** Reset the agentForwardRequested flag between tests */
+  resetAgentForwardRequested(): void;
   close(): Promise<void>;
 }
 
@@ -176,6 +178,9 @@ export async function startTestSshServer(log: TestLog): Promise<TestSshServer> {
         clientPrivateKey: clientKeyPair.privateKey,
         get agentForwardRequested() {
           return agentForwardRequested;
+        },
+        resetAgentForwardRequested() {
+          agentForwardRequested = false;
         },
         pushOutput(data: string) {
           log.add("ssh-server", "pushing output", data);

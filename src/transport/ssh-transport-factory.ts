@@ -99,12 +99,6 @@ export class SshTransportFactory {
     });
 
     if (!result) {
-      if (fileKeys.length > 0) {
-        throw new Error(
-          "WebAuthn authentication requires a browser session. " +
-            "Open ShellWatch in a browser, or add a file-based key to the key directory.",
-        );
-      }
       throw new Error(
         "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
       );

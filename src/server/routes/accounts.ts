@@ -49,16 +49,20 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         return { error: "Not authenticated" };
       }
       const { name, agentForward } = request.body;
+      const updates: Partial<{ name: string; agentForward: boolean }> = {};
       if (name !== undefined) {
         const trimmed = name.trim();
         if (!trimmed) {
           reply.status(400);
           return { error: "Name cannot be empty" };
         }
-        await accountRepo.update(accountId, { name: trimmed });
+        updates.name = trimmed;
       }
       if (agentForward !== undefined) {
-        await accountRepo.update(accountId, { agentForward });
+        updates.agentForward = agentForward;
+      }
+      if (Object.keys(updates).length > 0) {
+        await accountRepo.update(accountId, updates);
       }
       return { status: "updated" };
     },

@@ -94,15 +94,23 @@ describe("SSH Agent Forwarding", () => {
     return { terminalManager };
   }
 
+  /** Poll until condition is true or timeout (avoids flaky setTimeout in CI) */
+  async function waitFor(fn: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!fn()) {
+      if (Date.now() > deadline) throw new Error("waitFor timed out");
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
   it("requests agent forwarding when enabled", async () => {
+    sshServer.resetAgentForwardRequested();
     const { terminalManager } = buildTestInfra(true);
     try {
       const session = await terminalManager.create("test-server", "ui");
       expect(session.status).toBe("open");
 
-      // Give the SSH handshake a moment to complete the agent forward request
-      await new Promise((r) => setTimeout(r, 100));
-
+      await waitFor(() => sshServer.agentForwardRequested);
       expect(sshServer.agentForwardRequested).toBe(true);
 
       terminalManager.close(session.sessionId);
@@ -112,15 +120,14 @@ describe("SSH Agent Forwarding", () => {
   });
 
   it("does not request agent forwarding when disabled", async () => {
-    // Close and restart the SSH server to reset state
-    await sshServer.close();
-    sshServer = await startTestSshServer(log);
-
+    sshServer.resetAgentForwardRequested();
     const { terminalManager } = buildTestInfra(false);
     try {
       const session = await terminalManager.create("test-server", "ui");
       expect(session.status).toBe("open");
 
+      // Give enough time for the handshake to complete — if forwarding were
+      // requested it would happen within the first few ms after shell open
       await new Promise((r) => setTimeout(r, 100));
 
       expect(sshServer.agentForwardRequested).toBe(false);
