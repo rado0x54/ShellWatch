@@ -1,1 +1,0 @@
-ALTER TABLE `accounts` ADD `agent_forward` integer DEFAULT false NOT NULL;

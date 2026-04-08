@@ -3,6 +3,7 @@ CREATE TABLE `accounts` (
 	`name` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`max_sessions` integer DEFAULT 5 NOT NULL,
+	`agent_forward` integer DEFAULT false NOT NULL,
 	`last_used_at` text,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL
@@ -29,14 +30,6 @@ CREATE TABLE `api_keys` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);--> statement-breakpoint
-CREATE TABLE `endpoint_keys` (
-	`endpoint_id` text NOT NULL,
-	`key_id` text NOT NULL,
-	PRIMARY KEY(`endpoint_id`, `key_id`),
-	FOREIGN KEY (`endpoint_id`) REFERENCES `endpoints`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
 CREATE TABLE `endpoints` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -44,14 +37,10 @@ CREATE TABLE `endpoints` (
 	`host` text NOT NULL,
 	`port` integer DEFAULT 22 NOT NULL,
 	`username` text NOT NULL,
-	`key_id` text,
-	`passkey_id` text,
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
-	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`key_id`) REFERENCES `ssh_keys`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`passkey_id`) REFERENCES `webauthn_credentials`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `session_history` (
