@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "622edcd4-87a3-41e3-82d8-8b8b563a320e",
+  "id": "39858288-8a76-488c-98e7-1398b811f909",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "accounts": {
@@ -36,6 +36,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": 5
+        },
+        "agent_forward": {
+          "name": "agent_forward",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "last_used_at": {
           "name": "last_used_at",
@@ -195,54 +203,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "endpoint_keys": {
-      "name": "endpoint_keys",
-      "columns": {
-        "endpoint_id": {
-          "name": "endpoint_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "key_id": {
-          "name": "key_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "endpoint_keys_endpoint_id_endpoints_id_fk": {
-          "name": "endpoint_keys_endpoint_id_endpoints_id_fk",
-          "tableFrom": "endpoint_keys",
-          "tableTo": "endpoints",
-          "columnsFrom": ["endpoint_id"],
-          "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "endpoint_keys_key_id_ssh_keys_id_fk": {
-          "name": "endpoint_keys_key_id_ssh_keys_id_fk",
-          "tableFrom": "endpoint_keys",
-          "tableTo": "ssh_keys",
-          "columnsFrom": ["key_id"],
-          "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "endpoint_keys_endpoint_id_key_id_pk": {
-          "columns": ["endpoint_id", "key_id"],
-          "name": "endpoint_keys_endpoint_id_key_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "endpoints": {
       "name": "endpoints",
       "columns": {
@@ -289,20 +249,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "key_id": {
-          "name": "key_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "passkey_id": {
-          "name": "passkey_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "enabled": {
           "name": "enabled",
           "type": "integer",
@@ -333,24 +279,6 @@
           "tableFrom": "endpoints",
           "tableTo": "accounts",
           "columnsFrom": ["account_id"],
-          "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "endpoints_key_id_ssh_keys_id_fk": {
-          "name": "endpoints_key_id_ssh_keys_id_fk",
-          "tableFrom": "endpoints",
-          "tableTo": "ssh_keys",
-          "columnsFrom": ["key_id"],
-          "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "endpoints_passkey_id_webauthn_credentials_id_fk": {
-          "name": "endpoints_passkey_id_webauthn_credentials_id_fk",
-          "tableFrom": "endpoints",
-          "tableTo": "webauthn_credentials",
-          "columnsFrom": ["passkey_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"

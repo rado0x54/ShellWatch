@@ -1,17 +1,14 @@
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
-import {
-  findCredentialById,
-  findCredentialsForAccount,
-} from "../db/repositories/credential-queries.js";
+import { findCredentialsForAccount } from "../db/repositories/credential-queries.js";
 import {
   buildFileKeyEntry,
   buildPasskeyEntry,
   CompositeSshAgent,
   SigningBridge,
-  WebAuthnSshAgent,
   type SignRequest,
 } from "../webauthn/index.js";
+import { ForwardingAgent } from "./forwarding-agent.js";
 import type { KeyDirectoryWatcher } from "./key-directory-watcher.js";
 import { SshTransportFactory } from "./ssh-transport-factory.js";
 
@@ -32,39 +29,17 @@ export function createSshTransportFactoryFromConfig(
   const { db, endpointRepo, keyRepo, accountRepo, keyWatcher, signingBridge, rpId, agentLog } =
     params;
 
-  /** Register an agent with the signing bridge and return a cleanup function */
-  function registerAgent(prefix: string, agent: WebAuthnSshAgent) {
-    const agentId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    signingBridge.registerAgent(agentId, agent);
-    return {
-      agent,
-      cleanup: () => {
-        signingBridge.unregisterAgent(agentId);
-        agent.destroy();
-      },
-    };
-  }
-
   return new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
     rpId,
-    findCredential: (id) => findCredentialById(db, id),
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),
 
-    // Single assigned passkey — direct WebAuthn sign, no modal
-    createWebAuthnAgent: (credential, rpId) => {
-      if (!signingBridge.hasClients) return null;
-      const agent = new WebAuthnSshAgent({
-        passkeys: [buildPasskeyEntry(credential)!],
-        rpId,
-        onSignRequest: (request: SignRequest) => signingBridge.handleSignRequest(request),
-        logger: agentLog.current,
-      });
-      return registerAgent("agent", agent);
+    getAgentForward: async (accountId) => {
+      const account = await accountRepo.findById(accountId);
+      return account?.agentForward ?? false;
     },
 
-    // Auto-negotiate — admin gets CompositeSshAgent, non-admin gets WebAuthnSshAgent
-    createAutoNegotiateAgent: ({ endpoint, fileKeys, passkeys, isAdmin, rpId }) => {
+    createAgent: ({ endpoint, fileKeys, passkeys, isAdmin, rpId, agentForward }) => {
       // Need a browser if there are passkeys to try
       if (passkeys.length > 0 && !signingBridge.hasClients) {
         if (fileKeys.length === 0) return null;
@@ -75,31 +50,39 @@ export function createSshTransportFactoryFromConfig(
         : [];
 
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
+      const onSignRequest = (request: SignRequest) => signingBridge.handleSignRequest(request);
+
+      const fileKeyEntries = isAdmin
+        ? fileKeys.map((fk) => buildFileKeyEntry(fk.privateKey)).filter((e) => e !== null)
+        : [];
+
+      if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
+
       const baseParams = {
         passkeys: passkeyEntries,
+        fileKeys: fileKeyEntries,
         rpId,
         endpointLabel: endpoint.label,
         endpointAddress: address,
-        onSignRequest: (request: SignRequest) => signingBridge.handleSignRequest(request),
+        onSignRequest,
         logger: agentLog.current,
       };
 
-      if (isAdmin) {
-        // Admin: CompositeSshAgent with file keys + passkeys
-        const fileKeyEntries = fileKeys
-          .map((fk) => buildFileKeyEntry(fk.privateKey))
-          .filter((e) => e !== null);
+      // ForwardingAgent when forwarding is enabled, CompositeSshAgent otherwise
+      const agent = agentForward
+        ? new ForwardingAgent(baseParams)
+        : new CompositeSshAgent(baseParams);
 
-        if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
+      const agentId = `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      signingBridge.registerAgent(agentId, agent);
 
-        const agent = new CompositeSshAgent({ ...baseParams, fileKeys: fileKeyEntries });
-        return registerAgent("composite", agent);
-      }
-
-      // Non-admin: WebAuthnSshAgent with passkeys only
-      if (passkeyEntries.length === 0) return null;
-      const agent = new WebAuthnSshAgent(baseParams);
-      return registerAgent("agent", agent);
+      return {
+        agent,
+        cleanup: () => {
+          signingBridge.unregisterAgent(agentId);
+          agent.destroy();
+        },
+      };
     },
   });
 }

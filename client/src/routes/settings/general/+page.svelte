@@ -1,11 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Identicon from "$lib/components/Identicon.svelte";
-  import { account, fetchAccount, updateAccountName } from "$lib/stores/account.js";
+  import {
+    account,
+    fetchAccount,
+    updateAccountName,
+    updateAgentForward,
+  } from "$lib/stores/account.js";
 
   let nameInput = $state("");
   let saving = $state(false);
   let message = $state("");
+  let agentForwardSaving = $state(false);
+  let agentForwardMessage = $state("");
 
   onMount(async () => {
     await fetchAccount();
@@ -30,6 +37,20 @@
     }
     saving = false;
   }
+
+  async function handleAgentForwardToggle() {
+    if (!$account) return;
+    agentForwardSaving = true;
+    agentForwardMessage = "";
+    try {
+      await updateAgentForward(!$account.agentForward);
+      agentForwardMessage = "Saved";
+      setTimeout(() => (agentForwardMessage = ""), 2000);
+    } catch (err) {
+      agentForwardMessage = (err as Error).message;
+    }
+    agentForwardSaving = false;
+  }
 </script>
 
 <section>
@@ -53,6 +74,34 @@
         </div>
         {#if message}
           <span class="message" class:success={message === "Saved"}>{message}</span>
+        {/if}
+      </div>
+
+      <div class="field">
+        <label for="agent-forward">SSH Agent Forwarding</label>
+        <div class="toggle-row">
+          <button
+            id="agent-forward"
+            class="toggle"
+            class:active={$account.agentForward}
+            disabled={agentForwardSaving}
+            onclick={handleAgentForwardToggle}
+            role="switch"
+            aria-checked={$account.agentForward}
+          >
+            <span class="toggle-knob"></span>
+          </button>
+          <span class="toggle-label">
+            {$account.agentForward ? "Enabled" : "Disabled"}
+          </span>
+        </div>
+        <span class="field-hint">
+          Forward SSH keys to remote hosts so programs like ssh and git can authenticate onward.
+        </span>
+        {#if agentForwardMessage}
+          <span class="message" class:success={agentForwardMessage === "Saved"}
+            >{agentForwardMessage}</span
+          >
         {/if}
       </div>
     </div>
@@ -137,5 +186,58 @@
 
   .message.success {
     color: var(--green, #4ade80);
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.2s;
+  }
+
+  .toggle.active {
+    background: var(--green, #4ade80);
+    border-color: var(--green, #4ade80);
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition:
+      transform 0.2s,
+      background-color 0.2s;
+  }
+
+  .toggle.active .toggle-knob {
+    transform: translateX(18px);
+    background: white;
+  }
+
+  .toggle-label {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+  }
+
+  .field-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.375rem;
   }
 </style>

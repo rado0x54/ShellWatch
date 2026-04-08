@@ -19,7 +19,6 @@ const testEndpoints = [
     host: "dev.example.com",
     port: 22,
     username: "ubuntu",
-    keyId: "key-1",
   },
 ];
 

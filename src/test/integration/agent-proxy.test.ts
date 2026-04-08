@@ -100,6 +100,7 @@ describe("agent-proxy WebSocket endpoint", () => {
 
     const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
       rpId: "localhost",
+      createAgent: () => null,
     });
     const terminalManager = new TerminalManager(endpointRepo, (id) =>
       sshTransportFactory.create(id),

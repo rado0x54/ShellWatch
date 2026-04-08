@@ -9,8 +9,6 @@ export interface EndpointInfo {
   host: string;
   port: number;
   username: string;
-  keyId: string | null;
-  passkeyId: string | null;
 }
 
 export interface EndpointRepository {
@@ -29,8 +27,6 @@ export interface EndpointRepository {
     host: string;
     port: number;
     username: string;
-    keyId?: string;
-    passkeyId?: string;
   }): Promise<void>;
   update(
     id: string,
@@ -40,28 +36,26 @@ export interface EndpointRepository {
       host: string;
       port: number;
       username: string;
-      keyId: string | null;
-      passkeyId: string | null;
     }>,
   ): Promise<void>;
   delete(id: string, accountId: string): Promise<void>;
 }
+
+const ENDPOINT_COLUMNS = {
+  id: endpoints.id,
+  accountId: endpoints.accountId,
+  label: endpoints.label,
+  host: endpoints.host,
+  port: endpoints.port,
+  username: endpoints.username,
+} as const;
 
 export class DrizzleEndpointRepository implements EndpointRepository {
   constructor(private db: ShellWatchDB) {}
 
   async findAllForAccount(accountId: string): Promise<EndpointInfo[]> {
     return this.db
-      .select({
-        id: endpoints.id,
-        accountId: endpoints.accountId,
-        label: endpoints.label,
-        host: endpoints.host,
-        port: endpoints.port,
-        username: endpoints.username,
-        keyId: endpoints.keyId,
-        passkeyId: endpoints.passkeyId,
-      })
+      .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(and(eq(endpoints.accountId, accountId), eq(endpoints.enabled, true)))
       .all();
@@ -69,16 +63,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
 
   async findAll(): Promise<EndpointInfo[]> {
     return this.db
-      .select({
-        id: endpoints.id,
-        accountId: endpoints.accountId,
-        label: endpoints.label,
-        host: endpoints.host,
-        port: endpoints.port,
-        username: endpoints.username,
-        keyId: endpoints.keyId,
-        passkeyId: endpoints.passkeyId,
-      })
+      .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(eq(endpoints.enabled, true))
       .all();
@@ -86,16 +71,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
 
   async findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null> {
     const row = this.db
-      .select({
-        id: endpoints.id,
-        accountId: endpoints.accountId,
-        label: endpoints.label,
-        host: endpoints.host,
-        port: endpoints.port,
-        username: endpoints.username,
-        keyId: endpoints.keyId,
-        passkeyId: endpoints.passkeyId,
-      })
+      .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.accountId, accountId)))
       .get();
@@ -103,20 +79,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
   }
 
   async findById(id: string): Promise<EndpointInfo | null> {
-    const row = this.db
-      .select({
-        id: endpoints.id,
-        accountId: endpoints.accountId,
-        label: endpoints.label,
-        host: endpoints.host,
-        port: endpoints.port,
-        username: endpoints.username,
-        keyId: endpoints.keyId,
-        passkeyId: endpoints.passkeyId,
-      })
-      .from(endpoints)
-      .where(eq(endpoints.id, id))
-      .get();
+    const row = this.db.select(ENDPOINT_COLUMNS).from(endpoints).where(eq(endpoints.id, id)).get();
     return row ?? null;
   }
 
@@ -127,16 +90,12 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     host: string;
     port: number;
     username: string;
-    keyId?: string;
-    passkeyId?: string;
   }): Promise<void> {
     const now = new Date().toISOString();
     this.db
       .insert(endpoints)
       .values({
         ...data,
-        keyId: data.keyId ?? null,
-        passkeyId: data.passkeyId ?? null,
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -152,8 +111,6 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       host: string;
       port: number;
       username: string;
-      keyId: string | null;
-      passkeyId: string | null;
     }>,
   ): Promise<void> {
     this.db
@@ -176,20 +133,12 @@ export class InMemoryEndpointRepository implements EndpointRepository {
   private store: EndpointInfo[];
 
   constructor(
-    initialEndpoints: Array<
-      Omit<EndpointInfo, "keyId" | "passkeyId" | "accountId"> & {
-        keyId?: string;
-        passkeyId?: string;
-        accountId?: string;
-      }
-    > = [],
+    initialEndpoints: Array<Omit<EndpointInfo, "accountId"> & { accountId?: string }> = [],
     private defaultAccountId = "test-account",
   ) {
     this.store = initialEndpoints.map((e) => ({
       ...e,
       accountId: e.accountId ?? this.defaultAccountId,
-      keyId: e.keyId ?? null,
-      passkeyId: e.passkeyId ?? null,
     }));
   }
 
@@ -216,10 +165,8 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     host: string;
     port: number;
     username: string;
-    keyId?: string;
-    passkeyId?: string;
   }): Promise<void> {
-    this.store.push({ ...data, keyId: data.keyId ?? null, passkeyId: data.passkeyId ?? null });
+    this.store.push({ ...data });
   }
 
   async update(
@@ -230,8 +177,6 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       host: string;
       port: number;
       username: string;
-      keyId: string | null;
-      passkeyId: string | null;
     }>,
   ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id && e.accountId === accountId);

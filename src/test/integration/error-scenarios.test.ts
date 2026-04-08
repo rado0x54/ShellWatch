@@ -109,22 +109,14 @@ describe("Error Scenarios", () => {
           host: "localhost",
           port: 22,
           username: "test",
-          keyId: "missing-key",
         },
       ]);
-      const keyRepo = new InMemorySshKeyRepository([
-        {
-          id: "missing-key",
-          label: "Missing",
-          type: "file",
-          publicKey: "ssh-ed25519 AAAA...",
-          fingerprint: "SHA256:doesnotexist",
-        },
-      ]);
+      const keyRepo = new InMemorySshKeyRepository([]);
       // Empty key provider — no files available
       const keyProvider = new InMemoryKeyProvider([]);
       const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
         rpId: "localhost",
+        createAgent: () => null,
       });
       const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
 
@@ -182,7 +174,7 @@ describe("Error Scenarios", () => {
         });
         expect(res.status).toBe(400);
         const body = await res.json();
-        expect(body.error).toContain("is unavailable");
+        expect(body.error).toContain("No SSH keys available");
 
         // Test via MCP
         const { createTestMcpClient } = await import("../helpers/mcp-client.js");
@@ -192,7 +184,7 @@ describe("Error Scenarios", () => {
             endpointId: "no-key-ep",
           });
           expect(result.isError).toBe(true);
-          expect(result.content).toContain("is unavailable");
+          expect(result.content).toContain("No SSH keys available");
         } finally {
           await mcp.close();
         }

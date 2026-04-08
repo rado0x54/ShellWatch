@@ -60,7 +60,6 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         endpointRepo,
         keyRepo,
         request.accountId,
-        accountRepo,
       );
 
       await mcpServer.connect(transport);

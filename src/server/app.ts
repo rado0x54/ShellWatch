@@ -120,7 +120,6 @@ export async function buildApp(params: BuildAppParams) {
     accountRepo,
     terminalManager,
     uiCreatedSessions,
-    db,
   });
 
   if (apiKeyRepo) {

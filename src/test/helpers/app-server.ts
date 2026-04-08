@@ -21,6 +21,7 @@ import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
+import { buildFileKeyEntry, CompositeSshAgent } from "../../webauthn/index.js";
 import type { TestSshServer } from "./ssh-server.js";
 import type { TestLog } from "./test-log.js";
 
@@ -91,7 +92,6 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
       host: sshServer.host,
       port: sshServer.port,
       username: "testuser",
-      keyId: "test-key",
     },
   ]);
   const keyRepo = new InMemorySshKeyRepository([
@@ -101,6 +101,20 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
 
   const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
     rpId: "localhost",
+    createAgent: ({ fileKeys }) => {
+      const fileKeyEntries = fileKeys
+        .map((fk) => buildFileKeyEntry(fk.privateKey))
+        .filter((e) => e !== null);
+      if (fileKeyEntries.length === 0) return null;
+      const agent = new CompositeSshAgent({
+        passkeys: [],
+        fileKeys: fileKeyEntries,
+        rpId: "localhost",
+        onSignRequest: () => {},
+      });
+      return { agent, cleanup: () => agent.destroy() };
+    },
+    isAdmin: () => true,
   });
   const terminalManager = new TerminalManager(
     endpointRepo,

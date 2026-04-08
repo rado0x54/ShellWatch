@@ -1,8 +1,5 @@
-import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import type { ShellWatchDB } from "../../db/connection.js";
 import type { AccountRepository, EndpointRepository } from "../../db/index.js";
-import { sshKeys as sshKeysTable, webauthnCredentials } from "../../db/schema.js";
 import type { TerminalManager } from "../../terminal/index.js";
 
 export interface SessionRoutesParams {
@@ -11,11 +8,10 @@ export interface SessionRoutesParams {
   accountRepo: AccountRepository;
   terminalManager: TerminalManager;
   uiCreatedSessions: Set<string>;
-  db?: ShellWatchDB | null;
 }
 
 export function registerSessionRoutes(params: SessionRoutesParams) {
-  const { app, endpointRepo, accountRepo, terminalManager, uiCreatedSessions, db = null } = params;
+  const { app, endpointRepo, accountRepo, terminalManager, uiCreatedSessions } = params;
 
   app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
     if (!request.accountId) {
@@ -48,20 +44,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       }
       const session = await terminalManager.create(endpointId, "ui");
       uiCreatedSessions.add(session.sessionId);
-
-      // Update lastUsedAt on the assigned key
-      const now = new Date().toISOString();
-      if (endpoint.passkeyId && db) {
-        db.update(webauthnCredentials)
-          .set({ lastUsedAt: now })
-          .where(eq(webauthnCredentials.id, endpoint.passkeyId))
-          .run();
-      } else if (endpoint.keyId && db) {
-        db.update(sshKeysTable)
-          .set({ lastUsedAt: now })
-          .where(eq(sshKeysTable.id, endpoint.keyId))
-          .run();
-      }
 
       return session;
     } catch (err) {
