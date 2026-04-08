@@ -5,7 +5,6 @@ import type { AccountRepository } from "../../db/index.js";
 import {
   accounts as accountsTable,
   apiKeys as apiKeysTable,
-  endpointKeys,
   endpoints as endpointsTable,
   sessionHistory,
   webauthnCredentials,
@@ -108,15 +107,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
 
     // Hard-delete: cascade all owned data (order matters for FK constraints)
     if (db) {
-      // Get the account's endpoint IDs for junction table cleanup
-      const accountEndpoints = db
-        .select({ id: endpointsTable.id })
-        .from(endpointsTable)
-        .where(eq(endpointsTable.accountId, targetId))
-        .all();
-      for (const ep of accountEndpoints) {
-        db.delete(endpointKeys).where(eq(endpointKeys.endpointId, ep.id)).run();
-      }
       db.delete(sessionHistory).where(eq(sessionHistory.accountId, targetId)).run();
       db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
       db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
@@ -164,17 +154,10 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         host: endpointsTable.host,
         port: endpointsTable.port,
         username: endpointsTable.username,
-        passkeyId: endpointsTable.passkeyId,
       })
       .from(endpointsTable)
       .where(eq(endpointsTable.accountId, adminId))
       .all();
-
-    // Build passkey internal ID → credentialId lookup for endpoint references
-    const passkeyIdToCredentialId = new Map<string, string>();
-    for (const pk of passkeys) {
-      passkeyIdToCredentialId.set(pk.id, pk.credentialId);
-    }
 
     const seedPasskeys = passkeys.map((pk) => {
       let transports: string[] = [];
@@ -194,22 +177,14 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       };
     });
 
-    const seedEndpoints = eps.map((ep) => {
-      const address = formatEndpointAddress({
+    const seedEndpoints = eps.map((ep) => ({
+      label: ep.label,
+      address: formatEndpointAddress({
         username: ep.username,
         host: ep.host,
         port: ep.port,
-      });
-      const result: { label: string; address: string; passkeyCredentialRef?: string } = {
-        label: ep.label,
-        address,
-      };
-      if (ep.passkeyId) {
-        const credId = passkeyIdToCredentialId.get(ep.passkeyId);
-        if (credId) result.passkeyCredentialRef = credId;
-      }
-      return result;
-    });
+      }),
+    }));
 
     return { passkeys: seedPasskeys, endpoints: seedEndpoints };
   });

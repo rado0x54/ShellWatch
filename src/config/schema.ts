@@ -7,7 +7,6 @@ export const SeedEndpointSchema = z.object({
     .string()
     .min(1)
     .transform((addr) => parseEndpointAddress(addr)),
-  passkeyCredentialRef: z.string().optional(), // references a passkey by its credentialId
 });
 
 /** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */

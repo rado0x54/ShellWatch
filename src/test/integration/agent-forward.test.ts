@@ -52,17 +52,13 @@ describe("SSH Agent Forwarding", () => {
       privateKeyContent: sshServer.clientPrivateKey,
     };
 
-    const accountId = "test-account";
-
     const endpointRepo = new InMemoryEndpointRepository([
       {
         id: "test-server",
-        accountId,
         label: "Test Server",
         host: sshServer.host,
         port: sshServer.port,
         username: "testuser",
-        keyId: "test-key",
       },
     ]);
     const keyRepo = new InMemorySshKeyRepository([
@@ -73,17 +69,20 @@ describe("SSH Agent Forwarding", () => {
     const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
       rpId: "localhost",
       getAgentForward: async () => agentForward,
-      createForwardingAgent: () => {
-        const fileKeyEntry = buildFileKeyEntry(sshServer.clientPrivateKey);
-        if (!fileKeyEntry) return null;
-        const baseAgent = new CompositeSshAgent({
+      isAdmin: () => true,
+      createAgent: ({ fileKeys, agentForward: fwd }) => {
+        const fileKeyEntries = fileKeys
+          .map((fk) => buildFileKeyEntry(fk.privateKey))
+          .filter((e) => e !== null);
+        if (fileKeyEntries.length === 0) return null;
+        const params = {
           passkeys: [],
-          fileKeys: [fileKeyEntry],
+          fileKeys: fileKeyEntries,
           rpId: "localhost",
           onSignRequest: () => {},
-        });
-        const fwdAgent = new ForwardingAgent(baseAgent);
-        return { agent: fwdAgent, cleanup: () => fwdAgent.destroy() };
+        };
+        const agent = fwd ? new ForwardingAgent(params) : new CompositeSshAgent(params);
+        return { agent, cleanup: () => agent.destroy() };
       },
     });
 

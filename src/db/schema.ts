@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // --- Accounts ---
 
@@ -71,27 +71,10 @@ export const endpoints = sqliteTable("endpoints", {
   host: text("host").notNull(),
   port: integer("port").notNull().default(22),
   username: text("username").notNull(),
-  keyId: text("key_id").references(() => sshKeys.id),
-  passkeyId: text("passkey_id").references(() => webauthnCredentials.id),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
-
-// --- Endpoint ↔ Key (many-to-many for future multi-key support) ---
-
-export const endpointKeys = sqliteTable(
-  "endpoint_keys",
-  {
-    endpointId: text("endpoint_id")
-      .notNull()
-      .references(() => endpoints.id),
-    keyId: text("key_id")
-      .notNull()
-      .references(() => sshKeys.id),
-  },
-  (table) => [primaryKey({ columns: [table.endpointId, table.keyId] })],
-);
 
 // --- Session History ---
 

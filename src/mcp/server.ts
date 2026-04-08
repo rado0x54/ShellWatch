@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentSession } from "../agent/index.js";
-import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
 import { registerEndpointTools } from "./tools/endpoints.js";
@@ -12,7 +11,6 @@ export async function createMcpServer(
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
   accountId?: string | null,
-  accountRepo?: AccountRepository | null,
 ): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
@@ -45,7 +43,7 @@ export async function createMcpServer(
   const mcpServer = new McpServer({ name: "shellwatch", version: "0.5.0" }, { instructions });
 
   registerSessionTools(mcpServer, agentSession);
-  registerEndpointTools(mcpServer, endpointRepo, accountId, accountRepo);
+  registerEndpointTools(mcpServer, endpointRepo, accountId);
   registerKeyTools(mcpServer, keyRepo);
 
   return mcpServer;

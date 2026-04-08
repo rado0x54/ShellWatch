@@ -15,6 +15,13 @@
       "when": 1775630779253,
       "tag": "0001_fearless_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1775680118970,
+      "tag": "0002_shiny_pandemic",
+      "breakpoints": true
     }
   ]
 }

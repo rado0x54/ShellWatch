@@ -1,13 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { AccountRepository } from "../../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../../db/repositories/endpoint-repo.js";
 
 export function registerEndpointTools(
   mcpServer: McpServer,
   endpointRepo: EndpointRepository,
   accountId?: string | null,
-  accountRepo?: AccountRepository | null,
 ) {
   mcpServer.tool(
     "shellwatch_manage_endpoints",
@@ -21,11 +19,6 @@ export function registerEndpointTools(
           host: z.string().optional(),
           port: z.number().optional(),
           username: z.string().optional(),
-          keyId: z.string().optional().describe("File-based SSH key ID"),
-          passkeyId: z
-            .string()
-            .optional()
-            .describe("WebAuthn passkey ID (mutually exclusive with keyId)"),
         })
         .optional()
         .describe("Endpoint data (for create and update)"),
@@ -41,14 +34,12 @@ export function registerEndpointTools(
               };
             }
             const all = await endpointRepo.findAllForAccount(accountId);
-            const result = all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
+            const result = all.map(({ id, label, host, port, username }) => ({
               id,
               label,
               host,
               port,
               username,
-              keyId,
-              passkeyId,
             }));
             return {
               content: [{ type: "text", text: JSON.stringify({ endpoints: result }, null, 2) }],
@@ -68,8 +59,7 @@ export function registerEndpointTools(
                 isError: true,
                 content: [{ type: "text", text: `Endpoint not found: ${id}` }],
               };
-            const safe = ep;
-            return { content: [{ type: "text", text: JSON.stringify(safe, null, 2) }] };
+            return { content: [{ type: "text", text: JSON.stringify(ep, null, 2) }] };
           }
           case "create": {
             if (!id || !data?.label || !data?.host || !data?.username) {
@@ -86,17 +76,6 @@ export function registerEndpointTools(
                 content: [{ type: "text", text: "No account context for endpoint creation" }],
               };
             }
-            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
-              return {
-                isError: true,
-                content: [
-                  {
-                    type: "text",
-                    text: "File-based SSH keys can only be assigned by the admin account",
-                  },
-                ],
-              };
-            }
             await endpointRepo.create({
               id,
               accountId,
@@ -104,8 +83,6 @@ export function registerEndpointTools(
               host: data.host,
               port: data.port ?? 22,
               username: data.username,
-              keyId: data.keyId,
-              passkeyId: data.passkeyId,
             });
             return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
           }
@@ -115,17 +92,6 @@ export function registerEndpointTools(
                 isError: true,
                 content: [{ type: "text", text: "id and data are required" }],
               };
-            if (data.keyId && !(accountId && accountRepo?.isAdmin(accountId))) {
-              return {
-                isError: true,
-                content: [
-                  {
-                    type: "text",
-                    text: "File-based SSH keys can only be assigned by the admin account",
-                  },
-                ],
-              };
-            }
             if (accountId) {
               await endpointRepo.update(id, accountId, data);
             } else {

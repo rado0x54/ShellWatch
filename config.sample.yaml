@@ -32,7 +32,6 @@ keyDirectory: ./keys
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
-#     passkeyCredentialRef: "credential-id-from-seedAdminPasskeys"
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222

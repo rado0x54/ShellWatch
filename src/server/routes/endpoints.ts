@@ -11,7 +11,7 @@ export interface EndpointRoutesParams {
 }
 
 export function registerEndpointRoutes(params: EndpointRoutesParams) {
-  const { app, endpointRepo, accountRepo, terminalManager } = params;
+  const { app, endpointRepo, terminalManager } = params;
 
   app.get("/api/endpoints", async (request, reply) => {
     if (!request.accountId) {
@@ -20,14 +20,12 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     }
     const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
-      endpoints: all.map(({ id, label, host, port, username, keyId, passkeyId }) => ({
+      endpoints: all.map(({ id, label, host, port, username }) => ({
         id,
         label,
         host,
         port,
         username,
-        keyId,
-        passkeyId,
       })),
     };
   });
@@ -38,8 +36,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       host: string;
       port?: number;
       username?: string;
-      keyId?: string;
-      passkeyId?: string;
     };
   }>("/api/endpoints", async (request, reply) => {
     if (!request.accountId) {
@@ -47,14 +43,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       return { error: "Not authenticated" };
     }
     try {
-      if (request.body.keyId && request.body.passkeyId) {
-        reply.status(400);
-        return { error: "Cannot set both keyId and passkeyId" };
-      }
-      if (request.body.keyId && !accountRepo.isAdmin(request.accountId)) {
-        reply.status(403);
-        return { error: "File-based SSH keys can only be assigned by the admin account" };
-      }
       const id = randomUUID();
       await endpointRepo.create({
         id,
@@ -63,8 +51,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         host: request.body.host,
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
-        keyId: request.body.keyId,
-        passkeyId: request.body.passkeyId,
       });
       return { status: "created", id };
     } catch (err) {
@@ -82,19 +68,10 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         return { error: "Not authenticated" };
       }
       try {
-        const body = request.body as Record<string, unknown>;
-        if (body.keyId && body.passkeyId) {
-          reply.status(400);
-          return { error: "Cannot set both keyId and passkeyId" };
-        }
-        if (body.keyId && !accountRepo.isAdmin(request.accountId)) {
-          reply.status(403);
-          return { error: "File-based SSH keys can only be assigned by the admin account" };
-        }
         await endpointRepo.update(
           request.params.id,
           request.accountId,
-          body as Parameters<EndpointRepository["update"]>[2],
+          request.body as Parameters<EndpointRepository["update"]>[2],
         );
         return { status: "updated" };
       } catch (err) {

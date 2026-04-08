@@ -1,21 +1,19 @@
 /**
- * Wraps a CompositeSshAgent with a `getStream()` method so ssh2's
- * agent forwarding channel handler can pipe raw agent protocol data
- * through it. Each call to `getStream()` creates a fresh AgentProtocol
- * stream backed by the same underlying agent.
+ * SSH agent that supports both authentication and agent forwarding.
  *
- * ssh2 requires `getStream(cb)` on the agent object to handle incoming
- * `auth-agent@openssh.com` channels (see client.js ~line 1998).
+ * Extends CompositeSshAgent (file keys + passkeys) and adds `getStream()`
+ * which ssh2 requires for piping `auth-agent@openssh.com` forwarding
+ * channels (see client.js ~line 1998).
+ *
+ * Inheritance: ForwardingAgent → CompositeSshAgent → WebAuthnSshAgent → BaseAgent
  */
 
 import ssh2 from "ssh2";
 import type { ParsedKey } from "ssh2";
-import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
+import { CompositeSshAgent, type CompositeAgentParams } from "../webauthn/composite-ssh-agent.js";
+import { toPublicKeyBlob } from "../webauthn/ssh-agent.js";
 
 const { utils } = ssh2;
-
-// BaseAgent is exported at runtime but not in type definitions
-const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => object;
 
 // AgentProtocol is exported at runtime but not in type definitions
 const AgentProtocol = (ssh2 as Record<string, unknown>).AgentProtocol as new (
@@ -31,57 +29,28 @@ interface AgentProtocolInstance extends NodeJS.ReadWriteStream {
     event: "sign",
     listener: (req: unknown, pubKey: unknown, data: Buffer, flags: { hash?: string }) => void,
   ): this;
-  on(event: "data", listener: (chunk: Buffer) => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
   on(event: string, listener: (...args: never[]) => void): this;
   destroy(): void;
 }
 
-/**
- * An agent wrapper that delegates identity/sign to a CompositeSshAgent
- * and provides `getStream()` for ssh2's agent forwarding channel handler.
- *
- * Extends BaseAgent so ssh2's `isAgent()` check passes (it uses instanceof).
- */
-export class ForwardingAgent extends BaseAgent {
+export class ForwardingAgent extends CompositeSshAgent {
   private protocols: AgentProtocolInstance[] = [];
-  private agent: WebAuthnSshAgent;
 
-  constructor(agent: WebAuthnSshAgent) {
-    super();
-    this.agent = agent;
-  }
-
-  /** Required by ssh2's isAgent() check */
-  getIdentities(cb: (err: Error | null, keys?: Buffer[]) => void): void {
-    this.agent.getIdentities(cb);
-  }
-
-  /** Required by ssh2's isAgent() check */
-  sign(
-    pubKey: Buffer,
-    data: Buffer,
-    options: { hash?: string } | ((err: Error | null, sig?: Buffer) => void),
-    cb?: (err: Error | null, sig?: Buffer) => void,
-  ): void {
-    if (typeof options === "function") {
-      this.agent.sign(pubKey, data, {}, options);
-    } else {
-      this.agent.sign(pubKey, data, options, cb!);
-    }
+  constructor(params: CompositeAgentParams) {
+    super(params);
   }
 
   /**
    * Called by ssh2 for each incoming `auth-agent@openssh.com` channel.
    * Creates a server-mode AgentProtocol stream that handles identity
-   * and sign requests by delegating to the wrapped agent.
+   * and sign requests by delegating to this agent's getIdentities/sign.
    */
   getStream(cb: (err: Error | null, stream?: NodeJS.ReadWriteStream) => void): void {
     const protocol = new AgentProtocol(false); // server mode
     this.protocols.push(protocol);
 
     protocol.on("identities", (req) => {
-      this.agent.getIdentities((err, keys) => {
+      this.getIdentities((err, keys) => {
         if (err || !keys) {
           protocol.failureReply(req);
           return;
@@ -94,17 +63,12 @@ export class ForwardingAgent extends BaseAgent {
     });
 
     protocol.on("sign", (req, pubKey, data, flags) => {
-      const pubKeyBuf = Buffer.isBuffer(pubKey)
-        ? pubKey
-        : pubKey && typeof pubKey === "object" && "getPublicSSH" in pubKey
-          ? (pubKey as { getPublicSSH: () => Buffer }).getPublicSSH()
-          : null;
+      const pubKeyBuf = toPublicKeyBlob(pubKey as Buffer);
       if (!pubKeyBuf) {
         protocol.failureReply(req);
         return;
       }
-
-      this.agent.sign(pubKeyBuf, data, flags, (err, signature) => {
+      this.sign(pubKeyBuf, data, flags, (err, signature) => {
         if (err || !signature) {
           protocol.failureReply(req);
           return;
@@ -116,11 +80,11 @@ export class ForwardingAgent extends BaseAgent {
     cb(null, protocol);
   }
 
-  destroy(): void {
+  override destroy(): void {
     for (const p of this.protocols) {
       p.destroy();
     }
     this.protocols = [];
-    this.agent.destroy();
+    super.destroy();
   }
 }

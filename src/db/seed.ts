@@ -96,17 +96,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   if (!endpointCount || endpointCount.total === 0) {
     const now = new Date().toISOString();
     for (const ep of config.seedAdminEndpoints) {
-      // Resolve passkeyCredentialRef to a webauthn_credentials.id
-      let passkeyId: string | null = null;
-      if (ep.passkeyCredentialRef) {
-        const cred = db
-          .select({ id: webauthnCredentials.id })
-          .from(webauthnCredentials)
-          .where(eq(webauthnCredentials.credentialId, ep.passkeyCredentialRef))
-          .get();
-        passkeyId = cred?.id ?? null;
-      }
-
       db.insert(endpoints)
         .values({
           id: randomUUID(),
@@ -115,7 +104,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           host: ep.address.host,
           port: ep.address.port,
           username: ep.address.username,
-          passkeyId,
           enabled: true,
           createdAt: now,
           updatedAt: now,
