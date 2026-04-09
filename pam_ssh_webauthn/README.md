@@ -173,12 +173,36 @@ The following checks are performed, matching OpenSSH's `webauthn_check_prepare_h
 - **User Presence (UP)**: Flag bit 0x01 must be set
 - **Attested Credential Data (AD)**: Flag bit 0x40 must NOT be set (this is an assertion, not a registration)
 - **Extension Data (ED)**: Flag bit 0x80 must be consistent with extensions presence
-- **Origin**: Must not contain quote characters (prevents JSON injection)
+- **Origin**: Must not contain quote characters (prevents JSON injection); must match between signature blob and clientDataJSON
 - **clientDataJSON type**: Must be `"webauthn.get"`
 - **clientDataJSON challenge**: Must match the base64url-encoded challenge sent to the agent
+- **clientDataJSON origin**: Must match the origin from the signature blob
+- **Trailing data**: Rejected — no extra bytes allowed after the extensions field
 
-**Not checked** (by design, matching OpenSSH): Counter monotonicity — requires persistent state, which is not appropriate for a stateless PAM module. User Verification (UV) flag — not required, as the authenticator may not support it.
+### Limitations
+
+- **No counter/replay protection**: The WebAuthn counter is integrity-protected (included in signed_data) but not checked for monotonic increase. Counter validation requires persistent state (tracking the last-seen counter per key), which is not appropriate for a stateless PAM module. This means a captured signature cannot be replayed (the challenge is fresh each time), but a cloned authenticator with a reset counter would not be detected.
+- **No User Verification (UV) enforcement**: The UV flag is not required, as some authenticators may not support it. UP (User Presence) is always required.
 
 ## Logging
 
 Logs to syslog facility `AUTH` as `pam_ssh_webauthn`. Set log level via PAM or syslog configuration.
+
+## Troubleshooting
+
+**`SSH_AUTH_SOCK not set`** — The module reads `$SSH_AUTH_SOCK` from the environment. For sudo, this must be preserved:
+
+```bash
+# /etc/sudoers.d/ssh-auth-sock
+Defaults env_keep += "SSH_AUTH_SOCK"
+```
+
+**Agent timeout** — The module waits up to 60 seconds for the agent to respond. This is generous because the sign request may require user interaction (e.g. tapping a passkey in the browser). If the agent is unresponsive, authentication fails with a timeout error after 60s.
+
+**No matching key** — Key matching is done by raw blob comparison, which includes the application/relying party ID. If the key in `authorized_keys` was generated with a different RP ID than the one the agent holds, they will not match even if the underlying EC key material is identical. Use the `list_keys` example to inspect the agent's key blobs:
+
+```bash
+SSH_AUTH_SOCK=/path/to/agent.sock cargo run --example list_keys
+```
+
+**Silent failures** — Enable debug logging to see detailed matching and verification steps. The module logs to syslog facility `AUTH`.

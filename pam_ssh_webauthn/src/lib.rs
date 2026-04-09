@@ -131,7 +131,7 @@ fn do_authenticate(config: &Config, handle: &mut PamHandle) -> Result<bool, Box<
     for agent_id in &agent_identities {
         for auth_key in &authorized_keys {
             if agent_id.key_blob == auth_key.key_blob {
-                info!(
+                debug!(
                     "Matched key: {} (app: {})",
                     auth_key.comment, auth_key.application
                 );

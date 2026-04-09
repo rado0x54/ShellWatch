@@ -121,8 +121,12 @@ fn parse_webauthn_key_blob(blob: &[u8]) -> Option<(Vec<u8>, String)> {
         return None;
     }
 
-    // Application string
+    // Application string (relying party ID — must be non-empty)
     let app_bytes = read_ssh_bytes(&mut reader).ok()?;
+    if app_bytes.is_empty() {
+        log::debug!("Empty application string in key blob");
+        return None;
+    }
     let application = String::from_utf8(app_bytes.to_vec()).ok()?;
 
     Some((ec_point, application))

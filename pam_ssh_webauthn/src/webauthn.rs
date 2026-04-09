@@ -69,8 +69,8 @@ pub fn verify_webauthn_sk(
     // matches OpenSSH's webauthn_check_prepare_hash validation)
     validate_origin(&sig.origin)?;
 
-    // Validate clientDataJSON: type field and challenge
-    validate_client_data(&sig.client_data_json, challenge)?;
+    // Validate clientDataJSON: type field, challenge, and origin consistency
+    validate_client_data(&sig.client_data_json, challenge, &sig.origin)?;
 
     // Construct signed_data: SHA256(application) || flags || counter || extensions || SHA256(clientDataJSON)
     let app_hash = Sha256::digest(key.application.as_bytes());
@@ -185,8 +185,14 @@ fn validate_origin(origin: &str) -> Result<(), VerifyError> {
     Ok(())
 }
 
-/// Validate clientDataJSON: check type field is "webauthn.get" and challenge matches.
-fn validate_client_data(client_data_json: &str, challenge: &[u8]) -> Result<(), VerifyError> {
+/// Validate clientDataJSON: check type field is "webauthn.get", challenge matches,
+/// and origin is consistent with the origin from the signature blob.
+/// The origin cross-check matches OpenSSH's preamble validation approach.
+fn validate_client_data(
+    client_data_json: &str,
+    challenge: &[u8],
+    sig_origin: &str,
+) -> Result<(), VerifyError> {
     let parsed: serde_json::Value = serde_json::from_str(client_data_json)
         .map_err(|e| VerifyError::Parse(format!("Invalid clientDataJSON: {e}")))?;
 
@@ -217,6 +223,19 @@ fn validate_client_data(client_data_json: &str, challenge: &[u8]) -> Result<(), 
     if actual != expected {
         return Err(VerifyError::ChallengeMismatch(format!(
             "expected {expected}, got {actual}"
+        )));
+    }
+
+    // Validate origin matches the one from the signature blob
+    let cd_origin = parsed
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            VerifyError::InvalidOrigin("Missing 'origin' field in clientDataJSON".to_string())
+        })?;
+    if cd_origin != sig_origin {
+        return Err(VerifyError::InvalidOrigin(format!(
+            "Origin mismatch: sig blob has '{sig_origin}', clientDataJSON has '{cd_origin}'"
         )));
     }
 
@@ -341,6 +360,14 @@ fn parse_webauthn_signature(raw: &[u8]) -> Result<WebAuthnSignature, VerifyError
     // Extensions (CBOR, typically empty)
     let extensions = read_ssh_bytes(&mut reader)?.to_vec();
 
+    // Reject trailing data — a well-formed signature has no extra bytes
+    if !reader.is_empty() {
+        return Err(VerifyError::Parse(format!(
+            "Trailing data after signature: {} bytes",
+            reader.len()
+        )));
+    }
+
     Ok(WebAuthnSignature {
         ecdsa_sig_bytes,
         flags,
@@ -447,34 +474,47 @@ mod tests {
     fn test_validate_client_data() {
         let challenge = b"test-challenge-data-here!1234567";
         let encoded = URL_SAFE_NO_PAD.encode(challenge);
+        let origin = "https://example.com";
         let client_data = format!(
-            r#"{{"type":"webauthn.get","challenge":"{encoded}","origin":"https://example.com"}}"#
+            r#"{{"type":"webauthn.get","challenge":"{encoded}","origin":"{origin}"}}"#
         );
-        assert!(validate_client_data(&client_data, challenge).is_ok());
-        assert!(validate_client_data(&client_data, b"wrong").is_err());
+        assert!(validate_client_data(&client_data, challenge, origin).is_ok());
+        assert!(validate_client_data(&client_data, b"wrong", origin).is_err());
 
-        let bad_json = r#"{"type":"webauthn.get","origin":"https://example.com"}"#;
-        assert!(validate_client_data(bad_json, challenge).is_err());
+        let bad_json = format!(r#"{{"type":"webauthn.get","origin":"{origin}"}}"#);
+        assert!(validate_client_data(&bad_json, challenge, origin).is_err());
     }
 
     #[test]
     fn test_validate_client_data_wrong_type() {
         let challenge = b"test";
         let encoded = URL_SAFE_NO_PAD.encode(challenge);
+        let origin = "https://example.com";
 
         // webauthn.create should be rejected
         let client_data = format!(
-            r#"{{"type":"webauthn.create","challenge":"{encoded}","origin":"https://example.com"}}"#
+            r#"{{"type":"webauthn.create","challenge":"{encoded}","origin":"{origin}"}}"#
         );
-        let err = validate_client_data(&client_data, challenge).unwrap_err();
+        let err = validate_client_data(&client_data, challenge, origin).unwrap_err();
         assert!(matches!(err, VerifyError::InvalidType(_)));
 
         // Missing type field
         let client_data = format!(
-            r#"{{"challenge":"{encoded}","origin":"https://example.com"}}"#
+            r#"{{"challenge":"{encoded}","origin":"{origin}"}}"#
         );
-        let err = validate_client_data(&client_data, challenge).unwrap_err();
+        let err = validate_client_data(&client_data, challenge, origin).unwrap_err();
         assert!(matches!(err, VerifyError::InvalidType(_)));
+    }
+
+    #[test]
+    fn test_validate_client_data_origin_mismatch() {
+        let challenge = b"test";
+        let encoded = URL_SAFE_NO_PAD.encode(challenge);
+        let client_data = format!(
+            r#"{{"type":"webauthn.get","challenge":"{encoded}","origin":"https://evil.com"}}"#
+        );
+        let err = validate_client_data(&client_data, challenge, "https://example.com").unwrap_err();
+        assert!(matches!(err, VerifyError::InvalidOrigin(_)));
     }
 
     #[test]
@@ -552,6 +592,14 @@ mod tests {
         assert_eq!(sig.origin, "https://example.com");
         assert!(sig.client_data_json.contains("webauthn.get"));
         assert!(sig.extensions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_rejects_trailing_data() {
+        let mut blob = make_test_sig_blob(0x05, &[]);
+        blob.extend(b"trailing-garbage");
+        let err = parse_webauthn_signature(&blob).unwrap_err();
+        assert!(matches!(err, VerifyError::Parse(_)));
     }
 
     #[test]

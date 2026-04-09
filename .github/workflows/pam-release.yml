@@ -16,6 +16,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install PAM headers
+        run: sudo apt-get install -y libpam0g-dev
+
+      - name: Build and test
+        working-directory: pam_ssh_webauthn
+        run: |
+          cargo clippy -- -D warnings
+          cargo test
+
       - name: Package source
         run: |
           VERSION=${GITHUB_REF_NAME#pam/}
@@ -52,8 +66,8 @@ jobs:
           fi
 
           # Convert PR references to clickable markdown links
-          NOTES=$(echo "$NOTES" | sed -E 's|\(#([0-9]+)\)|([#\1](https://github.com/rado0x54/ShellWatch/pull/\1))|g')
-          NOTES=$(echo "$NOTES" | sed -E 's|([^(])https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|\1[#\2](https://github.com/rado0x54/ShellWatch/pull/\2)|g')
+          NOTES=$(echo "$NOTES" | sed -E 's|\(#([0-9]+)\)|([#\1](https://github.com/${{ github.repository }}/pull/\1))|g')
+          NOTES=$(echo "$NOTES" | sed -E 's|([^(])https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|\1[#\2](https://github.com/${{ github.repository }}/pull/\2)|g')
 
           VERSION=${GITHUB_REF_NAME#pam/}
           {
@@ -67,7 +81,7 @@ jobs:
             echo "cargo build --release"
             echo "\`\`\`"
             echo ""
-            echo "See [README.md](https://github.com/rado0x54/ShellWatch/blob/${GITHUB_REF_NAME}/pam_ssh_webauthn/README.md) for full build and setup instructions."
+            echo "See [README.md](https://github.com/${{ github.repository }}/blob/${GITHUB_REF_NAME}/pam_ssh_webauthn/README.md) for full build and setup instructions."
             echo ""
             echo "## Changes"
             echo ""

@@ -11,7 +11,6 @@ fn main() {
 
     if identities.is_empty() {
         println!("No WebAuthn SK identities found in agent.");
-        // Also show raw count of all identities
         return;
     }
 
