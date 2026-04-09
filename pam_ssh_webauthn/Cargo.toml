@@ -9,7 +9,7 @@ license = "MIT"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-pam-bindings = "0.1.1"
+pam = { package = "pam-bindings", version = "0.1.1" }
 p256 = { version = "0.13", features = ["ecdsa"] }
 sha2 = "0.10"
 base64 = "0.22"

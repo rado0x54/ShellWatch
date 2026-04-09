@@ -51,7 +51,9 @@ fn build_webauthn_signature(signing_key: &SigningKey, challenge: &[u8]) -> Vec<u
         r#"{{"type":"webauthn.get","challenge":"{challenge_b64}","origin":"{APPLICATION}","crossOrigin":false}}"#
     );
 
-    // signed_data = SHA256(application) || flags || counter || SHA256(clientDataJSON)
+    let extensions: &[u8] = &[];
+
+    // signed_data = SHA256(application) || flags || counter || extensions || SHA256(clientDataJSON)
     let app_hash = Sha256::digest(APPLICATION.as_bytes());
     let msg_hash = Sha256::digest(client_data_json.as_bytes());
 
@@ -59,6 +61,7 @@ fn build_webauthn_signature(signing_key: &SigningKey, challenge: &[u8]) -> Vec<u
     signed_data.extend(&app_hash);
     signed_data.push(flags);
     signed_data.extend(&counter.to_be_bytes());
+    signed_data.extend(extensions);
     signed_data.extend(&msg_hash);
 
     let ecdsa_sig: p256::ecdsa::Signature = signing_key.sign(&signed_data);
@@ -69,7 +72,6 @@ fn build_webauthn_signature(signing_key: &SigningKey, challenge: &[u8]) -> Vec<u
     write_ssh_mpint(&mut ecdsa_blob, &s);
 
     let algo = b"sk-ecdsa-sha2-nistp256@openssh.com";
-    let extensions = b"";
 
     let mut blob = Vec::new();
     write_ssh_string(&mut blob, algo);

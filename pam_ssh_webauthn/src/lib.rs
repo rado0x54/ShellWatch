@@ -18,7 +18,7 @@
 //! 5. Sends SIGN_REQUEST to agent with matched key blob
 //! 6. Parses WebAuthn signature (origin, clientDataJSON, extensions)
 //! 7. Validates challenge is embedded in clientDataJSON
-//! 8. Constructs signed_data, verifies ECDSA P-256 signature
+//! 8. Constructs signed_data (incl. extensions), verifies ECDSA P-256 signature
 //! 9. Returns PAM_SUCCESS or PAM_AUTH_ERR
 
 pub mod agent;

@@ -7,6 +7,7 @@
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::time::Duration;
 
 const SSH_AGENTC_REQUEST_IDENTITIES: u8 = 11;
 const SSH_AGENTC_SIGN_REQUEST: u8 = 13;
@@ -15,6 +16,15 @@ const SSH_AGENT_IDENTITIES_ANSWER: u8 = 12;
 const SSH_AGENT_SIGN_RESPONSE: u8 = 14;
 
 const WEBAUTHN_SK_ALGO: &[u8] = b"webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+
+/// Max size for individual SSH string fields (64 KB). Prevents a malicious agent
+/// response with len=0xFFFFFFFF from causing a huge allocation.
+const MAX_STRING_LEN: usize = 64 * 1024;
+
+/// Timeout for agent socket operations. A hung agent must not block sudo/login
+/// indefinitely. The sign request may require user interaction (passkey tap),
+/// so we use a generous timeout.
+const SOCKET_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A raw identity from the SSH agent: key blob + comment.
 #[derive(Debug, Clone)]
@@ -27,7 +37,7 @@ pub struct AgentIdentity {
 /// List identities from the SSH agent, returning only those with the
 /// `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` algorithm.
 pub fn list_webauthn_identities(socket_path: &Path) -> io::Result<Vec<AgentIdentity>> {
-    let mut stream = UnixStream::connect(socket_path)?;
+    let mut stream = connect_with_timeout(socket_path)?;
 
     // Send REQUEST_IDENTITIES
     let msg = [SSH_AGENTC_REQUEST_IDENTITIES];
@@ -56,7 +66,7 @@ pub fn list_webauthn_identities(socket_path: &Path) -> io::Result<Vec<AgentIdent
 /// Send a sign request to the SSH agent and return the raw signature blob.
 /// The blob preserves all WebAuthn fields (origin, clientDataJSON, extensions).
 pub fn sign_raw(socket_path: &Path, key_blob: &[u8], data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut stream = UnixStream::connect(socket_path)?;
+    let mut stream = connect_with_timeout(socket_path)?;
 
     // Build SSH_AGENTC_SIGN_REQUEST message
     let mut msg = Vec::new();
@@ -125,6 +135,13 @@ fn is_webauthn_key_blob(blob: &[u8]) -> bool {
 
 // --- Wire format helpers ---
 
+fn connect_with_timeout(socket_path: &Path) -> io::Result<UnixStream> {
+    let stream = UnixStream::connect(socket_path)?;
+    stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
+    stream.set_write_timeout(Some(SOCKET_TIMEOUT))?;
+    Ok(stream)
+}
+
 fn write_msg(stream: &mut UnixStream, msg: &[u8]) -> io::Result<()> {
     let len = u32::try_from(msg.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Message too large"))?;
@@ -162,6 +179,12 @@ pub fn read_u32(buf: &mut &[u8]) -> io::Result<u32> {
 
 pub fn read_ssh_bytes<'a>(buf: &mut &'a [u8]) -> io::Result<&'a [u8]> {
     let len = read_u32(buf)? as usize;
+    if len > MAX_STRING_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("SSH string length {len} exceeds maximum {MAX_STRING_LEN}"),
+        ));
+    }
     if buf.len() < len {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
