@@ -95,7 +95,10 @@ fn parse_args(args: &[&CStr]) -> Result<Config, String> {
     })
 }
 
-fn do_authenticate(config: &Config, _handle: &mut PamHandle) -> Result<bool, Box<dyn std::error::Error>> {
+fn do_authenticate(config: &Config, handle: &mut PamHandle) -> Result<bool, Box<dyn std::error::Error>> {
+    let user = handle.get_user(None).unwrap_or_else(|_| "unknown".to_string());
+    info!("pam_ssh_webauthn: authenticating user '{user}'");
+
     // Read authorized keys
     let authorized_keys = keys::parse_authorized_keys(Path::new(&config.key_file))?;
     if authorized_keys.is_empty() {
