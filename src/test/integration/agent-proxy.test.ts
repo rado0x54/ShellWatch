@@ -10,7 +10,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
 import type { Config } from "../../config/index.js";
-import { makeTestConfig } from "../helpers/test-config.js";
+import { makeTestConfig } from "../helpers/index.js";
 import {
   StubAccountRepository,
   InMemoryApiKeyRepository,

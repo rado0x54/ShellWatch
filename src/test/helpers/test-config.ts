@@ -20,12 +20,13 @@ export function makeTestConfig(
     security?: Partial<Config["security"]>;
   },
 ): Config {
-  if (!overrides) return { ...defaults };
+  const base = structuredClone(defaults);
+  if (!overrides) return base;
 
   const { security, ...rest } = overrides;
   return {
-    ...defaults,
+    ...base,
     ...rest,
-    security: security ? { ...defaults.security, ...security } : defaults.security,
+    security: security ? { ...base.security, ...security } : base.security,
   };
 }

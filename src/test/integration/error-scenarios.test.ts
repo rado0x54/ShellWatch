@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
-import { makeTestConfig } from "../helpers/test-config.js";
+import { makeTestConfig } from "../helpers/index.js";
 import {
   connectTestWsClient,
   createTestLog,
