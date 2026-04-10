@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
-import { securityFieldDefaults, serverDefaults } from "../../config/index.js";
+import { makeTestConfig } from "../helpers/test-config.js";
 import {
   connectTestWsClient,
   createTestLog,
@@ -121,26 +121,15 @@ describe("Error Scenarios", () => {
       const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
 
       const testSecret = "test-secret";
-      const config = {
-        keyDirectory: "/tmp",
+      const config = makeTestConfig({
         seedAdminEndpoints: [
           {
             label: "No Key",
             address: { username: "test", host: "localhost", port: 22 },
           },
         ],
-        seedAdminPasskeys: [],
-        server: serverDefaults,
-        security: {
-          ...securityFieldDefaults,
-          rpId: "localhost",
-          trustedWebauthnOrigins: ["http://localhost"],
-          cookieSecret: testSecret,
-          allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
-        },
-        notifications: { mcp: { debounceMs: 50 } },
-        agentSocket: { proxyEnabled: false }, // TODO: construct test configs via Zod schema so defaults apply automatically
-      };
+        security: { cookieSecret: testSecret },
+      });
       const testApiKey = "sw_test_error_scenario_key";
       const errorApiKeyRepo = new InMemoryApiKeyRepository();
       await errorApiKeyRepo.create({

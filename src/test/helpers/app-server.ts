@@ -7,7 +7,8 @@ import ssh2 from "ssh2";
 
 const { utils } = ssh2;
 
-import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
+import type { Config } from "../../config/index.js";
+import { makeTestConfig } from "./test-config.js";
 import {
   StubAccountRepository,
   InMemoryApiKeyRepository,
@@ -63,7 +64,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   const testCookieSecret = "test-secret-for-session-signing";
   const testAccountId = "test-account-00000000-0000-0000-0000-000000000000";
 
-  const config: Config = {
+  const config: Config = makeTestConfig({
     keyDirectory: tmpDir,
     seedAdminEndpoints: [
       {
@@ -71,18 +72,8 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
         address: { username: "testuser", host: sshServer.host, port: sshServer.port },
       },
     ],
-    seedAdminPasskeys: [],
-    server: { ...serverDefaults },
-    security: {
-      ...securityFieldDefaults,
-      rpId: "localhost",
-      trustedWebauthnOrigins: ["http://localhost"],
-      cookieSecret: testCookieSecret,
-      allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
-    },
-    notifications: { mcp: { debounceMs: 50 } },
-    agentSocket: { proxyEnabled: false }, // TODO: construct test configs via Zod schema so defaults apply automatically
-  };
+    security: { cookieSecret: testCookieSecret },
+  });
 
   const endpointRepo = new InMemoryEndpointRepository([
     {

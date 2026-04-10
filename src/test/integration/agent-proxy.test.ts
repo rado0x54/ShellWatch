@@ -9,7 +9,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
-import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
+import type { Config } from "../../config/index.js";
+import { makeTestConfig } from "../helpers/test-config.js";
 import {
   StubAccountRepository,
   InMemoryApiKeyRepository,
@@ -65,21 +66,10 @@ describe("agent-proxy WebSocket endpoint", () => {
       privateKeyContent: testPrivateKey,
     };
 
-    const config: Config = {
-      keyDirectory: "/tmp",
-      seedAdminEndpoints: [],
-      seedAdminPasskeys: [],
-      server: { ...serverDefaults },
-      security: {
-        ...securityFieldDefaults,
-        rpId: "localhost",
-        trustedWebauthnOrigins: ["http://localhost"],
-        cookieSecret: "test-secret",
-        allowedNetworks: ["127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128"],
-      },
-      notifications: { mcp: { debounceMs: 50 } },
+    const config: Config = makeTestConfig({
+      security: { cookieSecret: "test-secret" },
       agentSocket: { proxyEnabled: true },
-    };
+    });
 
     const endpointRepo = new InMemoryEndpointRepository([]);
     const keyRepo = new InMemorySshKeyRepository([
