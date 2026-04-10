@@ -19,6 +19,11 @@ jobs:
         with:
           components: clippy
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pam_ssh_webauthn
+
       - name: Install PAM headers
         run: sudo apt-get install -y libpam0g-dev
 
@@ -38,11 +43,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-20.04
+            runner: ubuntu-22.04
             artifact: pam_ssh_webauthn-x86_64-linux-gnu.so
             cross: false
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-20.04
+            runner: ubuntu-22.04
             artifact: pam_ssh_webauthn-aarch64-linux-gnu.so
             cross: true
     steps:
@@ -53,6 +58,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pam_ssh_webauthn
+          key: ${{ matrix.target }}
+
       - name: Install PAM headers (native)
         if: ${{ !matrix.cross }}
         run: sudo apt-get install -y libpam0g-dev
@@ -61,18 +72,17 @@ jobs:
         if: ${{ matrix.cross }}
         run: |
           sudo dpkg --add-architecture arm64
-          # Add arm64 package sources
           sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ focal main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ focal-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu libpam0g-dev:arm64
 
       - name: Configure cross-compilation
         if: ${{ matrix.cross }}
         run: |
-          mkdir -p .cargo
-          cat >> .cargo/config.toml <<'EOF'
+          mkdir -p pam_ssh_webauthn/.cargo
+          cat > pam_ssh_webauthn/.cargo/config.toml <<'EOF'
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
           EOF
@@ -166,10 +176,10 @@ jobs:
             echo ""
             echo "| File | Target |"
             echo "|------|--------|"
-            echo "| \`pam_ssh_webauthn-x86_64-linux-gnu.so\` | x86_64 Linux (glibc, Ubuntu 20.04+, Debian 11+, RHEL 8+) |"
-            echo "| \`pam_ssh_webauthn-aarch64-linux-gnu.so\` | ARM64 Linux (glibc, Ubuntu 20.04+, Debian 11+, Graviton) |"
+            echo "| \`pam_ssh_webauthn-x86_64-linux-gnu.so\` | x86_64 Linux (glibc, Ubuntu 22.04+, Debian 12+, RHEL 9+) |"
+            echo "| \`pam_ssh_webauthn-aarch64-linux-gnu.so\` | ARM64 Linux (glibc, Ubuntu 22.04+, Debian 12+, Graviton) |"
             echo ""
-            echo "These are dynamically linked against \`libpam\` and \`libc\` (glibc). Built on Ubuntu 20.04 for broad compatibility."
+            echo "These are dynamically linked against \`libpam\` and \`libc\` (glibc 2.35+). Built on Ubuntu 22.04."
             echo ""
             echo "## Source distribution"
             echo ""
