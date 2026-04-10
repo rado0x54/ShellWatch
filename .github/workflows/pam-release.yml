@@ -8,13 +8,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Package & Release
+  test:
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -24,11 +22,97 @@ jobs:
       - name: Install PAM headers
         run: sudo apt-get install -y libpam0g-dev
 
-      - name: Build and test
+      - name: Clippy
         working-directory: pam_ssh_webauthn
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        working-directory: pam_ssh_webauthn
+        run: cargo test
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-20.04
+            artifact: pam_ssh_webauthn-x86_64-linux-gnu.so
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-20.04
+            artifact: pam_ssh_webauthn-aarch64-linux-gnu.so
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install PAM headers (native)
+        if: ${{ !matrix.cross }}
+        run: sudo apt-get install -y libpam0g-dev
+
+      - name: Install cross-compilation toolchain (aarch64)
+        if: ${{ matrix.cross }}
         run: |
-          cargo clippy -- -D warnings
-          cargo test
+          sudo dpkg --add-architecture arm64
+          # Add arm64 package sources
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ focal main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ focal-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libpam0g-dev:arm64
+
+      - name: Configure cross-compilation
+        if: ${{ matrix.cross }}
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build
+        working-directory: pam_ssh_webauthn
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename artifact
+        run: |
+          cp pam_ssh_webauthn/target/${{ matrix.target }}/release/libpam_ssh_webauthn.so \
+             ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Package & Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Generate checksums for binaries
+        run: |
+          cd binaries
+          for f in *.so; do
+            sha256sum "$f" > "${f}.sha256"
+          done
 
       - name: Package source
         run: |
@@ -72,12 +156,27 @@ jobs:
 
           VERSION=${GITHUB_REF_NAME#pam/}
           {
-            echo "## Source-only release"
+            echo "## Prebuilt binaries"
             echo ""
-            echo "This is a **source distribution**. The PAM module (\`.so\`) should be built on the target machine to match its libc, PAM, and OpenSSL versions."
+            echo "Prebuilt \`.so\` modules are available for common targets. Download the one matching your architecture and copy it into place:"
             echo ""
             echo "\`\`\`bash"
-            echo "unzip pam_ssh_webauthn-${VERSION}-source.zip"
+            echo "sudo cp pam_ssh_webauthn-x86_64-linux-gnu.so /usr/lib/x86_64-linux-gnu/security/pam_ssh_webauthn.so"
+            echo "\`\`\`"
+            echo ""
+            echo "| File | Target |"
+            echo "|------|--------|"
+            echo "| \`pam_ssh_webauthn-x86_64-linux-gnu.so\` | x86_64 Linux (glibc, Ubuntu 20.04+, Debian 11+, RHEL 8+) |"
+            echo "| \`pam_ssh_webauthn-aarch64-linux-gnu.so\` | ARM64 Linux (glibc, Ubuntu 20.04+, Debian 11+, Graviton) |"
+            echo ""
+            echo "These are dynamically linked against \`libpam\` and \`libc\` (glibc). Built on Ubuntu 20.04 for broad compatibility."
+            echo ""
+            echo "## Source distribution"
+            echo ""
+            echo "For other targets, or if you need the \`native-crypto\` (OpenSSL/FIPS) feature:"
+            echo ""
+            echo "\`\`\`bash"
+            echo "tar xzf pam_ssh_webauthn-${VERSION}-source.tar.gz"
             echo "cd pam_ssh_webauthn-${VERSION}-source"
             echo "cargo build --release"
             echo "\`\`\`"
@@ -97,6 +196,10 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "pam_ssh_webauthn ${VERSION}" \
             --notes-file /tmp/release-notes.md \
+            binaries/pam_ssh_webauthn-x86_64-linux-gnu.so \
+            binaries/pam_ssh_webauthn-x86_64-linux-gnu.so.sha256 \
+            binaries/pam_ssh_webauthn-aarch64-linux-gnu.so \
+            binaries/pam_ssh_webauthn-aarch64-linux-gnu.so.sha256 \
             pam_ssh_webauthn-${VERSION}-source.zip \
             pam_ssh_webauthn-${VERSION}-source.zip.sha256 \
             pam_ssh_webauthn-${VERSION}-source.tar.gz \
