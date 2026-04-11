@@ -42,7 +42,7 @@
 
   let action = $state<ActionData | null>(null);
   let loading = $state(true);
-  let signing = $state(false);
+  let processing = $state(false);
   let error = $state<string | null>(null);
   let resultStatus = $state<string | null>(null);
 
@@ -67,9 +67,9 @@
     }
   });
 
-  async function handleSign() {
+  async function handleAction() {
     if (!action) return;
-    signing = true;
+    processing = true;
     error = null;
 
     try {
@@ -88,7 +88,7 @@
       error = (err as Error).message;
       toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
     } finally {
-      signing = false;
+      processing = false;
     }
   }
 
@@ -244,9 +244,9 @@
       {/if}
 
       <div class="sign-actions">
-        <button class="btn btn-secondary" onclick={handleDeny} disabled={signing}>Deny</button>
-        <button class="btn btn-primary" onclick={handleSign} disabled={signing}>
-          {#if signing}
+        <button class="btn btn-secondary" onclick={handleDeny} disabled={processing}>Deny</button>
+        <button class="btn btn-primary" onclick={handleAction} disabled={processing}>
+          {#if processing}
             {isKeyApprove ? "Approving..." : "Signing..."}
           {:else}
             {isKeyApprove ? "Approve" : "Sign"}

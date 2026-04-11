@@ -48,10 +48,10 @@ export class PendingActionStore {
   resolve(id: string, response?: SignResponse): boolean {
     const action = this.actions.get(id);
     if (!action || action.status !== "pending") return false;
+    if (action.type === "webauthn-sign" && !response) return false;
     action.status = "completed";
     if (action.type === "webauthn-sign") {
-      if (!response) return false;
-      action.resolve(response);
+      action.resolve(response!);
     } else {
       action.resolve();
     }

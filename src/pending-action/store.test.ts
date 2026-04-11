@@ -108,6 +108,16 @@ describe("PendingActionStore", () => {
     expect(resolve).toHaveBeenCalled();
   });
 
+  it("rejects resolve of webauthn-sign without response", () => {
+    const resolve = vi.fn();
+    const action = store.create(makeWebAuthnParams({ resolve }));
+
+    const result = store.resolve(action.id);
+    expect(result).toBe(false);
+    expect(action.status).toBe("pending");
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("cannot resolve a non-pending action", () => {
     const action = store.create(makeWebAuthnParams());
     store.deny(action.id);

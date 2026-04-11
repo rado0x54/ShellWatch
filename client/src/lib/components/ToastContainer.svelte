@@ -7,10 +7,10 @@
     sourceLabels,
   } from "$lib/utils/webauthn-sign.js";
 
-  let signingActionId = $state<string | null>(null);
+  let activeActionId = $state<string | null>(null);
 
-  async function handleSign(action: SignRequestAction, toastId: string) {
-    signingActionId = action.actionId;
+  async function handleAction(action: SignRequestAction, toastId: string) {
+    activeActionId = action.actionId;
     try {
       if (action.actionType === "webauthn-sign") {
         const result = await performSignCeremony(action);
@@ -22,7 +22,7 @@
     } catch (err) {
       toastError(`Signing failed: ${(err as Error).message}`);
     } finally {
-      signingActionId = null;
+      activeActionId = null;
     }
   }
 
@@ -44,7 +44,7 @@
     {#each $toasts as toast (toast.id)}
       <div class="toast toast-{toast.variant}">
         {#if toast.variant === "sign-request" && toast.action}
-          {@const isSigning = signingActionId === toast.action.actionId}
+          {@const isProcessing = activeActionId === toast.action.actionId}
           {@const isKeyApprove = toast.action.actionType === "key-approve"}
           <div class="toast-header">
             <span class="toast-icon">{isKeyApprove ? "&#128272;" : "&#128273;"}</span>
@@ -93,16 +93,16 @@
             <button
               class="btn btn-secondary"
               onclick={() => handleDeny(toast.action!.actionId, toast.id)}
-              disabled={isSigning}
+              disabled={isProcessing}
             >
               Deny
             </button>
             <button
               class="btn btn-primary"
-              onclick={() => handleSign(toast.action!, toast.id)}
-              disabled={isSigning}
+              onclick={() => handleAction(toast.action!, toast.id)}
+              disabled={isProcessing}
             >
-              {#if isSigning}
+              {#if isProcessing}
                 {isKeyApprove ? "Approving..." : "Signing..."}
               {:else}
                 {isKeyApprove ? "Approve" : "Sign"}
