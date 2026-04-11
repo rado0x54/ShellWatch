@@ -74,6 +74,9 @@ describe("WebSocketChannel as WsExtension", () => {
     expect(msg.type).toBe("sign:request");
     expect(msg.actionId).toBe("action-1");
     expect(msg.source).toBe("agent-proxy");
+    expect(msg.credentialId).toBe("cred-1");
+    expect(msg.challenge).toBe("dGVzdA==");
+    expect(msg.rpId).toBe("localhost");
   });
 
   it("broadcasts sign:resolved to all clients for the account", () => {

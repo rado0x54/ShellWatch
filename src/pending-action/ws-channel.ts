@@ -27,6 +27,9 @@ export class WebSocketChannel implements NotificationChannel, WsExtension {
       deepLink,
       source: action.context.source,
       passkeyLabel: action.passkeyLabel,
+      credentialId: action.credentialId,
+      challenge: action.challenge,
+      rpId: action.rpId,
       ...("endpointLabel" in action.context && {
         endpointLabel: action.context.endpointLabel,
       }),
