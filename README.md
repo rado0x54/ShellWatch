@@ -35,6 +35,9 @@ Edit `config.yaml`. See `config.sample.yaml` for all options. Minimal example:
 ```yaml
 keyDirectory: ./keys
 
+server:
+  externalUrl: http://localhost:3000
+
 security:
   rpId: localhost
   trustedWebauthnOrigins:
@@ -151,6 +154,31 @@ Each MCP client gets an isolated `AgentSession` — agents can only see and cont
 ```
 
 The API key must have `mcp` scope. Use `seedAdminApiKey` in config to seed a known key, or create one via the web UI under Settings → API Keys.
+
+## Push Notifications (PWA)
+
+ShellWatch is a Progressive Web App — it can be installed on mobile and desktop and supports Web Push notifications for sign requests (passkey signing, SSH key approval). This means users don't need the browser tab open to approve signing requests.
+
+### Setup
+
+Generate VAPID keys and add them to `config.yaml`:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+```yaml
+vapid:
+  subject: "mailto:admin@example.com"
+  publicKey: "BEl62i..."
+  privateKey: "UGo..."
+```
+
+Then enable push notifications in the web UI under Settings → Notifications. The browser will prompt for notification permission.
+
+When a sign request arrives (from an MCP agent, SSH agent proxy, or another UI session), a native push notification appears. Tapping it opens the sign request directly.
+
+Push notifications are optional — when `vapid` is not configured, the feature is simply hidden.
 
 ## SSH Agent Proxy
 

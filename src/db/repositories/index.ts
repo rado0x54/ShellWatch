@@ -18,6 +18,11 @@ export {
   InMemoryEndpointRepository,
 } from "./endpoint-repo.js";
 export {
+  DrizzlePushSubscriptionRepository,
+  type PushSubscriptionInfo,
+  type PushSubscriptionRepository,
+} from "./push-subscription-repo.js";
+export {
   DrizzleSshKeyRepository,
   InMemorySshKeyRepository,
   type SshKeyInfo,

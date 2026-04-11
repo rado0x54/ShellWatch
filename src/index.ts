@@ -5,6 +5,7 @@ import {
   DrizzleAccountRepository,
   DrizzleApiKeyRepository,
   DrizzleEndpointRepository,
+  DrizzlePushSubscriptionRepository,
   DrizzleSshKeyRepository,
   runMigrations,
   seedFromConfig,
@@ -13,6 +14,7 @@ import { findCredentialsForAccount } from "./db/repositories/credential-queries.
 import {
   NotificationDispatcher,
   PendingActionStore,
+  PushChannel,
   WebSocketChannel,
 } from "./pending-action/index.js";
 import { buildApp } from "./server/app.js";
@@ -43,10 +45,21 @@ try {
 
   // PendingAction system — manages sign request lifecycle + notifications
   const actionStore = new PendingActionStore();
-  const baseUrl = config.server.externalUrl ?? `http://${HOST}:${PORT}`;
+  const baseUrl = config.server.externalUrl;
   const dispatcher = new NotificationDispatcher(baseUrl);
   const wsChannel = new WebSocketChannel();
   dispatcher.register(wsChannel);
+
+  // Web Push notification channel (optional — requires VAPID config)
+  let pushSubRepo: DrizzlePushSubscriptionRepository | undefined;
+  if (config.vapid) {
+    pushSubRepo = new DrizzlePushSubscriptionRepository(db);
+    const pushChannel = new PushChannel({
+      pushSubRepo,
+      vapid: config.vapid,
+    });
+    dispatcher.register(pushChannel);
+  }
 
   // SigningBridge — coordinates sign requests from agents → PendingAction → notifications
   const signingBridge = new SigningBridge({ actionStore, dispatcher });
@@ -79,6 +92,7 @@ try {
     apiKeyRepo,
     actionStore,
     wsChannel,
+    pushSubRepo,
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
         keyProvider: keyWatcher,
@@ -90,12 +104,6 @@ try {
   });
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
-
-  if (!config.server.externalUrl && (HOST === "0.0.0.0" || HOST === "::")) {
-    app.log.warn(
-      `server.externalUrl not set and HOST is ${HOST} — deep links for external notification channels will not work`,
-    );
-  }
 
   app.log.info(`WebAuthn rpId: ${config.security.rpId}`);
   app.log.info(`Trusted origins: ${config.security.trustedWebauthnOrigins.join(", ")}`);
@@ -112,6 +120,10 @@ try {
   if (seedResult.seededAdminPasskey) {
     const labels = config.seedAdminPasskeys.map((pk) => pk.label).join(", ");
     app.log.info(`Seeded admin passkey(s): ${labels}`);
+  }
+
+  if (config.vapid) {
+    app.log.info("Web Push notifications enabled (VAPID configured)");
   }
 
   const endpoints = await endpointRepo.findAll();

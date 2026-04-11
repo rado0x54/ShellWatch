@@ -8,8 +8,9 @@
 # Keys are assigned to endpoints via the web UI after discovery.
 
 # Server settings
-# server:
-#   port: 3000                                        # HTTP port (default: 3000)
+server:
+  # port: 3000                                        # HTTP port (default: 3000)
+  externalUrl: http://localhost:3000 # External URL for deep links (required)
 
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
@@ -70,6 +71,14 @@ security:
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"
+
+# Web Push notifications — send push notifications for sign requests
+# so users don't need the browser tab open. Requires VAPID keys.
+# Generate keys: npx web-push generate-vapid-keys
+# vapid:
+#   subject: "mailto:admin@example.com"
+#   publicKey: "BEl62i..."                                # base64url-encoded VAPID public key
+#   privateKey: "UGo..."                                  # base64url-encoded VAPID private key
 
 # SSH agent proxy — allows system SSH clients to use ShellWatch-managed keys.
 # Requires the shellwatch-agent thin client on the user's workstation.

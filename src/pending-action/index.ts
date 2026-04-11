@@ -15,4 +15,5 @@ export {
   type UiContext,
   type WebAuthnSignAction,
 } from "./types.js";
+export { PushChannel, type PushChannelParams } from "./push-channel.js";
 export { WebSocketChannel } from "./ws-channel.js";

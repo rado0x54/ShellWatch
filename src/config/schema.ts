@@ -107,8 +107,10 @@ export const serverDefaults = {
 
 export const ServerSchema = z.object({
   port: z.number().int().min(1).max(65535).default(serverDefaults.port),
-  /** External URL for deep links (e.g., "https://shellwatch.example.com"). Falls back to http://HOST:PORT. */
-  externalUrl: z.string().url().optional(),
+  /** External URL for deep links (e.g., "https://shellwatch.example.com" or "http://localhost:3000"). */
+  externalUrl: z
+    .string()
+    .url("server.externalUrl must be a valid URL (e.g., 'http://localhost:3000')"),
 });
 
 export const SeedAdminPasskeySchema = z.object({
@@ -117,6 +119,14 @@ export const SeedAdminPasskeySchema = z.object({
   counter: z.number().int().default(0),
   transports: z.array(z.string()).default([]),
   label: z.string().default("Admin Passkey"),
+});
+
+export const VapidSchema = z.object({
+  subject: z.string().min(1, "vapid.subject is required (e.g., 'mailto:admin@example.com')"),
+  publicKey: z.string().min(1, "vapid.publicKey is required (base64url-encoded VAPID public key)"),
+  privateKey: z
+    .string()
+    .min(1, "vapid.privateKey is required (base64url-encoded VAPID private key)"),
 });
 
 export const AgentSocketSchema = z.object({
@@ -131,10 +141,11 @@ export const ConfigSchema = z.object({
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
-  server: ServerSchema.default(serverDefaults),
+  server: ServerSchema,
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  vapid: VapidSchema.optional(),
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;

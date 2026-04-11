@@ -11,6 +11,7 @@ import type {
   AccountRepository,
   ApiKeyRepository,
   EndpointRepository,
+  PushSubscriptionRepository,
   SshKeyRepository,
 } from "../db/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
@@ -30,6 +31,7 @@ import { registerActionRoutes } from "./routes/actions.js";
 import { registerApiKeyRoutes } from "./routes/api-keys.js";
 import { registerEndpointRoutes } from "./routes/endpoints.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerPushRoutes } from "./routes/push.js";
 import { registerSshKeyRoutes } from "./routes/ssh-keys.js";
 import type { WsExtension } from "./ws-extension.js";
 import { registerWebSocket } from "./ws-handler.js";
@@ -53,6 +55,8 @@ export interface BuildAppParams {
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;
   wsChannel?: WebSocketChannel;
+  /** Push subscription repo for Web Push routes */
+  pushSubRepo?: PushSubscriptionRepository;
   /** Required when agentSocket.proxyEnabled is true */
   agentProxy?: {
     keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
@@ -140,6 +144,13 @@ export async function buildApp(params: BuildAppParams) {
     registerApiKeyRoutes({ app, apiKeyRepo });
   }
 
+  if (params.pushSubRepo) {
+    registerPushRoutes({
+      app,
+      pushSubRepo: params.pushSubRepo,
+    });
+  }
+
   // MCP server over streamable HTTP at /mcp
   await registerMcpHttpTransport({
     app,
@@ -181,7 +192,8 @@ export async function buildApp(params: BuildAppParams) {
   // Client runtime config
   app.get("/config.js", async (_request, reply) => {
     reply.type("application/javascript");
-    return `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`;
+    const vapidPublicKey = config.vapid?.publicKey ?? null;
+    return `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};window.__VAPID_PUBLIC_KEY__=${JSON.stringify(vapidPublicKey)};`;
   });
 
   // Static client files (built by SvelteKit adapter-static -> dist/client/)
