@@ -104,18 +104,19 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
     const pubKeyBlob = toPublicKeyBlob(pubKey);
     const fileKey = this.fileKeys.find((fk) => fk.publicKeyBlob.equals(pubKeyBlob));
     if (fileKey) {
+      const opts = options as { hash?: string };
       if (this.onFileKeySignRequest) {
         // Route through approval — the resolve closure performs the actual signing
         this.onFileKeySignRequest({
           fileKey,
           dataToSign: data,
-          hash: (options as { hash?: string }).hash,
-          resolve: () => this.signWithFileKey(fileKey, data, options as { hash?: string }, cb),
+          hash: opts.hash,
+          resolve: () => this.signWithFileKey(fileKey, data, opts, cb),
           reject: (err) => cb(err),
         });
       } else {
         // No approval callback — auto-sign (backward compat for tests/simple setups)
-        this.signWithFileKey(fileKey, data, options as { hash?: string }, cb);
+        this.signWithFileKey(fileKey, data, opts, cb);
       }
       return;
     }

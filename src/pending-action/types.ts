@@ -82,14 +82,10 @@ export type CreateActionParams =
 export type PendingActionView = Omit<PendingAction, "resolve" | "reject">;
 
 export function toActionView(action: PendingAction): PendingActionView {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const {
-    resolve: _r,
-    reject: _rj,
-    ...view
-  } = action as PendingAction & {
-    resolve: unknown;
-    reject: unknown;
-  };
-  return view as PendingActionView;
+  if (action.type === "webauthn-sign") {
+    const { resolve: _, reject: _r, ...view } = action;
+    return view;
+  }
+  const { resolve: _, reject: _r, ...view } = action;
+  return view;
 }
