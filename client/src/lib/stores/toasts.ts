@@ -49,9 +49,9 @@ export function clearAction(actionId: string): void {
   toasts.update((t) => t.filter((toast) => toast.action?.actionId !== actionId));
 }
 
-/** Convenience: show an error toast (auto-dismiss after 5s) */
+/** Convenience: show an error toast (auto-dismiss after 10s) */
 export function toastError(message: string): string {
-  return addToast({ variant: "error", message, dismissAfterMs: 5000 });
+  return addToast({ variant: "error", message, dismissAfterMs: 10_000 });
 }
 
 /** Convenience: show an info toast (auto-dismiss after 3s) */

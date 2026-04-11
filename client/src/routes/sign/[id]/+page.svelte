@@ -3,8 +3,8 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
-  import { toastError, toastInfo } from "$lib/stores/toasts.js";
-  import { clearAction } from "$lib/stores/toasts.js";
+  import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
+  import { performSignCeremony, resolveAction, sourceLabels } from "$lib/utils/webauthn-sign.js";
 
   const actionId = $derived($page.params.id);
 
@@ -35,14 +35,7 @@
   let loading = $state(true);
   let signing = $state(false);
   let error = $state<string | null>(null);
-  let done = $state(false);
-
-  const sourceLabels: Record<string, string> = {
-    "agent-proxy": "Agent Proxy",
-    ui: "SSH Connection",
-    mcp: "MCP Client",
-    "forwarding-agent": "Agent Forwarding",
-  };
+  let resultStatus = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -63,70 +56,15 @@
     }
   });
 
-  function bufferToBase64url(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
-    }
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
   async function handleSign() {
     if (!action) return;
     signing = true;
     error = null;
 
     try {
-      // Decode challenge (standard base64)
-      const decoded = atob(action.challenge);
-      const challengeBytes = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
-
-      // Decode credential ID (base64url)
-      const credIdBytes = Uint8Array.from(
-        atob(action.credentialId.replace(/-/g, "+").replace(/_/g, "/")),
-        (c) => c.charCodeAt(0),
-      );
-
-      const assertion = (await navigator.credentials.get({
-        publicKey: {
-          challenge: challengeBytes,
-          rpId: action.rpId,
-          allowCredentials: [
-            {
-              id: credIdBytes,
-              type: "public-key",
-              transports: ["usb", "nfc", "ble", "internal"],
-            },
-          ],
-          userVerification: "discouraged",
-          timeout: 60000,
-        },
-      })) as PublicKeyCredential;
-
-      if (!assertion?.response) {
-        throw new Error("No assertion returned");
-      }
-
-      const authResponse = assertion.response as AuthenticatorAssertionResponse;
-
-      const res = await fetch(`/api/actions/${actionId}/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          authenticatorData: bufferToBase64url(authResponse.authenticatorData),
-          signature: bufferToBase64url(authResponse.signature),
-          clientDataJSON: new TextDecoder().decode(authResponse.clientDataJSON),
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-
-      done = true;
-      action.status = "completed";
+      const result = await performSignCeremony(action);
+      await resolveAction(actionId, result);
+      resultStatus = "completed";
       clearAction(actionId);
       toastInfo("Signature completed successfully");
     } catch (err) {
@@ -140,12 +78,9 @@
   async function handleDeny() {
     if (!action) return;
     try {
-      const res = await fetch(`/api/actions/${actionId}/deny`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (res.ok) {
-        action.status = "denied";
-        done = true;
+        resultStatus = "denied";
         clearAction(actionId);
       } else {
         const body = await res.json().catch(() => ({ error: "Unknown error" }));
@@ -159,6 +94,9 @@
   function viewSession(sessionId: string) {
     goto(resolve(`/session/${sessionId}`));
   }
+
+  const displayStatus = $derived(resultStatus ?? action?.status);
+  const isTerminal = $derived(displayStatus !== "pending");
 </script>
 
 <div class="sign-page">
@@ -174,25 +112,25 @@
         <button class="btn btn-primary" onclick={() => goto(resolve("/"))}>Go Home</button>
       </div>
     </div>
-  {:else if action.status !== "pending" || done}
+  {:else if isTerminal}
     <div class="sign-card">
       <h2>
-        {#if action.status === "completed"}
+        {#if displayStatus === "completed"}
           Signature Complete
-        {:else if action.status === "denied"}
+        {:else if displayStatus === "denied"}
           Request Denied
-        {:else if action.status === "expired"}
+        {:else if displayStatus === "expired"}
           Request Expired
         {:else}
-          Request {action.status}
+          Request {displayStatus}
         {/if}
       </h2>
       <p class="sign-status-msg">
-        {#if action.status === "completed"}
+        {#if displayStatus === "completed"}
           The passkey signature was completed successfully.
-        {:else if action.status === "denied"}
+        {:else if displayStatus === "denied"}
           This signing request was denied.
-        {:else if action.status === "expired"}
+        {:else if displayStatus === "expired"}
           This signing request expired before it could be completed.
         {:else}
           This request is no longer pending.
@@ -259,7 +197,7 @@
           </div>
         {/if}
 
-        {#if action.context.sessionId && action.context.sessionId !== "pending"}
+        {#if action.context.sessionId}
           <div class="sign-field">
             <span class="sign-label">Session</span>
             <button class="sign-link" onclick={() => viewSession(action!.context.sessionId!)}>

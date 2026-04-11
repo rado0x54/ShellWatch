@@ -54,7 +54,16 @@ export function registerActionRoutes(params: ActionRoutesParams) {
       return { error: `Action is already ${action.status}` };
     }
 
-    const { authenticatorData, signature, clientDataJSON } = request.body;
+    const { authenticatorData, signature, clientDataJSON } = request.body ?? {};
+    if (
+      typeof authenticatorData !== "string" ||
+      typeof signature !== "string" ||
+      typeof clientDataJSON !== "string"
+    ) {
+      reply.status(400);
+      return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
+    }
+
     const resolved = actionStore.resolve(action.id, {
       requestId: action.id,
       authenticatorData: Buffer.from(authenticatorData, "base64url"),
