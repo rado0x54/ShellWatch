@@ -21,6 +21,8 @@ describe("loadConfig", () => {
       dir,
       `
 keyDirectory: ./keys
+server:
+  externalUrl: http://localhost:3000
 security:
   rpId: localhost
   trustedWebauthnOrigins:
@@ -47,6 +49,8 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+server:
+  externalUrl: http://localhost:3000
 security:
   rpId: localhost
   trustedWebauthnOrigins:
@@ -67,6 +71,8 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+server:
+  externalUrl: http://localhost:3000
 security:
   rpId: localhost
   trustedWebauthnOrigins:
@@ -85,7 +91,7 @@ seedAdminEndpoints:
     const dir = createTempDir();
     const configPath = writeConfig(
       dir,
-      "keyDirectory: ./keys\nsecurity:\n  rpId: localhost\n  trustedWebauthnOrigins:\n    - http://localhost\n",
+      "keyDirectory: ./keys\nserver:\n  externalUrl: http://localhost:3000\nsecurity:\n  rpId: localhost\n  trustedWebauthnOrigins:\n    - http://localhost\n",
     );
 
     const config = loadConfig(configPath);
@@ -108,6 +114,8 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+server:
+  externalUrl: http://localhost:3000
 security:
   rpId: localhost
   trustedWebauthnOrigins:
@@ -124,6 +132,8 @@ seedAdminEndpoints:
     const configPath = writeConfig(
       dir,
       `
+server:
+  externalUrl: http://localhost:3000
 security:
   rpId: localhost
   trustedWebauthnOrigins:

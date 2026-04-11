@@ -107,8 +107,10 @@ export const serverDefaults = {
 
 export const ServerSchema = z.object({
   port: z.number().int().min(1).max(65535).default(serverDefaults.port),
-  /** External URL for deep links (e.g., "https://shellwatch.example.com"). Falls back to http://HOST:PORT. */
-  externalUrl: z.string().url().optional(),
+  /** External URL for deep links (e.g., "https://shellwatch.example.com" or "http://localhost:3000"). */
+  externalUrl: z
+    .string()
+    .url("server.externalUrl must be a valid URL (e.g., 'http://localhost:3000')"),
 });
 
 export const SeedAdminPasskeySchema = z.object({
@@ -139,7 +141,7 @@ export const ConfigSchema = z.object({
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
-  server: ServerSchema.default(serverDefaults),
+  server: ServerSchema,
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),

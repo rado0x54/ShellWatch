@@ -8,8 +8,9 @@
 # Keys are assigned to endpoints via the web UI after discovery.
 
 # Server settings
-# server:
-#   port: 3000                                        # HTTP port (default: 3000)
+server:
+  # port: 3000                                        # HTTP port (default: 3000)
+  externalUrl: http://localhost:3000 # External URL for deep links (required)
 
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys

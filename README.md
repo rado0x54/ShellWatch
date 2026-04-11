@@ -35,6 +35,9 @@ Edit `config.yaml`. See `config.sample.yaml` for all options. Minimal example:
 ```yaml
 keyDirectory: ./keys
 
+server:
+  externalUrl: http://localhost:3000
+
 security:
   rpId: localhost
   trustedWebauthnOrigins:

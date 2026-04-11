@@ -31,7 +31,7 @@ export class PushChannel implements NotificationChannel {
           : "SSH Key Approval Requested",
       body: this.buildBody(action),
       actionId: action.id,
-      deepLink,
+      deepLink: this.toPath(deepLink),
       actionType: action.type,
     });
 
@@ -56,6 +56,15 @@ export class PushChannel implements NotificationChannel {
     const sent = results.filter((r) => r.status === "fulfilled").length;
     if (sent > 0) {
       this.log?.info(`Sent ${sent} push notification(s) for action ${action.id}`);
+    }
+  }
+
+  /** Strip origin from deep link — the service worker opens relative to its own origin. */
+  private toPath(deepLink: string): string {
+    try {
+      return new URL(deepLink).pathname;
+    } catch {
+      return deepLink;
     }
   }
 
