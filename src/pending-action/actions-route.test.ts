@@ -4,11 +4,14 @@ import type { FastifyInstance } from "fastify";
 import { PendingActionStore } from "./store.js";
 import { WebSocketChannel } from "./ws-channel.js";
 import { registerActionRoutes } from "../server/routes/actions.js";
-import type { CreateActionParams } from "./types.js";
+import type { KeyApproveAction, WebAuthnSignAction } from "./types.js";
 
 const testAccountId = "test-account";
 
-function makeActionParams(overrides?: Partial<CreateActionParams>): CreateActionParams {
+type WebAuthnParams = Omit<WebAuthnSignAction, "id" | "status" | "createdAt" | "expiresAt">;
+type KeyApproveParams = Omit<KeyApproveAction, "id" | "status" | "createdAt" | "expiresAt">;
+
+function makeWebAuthnParams(overrides?: Partial<WebAuthnParams>): WebAuthnParams {
   return {
     type: "webauthn-sign",
     accountId: testAccountId,
@@ -17,6 +20,24 @@ function makeActionParams(overrides?: Partial<CreateActionParams>): CreateAction
     challenge: "dGVzdA==",
     rpId: "localhost",
     passkeyLabel: "YubiKey",
+    resolve: vi.fn(),
+    reject: vi.fn(),
+    ...overrides,
+  };
+}
+
+function makeKeyApproveParams(overrides?: Partial<KeyApproveParams>): KeyApproveParams {
+  return {
+    type: "key-approve",
+    accountId: testAccountId,
+    context: {
+      source: "ui",
+      sourceIp: "127.0.0.1",
+      endpointLabel: "Prod",
+      endpointAddress: "user@host:22",
+    },
+    keyLabel: "Test Key",
+    keyFingerprint: "SHA256:abc123",
     resolve: vi.fn(),
     reject: vi.fn(),
     ...overrides,
@@ -64,7 +85,7 @@ describe("action routes", () => {
   // --- GET /api/actions/:actionId ---
 
   it("GET returns 401 without auth", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}`));
     expect(res.status).toBe(401);
   });
@@ -75,7 +96,7 @@ describe("action routes", () => {
   });
 
   it("GET returns 403 for wrong account", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}`), {
       headers: authHeaders("other-account"),
     });
@@ -83,7 +104,7 @@ describe("action routes", () => {
   });
 
   it("GET returns action data for correct account", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}`), { headers: authHeaders() });
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -98,7 +119,7 @@ describe("action routes", () => {
   // --- POST /api/actions/:actionId/resolve ---
 
   it("resolve returns 401 without auth", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}/resolve`), { method: "POST" });
     expect(res.status).toBe(401);
   });
@@ -117,7 +138,7 @@ describe("action routes", () => {
   });
 
   it("resolve returns 403 for wrong account", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
       method: "POST",
       headers: { ...authHeaders("other-account"), "Content-Type": "application/json" },
@@ -131,7 +152,7 @@ describe("action routes", () => {
   });
 
   it("resolve returns 400 for missing body fields", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -144,7 +165,7 @@ describe("action routes", () => {
 
   it("resolve completes a pending action", async () => {
     const resolve = vi.fn();
-    const action = actionStore.create(makeActionParams({ resolve }));
+    const action = actionStore.create(makeWebAuthnParams({ resolve }));
 
     const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
       method: "POST",
@@ -162,7 +183,7 @@ describe("action routes", () => {
   });
 
   it("resolve returns 409 for already-resolved action", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     // Resolve it first
     actionStore.resolve(action.id, {
       requestId: action.id,
@@ -186,13 +207,13 @@ describe("action routes", () => {
   // --- POST /api/actions/:actionId/deny ---
 
   it("deny returns 401 without auth", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}/deny`), { method: "POST" });
     expect(res.status).toBe(401);
   });
 
   it("deny returns 403 for wrong account", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     const res = await fetch(url(`/api/actions/${action.id}/deny`), {
       method: "POST",
       headers: authHeaders("other-account"),
@@ -202,7 +223,7 @@ describe("action routes", () => {
 
   it("deny rejects a pending action", async () => {
     const reject = vi.fn();
-    const action = actionStore.create(makeActionParams({ reject }));
+    const action = actionStore.create(makeWebAuthnParams({ reject }));
 
     const res = await fetch(url(`/api/actions/${action.id}/deny`), {
       method: "POST",
@@ -215,7 +236,7 @@ describe("action routes", () => {
   });
 
   it("deny returns 409 for already-denied action", async () => {
-    const action = actionStore.create(makeActionParams());
+    const action = actionStore.create(makeWebAuthnParams());
     actionStore.deny(action.id);
 
     const res = await fetch(url(`/api/actions/${action.id}/deny`), {
@@ -223,5 +244,44 @@ describe("action routes", () => {
       headers: authHeaders(),
     });
     expect(res.status).toBe(409);
+  });
+
+  // --- key-approve action type ---
+
+  it("GET returns key-approve action data", async () => {
+    const action = actionStore.create(makeKeyApproveParams());
+    const res = await fetch(url(`/api/actions/${action.id}`), { headers: authHeaders() });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.type).toBe("key-approve");
+    expect(data.keyLabel).toBe("Test Key");
+    expect(data.keyFingerprint).toBe("SHA256:abc123");
+  });
+
+  it("resolve completes a key-approve action with empty body", async () => {
+    const resolve = vi.fn();
+    const action = actionStore.create(makeKeyApproveParams({ resolve }));
+
+    const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.status).toBe("completed");
+    expect(resolve).toHaveBeenCalled();
+  });
+
+  it("deny rejects a key-approve action", async () => {
+    const reject = vi.fn();
+    const action = actionStore.create(makeKeyApproveParams({ reject }));
+
+    const res = await fetch(url(`/api/actions/${action.id}/deny`), {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    expect(res.status).toBe(200);
+    expect(reject).toHaveBeenCalled();
   });
 });

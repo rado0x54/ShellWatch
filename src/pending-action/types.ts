@@ -39,38 +39,57 @@ export type SignRequestContext =
   | McpContext
   | ForwardingAgentContext;
 
-// --- PendingAction ---
+// --- PendingAction (discriminated union on `type`) ---
 
 export type PendingActionStatus = "pending" | "completed" | "expired" | "denied";
 
-export interface PendingAction {
+interface PendingActionBase {
   id: string;
-  type: "webauthn-sign";
   accountId: string;
   status: PendingActionStatus;
   createdAt: number;
   expiresAt: number;
-
   context: SignRequestContext;
+  reject: (error: Error) => void;
+}
 
-  // WebAuthn payload
+export interface WebAuthnSignAction extends PendingActionBase {
+  type: "webauthn-sign";
   credentialId: string;
   challenge: string;
   rpId: string;
   passkeyLabel?: string;
-
-  // Server-only — close over the ssh2 callback
   resolve: (result: SignResponse) => void;
-  reject: (error: Error) => void;
 }
 
+export interface KeyApproveAction extends PendingActionBase {
+  type: "key-approve";
+  keyLabel: string;
+  keyFingerprint: string;
+  resolve: () => void;
+}
+
+export type PendingAction = WebAuthnSignAction | KeyApproveAction;
+
+export type PendingActionType = PendingAction["type"];
+
 /** Fields required to create a PendingAction (store generates id, status, timestamps). */
-export type CreateActionParams = Omit<PendingAction, "id" | "status" | "createdAt" | "expiresAt">;
+export type CreateActionParams =
+  | Omit<WebAuthnSignAction, "id" | "status" | "createdAt" | "expiresAt">
+  | Omit<KeyApproveAction, "id" | "status" | "createdAt" | "expiresAt">;
 
 /** Client-safe projection (excludes resolve/reject). */
 export type PendingActionView = Omit<PendingAction, "resolve" | "reject">;
 
 export function toActionView(action: PendingAction): PendingActionView {
-  const { resolve: _r, reject: _rj, ...view } = action;
-  return view;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const {
+    resolve: _r,
+    reject: _rj,
+    ...view
+  } = action as PendingAction & {
+    resolve: unknown;
+    reject: unknown;
+  };
+  return view as PendingActionView;
 }

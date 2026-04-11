@@ -1,14 +1,23 @@
 <script lang="ts">
   import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
-  import { performSignCeremony, resolveAction, sourceLabels } from "$lib/utils/webauthn-sign.js";
+  import {
+    approveAction,
+    performSignCeremony,
+    resolveAction,
+    sourceLabels,
+  } from "$lib/utils/webauthn-sign.js";
 
   let signingActionId = $state<string | null>(null);
 
   async function handleSign(action: SignRequestAction, toastId: string) {
     signingActionId = action.actionId;
     try {
-      const result = await performSignCeremony(action);
-      await resolveAction(action.actionId, result);
+      if (action.actionType === "webauthn-sign") {
+        const result = await performSignCeremony(action);
+        await resolveAction(action.actionId, result);
+      } else {
+        await approveAction(action.actionId);
+      }
       removeToast(toastId);
     } catch (err) {
       toastError(`Signing failed: ${(err as Error).message}`);
@@ -36,9 +45,12 @@
       <div class="toast toast-{toast.variant}">
         {#if toast.variant === "sign-request" && toast.action}
           {@const isSigning = signingActionId === toast.action.actionId}
+          {@const isKeyApprove = toast.action.actionType === "key-approve"}
           <div class="toast-header">
-            <span class="toast-icon">&#128273;</span>
-            <span class="toast-title">Passkey Signature Request</span>
+            <span class="toast-icon">{isKeyApprove ? "&#128272;" : "&#128273;"}</span>
+            <span class="toast-title">
+              {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
+            </span>
           </div>
           <div class="toast-body">
             <div class="toast-field">
@@ -58,7 +70,19 @@
                 </span>
               </div>
             {/if}
-            {#if toast.action.passkeyLabel}
+            {#if toast.action.actionType === "key-approve"}
+              <div class="toast-field">
+                <span class="toast-label">SSH Key</span>
+                <span class="toast-value">{toast.action.keyLabel}</span>
+              </div>
+              {#if toast.action.keyFingerprint}
+                <div class="toast-field">
+                  <span class="toast-label">Fingerprint</span>
+                  <span class="toast-value toast-mono">{toast.action.keyFingerprint}</span>
+                </div>
+              {/if}
+            {/if}
+            {#if toast.action.actionType === "webauthn-sign" && toast.action.passkeyLabel}
               <div class="toast-field">
                 <span class="toast-label">Passkey</span>
                 <span class="toast-value">{toast.action.passkeyLabel}</span>
@@ -78,7 +102,11 @@
               onclick={() => handleSign(toast.action!, toast.id)}
               disabled={isSigning}
             >
-              {#if isSigning}Signing...{:else}Sign{/if}
+              {#if isSigning}
+                {isKeyApprove ? "Approving..." : "Signing..."}
+              {:else}
+                {isKeyApprove ? "Approve" : "Sign"}
+              {/if}
             </button>
           </div>
         {:else}
@@ -168,7 +196,7 @@
   .toast-label {
     font-size: 0.7rem;
     color: var(--text-muted);
-    min-width: 4rem;
+    min-width: 4.5rem;
   }
 
   .toast-value {
@@ -177,6 +205,11 @@
 
   .toast-muted {
     color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+
+  .toast-mono {
+    font-family: monospace;
     font-size: 0.75rem;
   }
 

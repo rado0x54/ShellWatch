@@ -3,6 +3,7 @@ export {
   type CompositeAgentParams,
   CompositeSshAgent,
   type FileKeyEntry,
+  type FileKeySignRequest,
 } from "./composite-ssh-agent.js";
 export { registerWebAuthnRoutes } from "./routes.js";
 export {

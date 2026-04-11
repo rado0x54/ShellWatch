@@ -126,7 +126,12 @@ describe("SshTransportFactory", () => {
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         fileKeys: [
-          { publicKey: testFileKey.publicKey, privateKey: testScannedKey.privateKeyContent },
+          expect.objectContaining({
+            publicKey: testFileKey.publicKey,
+            privateKey: testScannedKey.privateKeyContent,
+            label: testFileKey.label,
+            fingerprint: testFileKey.fingerprint,
+          }),
         ],
         passkeys: [],
         isAdmin: true,

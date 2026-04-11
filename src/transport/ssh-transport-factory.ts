@@ -20,7 +20,7 @@ export interface AgentFactory {
    */
   (params: {
     endpoint: EndpointInfo;
-    fileKeys: Array<{ publicKey: string; privateKey: string }>;
+    fileKeys: Array<{ publicKey: string; privateKey: string; label: string; fingerprint: string }>;
     passkeys: WebAuthnCredentialInfo[];
     isAdmin: boolean;
     rpId: string;
@@ -68,14 +68,24 @@ export class SshTransportFactory {
     const isAdmin = this.options.isAdmin?.(endpoint.accountId) ?? false;
 
     // Gather file keys (admin only)
-    const fileKeys: Array<{ publicKey: string; privateKey: string }> = [];
+    const fileKeys: Array<{
+      publicKey: string;
+      privateKey: string;
+      label: string;
+      fingerprint: string;
+    }> = [];
     if (isAdmin) {
       const allKeys = await this.keyRepo.findAll();
       for (const key of allKeys) {
         if (key.type !== "file" || !key.enabled) continue;
         const privateKey = this.keyProvider.getPrivateKey(key.fingerprint);
         if (privateKey) {
-          fileKeys.push({ publicKey: key.publicKey, privateKey });
+          fileKeys.push({
+            publicKey: key.publicKey,
+            privateKey,
+            label: key.label,
+            fingerprint: key.fingerprint,
+          });
         }
       }
     }
