@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import { addToast, clearAction, type SignRequestAction } from "./toasts.js";
+import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
 
 export type SessionMode = "control" | "observer";
 
@@ -103,6 +103,10 @@ export function connectWs(): void {
 
       if (msg.type === "sign:resolved") {
         clearAction(msg.actionId);
+      }
+
+      if (msg.type === "error") {
+        toastError(msg.message);
       }
 
       for (const handler of handlers) {

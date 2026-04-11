@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
   import {
     approveAction,
     performSignCeremony,
@@ -21,7 +22,8 @@
       removeToast(toastId);
     } catch (err) {
       const verb = action.actionType === "key-approve" ? "Approval" : "Signing";
-      toastError(`${verb} failed: ${(err as Error).message}`);
+      console.error(`${verb} failed:`, err);
+      toastError(`${verb} failed: ${errorMessage(err)}`);
     } finally {
       activeActionId = null;
     }
@@ -31,10 +33,11 @@
     try {
       const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (!res.ok) {
-        console.error("Failed to deny action:", await res.text());
+        toastError(`Failed to deny action: ${await res.text()}`);
       }
     } catch (err) {
       console.error("Failed to deny action:", err);
+      toastError(`Failed to deny action: ${errorMessage(err)}`);
     }
     removeToast(toastId);
   }

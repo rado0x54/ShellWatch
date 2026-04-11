@@ -7,6 +7,8 @@
   import { endpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
+  import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
   import { logout } from "$lib/stores/webauthn.js";
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
 
@@ -29,6 +31,7 @@
       onMobileClose?.();
     } catch (err) {
       console.error("Failed to create session:", err);
+      toastError(`Failed to create session: ${errorMessage(err)}`);
     }
   }
 
@@ -37,6 +40,7 @@
       await closeSession(sessionId);
     } catch (err) {
       console.error("Failed to close session:", err);
+      toastError(`Failed to close session: ${errorMessage(err)}`);
     }
   }
 

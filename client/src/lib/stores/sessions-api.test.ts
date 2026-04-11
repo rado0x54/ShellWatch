@@ -28,7 +28,7 @@ describe("sessions-api store", () => {
 
   it("createSession throws on error response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ message: "Unknown endpoint" }), { status: 400 }),
+      new Response(JSON.stringify({ error: "Unknown endpoint" }), { status: 400 }),
     );
 
     await expect(createSession("nope")).rejects.toThrow("Unknown endpoint");

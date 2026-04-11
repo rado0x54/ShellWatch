@@ -13,12 +13,16 @@ export async function createSession(endpointId: string): Promise<TerminalSession
     body: JSON.stringify({ endpointId }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message || "Failed to create session");
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "Failed to create session");
   }
   return res.json();
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
-  await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  const res = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "Failed to close session");
+  }
 }

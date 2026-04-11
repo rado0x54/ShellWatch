@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
+  import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
 
   let label = $state("");
   let showKeyModal = $state(false);
@@ -17,13 +19,17 @@
       showKeyModal = true;
       label = "";
     } catch (err) {
-      alert((err as Error).message);
+      toastError(errorMessage(err));
     }
   }
 
   async function handleRevoke(id: string) {
     if (confirm("Revoke this API key?")) {
-      await revokeApiKey(id);
+      try {
+        await revokeApiKey(id);
+      } catch (err) {
+        toastError(errorMessage(err));
+      }
     }
   }
 
