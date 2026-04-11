@@ -119,6 +119,14 @@ export const SeedAdminPasskeySchema = z.object({
   label: z.string().default("Admin Passkey"),
 });
 
+export const VapidSchema = z.object({
+  subject: z.string().min(1, "vapid.subject is required (e.g., 'mailto:admin@example.com')"),
+  publicKey: z.string().min(1, "vapid.publicKey is required (base64url-encoded VAPID public key)"),
+  privateKey: z
+    .string()
+    .min(1, "vapid.privateKey is required (base64url-encoded VAPID private key)"),
+});
+
 export const AgentSocketSchema = z.object({
   /** Enable the WebSocket agent proxy endpoint (/agent-proxy) */
   proxyEnabled: z.boolean().default(false),
@@ -135,6 +143,7 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  vapid: VapidSchema.optional(),
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;

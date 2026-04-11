@@ -89,6 +89,19 @@ export const sessionHistory = sqliteTable("session_history", {
   durationMs: integer("duration_ms"),
 });
 
+// --- Push Subscriptions (Web Push API) ---
+
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: text("id").primaryKey(), // UUIDv4
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
+  endpoint: text("endpoint").notNull().unique(), // Push service URL (unique per browser)
+  p256dh: text("p256dh").notNull(), // Base64url-encoded public key
+  auth: text("auth").notNull(), // Base64url-encoded auth secret
+  createdAt: text("created_at").notNull(),
+});
+
 // --- API Keys ---
 
 export const apiKeys = sqliteTable("api_keys", {

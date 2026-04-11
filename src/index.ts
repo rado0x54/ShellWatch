@@ -5,6 +5,7 @@ import {
   DrizzleAccountRepository,
   DrizzleApiKeyRepository,
   DrizzleEndpointRepository,
+  DrizzlePushSubscriptionRepository,
   DrizzleSshKeyRepository,
   runMigrations,
   seedFromConfig,
@@ -13,6 +14,7 @@ import { findCredentialsForAccount } from "./db/repositories/credential-queries.
 import {
   NotificationDispatcher,
   PendingActionStore,
+  PushChannel,
   WebSocketChannel,
 } from "./pending-action/index.js";
 import { buildApp } from "./server/app.js";
@@ -48,6 +50,17 @@ try {
   const wsChannel = new WebSocketChannel();
   dispatcher.register(wsChannel);
 
+  // Web Push notification channel (optional — requires VAPID config)
+  let pushSubRepo: DrizzlePushSubscriptionRepository | undefined;
+  if (config.vapid) {
+    pushSubRepo = new DrizzlePushSubscriptionRepository(db);
+    const pushChannel = new PushChannel({
+      pushSubRepo,
+      vapid: config.vapid,
+    });
+    dispatcher.register(pushChannel);
+  }
+
   // SigningBridge — coordinates sign requests from agents → PendingAction → notifications
   const signingBridge = new SigningBridge({ actionStore, dispatcher });
 
@@ -79,6 +92,8 @@ try {
     apiKeyRepo,
     actionStore,
     wsChannel,
+    pushSubRepo,
+    vapidPublicKey: config.vapid?.publicKey,
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
         keyProvider: keyWatcher,
@@ -112,6 +127,10 @@ try {
   if (seedResult.seededAdminPasskey) {
     const labels = config.seedAdminPasskeys.map((pk) => pk.label).join(", ");
     app.log.info(`Seeded admin passkey(s): ${labels}`);
+  }
+
+  if (config.vapid) {
+    app.log.info("Web Push notifications enabled (VAPID configured)");
   }
 
   const endpoints = await endpointRepo.findAll();

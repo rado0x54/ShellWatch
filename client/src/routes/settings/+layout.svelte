@@ -10,6 +10,7 @@
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Keys" },
     { path: "/settings/api-keys", label: "API Keys" },
+    { path: "/settings/notifications", label: "Notifications" },
   ];
 
   const currentPath = $derived($page.url.pathname);
