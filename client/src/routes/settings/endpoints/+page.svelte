@@ -6,6 +6,7 @@
     endpoints,
     fetchEndpoints,
   } from "$lib/stores/endpoints.js";
+  import { toastError } from "$lib/stores/toasts.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
 
   let epLabel = $state("");
@@ -17,14 +18,14 @@
 
   async function handleAdd() {
     if (!epLabel || !epAddress) {
-      alert("Label and Address are required");
+      toastError("Label and Address are required");
       return;
     }
     let parsed;
     try {
       parsed = parseEndpointAddress(epAddress);
     } catch (err) {
-      alert((err as Error).message);
+      toastError((err as Error).message);
       return;
     }
     try {
@@ -37,7 +38,7 @@
       epLabel = "";
       epAddress = "";
     } catch (err) {
-      alert((err as Error).message);
+      toastError((err as Error).message);
     }
   }
 
@@ -46,7 +47,7 @@
       try {
         await deleteEndpoint(id);
       } catch (err) {
-        alert((err as Error).message);
+        toastError((err as Error).message);
       }
     }
   }

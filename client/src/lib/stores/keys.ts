@@ -61,6 +61,10 @@ export async function generateApiKey(label: string): Promise<string> {
 }
 
 export async function revokeApiKey(id: string): Promise<void> {
-  await fetch(`/api/keys/api/${id}`, { method: "DELETE" });
+  const res = await fetch(`/api/keys/api/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "Failed to revoke API key");
+  }
   await fetchApiKeys();
 }

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { account } from "$lib/stores/account.js";
   import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
+  import { toastError } from "$lib/stores/toasts.js";
   import {
     credentials,
     fetchCredentials,
@@ -48,7 +49,7 @@
     const activeCount = $credentials.filter((c) => !c.revoked).length;
     if (activeCount <= 1) {
       // Client-side guard for UX; also enforced server-side in the revoke endpoint
-      alert("Cannot revoke the last active passkey.");
+      toastError("Cannot revoke the last active passkey.");
       return;
     }
     if (!confirm("Revoke this passkey? This is permanent and cannot be undone.")) return;
@@ -58,11 +59,11 @@
       const res = await fetch(`${base}/api/webauthn/credentials/${id}/revoke`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json();
-        alert(err.error || "Failed to revoke");
+        toastError(err.error || "Failed to revoke");
       }
       await fetchCredentials();
     } catch (err) {
-      alert((err as Error).message);
+      toastError((err as Error).message);
     }
     revoking = false;
   }
@@ -75,11 +76,11 @@
       const res = await fetch(`${base}/api/keys/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const err = await res.json();
-        alert(err.error || "Failed to revoke");
+        toastError(err.error || "Failed to revoke");
       }
       await fetchSshKeys();
     } catch (err) {
-      alert((err as Error).message);
+      toastError((err as Error).message);
     }
     revoking = false;
   }
@@ -93,7 +94,7 @@
       editingId = result.credentialId;
       editLabel = result.label;
     } catch (err) {
-      alert(`Registration failed: ${(err as Error).message}`);
+      toastError(`Registration failed: ${(err as Error).message}`);
     }
     registering = false;
   }
@@ -108,7 +109,7 @@
     try {
       await renamePasskey(editingId, editLabel.trim());
     } catch (err) {
-      alert((err as Error).message);
+      toastError((err as Error).message);
     }
     editingId = null;
   }

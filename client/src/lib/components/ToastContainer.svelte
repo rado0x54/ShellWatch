@@ -31,10 +31,10 @@
     try {
       const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (!res.ok) {
-        console.error("Failed to deny action:", await res.text());
+        toastError(`Failed to deny action: ${await res.text()}`);
       }
     } catch (err) {
-      console.error("Failed to deny action:", err);
+      toastError(`Failed to deny action: ${(err as Error).message}`);
     }
     removeToast(toastId);
   }
