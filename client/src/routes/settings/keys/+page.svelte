@@ -3,6 +3,7 @@
   import { account } from "$lib/stores/account.js";
   import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
   import {
     credentials,
     fetchCredentials,
@@ -63,7 +64,7 @@
       }
       await fetchCredentials();
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
     }
     revoking = false;
   }
@@ -80,7 +81,7 @@
       }
       await fetchSshKeys();
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
     }
     revoking = false;
   }
@@ -94,7 +95,7 @@
       editingId = result.credentialId;
       editLabel = result.label;
     } catch (err) {
-      toastError(`Registration failed: ${(err as Error).message}`);
+      toastError(`Registration failed: ${errorMessage(err)}`);
     }
     registering = false;
   }
@@ -109,7 +110,7 @@
     try {
       await renamePasskey(editingId, editLabel.trim());
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
     }
     editingId = null;
   }

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
 
   let label = $state("");
   let showKeyModal = $state(false);
@@ -18,7 +19,7 @@
       showKeyModal = true;
       label = "";
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
     }
   }
 
@@ -27,7 +28,7 @@
       try {
         await revokeApiKey(id);
       } catch (err) {
-        toastError((err as Error).message);
+        toastError(errorMessage(err));
       }
     }
   }

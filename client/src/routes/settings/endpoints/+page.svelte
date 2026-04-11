@@ -7,6 +7,7 @@
     fetchEndpoints,
   } from "$lib/stores/endpoints.js";
   import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
 
   let epLabel = $state("");
@@ -25,7 +26,7 @@
     try {
       parsed = parseEndpointAddress(epAddress);
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
       return;
     }
     try {
@@ -38,7 +39,7 @@
       epLabel = "";
       epAddress = "";
     } catch (err) {
-      toastError((err as Error).message);
+      toastError(errorMessage(err));
     }
   }
 
@@ -47,7 +48,7 @@
       try {
         await deleteEndpoint(id);
       } catch (err) {
-        toastError((err as Error).message);
+        toastError(errorMessage(err));
       }
     }
   }
