@@ -10,6 +10,11 @@ import {
   seedFromConfig,
 } from "./db/index.js";
 import { findCredentialsForAccount } from "./db/repositories/credential-queries.js";
+import {
+  NotificationDispatcher,
+  PendingActionStore,
+  WebSocketChannel,
+} from "./pending-action/index.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
 import { KeyDirectoryWatcher } from "./transport/index.js";
@@ -36,8 +41,15 @@ try {
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
   const scannedKeys = await keyWatcher.start();
 
-  // WebAuthn signing bridge — connects SSH agent to browser
-  const signingBridge = new SigningBridge();
+  // PendingAction system — manages sign request lifecycle + notifications
+  const actionStore = new PendingActionStore();
+  const baseUrl = config.server.externalUrl ?? `http://${HOST}:${PORT}`;
+  const dispatcher = new NotificationDispatcher(baseUrl);
+  const wsChannel = new WebSocketChannel();
+  dispatcher.register(wsChannel);
+
+  // SigningBridge — coordinates sign requests from agents → PendingAction → notifications
+  const signingBridge = new SigningBridge({ actionStore, dispatcher });
 
   // Late-binding logger — set after buildApp(), but only used at session time
   const agentLog: { current?: { error(msg: string): void } } = {};
@@ -62,9 +74,11 @@ try {
     keyRepo,
     accountRepo,
     db,
-    wsExtensions: [signingBridge],
+    wsExtensions: [wsChannel],
     keyAvailability: keyWatcher,
     apiKeyRepo,
+    actionStore,
+    wsChannel,
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
         keyProvider: keyWatcher,
@@ -106,6 +120,7 @@ try {
     stopCleanup();
     keyWatcher.stop();
     terminalManager.destroy();
+    actionStore.destroy();
     accountRepo.destroy();
     await app.close();
     closeDb();

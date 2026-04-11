@@ -1,82 +1,97 @@
 import { describe, expect, it, vi } from "vitest";
-import { SigningBridge } from "../webauthn/signing-bridge.js";
+import { WebSocketChannel } from "../pending-action/ws-channel.js";
 
-describe("SigningBridge as WsExtension", () => {
-  it("handles fido:sign-response messages", () => {
-    const bridge = new SigningBridge();
-    const mockSocket = {} as never;
-
-    // Register a mock agent so handleSignResponse has something to route to
-    const mockAgent = {
-      handleSignResponse: vi.fn(),
-      handleSignError: vi.fn(),
-    } as unknown as import("../webauthn/ssh-agent.js").WebAuthnSshAgent;
-    bridge.registerAgent("test-agent", mockAgent);
-
-    const handled = bridge.onMessage(
-      {
-        type: "fido:sign-response",
-        requestId: "req-1",
-        authenticatorData: "AAAA", // base64url
-        signature: "BBBB",
-        clientDataJSON: '{"type":"webauthn.get"}',
-      },
-      mockSocket,
-    );
-
-    expect(handled).toBe(true);
-    expect(mockAgent.handleSignResponse).toHaveBeenCalledWith(
-      expect.objectContaining({ requestId: "req-1" }),
-    );
-  });
-
-  it("handles fido:sign-error messages", () => {
-    const bridge = new SigningBridge();
-    const mockSocket = {} as never;
-
-    const mockAgent = {
-      handleSignResponse: vi.fn(),
-      handleSignError: vi.fn(),
-    } as unknown as import("../webauthn/ssh-agent.js").WebAuthnSshAgent;
-    bridge.registerAgent("test-agent", mockAgent);
-
-    const handled = bridge.onMessage(
-      { type: "fido:sign-error", requestId: "req-2", error: "User cancelled" },
-      mockSocket,
-    );
-
-    expect(handled).toBe(true);
-    expect(mockAgent.handleSignError).toHaveBeenCalledWith("req-2", "User cancelled");
-  });
-
-  it("ignores non-fido messages", () => {
-    const bridge = new SigningBridge();
-    const mockSocket = {} as never;
-
-    const handled = bridge.onMessage(
-      { type: "terminal:input", sessionId: "s1", data: "hello" },
-      mockSocket,
-    );
-
-    expect(handled).toBe(false);
-  });
-
-  it("tracks clients via onConnect/onDisconnect", () => {
-    const bridge = new SigningBridge();
+describe("WebSocketChannel as WsExtension", () => {
+  it("tracks clients by account on connect/disconnect", () => {
+    const channel = new WebSocketChannel();
 
     const socket1 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
     const socket2 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
 
-    expect(bridge.hasClients).toBe(false);
+    expect(channel.hasClientsForAccount("acc-1")).toBe(false);
 
-    bridge.onConnect(socket1);
-    expect(bridge.hasClients).toBe(true);
+    channel.onConnect(socket1, "acc-1");
+    expect(channel.hasClientsForAccount("acc-1")).toBe(true);
+    expect(channel.hasClientsForAccount("acc-2")).toBe(false);
 
-    bridge.onConnect(socket2);
-    bridge.onDisconnect(socket1);
-    expect(bridge.hasClients).toBe(true);
+    channel.onConnect(socket2, "acc-1");
+    channel.onDisconnect(socket1);
+    expect(channel.hasClientsForAccount("acc-1")).toBe(true);
 
-    bridge.onDisconnect(socket2);
-    expect(bridge.hasClients).toBe(false);
+    channel.onDisconnect(socket2);
+    expect(channel.hasClientsForAccount("acc-1")).toBe(false);
+  });
+
+  it("ignores connections without accountId", () => {
+    const channel = new WebSocketChannel();
+    const socket = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+
+    channel.onConnect(socket, undefined);
+    expect(channel.hasClientsForAccount("any")).toBe(false);
+  });
+
+  it("does not handle any incoming messages", () => {
+    const channel = new WebSocketChannel();
+    const socket = {} as never;
+
+    expect(channel.onMessage({ type: "anything" }, socket)).toBe(false);
+  });
+
+  it("sends sign:request only to clients for the correct account", async () => {
+    const channel = new WebSocketChannel();
+    const socket1 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+    const socket2 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+
+    channel.onConnect(socket1, "acc-1");
+    channel.onConnect(socket2, "acc-2");
+
+    const action = {
+      id: "action-1",
+      type: "webauthn-sign" as const,
+      accountId: "acc-1",
+      status: "pending" as const,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      context: { source: "agent-proxy" as const, sourceIp: "1.2.3.4", apiKeyPrefix: "sw_test" },
+      credentialId: "cred-1",
+      challenge: "dGVzdA==",
+      rpId: "localhost",
+      passkeyLabel: "YubiKey",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+
+    await channel.send(action, "https://example.com/sign/action-1");
+
+    expect((socket1 as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledTimes(
+      1,
+    );
+    expect((socket2 as unknown as { send: ReturnType<typeof vi.fn> }).send).not.toHaveBeenCalled();
+
+    const msg = JSON.parse(
+      (socket1 as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls[0][0] as string,
+    );
+    expect(msg.type).toBe("sign:request");
+    expect(msg.actionId).toBe("action-1");
+    expect(msg.source).toBe("agent-proxy");
+  });
+
+  it("broadcasts sign:resolved to all clients for the account", () => {
+    const channel = new WebSocketChannel();
+    const socket1 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+    const socket2 = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+
+    channel.onConnect(socket1, "acc-1");
+    channel.onConnect(socket2, "acc-1");
+
+    channel.broadcastResolved("action-1", "acc-1");
+
+    for (const sock of [socket1, socket2]) {
+      const msg = JSON.parse(
+        (sock as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls[0][0] as string,
+      );
+      expect(msg.type).toBe("sign:resolved");
+      expect(msg.actionId).toBe("action-1");
+    }
   });
 });

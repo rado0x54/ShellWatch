@@ -41,9 +41,10 @@ export function registerWebSocket(
     }
   });
 
-  app.get("/ws", { websocket: true }, (socket: WebSocket) => {
+  app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
+    const accountId = request.accountId ?? undefined;
     clients.add(socket);
-    for (const ext of extensions) ext.onConnect(socket);
+    for (const ext of extensions) ext.onConnect(socket, accountId);
     const attachedSessions = new Set<string>();
     const controlledSessions = new Set<string>();
     clientMeta.set(socket, { attachedSessions, controlledSessions });

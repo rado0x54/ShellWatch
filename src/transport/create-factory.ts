@@ -1,6 +1,7 @@
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
 import { findCredentialsForAccount } from "../db/repositories/credential-queries.js";
+import type { SignRequestContext } from "../pending-action/index.js";
 import {
   buildFileKeyEntry,
   buildPasskeyEntry,
@@ -39,18 +40,40 @@ export function createSshTransportFactoryFromConfig(
       return account?.agentForward ?? false;
     },
 
-    createAgent: ({ endpoint, fileKeys, passkeys, isAdmin, rpId, agentForward }) => {
-      // Need a browser if there are passkeys to try
-      if (passkeys.length > 0 && !signingBridge.hasClients) {
-        if (fileKeys.length === 0) return null;
-      }
-
-      const passkeyEntries = signingBridge.hasClients
-        ? passkeys.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null)
-        : [];
+    createAgent: ({
+      endpoint,
+      fileKeys,
+      passkeys,
+      isAdmin,
+      rpId,
+      agentForward,
+      sessionId: _sessionId,
+    }) => {
+      const passkeyEntries = passkeys.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null);
 
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
-      const onSignRequest = (request: SignRequest) => signingBridge.handleSignRequest(request);
+
+      const onSignRequest = (request: SignRequest) => {
+        // Build context based on whether this is a forwarding agent session.
+        // sessionId is not yet known at agent creation time (TerminalManager
+        // generates it after the transport connects), so we omit it here.
+        const context: SignRequestContext = agentForward
+          ? {
+              source: "forwarding-agent",
+              endpointLabel: endpoint.label,
+              endpointAddress: address,
+              sessionId: "pending",
+            }
+          : {
+              source: "ui",
+              sourceIp: "127.0.0.1",
+              endpointLabel: endpoint.label,
+              endpointAddress: address,
+              sessionId: "pending",
+            };
+
+        signingBridge.handleSignRequest(request, endpoint.accountId, context);
+      };
 
       const fileKeyEntries = isAdmin
         ? fileKeys.map((fk) => buildFileKeyEntry(fk.privateKey)).filter((e) => e !== null)
@@ -68,18 +91,13 @@ export function createSshTransportFactoryFromConfig(
         logger: agentLog.current,
       };
 
-      // ForwardingAgent when forwarding is enabled, CompositeSshAgent otherwise
       const agent = agentForward
         ? new ForwardingAgent(baseParams)
         : new CompositeSshAgent(baseParams);
 
-      const agentId = `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      signingBridge.registerAgent(agentId, agent);
-
       return {
         agent,
         cleanup: () => {
-          signingBridge.unregisterAgent(agentId);
           agent.destroy();
         },
       };

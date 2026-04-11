@@ -22,7 +22,7 @@ export interface AgentProxyRouteParams {
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
   apiKeyRepo: ApiKeyRepository;
   accountRepo: AccountRepository;
-  /** Signing bridge for WebAuthn passkey support through the agent proxy */
+  /** Signing bridge for routing WebAuthn sign requests through PendingAction */
   signingBridge?: SigningBridge;
   /** Look up passkeys for an account */
   findCredentialsForAccount?: (accountId: string) => WebAuthnCredentialInfo[];
@@ -80,6 +80,9 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
       passkeys,
       signingBridge,
       rpId,
+      accountId: key.accountId,
+      sourceIp: request.ip,
+      apiKeyPrefix: key.keyPrefix,
     });
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);

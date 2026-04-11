@@ -7,7 +7,7 @@ import type { WebSocket } from "ws";
  */
 export interface WsExtension {
   /** Called when a new WebSocket client connects. */
-  onConnect(socket: WebSocket): void;
+  onConnect(socket: WebSocket, accountId: string | undefined): void;
   /** Called when a WebSocket client disconnects. */
   onDisconnect(socket: WebSocket): void;
   /**

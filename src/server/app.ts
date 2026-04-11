@@ -15,6 +15,8 @@ import type {
 } from "../db/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
+import type { PendingActionStore } from "../pending-action/index.js";
+import type { WebSocketChannel } from "../pending-action/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
@@ -24,6 +26,7 @@ import { registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
+import { registerActionRoutes } from "./routes/actions.js";
 import { registerApiKeyRoutes } from "./routes/api-keys.js";
 import { registerEndpointRoutes } from "./routes/endpoints.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
@@ -47,6 +50,9 @@ export interface BuildAppParams {
   keyAvailability?: KeyAvailability | null;
   apiKeyRepo?: ApiKeyRepository | null;
   options?: AppOptions;
+  /** PendingAction store + WebSocket channel for sign request notifications */
+  actionStore?: PendingActionStore;
+  wsChannel?: WebSocketChannel;
   /** Required when agentSocket.proxyEnabled is true */
   agentProxy?: {
     keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
@@ -121,6 +127,14 @@ export async function buildApp(params: BuildAppParams) {
     terminalManager,
     uiCreatedSessions,
   });
+
+  if (params.actionStore && params.wsChannel) {
+    registerActionRoutes({
+      app,
+      actionStore: params.actionStore,
+      wsChannel: params.wsChannel,
+    });
+  }
 
   if (apiKeyRepo) {
     registerApiKeyRoutes({ app, apiKeyRepo });

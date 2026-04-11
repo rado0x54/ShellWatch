@@ -4,8 +4,10 @@
  * Creates an AgentProtocol (server mode) and delegates identity/sign
  * requests to a CompositeSshAgent built from current file keys and passkeys.
  *
- * Passkeys require OpenSSH 10.3+ on the client and a browser session connected
- * to ShellWatch for WebAuthn signing. See #36 for the full analysis.
+ * Passkeys require OpenSSH 10.3+ on the client. Sign requests are routed
+ * through the PendingAction system — the user approves via the signing
+ * view, which can be reached from any notification channel (WebSocket toast,
+ * Web Push, etc.).
  *
  * ## OpenSSH 10.3 canonicalization
  *
@@ -35,10 +37,10 @@ import {
   CompositeSshAgent,
   type PasskeyEntry,
   type SignRequest,
-  type WebAuthnSshAgent,
 } from "../webauthn/index.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
+import type { AgentProxyContext } from "../pending-action/types.js";
 
 // AgentProtocol is exported at runtime but not in type definitions
 const AgentProtocol = (ssh2 as Record<string, unknown>).AgentProtocol as new (
@@ -65,12 +67,18 @@ export { AgentProtocol, type AgentProtocolInstance };
 export interface AgentHandlerDeps {
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
   logger?: { error(msg: string): void; debug?(msg: string): void };
-  /** Passkey credentials for the authenticated account (empty if none or no browser) */
+  /** Passkey credentials for the authenticated account (empty if none) */
   passkeys?: WebAuthnCredentialInfo[];
-  /** Signing bridge for forwarding WebAuthn sign requests to the browser */
+  /** Signing bridge for creating PendingActions from sign requests */
   signingBridge?: SigningBridge;
   /** Relying party ID for WebAuthn (e.g. "localhost") */
   rpId: string;
+  /** Account ID for the authenticated connection */
+  accountId: string;
+  /** Source IP of the connecting client */
+  sourceIp: string;
+  /** API key prefix for display context */
+  apiKeyPrefix: string;
 }
 
 /**
@@ -84,7 +92,7 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
   const protocol = new AgentProtocol(false);
   const debug = deps.logger?.debug ?? (() => {});
 
-  const { agent, agentId } = buildAgent(deps);
+  const agent = buildAgent(deps);
 
   const { utils } = ssh2;
 
@@ -131,9 +139,6 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
   });
 
   const cleanup = () => {
-    if (agentId && deps.signingBridge) {
-      deps.signingBridge.unregisterAgent(agentId);
-    }
     agent.destroy();
   };
 
@@ -150,34 +155,21 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
 
 /**
  * Build a CompositeSshAgent with file keys and (optionally) passkeys.
- * Passkeys require a signing bridge with a connected browser and OpenSSH 10.3+
- * on the client. See #36.
+ * Passkeys are always included when available — sign requests are routed
+ * through the PendingAction system which handles notification delivery
+ * regardless of whether a browser is currently connected.
  */
-function buildAgent(deps: AgentHandlerDeps): {
-  agent: WebAuthnSshAgent & { destroy(): void };
-  agentId: string | null;
-} {
-  const { keyProvider, logger, signingBridge, rpId } = deps;
+function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
+  const { keyProvider, logger, signingBridge, rpId, accountId, sourceIp, apiKeyPrefix } = deps;
 
   const availableKeys = keyProvider.getAvailableKeys();
   const fileKeyEntries = availableKeys
     .map((k) => buildFileKeyEntry(k.privateKeyContent))
     .filter((e) => e !== null);
 
-  // Include passkeys if we have a signing bridge with a connected browser.
-  //
-  // NOTE: hasClients is checked once at agent build time (per WS connection).
-  // The identity list is frozen — if the browser disconnects after this point,
-  // passkey sign requests will fail at the signing bridge ("no browser session").
-  // If a browser connects later, passkeys won't appear until the SSH client
-  // reconnects. This is intentional: the SSH agent protocol caches identities
-  // per connection, so dynamic changes mid-connection would be inconsistent.
-  //
-  // A future notification system (see #38) will decouple signing from requiring
-  // a pre-existing browser session — sign requests will be delivered via push
-  // notification, allowing the user to open a signing view on demand.
+  // Always include passkeys — sign requests go through PendingAction notification
   const passkeyEntries: PasskeyEntry[] = [];
-  if (deps.passkeys && signingBridge?.hasClients) {
+  if (deps.passkeys) {
     for (const cred of deps.passkeys) {
       const entry = buildPasskeyEntry(cred);
       if (entry) passkeyEntries.push(entry);
@@ -189,28 +181,26 @@ function buildAgent(deps: AgentHandlerDeps): {
     `[Agent Proxy] building agent: ${fileKeyEntries.length} file key(s), ${passkeyEntries.length} passkey(s)`,
   );
 
-  let agentId: string | null = null;
-  let onSignRequest: (request: SignRequest) => void = () => {};
+  const context: AgentProxyContext = {
+    source: "agent-proxy",
+    sourceIp,
+    apiKeyPrefix,
+  };
 
-  if (passkeyEntries.length > 0 && signingBridge) {
-    agentId = `agent-proxy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    onSignRequest = (request) => {
-      debug(`[Agent Proxy] forwarding sign request ${request.requestId} to browser`);
-      signingBridge.handleSignRequest(request);
-    };
-  }
+  const onSignRequest = (request: SignRequest) => {
+    if (signingBridge) {
+      debug(`[Agent Proxy] forwarding sign request to PendingAction system`);
+      signingBridge.handleSignRequest(request, accountId, context);
+    } else {
+      request.reject(new Error("No signing bridge configured"));
+    }
+  };
 
-  const agent = new CompositeSshAgent({
+  return new CompositeSshAgent({
     passkeys: passkeyEntries,
     fileKeys: fileKeyEntries,
     rpId,
     onSignRequest,
     logger,
   });
-
-  if (agentId && signingBridge) {
-    signingBridge.registerAgent(agentId, agent);
-  }
-
-  return { agent, agentId };
 }
