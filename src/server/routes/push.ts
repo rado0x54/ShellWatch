@@ -4,16 +4,10 @@ import type { PushSubscriptionRepository } from "../../db/repositories/push-subs
 export interface PushRoutesParams {
   app: FastifyInstance;
   pushSubRepo: PushSubscriptionRepository;
-  vapidPublicKey: string;
 }
 
 export function registerPushRoutes(params: PushRoutesParams) {
-  const { app, pushSubRepo, vapidPublicKey } = params;
-
-  // Return VAPID public key so the client can subscribe
-  app.get("/api/push/vapid-key", async () => {
-    return { publicKey: vapidPublicKey };
-  });
+  const { app, pushSubRepo } = params;
 
   // Save push subscription
   app.post<{

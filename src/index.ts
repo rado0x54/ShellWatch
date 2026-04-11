@@ -93,7 +93,6 @@ try {
     actionStore,
     wsChannel,
     pushSubRepo,
-    vapidPublicKey: config.vapid?.publicKey,
     ...(config.agentSocket.proxyEnabled && {
       agentProxy: {
         keyProvider: keyWatcher,

@@ -10,6 +10,7 @@ export interface PushSubscriptionInfo {
   p256dh: string;
   auth: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface PushSubscriptionRepository {
@@ -44,10 +45,10 @@ export class DrizzlePushSubscriptionRepository implements PushSubscriptionReposi
     const id = randomUUID();
     this.db
       .insert(pushSubscriptions)
-      .values({ id, ...data, createdAt: now })
+      .values({ id, ...data, createdAt: now, updatedAt: now })
       .onConflictDoUpdate({
         target: pushSubscriptions.endpoint,
-        set: { accountId: data.accountId, p256dh: data.p256dh, auth: data.auth },
+        set: { accountId: data.accountId, p256dh: data.p256dh, auth: data.auth, updatedAt: now },
       })
       .run();
 

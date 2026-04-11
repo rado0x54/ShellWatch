@@ -95,11 +95,12 @@ export const pushSubscriptions = sqliteTable("push_subscriptions", {
   id: text("id").primaryKey(), // UUIDv4
   accountId: text("account_id")
     .notNull()
-    .references(() => accounts.id),
+    .references(() => accounts.id, { onDelete: "cascade" }),
   endpoint: text("endpoint").notNull().unique(), // Push service URL (unique per browser)
   p256dh: text("p256dh").notNull(), // Base64url-encoded public key
   auth: text("auth").notNull(), // Base64url-encoded auth secret
   createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
 // --- API Keys ---

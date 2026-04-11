@@ -21,9 +21,8 @@ export async function checkPushStatus(): Promise<void> {
 export async function subscribePush(): Promise<void> {
   pushLoading.set(true);
   try {
-    const res = await fetch("/api/push/vapid-key");
-    if (!res.ok) throw new Error("Push notifications not available on this server");
-    const { publicKey } = await res.json();
+    const publicKey = (window as unknown as { __VAPID_PUBLIC_KEY__?: string }).__VAPID_PUBLIC_KEY__;
+    if (!publicKey) throw new Error("Push notifications not available on this server");
 
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({
@@ -32,7 +31,7 @@ export async function subscribePush(): Promise<void> {
     });
 
     const subJson = sub.toJSON();
-    await fetch("/api/push/subscribe", {
+    const res = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -40,6 +39,13 @@ export async function subscribePush(): Promise<void> {
         keys: subJson.keys,
       }),
     });
+
+    if (!res.ok) {
+      // Server rejected — unsubscribe locally to stay in sync
+      await sub.unsubscribe();
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || "Failed to register push subscription");
+    }
 
     pushEnabled.set(true);
   } finally {

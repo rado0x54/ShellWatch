@@ -55,9 +55,8 @@ export interface BuildAppParams {
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;
   wsChannel?: WebSocketChannel;
-  /** Push subscription repo + VAPID public key for Web Push routes */
+  /** Push subscription repo for Web Push routes */
   pushSubRepo?: PushSubscriptionRepository;
-  vapidPublicKey?: string;
   /** Required when agentSocket.proxyEnabled is true */
   agentProxy?: {
     keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
@@ -145,11 +144,10 @@ export async function buildApp(params: BuildAppParams) {
     registerApiKeyRoutes({ app, apiKeyRepo });
   }
 
-  if (params.pushSubRepo && params.vapidPublicKey) {
+  if (params.pushSubRepo) {
     registerPushRoutes({
       app,
       pushSubRepo: params.pushSubRepo,
-      vapidPublicKey: params.vapidPublicKey,
     });
   }
 
