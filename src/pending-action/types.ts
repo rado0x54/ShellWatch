@@ -13,7 +13,7 @@ export interface UiContext {
   sourceIp: string;
   endpointLabel: string;
   endpointAddress: string;
-  sessionId: string;
+  sessionId?: string;
 }
 
 export interface McpContext {
@@ -30,7 +30,7 @@ export interface ForwardingAgentContext {
   source: "forwarding-agent";
   endpointLabel: string;
   endpointAddress: string;
-  sessionId: string;
+  sessionId?: string;
 }
 
 export type SignRequestContext =

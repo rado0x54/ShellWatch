@@ -91,6 +91,12 @@ try {
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
 
+  if (!config.server.externalUrl && (HOST === "0.0.0.0" || HOST === "::")) {
+    app.log.warn(
+      `server.externalUrl not set and HOST is ${HOST} — deep links for external notification channels will not work`,
+    );
+  }
+
   app.log.info(`WebAuthn rpId: ${config.security.rpId}`);
   app.log.info(`Trusted origins: ${config.security.trustedWebauthnOrigins.join(", ")}`);
   app.log.info(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);

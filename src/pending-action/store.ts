@@ -50,7 +50,6 @@ export class PendingActionStore {
     if (!action || action.status !== "pending") return false;
     action.status = "completed";
     action.resolve(response);
-    this.scheduleCleanup(id);
     return true;
   }
 
@@ -59,7 +58,6 @@ export class PendingActionStore {
     if (!action || action.status !== "pending") return false;
     action.status = "denied";
     action.reject(new Error("User denied signing request"));
-    this.scheduleCleanup(id);
     return true;
   }
 
@@ -80,17 +78,11 @@ export class PendingActionStore {
       if (action.status === "pending" && now >= action.expiresAt) {
         action.status = "expired";
         action.reject(new Error("Signing request expired — no response within 60 seconds"));
-        this.scheduleCleanup(id);
       }
       // Clean up terminal states older than 2 minutes (allows client to poll status)
       if (action.status !== "pending" && now - action.expiresAt > 120_000) {
         this.actions.delete(id);
       }
     }
-  }
-
-  /** Remove from map after a delay so clients can still read the terminal status. */
-  private scheduleCleanup(id: string): void {
-    setTimeout(() => this.actions.delete(id), 120_000);
   }
 }

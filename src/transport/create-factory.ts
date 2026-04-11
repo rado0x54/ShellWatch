@@ -54,7 +54,6 @@ export function createSshTransportFactoryFromConfig(
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
 
       const onSignRequest = (request: SignRequest) => {
-        // Build context based on whether this is a forwarding agent session.
         // sessionId is not yet known at agent creation time (TerminalManager
         // generates it after the transport connects), so we omit it here.
         const context: SignRequestContext = agentForward
@@ -62,14 +61,12 @@ export function createSshTransportFactoryFromConfig(
               source: "forwarding-agent",
               endpointLabel: endpoint.label,
               endpointAddress: address,
-              sessionId: "pending",
             }
           : {
               source: "ui",
               sourceIp: "127.0.0.1",
               endpointLabel: endpoint.label,
               endpointAddress: address,
-              sessionId: "pending",
             };
 
         signingBridge.handleSignRequest(request, endpoint.accountId, context);
