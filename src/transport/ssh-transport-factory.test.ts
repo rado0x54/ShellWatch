@@ -84,7 +84,7 @@ describe("SshTransportFactory", () => {
     await expect(factory.create("ep-1")).rejects.toThrow("No SSH keys available");
   });
 
-  it("throws if agent factory returns null (no browser)", async () => {
+  it("throws if agent factory returns null (no keys)", async () => {
     const factory = new SshTransportFactory(
       new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([]),
@@ -97,9 +97,7 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await expect(factory.create("ep-1")).rejects.toThrow(
-      "WebAuthn authentication requires a browser session",
-    );
+    await expect(factory.create("ep-1")).rejects.toThrow("No SSH keys available for this endpoint");
   });
 
   it("connects with agent and passes agentForward flag", async () => {

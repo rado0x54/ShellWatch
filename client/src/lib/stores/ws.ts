@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import { addToast, clearAction } from "./toasts.js";
 
 export type SessionMode = "control" | "observer";
 
@@ -18,16 +19,15 @@ type ServerMessage =
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | {
-      type: "fido:sign-request";
-      requestId: string;
-      credentialId: string;
-      challenge: string;
-      rpId: string;
-      directSign?: boolean;
+      type: "sign:request";
+      actionId: string;
+      deepLink: string;
+      source: string;
+      passkeyLabel?: string;
       endpointLabel?: string;
       endpointAddress?: string;
-      passkeyLabel?: string;
     }
+  | { type: "sign:resolved"; actionId: string }
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
@@ -49,6 +49,27 @@ export function connectWs(): void {
 
       if (msg.type === "sessions:changed") {
         sessions.set(msg.sessions);
+      }
+
+      // Handle sign request → show toast
+      if (msg.type === "sign:request") {
+        addToast({
+          variant: "sign-request",
+          message: "Passkey signature requested",
+          action: {
+            actionId: msg.actionId,
+            deepLink: msg.deepLink,
+            source: msg.source,
+            endpointLabel: msg.endpointLabel,
+            endpointAddress: msg.endpointAddress,
+            passkeyLabel: msg.passkeyLabel,
+          },
+        });
+      }
+
+      // Handle sign resolved → clear toast
+      if (msg.type === "sign:resolved") {
+        clearAction(msg.actionId);
       }
 
       for (const handler of handlers) {

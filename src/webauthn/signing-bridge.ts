@@ -1,124 +1,54 @@
 /**
- * Bridges WebAuthn signing requests between the SSH agent and browser clients.
+ * Coordinates WebAuthn signing requests between SSH agents and notification channels.
  *
  * When an SSH connection needs WebAuthn authentication:
- * 1. The agent calls onSignRequest
- * 2. The bridge forwards it to all connected WebSocket clients as fido:sign-request
- * 3. A browser client performs navigator.credentials.get() and sends fido:sign-response
- * 4. The bridge forwards the response back to the agent
+ * 1. The agent's sign() fires onSignRequest with resolve/reject callbacks
+ * 2. The bridge creates a PendingAction in the store
+ * 3. The NotificationDispatcher sends notifications to all channels
+ * 4. A client resolves/denies via the REST API → PendingActionStore resolves/rejects
+ * 5. The resolve callback builds the SSH signature blob and completes the ssh2 callback
  */
 
-import type { WebSocket } from "ws";
-import type { WsExtension } from "../server/ws-extension.js";
-import type { SignRequest, SignResponse, WebAuthnSshAgent } from "./ssh-agent.js";
+import type { NotificationDispatcher } from "../pending-action/dispatcher.js";
+import type { PendingActionStore } from "../pending-action/store.js";
+import type { SignRequestContext } from "../pending-action/types.js";
+import type { SignRequest } from "./ssh-agent.js";
 
-export class SigningBridge implements WsExtension {
-  private clients: WebSocket[] = [];
-  private agents = new Map<string, WebAuthnSshAgent>();
+export interface SigningBridgeParams {
+  actionStore: PendingActionStore;
+  dispatcher: NotificationDispatcher;
+}
 
-  // --- WsExtension implementation ---
+export class SigningBridge {
+  private actionStore: PendingActionStore;
+  private dispatcher: NotificationDispatcher;
 
-  onConnect(socket: WebSocket): void {
-    if (!this.clients.includes(socket)) this.clients.push(socket);
+  constructor(params: SigningBridgeParams) {
+    this.actionStore = params.actionStore;
+    this.dispatcher = params.dispatcher;
   }
 
-  onDisconnect(socket: WebSocket): void {
-    const idx = this.clients.indexOf(socket);
-    if (idx >= 0) this.clients.splice(idx, 1);
-  }
-
-  onMessage(msg: Record<string, unknown>, _socket: WebSocket): boolean {
-    if (msg.type === "fido:sign-response") {
-      this.handleSignResponse({
-        requestId: msg.requestId as string,
-        authenticatorData: Buffer.from(msg.authenticatorData as string, "base64url"),
-        signature: Buffer.from(msg.signature as string, "base64url"),
-        clientDataJSON: msg.clientDataJSON as string,
-      });
-      return true;
-    }
-    if (msg.type === "fido:sign-error") {
-      this.handleSignError(msg.requestId as string, msg.error as string);
-      return true;
-    }
-    if (msg.type === "fido:sign-skip") {
-      this.handleSignError(msg.requestId as string, "User skipped signing");
-      return true;
-    }
-    return false;
-  }
-
-  /** Forward a sign request from an agent to the browser */
-  handleSignRequest(request: SignRequest): void {
+  /**
+   * Handle a sign request from an agent. Creates a PendingAction and
+   * dispatches notifications to all configured channels.
+   */
+  handleSignRequest(request: SignRequest, accountId: string, context: SignRequestContext): void {
     // IMPORTANT: Use standard base64 (not base64url) — matches what
     // OpenSSH's verifier expects when reconstructing clientDataJSON
     const challenge = request.dataToSign.toString("base64");
 
-    // directSign: true when no endpoint context (assigned passkey, skip modal)
-    const directSign = !request.endpointLabel;
-
-    const msg = JSON.stringify({
-      type: "fido:sign-request",
-      requestId: request.requestId,
+    const action = this.actionStore.create({
+      type: "webauthn-sign",
+      accountId,
+      context,
       credentialId: request.credentialId,
       challenge,
       rpId: request.rpId,
-      directSign,
-      ...(!directSign && {
-        endpointLabel: request.endpointLabel,
-        endpointAddress: request.endpointAddress,
-        passkeyLabel: request.passkeyLabel,
-      }),
+      passkeyLabel: request.passkeyLabel,
+      resolve: request.resolve,
+      reject: request.reject,
     });
 
-    // Send to the most recently connected client only — multiple clients
-    // (e.g. Vite dev proxy + direct browser) would each call
-    // navigator.credentials.get(), causing "A request is already pending."
-    let sent = false;
-    for (let i = this.clients.length - 1; i >= 0; i--) {
-      const client = this.clients[i];
-      if (client.readyState === client.OPEN) {
-        client.send(msg);
-        sent = true;
-        break;
-      }
-    }
-
-    if (!sent) {
-      // No browser clients — find the agent and report error
-      for (const agent of this.agents.values()) {
-        agent.handleSignError(
-          request.requestId,
-          "No browser session available for WebAuthn signing. Open ShellWatch in a browser.",
-        );
-      }
-    }
-  }
-
-  /** Handle a signing response from a browser client */
-  handleSignResponse(response: SignResponse): void {
-    for (const agent of this.agents.values()) {
-      agent.handleSignResponse(response);
-    }
-  }
-
-  /** Handle a signing error from a browser client */
-  handleSignError(requestId: string, error: string): void {
-    for (const agent of this.agents.values()) {
-      agent.handleSignError(requestId, error);
-    }
-  }
-
-  /** Track an agent so we can route responses to it */
-  registerAgent(id: string, agent: WebAuthnSshAgent): void {
-    this.agents.set(id, agent);
-  }
-
-  unregisterAgent(id: string): void {
-    this.agents.delete(id);
-  }
-
-  get hasClients(): boolean {
-    return this.clients.some((c) => c.readyState === c.OPEN);
+    this.dispatcher.dispatch(action);
   }
 }

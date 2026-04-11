@@ -107,6 +107,8 @@ export const serverDefaults = {
 
 export const ServerSchema = z.object({
   port: z.number().int().min(1).max(65535).default(serverDefaults.port),
+  /** External URL for deep links (e.g., "https://shellwatch.example.com"). Falls back to http://HOST:PORT. */
+  externalUrl: z.string().url().optional(),
 });
 
 export const SeedAdminPasskeySchema = z.object({

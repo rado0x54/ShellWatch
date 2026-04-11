@@ -16,7 +16,7 @@ export interface AgentFactory {
   /**
    * Create an agent for the given endpoint.
    * When agentForward is true, returns a ForwardingAgent (with getStream()).
-   * Returns null if no browser is available and passkeys are required.
+   * Returns null if no keys are available.
    */
   (params: {
     endpoint: EndpointInfo;
@@ -25,6 +25,7 @@ export interface AgentFactory {
     isAdmin: boolean;
     rpId: string;
     agentForward: boolean;
+    sessionId?: string;
   }): AgentResult | null;
 }
 
@@ -99,9 +100,7 @@ export class SshTransportFactory {
     });
 
     if (!result) {
-      throw new Error(
-        "WebAuthn authentication requires a browser session. Open ShellWatch in a browser.",
-      );
+      throw new Error("No SSH keys available for this endpoint.");
     }
 
     const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });

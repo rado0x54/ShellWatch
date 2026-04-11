@@ -20,6 +20,7 @@ export {
   type WebAuthnSshAgentParams,
   WebAuthnSshAgent,
 } from "./ssh-agent.js";
+export type { SigningBridgeParams } from "./signing-bridge.js";
 export {
   buildPublicKeyBlob,
   coseToAuthorizedKeys,
