@@ -5,7 +5,7 @@ import type { CreateActionParams, PendingAction } from "./types.js";
 const ACTION_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 10_000;
 
-/** Generate a short, URL-safe ID (16 bytes → 22 chars base64url). */
+/** Generate a short, URL-safe ID (16 bytes -> 22 chars base64url). */
 function generateActionId(): string {
   return randomBytes(16).toString("base64url");
 }
@@ -20,13 +20,13 @@ export class PendingActionStore {
 
   create(params: CreateActionParams): PendingAction {
     const now = Date.now();
-    const action: PendingAction = {
+    const action = {
       ...params,
       id: generateActionId(),
-      status: "pending",
+      status: "pending" as const,
       createdAt: now,
       expiresAt: now + ACTION_TTL_MS,
-    };
+    } as PendingAction;
     this.actions.set(action.id, action);
     return action;
   }
@@ -45,11 +45,16 @@ export class PendingActionStore {
     return result;
   }
 
-  resolve(id: string, response: SignResponse): boolean {
+  resolve(id: string, response?: SignResponse): boolean {
     const action = this.actions.get(id);
     if (!action || action.status !== "pending") return false;
     action.status = "completed";
-    action.resolve(response);
+    if (action.type === "webauthn-sign") {
+      if (!response) return false;
+      action.resolve(response);
+    } else {
+      action.resolve();
+    }
     return true;
   }
 

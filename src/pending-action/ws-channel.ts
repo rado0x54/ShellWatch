@@ -21,22 +21,36 @@ export class WebSocketChannel implements NotificationChannel, WsExtension {
   // --- NotificationChannel ---
 
   async send(action: PendingAction, deepLink: string): Promise<void> {
-    const msg = JSON.stringify({
+    const base = {
       type: "sign:request",
       actionId: action.id,
+      actionType: action.type,
       deepLink,
       source: action.context.source,
-      passkeyLabel: action.passkeyLabel,
-      credentialId: action.credentialId,
-      challenge: action.challenge,
-      rpId: action.rpId,
       ...("endpointLabel" in action.context && {
         endpointLabel: action.context.endpointLabel,
       }),
       ...("endpointAddress" in action.context && {
         endpointAddress: action.context.endpointAddress,
       }),
-    });
+    };
+
+    const payload =
+      action.type === "webauthn-sign"
+        ? {
+            ...base,
+            passkeyLabel: action.passkeyLabel,
+            credentialId: action.credentialId,
+            challenge: action.challenge,
+            rpId: action.rpId,
+          }
+        : {
+            ...base,
+            keyLabel: action.keyLabel,
+            keyFingerprint: action.keyFingerprint,
+          };
+
+    const msg = JSON.stringify(payload);
     for (const client of this.getOpenClientsForAccount(action.accountId)) {
       client.socket.send(msg);
     }

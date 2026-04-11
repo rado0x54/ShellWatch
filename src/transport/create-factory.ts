@@ -7,6 +7,7 @@ import {
   buildPasskeyEntry,
   CompositeSshAgent,
   SigningBridge,
+  type FileKeySignRequest,
   type SignRequest,
 } from "../webauthn/index.js";
 import { ForwardingAgent } from "./forwarding-agent.js";
@@ -53,10 +54,8 @@ export function createSshTransportFactoryFromConfig(
 
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
 
-      const onSignRequest = (request: SignRequest) => {
-        // sessionId is not yet known at agent creation time (TerminalManager
-        // generates it after the transport connects), so we omit it here.
-        const context: SignRequestContext = agentForward
+      const buildContext = (): SignRequestContext =>
+        agentForward
           ? {
               source: "forwarding-agent",
               endpointLabel: endpoint.label,
@@ -69,11 +68,18 @@ export function createSshTransportFactoryFromConfig(
               endpointAddress: address,
             };
 
-        signingBridge.handleSignRequest(request, endpoint.accountId, context);
+      const onSignRequest = (request: SignRequest) => {
+        signingBridge.handleSignRequest(request, endpoint.accountId, buildContext());
+      };
+
+      const onFileKeySignRequest = (request: FileKeySignRequest) => {
+        signingBridge.handleKeyApproveRequest(request, endpoint.accountId, buildContext());
       };
 
       const fileKeyEntries = isAdmin
-        ? fileKeys.map((fk) => buildFileKeyEntry(fk.privateKey)).filter((e) => e !== null)
+        ? fileKeys
+            .map((fk) => buildFileKeyEntry(fk.privateKey, fk.label, fk.fingerprint))
+            .filter((e) => e !== null)
         : [];
 
       if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
@@ -85,6 +91,7 @@ export function createSshTransportFactoryFromConfig(
         endpointLabel: endpoint.label,
         endpointAddress: address,
         onSignRequest,
+        onFileKeySignRequest,
         logger: agentLog.current,
       };
 

@@ -2,18 +2,29 @@ import { writable } from "svelte/store";
 
 export type ToastVariant = "info" | "error" | "sign-request";
 
-export interface SignRequestAction {
+interface SignRequestBase {
   actionId: string;
   deepLink: string;
   source: string;
   endpointLabel?: string;
   endpointAddress?: string;
-  passkeyLabel?: string;
-  /** WebAuthn fields for inline signing (when user is already in the browser) */
+}
+
+export interface WebAuthnSignRequestAction extends SignRequestBase {
+  actionType: "webauthn-sign";
   credentialId: string;
   challenge: string;
   rpId: string;
+  passkeyLabel?: string;
 }
+
+export interface KeyApproveRequestAction extends SignRequestBase {
+  actionType: "key-approve";
+  keyLabel: string;
+  keyFingerprint: string;
+}
+
+export type SignRequestAction = WebAuthnSignRequestAction | KeyApproveRequestAction;
 
 export interface Toast {
   id: string;

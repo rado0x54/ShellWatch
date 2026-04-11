@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SignResponse } from "../webauthn/ssh-agent.js";
 import { PendingActionStore } from "./store.js";
-import type { CreateActionParams } from "./types.js";
+import type { KeyApproveAction, WebAuthnSignAction } from "./types.js";
 
-function makeParams(overrides?: Partial<CreateActionParams>): CreateActionParams {
+type WebAuthnCreateParams = Omit<WebAuthnSignAction, "id" | "status" | "createdAt" | "expiresAt">;
+type KeyApproveCreateParams = Omit<KeyApproveAction, "id" | "status" | "createdAt" | "expiresAt">;
+
+function makeWebAuthnParams(overrides?: Partial<WebAuthnCreateParams>): WebAuthnCreateParams {
   return {
     type: "webauthn-sign",
     accountId: "acc-1",
@@ -12,6 +15,24 @@ function makeParams(overrides?: Partial<CreateActionParams>): CreateActionParams
     challenge: "dGVzdC1jaGFsbGVuZ2U=",
     rpId: "localhost",
     passkeyLabel: "YubiKey",
+    resolve: vi.fn(),
+    reject: vi.fn(),
+    ...overrides,
+  };
+}
+
+function makeKeyApproveParams(overrides?: Partial<KeyApproveCreateParams>): KeyApproveCreateParams {
+  return {
+    type: "key-approve",
+    accountId: "acc-1",
+    context: {
+      source: "ui",
+      sourceIp: "127.0.0.1",
+      endpointLabel: "Prod",
+      endpointAddress: "user@host:22",
+    },
+    keyLabel: "Test Key",
+    keyFingerprint: "SHA256:abc123",
     resolve: vi.fn(),
     reject: vi.fn(),
     ...overrides,
@@ -39,8 +60,7 @@ describe("PendingActionStore", () => {
   });
 
   it("creates an action with generated id and pending status", () => {
-    const params = makeParams();
-    const action = store.create(params);
+    const action = store.create(makeWebAuthnParams());
 
     expect(action.id).toBeTruthy();
     expect(action.status).toBe("pending");
@@ -49,7 +69,7 @@ describe("PendingActionStore", () => {
   });
 
   it("retrieves a created action by id", () => {
-    const action = store.create(makeParams());
+    const action = store.create(makeWebAuthnParams());
     expect(store.get(action.id)).toBe(action);
   });
 
@@ -58,9 +78,9 @@ describe("PendingActionStore", () => {
   });
 
   it("finds pending actions for an account", () => {
-    const a1 = store.create(makeParams({ accountId: "acc-1" }));
-    store.create(makeParams({ accountId: "acc-2" }));
-    const a3 = store.create(makeParams({ accountId: "acc-1" }));
+    const a1 = store.create(makeWebAuthnParams({ accountId: "acc-1" }));
+    store.create(makeWebAuthnParams({ accountId: "acc-2" }));
+    const a3 = store.create(makeKeyApproveParams({ accountId: "acc-1" }));
 
     const pending = store.findPendingForAccount("acc-1");
     expect(pending).toHaveLength(2);
@@ -68,9 +88,9 @@ describe("PendingActionStore", () => {
     expect(pending.map((a) => a.id)).toContain(a3.id);
   });
 
-  it("resolves a pending action", () => {
+  it("resolves a webauthn-sign action with response", () => {
     const resolve = vi.fn();
-    const action = store.create(makeParams({ resolve }));
+    const action = store.create(makeWebAuthnParams({ resolve }));
 
     const result = store.resolve(action.id, fakeResponse);
     expect(result).toBe(true);
@@ -78,15 +98,25 @@ describe("PendingActionStore", () => {
     expect(resolve).toHaveBeenCalledWith(fakeResponse);
   });
 
+  it("resolves a key-approve action without response", () => {
+    const resolve = vi.fn();
+    const action = store.create(makeKeyApproveParams({ resolve }));
+
+    const result = store.resolve(action.id);
+    expect(result).toBe(true);
+    expect(action.status).toBe("completed");
+    expect(resolve).toHaveBeenCalled();
+  });
+
   it("cannot resolve a non-pending action", () => {
-    const action = store.create(makeParams());
+    const action = store.create(makeWebAuthnParams());
     store.deny(action.id);
     expect(store.resolve(action.id, fakeResponse)).toBe(false);
   });
 
   it("denies a pending action", () => {
     const reject = vi.fn();
-    const action = store.create(makeParams({ reject }));
+    const action = store.create(makeWebAuthnParams({ reject }));
 
     const result = store.deny(action.id);
     expect(result).toBe(true);
@@ -94,11 +124,19 @@ describe("PendingActionStore", () => {
     expect(reject).toHaveBeenCalledWith(expect.any(Error));
   });
 
+  it("denies a key-approve action", () => {
+    const reject = vi.fn();
+    const action = store.create(makeKeyApproveParams({ reject }));
+
+    store.deny(action.id);
+    expect(action.status).toBe("denied");
+    expect(reject).toHaveBeenCalledWith(expect.any(Error));
+  });
+
   it("expires actions after TTL via sweep", () => {
     const reject = vi.fn();
-    const action = store.create(makeParams({ reject }));
+    const action = store.create(makeWebAuthnParams({ reject }));
 
-    // Advance past the 60s TTL + sweep interval
     vi.advanceTimersByTime(70_000);
 
     expect(action.status).toBe("expired");
@@ -106,7 +144,7 @@ describe("PendingActionStore", () => {
   });
 
   it("does not include resolved actions in findPendingForAccount", () => {
-    const action = store.create(makeParams());
+    const action = store.create(makeWebAuthnParams());
     store.resolve(action.id, fakeResponse);
 
     expect(store.findPendingForAccount("acc-1")).toHaveLength(0);
@@ -115,8 +153,8 @@ describe("PendingActionStore", () => {
   it("destroy rejects all pending actions", () => {
     const reject1 = vi.fn();
     const reject2 = vi.fn();
-    store.create(makeParams({ reject: reject1 }));
-    store.create(makeParams({ reject: reject2 }));
+    store.create(makeWebAuthnParams({ reject: reject1 }));
+    store.create(makeKeyApproveParams({ reject: reject2 }));
 
     store.destroy();
 

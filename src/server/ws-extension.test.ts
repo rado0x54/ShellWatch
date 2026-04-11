@@ -73,10 +73,49 @@ describe("WebSocketChannel as WsExtension", () => {
     );
     expect(msg.type).toBe("sign:request");
     expect(msg.actionId).toBe("action-1");
+    expect(msg.actionType).toBe("webauthn-sign");
     expect(msg.source).toBe("agent-proxy");
     expect(msg.credentialId).toBe("cred-1");
     expect(msg.challenge).toBe("dGVzdA==");
     expect(msg.rpId).toBe("localhost");
+  });
+
+  it("sends key-approve message with correct fields", async () => {
+    const channel = new WebSocketChannel();
+    const socket = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
+
+    channel.onConnect(socket, "acc-1");
+
+    const action = {
+      id: "action-2",
+      type: "key-approve" as const,
+      accountId: "acc-1",
+      status: "pending" as const,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      context: {
+        source: "ui" as const,
+        sourceIp: "127.0.0.1",
+        endpointLabel: "Prod",
+        endpointAddress: "user@host:22",
+      },
+      keyLabel: "Test Key",
+      keyFingerprint: "SHA256:abc123",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+
+    await channel.send(action, "https://example.com/sign/action-2");
+
+    const msg = JSON.parse(
+      (socket as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls[0][0] as string,
+    );
+    expect(msg.type).toBe("sign:request");
+    expect(msg.actionType).toBe("key-approve");
+    expect(msg.keyLabel).toBe("Test Key");
+    expect(msg.keyFingerprint).toBe("SHA256:abc123");
+    expect(msg.endpointLabel).toBe("Prod");
+    expect(msg.credentialId).toBeUndefined();
   });
 
   it("broadcasts sign:resolved to all clients for the account", () => {

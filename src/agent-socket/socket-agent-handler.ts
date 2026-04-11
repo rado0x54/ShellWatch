@@ -35,6 +35,7 @@ import {
   buildFileKeyEntry,
   buildPasskeyEntry,
   CompositeSshAgent,
+  type FileKeySignRequest,
   type PasskeyEntry,
   type SignRequest,
 } from "../webauthn/index.js";
@@ -164,7 +165,7 @@ function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
 
   const availableKeys = keyProvider.getAvailableKeys();
   const fileKeyEntries = availableKeys
-    .map((k) => buildFileKeyEntry(k.privateKeyContent))
+    .map((k) => buildFileKeyEntry(k.privateKeyContent, k.filename, k.fingerprint))
     .filter((e) => e !== null);
 
   // Always include passkeys — sign requests go through PendingAction notification
@@ -189,18 +190,26 @@ function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
 
   const onSignRequest = (request: SignRequest) => {
     if (signingBridge) {
-      debug(`[Agent Proxy] forwarding sign request to PendingAction system`);
+      debug(`[Agent Proxy] forwarding passkey sign request to PendingAction system`);
       signingBridge.handleSignRequest(request, accountId, context);
     } else {
       request.reject(new Error("No signing bridge configured"));
     }
   };
 
+  const onFileKeySignRequest = signingBridge
+    ? (request: FileKeySignRequest) => {
+        debug(`[Agent Proxy] forwarding file key approve request to PendingAction system`);
+        signingBridge.handleKeyApproveRequest(request, accountId, context);
+      }
+    : undefined;
+
   return new CompositeSshAgent({
     passkeys: passkeyEntries,
     fileKeys: fileKeyEntries,
     rpId,
     onSignRequest,
+    onFileKeySignRequest,
     logger,
   });
 }

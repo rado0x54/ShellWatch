@@ -77,6 +77,19 @@ export async function resolveAction(actionId: string, result: SignCeremonyResult
   }
 }
 
+/** Approve a key-approve PendingAction (no WebAuthn ceremony needed). */
+export async function approveAction(actionId: string): Promise<void> {
+  const res = await fetch(`/api/actions/${actionId}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
 /** Human-readable labels for sign request sources. */
 export const sourceLabels: Record<string, string> = {
   "agent-proxy": "Agent Proxy",

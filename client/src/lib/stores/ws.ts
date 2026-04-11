@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import { addToast, clearAction } from "./toasts.js";
+import { addToast, clearAction, type SignRequestAction } from "./toasts.js";
 
 export type SessionMode = "control" | "observer";
 
@@ -12,24 +12,31 @@ export interface SessionListEntry {
   mode: SessionMode;
 }
 
+type SignRequestMessage = {
+  type: "sign:request";
+  actionId: string;
+  actionType: "webauthn-sign" | "key-approve";
+  deepLink: string;
+  source: string;
+  endpointLabel?: string;
+  endpointAddress?: string;
+  // webauthn-sign fields
+  passkeyLabel?: string;
+  credentialId?: string;
+  challenge?: string;
+  rpId?: string;
+  // key-approve fields
+  keyLabel?: string;
+  keyFingerprint?: string;
+};
+
 type ServerMessage =
   | { type: "terminal:output"; sessionId: string; data: string }
   | { type: "terminal:status"; sessionId: string; status: string }
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
-  | {
-      type: "sign:request";
-      actionId: string;
-      deepLink: string;
-      source: string;
-      passkeyLabel?: string;
-      endpointLabel?: string;
-      endpointAddress?: string;
-      credentialId: string;
-      challenge: string;
-      rpId: string;
-    }
+  | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
   | { type: "error"; message: string };
 
@@ -39,6 +46,34 @@ export const sessions = writable<SessionListEntry[]>([]);
 
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
+
+function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
+  const base = {
+    actionId: msg.actionId,
+    deepLink: msg.deepLink,
+    source: msg.source,
+    endpointLabel: msg.endpointLabel,
+    endpointAddress: msg.endpointAddress,
+  };
+
+  if (msg.actionType === "key-approve") {
+    return {
+      ...base,
+      actionType: "key-approve",
+      keyLabel: msg.keyLabel!,
+      keyFingerprint: msg.keyFingerprint!,
+    };
+  }
+
+  return {
+    ...base,
+    actionType: "webauthn-sign",
+    credentialId: msg.credentialId!,
+    challenge: msg.challenge!,
+    rpId: msg.rpId!,
+    passkeyLabel: msg.passkeyLabel,
+  };
+}
 
 export function connectWs(): void {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -54,26 +89,18 @@ export function connectWs(): void {
         sessions.set(msg.sessions);
       }
 
-      // Handle sign request → show toast
       if (msg.type === "sign:request") {
+        const message =
+          msg.actionType === "key-approve"
+            ? "SSH key approval requested"
+            : "Passkey signature requested";
         addToast({
           variant: "sign-request",
-          message: "Passkey signature requested",
-          action: {
-            actionId: msg.actionId,
-            deepLink: msg.deepLink,
-            source: msg.source,
-            endpointLabel: msg.endpointLabel,
-            endpointAddress: msg.endpointAddress,
-            passkeyLabel: msg.passkeyLabel,
-            credentialId: msg.credentialId,
-            challenge: msg.challenge,
-            rpId: msg.rpId,
-          },
+          message,
+          action: buildActionFromMessage(msg),
         });
       }
 
-      // Handle sign resolved → clear toast
       if (msg.type === "sign:resolved") {
         clearAction(msg.actionId);
       }

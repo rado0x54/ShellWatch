@@ -4,13 +4,18 @@
   import { page } from "$app/stores";
   import { onMount } from "svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
-  import { performSignCeremony, resolveAction, sourceLabels } from "$lib/utils/webauthn-sign.js";
+  import {
+    approveAction,
+    performSignCeremony,
+    resolveAction,
+    sourceLabels,
+  } from "$lib/utils/webauthn-sign.js";
 
   const actionId = $derived($page.params.id);
 
   interface ActionData {
     id: string;
-    type: string;
+    type: "webauthn-sign" | "key-approve";
     accountId: string;
     status: string;
     createdAt: number;
@@ -25,10 +30,14 @@
       mcpClientName?: string;
       mcpClientVersion?: string;
     };
-    credentialId: string;
-    challenge: string;
-    rpId: string;
+    // webauthn-sign fields
+    credentialId?: string;
+    challenge?: string;
+    rpId?: string;
     passkeyLabel?: string;
+    // key-approve fields
+    keyLabel?: string;
+    keyFingerprint?: string;
   }
 
   let action = $state<ActionData | null>(null);
@@ -36,6 +45,8 @@
   let signing = $state(false);
   let error = $state<string | null>(null);
   let resultStatus = $state<string | null>(null);
+
+  const isKeyApprove = $derived(action?.type === "key-approve");
 
   onMount(async () => {
     try {
@@ -62,14 +73,20 @@
     error = null;
 
     try {
-      const result = await performSignCeremony(action);
-      await resolveAction(actionId, result);
+      if (action.type === "key-approve") {
+        await approveAction(actionId);
+      } else {
+        const result = await performSignCeremony(
+          action as { credentialId: string; challenge: string; rpId: string },
+        );
+        await resolveAction(actionId, result);
+      }
       resultStatus = "completed";
       clearAction(actionId);
-      toastInfo("Signature completed successfully");
+      toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
     } catch (err) {
       error = (err as Error).message;
-      toastError(`Signing failed: ${error}`);
+      toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
     } finally {
       signing = false;
     }
@@ -116,7 +133,7 @@
     <div class="sign-card">
       <h2>
         {#if displayStatus === "completed"}
-          Signature Complete
+          {isKeyApprove ? "Key Usage Approved" : "Signature Complete"}
         {:else if displayStatus === "denied"}
           Request Denied
         {:else if displayStatus === "expired"}
@@ -127,11 +144,13 @@
       </h2>
       <p class="sign-status-msg">
         {#if displayStatus === "completed"}
-          The passkey signature was completed successfully.
+          {isKeyApprove
+            ? "The SSH key usage was approved successfully."
+            : "The passkey signature was completed successfully."}
         {:else if displayStatus === "denied"}
-          This signing request was denied.
+          This request was denied.
         {:else if displayStatus === "expired"}
-          This signing request expired before it could be completed.
+          This request expired before it could be completed.
         {:else}
           This request is no longer pending.
         {/if}
@@ -142,7 +161,7 @@
     </div>
   {:else}
     <div class="sign-card">
-      <h2>Passkey Signature Request</h2>
+      <h2>{isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}</h2>
 
       <div class="sign-fields">
         <div class="sign-field">
@@ -190,7 +209,20 @@
           </div>
         {/if}
 
-        {#if action.passkeyLabel}
+        {#if isKeyApprove && action.keyLabel}
+          <div class="sign-field">
+            <span class="sign-label">SSH Key</span>
+            <span class="sign-value">{action.keyLabel}</span>
+          </div>
+          {#if action.keyFingerprint}
+            <div class="sign-field">
+              <span class="sign-label">Fingerprint</span>
+              <span class="sign-value sign-mono">{action.keyFingerprint}</span>
+            </div>
+          {/if}
+        {/if}
+
+        {#if !isKeyApprove && action.passkeyLabel}
           <div class="sign-field">
             <span class="sign-label">Passkey</span>
             <span class="sign-value">{action.passkeyLabel}</span>
@@ -214,7 +246,11 @@
       <div class="sign-actions">
         <button class="btn btn-secondary" onclick={handleDeny} disabled={signing}>Deny</button>
         <button class="btn btn-primary" onclick={handleSign} disabled={signing}>
-          {#if signing}Signing...{:else}Sign{/if}
+          {#if signing}
+            {isKeyApprove ? "Approving..." : "Signing..."}
+          {:else}
+            {isKeyApprove ? "Approve" : "Sign"}
+          {/if}
         </button>
       </div>
     </div>

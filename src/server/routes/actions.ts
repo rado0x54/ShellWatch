@@ -54,22 +54,28 @@ export function registerActionRoutes(params: ActionRoutesParams) {
       return { error: `Action is already ${action.status}` };
     }
 
-    const { authenticatorData, signature, clientDataJSON } = request.body ?? {};
-    if (
-      typeof authenticatorData !== "string" ||
-      typeof signature !== "string" ||
-      typeof clientDataJSON !== "string"
-    ) {
-      reply.status(400);
-      return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
-    }
+    let resolved: boolean;
 
-    const resolved = actionStore.resolve(action.id, {
-      requestId: action.id,
-      authenticatorData: Buffer.from(authenticatorData, "base64url"),
-      signature: Buffer.from(signature, "base64url"),
-      clientDataJSON,
-    });
+    if (action.type === "webauthn-sign") {
+      const { authenticatorData, signature, clientDataJSON } = request.body ?? {};
+      if (
+        typeof authenticatorData !== "string" ||
+        typeof signature !== "string" ||
+        typeof clientDataJSON !== "string"
+      ) {
+        reply.status(400);
+        return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
+      }
+      resolved = actionStore.resolve(action.id, {
+        requestId: action.id,
+        authenticatorData: Buffer.from(authenticatorData, "base64url"),
+        signature: Buffer.from(signature, "base64url"),
+        clientDataJSON,
+      });
+    } else {
+      // key-approve: no payload needed
+      resolved = actionStore.resolve(action.id);
+    }
 
     if (!resolved) {
       reply.status(409);
