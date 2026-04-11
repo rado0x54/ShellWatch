@@ -82,10 +82,6 @@ export type CreateActionParams =
 export type PendingActionView = Omit<PendingAction, "resolve" | "reject">;
 
 export function toActionView(action: PendingAction): PendingActionView {
-  if (action.type === "webauthn-sign") {
-    const { resolve: _, reject: _r, ...view } = action;
-    return view;
-  }
   const { resolve: _, reject: _r, ...view } = action;
   return view;
 }

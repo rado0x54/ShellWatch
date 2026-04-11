@@ -20,7 +20,8 @@
       }
       removeToast(toastId);
     } catch (err) {
-      toastError(`Signing failed: ${(err as Error).message}`);
+      const verb = action.actionType === "key-approve" ? "Approval" : "Signing";
+      toastError(`${verb} failed: ${(err as Error).message}`);
     } finally {
       activeActionId = null;
     }
