@@ -9,6 +9,10 @@ export interface SignRequestAction {
   endpointLabel?: string;
   endpointAddress?: string;
   passkeyLabel?: string;
+  /** WebAuthn fields for inline signing (when user is already in the browser) */
+  credentialId: string;
+  challenge: string;
+  rpId: string;
 }
 
 export interface Toast {

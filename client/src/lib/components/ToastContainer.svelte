@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { resolve } from "$app/paths";
-  import { goto } from "$app/navigation";
-  import { toasts, removeToast } from "$lib/stores/toasts.js";
+  import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
 
   const sourceLabels: Record<string, string> = {
     "agent-proxy": "Agent Proxy",
@@ -10,10 +8,73 @@
     "forwarding-agent": "Agent Forwarding",
   };
 
-  function handleReview(deepLink: string) {
-    // Navigate within the SPA using relative path
-    const url = new URL(deepLink);
-    goto(resolve(url.pathname));
+  let signingActionId = $state<string | null>(null);
+
+  function bufferToBase64url(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  async function handleSign(action: SignRequestAction, toastId: string) {
+    signingActionId = action.actionId;
+    try {
+      // Decode challenge (standard base64)
+      const decoded = atob(action.challenge);
+      const challengeBytes = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+
+      // Decode credential ID (base64url)
+      const credIdBytes = Uint8Array.from(
+        atob(action.credentialId.replace(/-/g, "+").replace(/_/g, "/")),
+        (c) => c.charCodeAt(0),
+      );
+
+      const assertion = (await navigator.credentials.get({
+        publicKey: {
+          challenge: challengeBytes,
+          rpId: action.rpId,
+          allowCredentials: [
+            {
+              id: credIdBytes,
+              type: "public-key",
+              transports: ["usb", "nfc", "ble", "internal"],
+            },
+          ],
+          userVerification: "discouraged",
+          timeout: 60000,
+        },
+      })) as PublicKeyCredential;
+
+      if (!assertion?.response) {
+        throw new Error("No assertion returned");
+      }
+
+      const authResponse = assertion.response as AuthenticatorAssertionResponse;
+
+      const res = await fetch(`/api/actions/${action.actionId}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authenticatorData: bufferToBase64url(authResponse.authenticatorData),
+          signature: bufferToBase64url(authResponse.signature),
+          clientDataJSON: new TextDecoder().decode(authResponse.clientDataJSON),
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+
+      removeToast(toastId);
+    } catch (err) {
+      toastError(`Signing failed: ${(err as Error).message}`);
+    } finally {
+      signingActionId = null;
+    }
   }
 
   async function handleDeny(actionId: string, toastId: string) {
@@ -34,6 +95,7 @@
     {#each $toasts as toast (toast.id)}
       <div class="toast toast-{toast.variant}">
         {#if toast.variant === "sign-request" && toast.action}
+          {@const isSigning = signingActionId === toast.action.actionId}
           <div class="toast-header">
             <span class="toast-icon">&#128273;</span>
             <span class="toast-title">Passkey Signature Request</span>
@@ -67,11 +129,16 @@
             <button
               class="btn btn-secondary"
               onclick={() => handleDeny(toast.action!.actionId, toast.id)}
+              disabled={isSigning}
             >
               Deny
             </button>
-            <button class="btn btn-primary" onclick={() => handleReview(toast.action!.deepLink)}>
-              Review &amp; Sign
+            <button
+              class="btn btn-primary"
+              onclick={() => handleSign(toast.action!, toast.id)}
+              disabled={isSigning}
+            >
+              {#if isSigning}Signing...{:else}Sign{/if}
             </button>
           </div>
         {:else}

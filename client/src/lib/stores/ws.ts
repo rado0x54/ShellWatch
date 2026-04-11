@@ -26,6 +26,9 @@ type ServerMessage =
       passkeyLabel?: string;
       endpointLabel?: string;
       endpointAddress?: string;
+      credentialId: string;
+      challenge: string;
+      rpId: string;
     }
   | { type: "sign:resolved"; actionId: string }
   | { type: "error"; message: string };
@@ -63,6 +66,9 @@ export function connectWs(): void {
             endpointLabel: msg.endpointLabel,
             endpointAddress: msg.endpointAddress,
             passkeyLabel: msg.passkeyLabel,
+            credentialId: msg.credentialId,
+            challenge: msg.challenge,
+            rpId: msg.rpId,
           },
         });
       }
