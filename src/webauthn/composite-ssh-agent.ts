@@ -65,8 +65,9 @@ export interface CompositeAgentParams extends WebAuthnSshAgentParams {
  * Admin-only composite ssh2 agent that adds file-based key signing
  * on top of WebAuthnSshAgent's passkey support.
  *
- * File keys are tried first (auto-sign), then passkeys via the inherited
- * WebAuthn browser signing flow.
+ * File keys are tried first, then passkeys. When `onFileKeySignRequest`
+ * is set, file key signing requires user approval via the PendingAction
+ * system. When unset, file keys auto-sign (backward compat).
  */
 export class CompositeSshAgent extends WebAuthnSshAgent {
   private fileKeys: FileKeyEntry[];

@@ -20,6 +20,9 @@ export class PendingActionStore {
 
   create(params: CreateActionParams): PendingAction {
     const now = Date.now();
+    // Cast is safe: CreateActionParams is a union of complete action shapes minus the
+    // four fields we add here (id, status, createdAt, expiresAt). TypeScript can't
+    // narrow a spread on a union type, but the result is always a valid PendingAction.
     const action = {
       ...params,
       id: generateActionId(),
