@@ -55,13 +55,22 @@ interface PushPayload {
 self.addEventListener("push", (event) => {
   const data: PushPayload = event.data?.json() ?? {};
   event.waitUntil(
-    self.registration.showNotification(data.title || "ShellWatch", {
-      body: data.body || "New sign request",
-      icon: "/icon-192.png",
-      badge: "/icon-64.png",
-      tag: data.actionId, // Collapse duplicates for same action
-      data: { deepLink: data.deepLink, actionId: data.actionId },
-    }),
+    (async () => {
+      // If a ShellWatch tab is already visible on this device, skip the push —
+      // the in-page WebSocket toast will handle it. This prevents the triggering
+      // device from getting a duplicate notification while other devices still do.
+      const windows = await self.clients.matchAll({ type: "window" });
+      const hasVisibleTab = windows.some((c) => c.visibilityState === "visible");
+      if (hasVisibleTab) return;
+
+      await self.registration.showNotification(data.title || "ShellWatch", {
+        body: data.body || "New sign request",
+        icon: "/icon-192.png",
+        badge: "/icon-64.png",
+        tag: data.actionId, // Collapse duplicates for same action
+        data: { deepLink: data.deepLink, actionId: data.actionId },
+      });
+    })(),
   );
 });
 
