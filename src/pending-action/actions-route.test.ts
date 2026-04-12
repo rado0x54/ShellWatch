@@ -15,7 +15,12 @@ function makeWebAuthnParams(overrides?: Partial<WebAuthnParams>): WebAuthnParams
   return {
     type: "webauthn-sign",
     accountId: testAccountId,
-    context: { source: "agent-proxy", sourceIp: "127.0.0.1", apiKeyPrefix: "sw_test" },
+    context: {
+      source: "agent-proxy",
+      sourceIp: "127.0.0.1",
+      apiKeyLabel: "Test Key",
+      apiKeyPrefix: "sw_test",
+    },
     credentialId: "cred-1",
     challenge: "dGVzdA==",
     rpId: "localhost",

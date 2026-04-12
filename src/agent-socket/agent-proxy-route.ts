@@ -7,7 +7,7 @@
  * (4-byte BE length prefix + payload).
  */
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
 import type { AccountRepository, ApiKeyRepository } from "../db/index.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
@@ -16,6 +16,33 @@ import type { ScannedKey } from "../transport/key-scanner.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
 import { createAgentHandler } from "./socket-agent-handler.js";
+
+/** Max length for client-reported header values, after stripping control chars. */
+export const CLIENT_HEADER_MAX_LEN = 128;
+
+/**
+ * Read and sanitize a client-reported handshake header.
+ *
+ * These values are advertised by the agent client (`X-ShellWatch-Hostname`,
+ * `-OS`, `-Version`) and are rendered as "self-reported" in the approval UI.
+ * They cross the trust boundary here, so we:
+ * - Look up by lowercased name (Fastify/Node HTTP always lowercase headers)
+ * - Strip ASCII control chars (including newlines, tabs, DEL)
+ * - Clamp length to keep pending-action payloads bounded
+ *
+ * Returns `undefined` for missing/empty values so downstream code can rely
+ * on presence checks.
+ */
+export function readClientHeader(
+  request: Pick<FastifyRequest, "headers">,
+  lowercaseName: string,
+): string | undefined {
+  const raw = request.headers[lowercaseName];
+  if (typeof raw !== "string") return undefined;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, "").slice(0, CLIENT_HEADER_MAX_LEN);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
 
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
@@ -74,6 +101,13 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
     // Look up passkeys for the authenticated account
     const passkeys = findCredentialsForAccount?.(key.accountId) ?? [];
 
+    // Best-effort client metadata from WS handshake headers; see readClientHeader
+    // for the sanitization contract. Older clients that don't send these headers
+    // simply produce `undefined` values and the UI hides them.
+    const clientHostname = readClientHeader(request, "x-shellwatch-hostname");
+    const clientOs = readClientHeader(request, "x-shellwatch-os");
+    const clientVersion = readClientHeader(request, "x-shellwatch-version");
+
     const { protocol, cleanup } = createAgentHandler({
       keyProvider,
       logger,
@@ -82,7 +116,11 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
       rpId,
       accountId: key.accountId,
       sourceIp: request.ip,
+      apiKeyLabel: key.label,
       apiKeyPrefix: key.keyPrefix,
+      clientHostname,
+      clientOs,
+      clientVersion,
     });
 
     app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);

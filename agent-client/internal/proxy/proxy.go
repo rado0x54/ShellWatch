@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +25,7 @@ type ProxyConfig struct {
 	ServerURL  string
 	ApiKey     string
 	Insecure   bool
+	Version    string
 }
 
 // Run starts the agent proxy. It listens on a Unix socket and relays
@@ -78,7 +80,7 @@ func Run(cfg ProxyConfig) error {
 			// Listener closed (shutdown)
 			return nil
 		}
-		go handleConnection(conn, wsURL, cfg.ApiKey)
+		go handleConnection(conn, wsURL, cfg.ApiKey, cfg.Version)
 	}
 }
 
@@ -95,7 +97,7 @@ var agentFailureResponse = []byte{0, 0, 0, 1, sshAgentFailure}
 // handleConnection processes one SSH agent client connection.
 // Each connection gets its own WebSocket to the server, ensuring
 // clean protocol state isolation between concurrent SSH clients.
-func handleConnection(conn net.Conn, wsURL, apiKey string) {
+func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
 	defer conn.Close()
 
 	var ws *websocket.Conn
@@ -132,7 +134,7 @@ func handleConnection(conn net.Conn, wsURL, apiKey string) {
 
 		// Lazily dial the WebSocket on first real agent message
 		if ws == nil {
-			ws, err = dialWS(wsURL, apiKey)
+			ws, err = dialWS(wsURL, apiKey, version)
 			if err != nil {
 				log.Printf("WebSocket connect error: %v", err)
 				return
@@ -164,9 +166,20 @@ func handleConnection(conn net.Conn, wsURL, apiKey string) {
 	}
 }
 
-func dialWS(wsURL, apiKey string) (*websocket.Conn, error) {
+func dialWS(wsURL, apiKey, version string) (*websocket.Conn, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+apiKey)
+
+	// Best-effort client metadata advertised to the server so it can show a
+	// richer "who is asking?" context on the /sign/:id approval page. All
+	// three headers are optional; the server falls back gracefully when absent.
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		header.Set("X-ShellWatch-Hostname", hostname)
+	}
+	header.Set("X-ShellWatch-OS", runtime.GOOS+"/"+runtime.GOARCH)
+	if version != "" {
+		header.Set("X-ShellWatch-Version", version)
+	}
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,

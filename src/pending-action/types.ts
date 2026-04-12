@@ -5,7 +5,14 @@ import type { SignResponse } from "../webauthn/ssh-agent.js";
 export interface AgentProxyContext {
   source: "agent-proxy";
   sourceIp: string;
+  apiKeyLabel: string;
   apiKeyPrefix: string;
+  /** Client hostname advertised via X-ShellWatch-Hostname header on WS handshake. */
+  clientHostname?: string;
+  /** Client OS/arch (e.g. "darwin/arm64") advertised via X-ShellWatch-OS header. */
+  clientOs?: string;
+  /** Agent client version advertised via X-ShellWatch-Version header. */
+  clientVersion?: string;
 }
 
 export type EndpointAuthTrigger =
