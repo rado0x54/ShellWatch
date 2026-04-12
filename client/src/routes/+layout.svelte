@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import "../app.css";
@@ -35,7 +34,14 @@
     if (!isUnauthPage) {
       const { authenticated } = await checkAuth();
       if (!authenticated) {
-        await goto(resolve("/login"));
+        const redirect = window.location.pathname + window.location.search;
+        const target =
+          redirect && redirect !== "/"
+            ? `/login?redirect=${encodeURIComponent(redirect)}`
+            : resolve("/login");
+        // Full-page reload (not goto) — typed routes can't validate a dynamic
+        // string, and this flushes any in-memory state from the unauth view.
+        window.location.href = target;
         ready = true;
         return;
       }

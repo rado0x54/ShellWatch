@@ -1,7 +1,8 @@
 import type { EndpointInfo, EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
-import type { TerminalTransport } from "../terminal/transport.js";
+import type { EndpointAuthTrigger } from "../pending-action/types.js";
+import type { TerminalTransport, TransportFactoryParams } from "../terminal/transport.js";
 import type { WebAuthnSshAgent } from "../webauthn/ssh-agent.js";
 import type { PrivateKeyProvider } from "./key-directory-watcher.js";
 import { connectSshWithAgent } from "./ssh-transport.js";
@@ -25,7 +26,8 @@ export interface AgentFactory {
     isAdmin: boolean;
     rpId: string;
     agentForward: boolean;
-    sessionId?: string;
+    sessionId: string;
+    trigger: EndpointAuthTrigger;
   }): AgentResult | null;
 }
 
@@ -58,7 +60,8 @@ export class SshTransportFactory {
     private options: SshTransportFactoryOptions,
   ) {}
 
-  async create(endpointId: string): Promise<TerminalTransport> {
+  async create(params: TransportFactoryParams): Promise<TerminalTransport> {
+    const { endpointId, sessionId, trigger } = params;
     const endpoint = await this.endpointRepo.findById(endpointId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
@@ -107,6 +110,8 @@ export class SshTransportFactory {
       isAdmin,
       rpId: this.options.rpId,
       agentForward,
+      sessionId,
+      trigger,
     });
 
     if (!result) {

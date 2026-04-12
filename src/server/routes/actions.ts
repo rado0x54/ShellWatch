@@ -83,7 +83,7 @@ export function registerActionRoutes(params: ActionRoutesParams) {
     }
 
     wsChannel.broadcastResolved(action.id, action.accountId);
-    return { status: "completed" };
+    return { redirectTo: action.redirectTo };
   });
 
   app.post<{ Params: { actionId: string } }>(

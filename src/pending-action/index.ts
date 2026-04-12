@@ -1,18 +1,18 @@
 export { NotificationDispatcher, type NotificationChannel } from "./dispatcher.js";
 export { PendingActionStore } from "./store.js";
 export {
+  type AgentForwardingContext,
   type AgentProxyContext,
   type CreateActionParams,
-  type ForwardingAgentContext,
+  type EndpointAuthContext,
+  type EndpointAuthTrigger,
   type KeyApproveAction,
-  type McpContext,
   type PendingAction,
   type PendingActionStatus,
   type PendingActionType,
   type PendingActionView,
   type SignRequestContext,
   toActionView,
-  type UiContext,
   type WebAuthnSignAction,
 } from "./types.js";
 export { PushChannel, type PushChannelParams } from "./push-channel.js";

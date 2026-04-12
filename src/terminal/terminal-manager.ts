@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
@@ -8,7 +9,6 @@ import {
   type OutputReadResult,
   type TerminalEventMap,
   type TerminalSession,
-  type TerminalSource,
   type TerminalStatus,
 } from "./types.js";
 
@@ -47,7 +47,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     this.cleanupTimer.unref();
   }
 
-  async create(endpointId: string, source: TerminalSource): Promise<TerminalSession> {
+  async create(endpointId: string, trigger: EndpointAuthTrigger): Promise<TerminalSession> {
     const endpoint = await this.endpointRepo.findById(endpointId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
@@ -62,14 +62,17 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       status: "opening",
       createdAt: now,
       lastActivityAt: now,
-      source,
+      // trigger.kind is intentionally the same string set as TerminalSource for
+      // the kinds we implement today (ui, mcp). When the planned "ssh" agent
+      // source lands (#12), extend EndpointAuthTrigger to include it.
+      source: trigger.kind,
     };
 
     const output = new OutputBuffer(this.maxOutputBufferSize);
 
     let transport: TerminalTransport;
     try {
-      transport = await this.transportFactory(endpointId);
+      transport = await this.transportFactory({ endpointId, sessionId, trigger });
     } catch (err) {
       session.status = "error";
       throw new Error(`Failed to connect to ${endpointId}: ${(err as Error).message}`, {

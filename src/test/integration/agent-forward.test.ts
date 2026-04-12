@@ -81,12 +81,14 @@ describe("SSH Agent Forwarding", () => {
           rpId: "localhost",
           onSignRequest: () => {},
         };
-        const agent = fwd ? new ForwardingAgent(params) : new CompositeSshAgent(params);
+        const agent = fwd
+          ? new ForwardingAgent({ ...params, forwardingOnSignRequest: () => {} })
+          : new CompositeSshAgent(params);
         return { agent, cleanup: () => agent.destroy() };
       },
     });
 
-    const terminalManager = new TerminalManager(endpointRepo, (id) => factory.create(id), {
+    const terminalManager = new TerminalManager(endpointRepo, (p) => factory.create(p), {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
@@ -107,7 +109,10 @@ describe("SSH Agent Forwarding", () => {
     sshServer.resetAgentForwardRequested();
     const { terminalManager } = buildTestInfra(true);
     try {
-      const session = await terminalManager.create("test-server", "ui");
+      const session = await terminalManager.create("test-server", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       expect(session.status).toBe("open");
 
       await waitFor(() => sshServer.agentForwardRequested);
@@ -123,7 +128,10 @@ describe("SSH Agent Forwarding", () => {
     sshServer.resetAgentForwardRequested();
     const { terminalManager } = buildTestInfra(false);
     try {
-      const session = await terminalManager.create("test-server", "ui");
+      const session = await terminalManager.create("test-server", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       expect(session.status).toBe("open");
 
       // Give enough time for the handshake to complete — if forwarding were

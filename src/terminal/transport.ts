@@ -14,4 +14,12 @@ export interface TerminalTransport extends EventEmitter {
   close(): void;
 }
 
-export type TransportFactory = (endpointId: string) => Promise<TerminalTransport>;
+import type { EndpointAuthTrigger } from "../pending-action/types.js";
+
+export interface TransportFactoryParams {
+  endpointId: string;
+  sessionId: string;
+  trigger: EndpointAuthTrigger;
+}
+
+export type TransportFactory = (params: TransportFactoryParams) => Promise<TerminalTransport>;

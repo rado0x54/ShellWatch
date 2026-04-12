@@ -10,8 +10,19 @@
 
 import ssh2 from "ssh2";
 import type { ParsedKey } from "ssh2";
-import { CompositeSshAgent, type CompositeAgentParams } from "../webauthn/composite-ssh-agent.js";
-import { toPublicKeyBlob } from "../webauthn/ssh-agent.js";
+import {
+  CompositeSshAgent,
+  type CompositeAgentParams,
+  type FileKeySignRequest,
+} from "../webauthn/composite-ssh-agent.js";
+import { toPublicKeyBlob, type SignRequest } from "../webauthn/ssh-agent.js";
+
+export interface ForwardingAgentParams extends CompositeAgentParams {
+  /** Callback for passkey signing triggered by the auth-agent@openssh.com channel. */
+  forwardingOnSignRequest: (request: SignRequest) => void;
+  /** Callback for file-key approval triggered by the auth-agent@openssh.com channel. */
+  forwardingOnFileKeySignRequest?: (request: FileKeySignRequest) => void;
+}
 
 const { utils } = ssh2;
 
@@ -35,15 +46,21 @@ interface AgentProtocolInstance extends NodeJS.ReadWriteStream {
 
 export class ForwardingAgent extends CompositeSshAgent {
   private protocols: AgentProtocolInstance[] = [];
+  private forwardingOnSignRequest: (request: SignRequest) => void;
+  private forwardingOnFileKeySignRequest?: (request: FileKeySignRequest) => void;
 
-  constructor(params: CompositeAgentParams) {
+  constructor(params: ForwardingAgentParams) {
     super(params);
+    this.forwardingOnSignRequest = params.forwardingOnSignRequest;
+    this.forwardingOnFileKeySignRequest = params.forwardingOnFileKeySignRequest;
   }
 
   /**
    * Called by ssh2 for each incoming `auth-agent@openssh.com` channel.
    * Creates a server-mode AgentProtocol stream that handles identity
-   * and sign requests by delegating to this agent's getIdentities/sign.
+   * and sign requests by delegating to this agent's getIdentities + a
+   * sign path that routes through the forwarding-specific callbacks
+   * (so `/sign/:id` sees source="agent-forwarding" for these requests).
    */
   getStream(cb: (err: Error | null, stream?: NodeJS.ReadWriteStream) => void): void {
     const protocol = new AgentProtocol(false); // server mode
@@ -68,13 +85,22 @@ export class ForwardingAgent extends CompositeSshAgent {
         protocol.failureReply(req);
         return;
       }
-      this.sign(pubKeyBuf, data, flags, (err, signature) => {
-        if (err || !signature) {
-          protocol.failureReply(req);
-          return;
-        }
-        protocol.signReply(req, signature);
-      });
+      this.signWithCallbacks(
+        pubKeyBuf,
+        data,
+        flags,
+        (err, signature) => {
+          if (err || !signature) {
+            protocol.failureReply(req);
+            return;
+          }
+          protocol.signReply(req, signature);
+        },
+        {
+          onSignRequest: this.forwardingOnSignRequest,
+          onFileKeySignRequest: this.forwardingOnFileKeySignRequest,
+        },
+      );
     });
 
     cb(null, protocol);

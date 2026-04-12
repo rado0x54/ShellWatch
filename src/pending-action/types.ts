@@ -8,36 +8,25 @@ export interface AgentProxyContext {
   apiKeyPrefix: string;
 }
 
-export interface UiContext {
-  source: "ui";
-  sourceIp: string;
+export type EndpointAuthTrigger =
+  | { kind: "ui"; sourceIp?: string }
+  | { kind: "mcp"; sourceIp?: string; mcpClientName?: string; mcpClientVersion?: string };
+
+export interface EndpointAuthContext {
+  source: "endpoint-auth";
   endpointLabel: string;
   endpointAddress: string;
-  sessionId?: string;
+  trigger: EndpointAuthTrigger;
 }
 
-export interface McpContext {
-  source: "mcp";
-  sourceIp: string;
+export interface AgentForwardingContext {
+  source: "agent-forwarding";
   endpointLabel: string;
   endpointAddress: string;
-  mcpClientName?: string;
-  mcpClientVersion?: string;
-  sessionId?: string;
+  sessionId: string;
 }
 
-export interface ForwardingAgentContext {
-  source: "forwarding-agent";
-  endpointLabel: string;
-  endpointAddress: string;
-  sessionId?: string;
-}
-
-export type SignRequestContext =
-  | AgentProxyContext
-  | UiContext
-  | McpContext
-  | ForwardingAgentContext;
+export type SignRequestContext = AgentProxyContext | EndpointAuthContext | AgentForwardingContext;
 
 // --- PendingAction (discriminated union on `type`) ---
 
@@ -50,6 +39,8 @@ interface PendingActionBase {
   createdAt: number;
   expiresAt: number;
   context: SignRequestContext;
+  /** Optional path to navigate to after successful resolution (e.g. "/terminal/:id"). */
+  redirectTo?: string;
   reject: (error: Error) => void;
 }
 

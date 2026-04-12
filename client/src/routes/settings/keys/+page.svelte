@@ -171,8 +171,8 @@
                 class="label-btn"
                 title="Rename"
                 disabled={pk.revoked}
-                onclick={() => startRename(pk.id, pk.label)}
-              >{pk.label}</button>
+                onclick={() => startRename(pk.id, pk.label)}>{pk.label}</button
+              >
             {/if}
           </td>
           <td>{pk.algorithm}</td>
@@ -192,15 +192,18 @@
                 class="btn-icon"
                 title="Copy SSH public key"
                 onclick={(e) =>
-                  copyKey(`${pk.authorizedKeysEntry} ${sshComment(pk.label)}`, e.currentTarget as HTMLButtonElement)}
-              >&#128203; SSH PubKey</button>
+                  copyKey(
+                    `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
+                    e.currentTarget as HTMLButtonElement,
+                  )}>&#128203; SSH PubKey</button
+              >
             {/if}
             {#if !pk.revoked}
               <button
                 class="btn btn-secondary btn-sm"
                 disabled={revoking}
-                onclick={() => handleRevoke(pk.id)}
-              >Revoke</button>
+                onclick={() => handleRevoke(pk.id)}>Revoke</button
+              >
             {/if}
           </td>
         </tr>
@@ -266,14 +269,15 @@
                   title="Copy SSH public key"
                   onclick={(e) =>
                     copyKey(k.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
-                >&#128203; SSH PubKey</button>
+                  >&#128203; SSH PubKey</button
+                >
               {/if}
               {#if !k.revoked}
                 <button
                   class="btn btn-secondary btn-sm"
                   disabled={revoking}
-                  onclick={() => handleRevokeFileKey(k.id)}
-                >Revoke</button>
+                  onclick={() => handleRevokeFileKey(k.id)}>Revoke</button
+                >
               {/if}
             </td>
           </tr>
@@ -281,7 +285,6 @@
       </tbody>
     </table>
   {/if}
-
 </section>
 
 <style>

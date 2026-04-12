@@ -31,10 +31,10 @@ function makeKeyApproveParams(overrides?: Partial<KeyApproveParams>): KeyApprove
     type: "key-approve",
     accountId: testAccountId,
     context: {
-      source: "ui",
-      sourceIp: "127.0.0.1",
+      source: "endpoint-auth",
       endpointLabel: "Prod",
       endpointAddress: "user@host:22",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     },
     keyLabel: "Test Key",
     keyFingerprint: "SHA256:abc123",
@@ -178,7 +178,7 @@ describe("action routes", () => {
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.status).toBe("completed");
+    expect(data.redirectTo).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
   });
 
@@ -269,7 +269,7 @@ describe("action routes", () => {
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.status).toBe("completed");
+    expect(data.redirectTo).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
   });
 

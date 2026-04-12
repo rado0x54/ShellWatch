@@ -64,8 +64,15 @@ export async function performSignCeremony(params: SignCeremonyParams): Promise<S
   };
 }
 
+export interface ResolveResponse {
+  redirectTo?: string;
+}
+
 /** Resolve a PendingAction via the REST API after a successful ceremony. */
-export async function resolveAction(actionId: string, result: SignCeremonyResult): Promise<void> {
+export async function resolveAction(
+  actionId: string,
+  result: SignCeremonyResult,
+): Promise<ResolveResponse> {
   const res = await fetch(`/api/actions/${actionId}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,10 +82,11 @@ export async function resolveAction(actionId: string, result: SignCeremonyResult
     const body = await res.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
+  return (await res.json()) as ResolveResponse;
 }
 
 /** Approve a key-approve PendingAction (no WebAuthn ceremony needed). */
-export async function approveAction(actionId: string): Promise<void> {
+export async function approveAction(actionId: string): Promise<ResolveResponse> {
   const res = await fetch(`/api/actions/${actionId}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -88,12 +96,18 @@ export async function approveAction(actionId: string): Promise<void> {
     const body = await res.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
+  return (await res.json()) as ResolveResponse;
 }
 
 /** Human-readable labels for sign request sources. */
 export const sourceLabels: Record<string, string> = {
   "agent-proxy": "Agent Proxy",
-  ui: "SSH Connection",
+  "endpoint-auth": "Endpoint Authentication",
+  "agent-forwarding": "Agent Forwarding",
+};
+
+/** Human-readable labels for endpoint-auth trigger kinds. */
+export const triggerKindLabels: Record<string, string> = {
+  ui: "Web UI",
   mcp: "MCP Client",
-  "forwarding-agent": "Agent Forwarding",
 };

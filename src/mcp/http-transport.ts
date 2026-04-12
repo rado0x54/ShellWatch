@@ -54,7 +54,13 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         if (account) maxSessions = account.maxSessions;
       }
 
-      const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp", maxSessions);
+      const agentSession = new AgentSession(
+        endpointRepo,
+        terminalManager,
+        "mcp",
+        maxSessions,
+        request.ip,
+      );
       const mcpServer = await createMcpServer(
         agentSession,
         endpointRepo,
