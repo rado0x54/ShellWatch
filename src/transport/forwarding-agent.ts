@@ -21,7 +21,7 @@ export interface ForwardingAgentParams extends CompositeAgentParams {
   /** Callback for passkey signing triggered by the auth-agent@openssh.com channel. */
   forwardingOnSignRequest: (request: SignRequest) => void;
   /** Callback for file-key approval triggered by the auth-agent@openssh.com channel. */
-  forwardingOnFileKeySignRequest?: (request: FileKeySignRequest) => void;
+  forwardingOnFileKeySignRequest: (request: FileKeySignRequest) => void;
 }
 
 const { utils } = ssh2;
@@ -47,7 +47,7 @@ interface AgentProtocolInstance extends NodeJS.ReadWriteStream {
 export class ForwardingAgent extends CompositeSshAgent {
   private protocols: AgentProtocolInstance[] = [];
   private forwardingOnSignRequest: (request: SignRequest) => void;
-  private forwardingOnFileKeySignRequest?: (request: FileKeySignRequest) => void;
+  private forwardingOnFileKeySignRequest: (request: FileKeySignRequest) => void;
 
   constructor(params: ForwardingAgentParams) {
     super(params);
