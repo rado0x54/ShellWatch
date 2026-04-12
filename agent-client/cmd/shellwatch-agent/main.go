@@ -18,6 +18,10 @@ import (
 	"github.com/rado0x54/shellwatch-agent/internal/proxy"
 )
 
+// Version is set at build time via -ldflags "-X main.Version=..."
+// Defaults to "dev" for plain `go build` / `go run`.
+var Version = "dev"
+
 func main() {
 	cfg, printEnv, err := config.Load()
 	if err != nil {
@@ -40,6 +44,7 @@ func main() {
 		ServerURL:  cfg.Server,
 		ApiKey:     cfg.ApiKey,
 		Insecure:   cfg.Insecure,
+		Version:    Version,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

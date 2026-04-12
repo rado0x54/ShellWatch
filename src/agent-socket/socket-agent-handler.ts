@@ -78,8 +78,16 @@ export interface AgentHandlerDeps {
   accountId: string;
   /** Source IP of the connecting client */
   sourceIp: string;
+  /** Human-readable label for the API key in use */
+  apiKeyLabel: string;
   /** API key prefix for display context */
   apiKeyPrefix: string;
+  /** Client hostname from WS handshake header (optional) */
+  clientHostname?: string;
+  /** Client OS/arch from WS handshake header (optional) */
+  clientOs?: string;
+  /** Client agent version from WS handshake header (optional) */
+  clientVersion?: string;
 }
 
 /**
@@ -161,7 +169,19 @@ function extractPubKeyBlob(pubKey: unknown): Buffer | null {
  * regardless of whether a browser is currently connected.
  */
 function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
-  const { keyProvider, logger, signingBridge, rpId, accountId, sourceIp, apiKeyPrefix } = deps;
+  const {
+    keyProvider,
+    logger,
+    signingBridge,
+    rpId,
+    accountId,
+    sourceIp,
+    apiKeyLabel,
+    apiKeyPrefix,
+    clientHostname,
+    clientOs,
+    clientVersion,
+  } = deps;
 
   const availableKeys = keyProvider.getAvailableKeys();
   const fileKeyEntries = availableKeys
@@ -185,7 +205,11 @@ function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
   const context: AgentProxyContext = {
     source: "agent-proxy",
     sourceIp,
+    apiKeyLabel,
     apiKeyPrefix,
+    clientHostname,
+    clientOs,
+    clientVersion,
   };
 
   const onSignRequest = (request: SignRequest) => {

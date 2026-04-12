@@ -52,7 +52,12 @@ describe("WebSocketChannel as WsExtension", () => {
       status: "pending" as const,
       createdAt: Date.now(),
       expiresAt: Date.now() + 60_000,
-      context: { source: "agent-proxy" as const, sourceIp: "1.2.3.4", apiKeyPrefix: "sw_test" },
+      context: {
+        source: "agent-proxy" as const,
+        sourceIp: "1.2.3.4",
+        apiKeyLabel: "Test Key",
+        apiKeyPrefix: "sw_test",
+      },
       credentialId: "cred-1",
       challenge: "dGVzdA==",
       rpId: "localhost",

@@ -19,7 +19,15 @@
     | { kind: "mcp"; sourceIp: string; mcpClientName?: string; mcpClientVersion?: string };
 
   type SignContext =
-    | { source: "agent-proxy"; sourceIp: string; apiKeyPrefix: string }
+    | {
+        source: "agent-proxy";
+        sourceIp: string;
+        apiKeyLabel: string;
+        apiKeyPrefix: string;
+        clientHostname?: string;
+        clientOs?: string;
+        clientVersion?: string;
+      }
     | {
         source: "endpoint-auth";
         endpointLabel: string;
@@ -136,6 +144,40 @@
 
   const ctx = $derived(action?.context);
   const displayStatus = $derived(resultStatus ?? action?.status);
+
+  /**
+   * Client-reported fields grouped in the "self-reported" box.
+   *
+   * These are advertised by the connecting client (Go agent, MCP client) and
+   * NOT verified by the server — an attacker with a compromised API key can
+   * set them to anything. They're shown for context only; approvers must
+   * rely on the server-verified fields (source IP, API key label, endpoint)
+   * for their trust decision.
+   */
+  interface ReportedItem {
+    label: string;
+    value: string;
+    mono?: boolean;
+  }
+  const reportedItems = $derived.by((): ReportedItem[] => {
+    if (!ctx) return [];
+    const items: ReportedItem[] = [];
+    if (ctx.source === "agent-proxy") {
+      if (ctx.clientHostname) items.push({ label: "Hostname", value: ctx.clientHostname });
+      if (ctx.clientOs) items.push({ label: "OS", value: ctx.clientOs, mono: true });
+      if (ctx.clientVersion) items.push({ label: "Version", value: ctx.clientVersion, mono: true });
+    } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "mcp") {
+      if (ctx.trigger.mcpClientName)
+        items.push({ label: "MCP Client", value: ctx.trigger.mcpClientName });
+      if (ctx.trigger.mcpClientVersion)
+        items.push({
+          label: "Version",
+          value: ctx.trigger.mcpClientVersion,
+          mono: true,
+        });
+    }
+    return items;
+  });
   const isTerminal = $derived(displayStatus !== "pending");
 </script>
 
@@ -212,17 +254,6 @@
               {/if}
             </span>
           </div>
-          {#if ctx.trigger.kind === "mcp" && ctx.trigger.mcpClientName}
-            <div class="sign-field">
-              <span class="sign-label">MCP Client</span>
-              <span class="sign-value">
-                {ctx.trigger.mcpClientName}
-                {#if ctx.trigger.mcpClientVersion}
-                  <span class="sign-muted">v{ctx.trigger.mcpClientVersion}</span>
-                {/if}
-              </span>
-            </div>
-          {/if}
         {/if}
 
         {#if ctx && ctx.source === "agent-proxy"}
@@ -232,7 +263,10 @@
           </div>
           <div class="sign-field">
             <span class="sign-label">API Key</span>
-            <span class="sign-value sign-mono">{ctx.apiKeyPrefix}...</span>
+            <span class="sign-value">
+              {ctx.apiKeyLabel}
+              <span class="sign-muted sign-mono">({ctx.apiKeyPrefix}…)</span>
+            </span>
           </div>
         {/if}
 
@@ -265,6 +299,23 @@
           </div>
         {/if}
       </div>
+
+      {#if reportedItems.length > 0}
+        <div class="sign-reported" role="group" aria-labelledby="reported-heading">
+          <div class="sign-reported-header" id="reported-heading">
+            Self-reported by client
+            <span class="sign-reported-note">— not verified, treat as context only</span>
+          </div>
+          <div class="sign-fields">
+            {#each reportedItems as item (item.label)}
+              <div class="sign-field">
+                <span class="sign-label">{item.label}</span>
+                <span class="sign-value" class:sign-mono={item.mono}>{item.value}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       {#if error}
         <div class="sign-error">{error}</div>
@@ -326,6 +377,34 @@
     flex-direction: column;
     gap: 0.6rem;
     margin-bottom: 1.5rem;
+  }
+
+  .sign-reported {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    background: rgba(255, 255, 255, 0.015);
+  }
+
+  .sign-reported-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 0.6rem;
+  }
+
+  .sign-reported-note {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    font-style: italic;
+  }
+
+  .sign-reported .sign-fields {
+    margin-bottom: 0;
   }
 
   .sign-field {
