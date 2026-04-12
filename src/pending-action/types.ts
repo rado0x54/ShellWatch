@@ -15,9 +15,20 @@ export interface AgentProxyContext {
   clientVersion?: string;
 }
 
+/**
+ * MCP triggers carry a `reason` string so the approval UI (and future audit
+ * log, #16) can show the agent's stated intent — humans clicking through the
+ * web UI already know what they meant, so the `ui` variant has no equivalent.
+ */
 export type EndpointAuthTrigger =
   | { kind: "ui"; sourceIp?: string }
-  | { kind: "mcp"; sourceIp?: string; mcpClientName?: string; mcpClientVersion?: string };
+  | {
+      kind: "mcp";
+      reason: string;
+      sourceIp?: string;
+      mcpClientName?: string;
+      mcpClientVersion?: string;
+    };
 
 export interface EndpointAuthContext {
   source: "endpoint-auth";

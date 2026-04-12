@@ -34,10 +34,20 @@ describe("Concurrent Sessions", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const s1 = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
       const s2 = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       // Send different input to each via send_keys
@@ -71,10 +81,20 @@ describe("Concurrent Sessions", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const s1 = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
       const s2 = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       await mcp.callTool("shellwatch_close_session", { sessionId: s1.sessionId });
@@ -97,14 +117,19 @@ describe("Concurrent Sessions", () => {
     try {
       // Create via MCP
       const mcpSession = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       // Create via HTTP
       const httpRes = await appServer.fetch(`/api/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpointId: "test-server" }),
+        body: JSON.stringify({ endpointId: "test-server", reason: "integration test" }),
       });
       const httpSession = await httpRes.json();
 

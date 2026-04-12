@@ -114,7 +114,7 @@ describe("TerminalManager", () => {
   describe("listSessions", () => {
     it("lists active sessions", async () => {
       await manager.create("test-server", { kind: "ui", sourceIp: "127.0.0.1" });
-      await manager.create("test-server", { kind: "mcp", sourceIp: "127.0.0.1" });
+      await manager.create("test-server", { kind: "mcp", sourceIp: "127.0.0.1", reason: "test" });
       const sessions = manager.listSessions();
       expect(sessions).toHaveLength(2);
       expect(sessions[0].source).toBe("ui");
@@ -211,7 +211,7 @@ describe("TerminalManager", () => {
   describe("destroy", () => {
     it("closes all sessions", async () => {
       await manager.create("test-server", { kind: "ui", sourceIp: "127.0.0.1" });
-      await manager.create("test-server", { kind: "mcp", sourceIp: "127.0.0.1" });
+      await manager.create("test-server", { kind: "mcp", sourceIp: "127.0.0.1", reason: "test" });
       manager.destroy();
       expect(manager.listSessions()).toHaveLength(0);
     });

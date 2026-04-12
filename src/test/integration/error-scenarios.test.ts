@@ -38,6 +38,7 @@ describe("Error Scenarios", () => {
       try {
         const result = await mcp.callTool("shellwatch_create_session", {
           endpointId: "nonexistent",
+          reason: "integration test",
         });
         expect(result.isError).toBe(true);
         expect(result.content).toContain("Unknown endpoint");
@@ -171,6 +172,7 @@ describe("Error Scenarios", () => {
         try {
           const result = await mcp.callTool("shellwatch_create_session", {
             endpointId: "no-key-ep",
+            reason: "integration test",
           });
           expect(result.isError).toBe(true);
           expect(result.content).toContain("No SSH keys available");
@@ -198,7 +200,7 @@ describe("Error Scenarios", () => {
         const res = await deadApp.fetch(`/api/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpointId: "test-server" }),
+          body: JSON.stringify({ endpointId: "test-server", reason: "integration test" }),
         });
         expect(res.status).toBe(400);
       } finally {

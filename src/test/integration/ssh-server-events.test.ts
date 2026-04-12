@@ -36,6 +36,7 @@ describe("SSH Server Events", () => {
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -61,6 +62,7 @@ describe("SSH Server Events", () => {
 
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -89,6 +91,7 @@ describe("SSH Server Events", () => {
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -119,6 +122,7 @@ describe("SSH Server Events", () => {
 
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       JSON.parse(result.content);
       await ws.waitForMessage("sessions:changed");

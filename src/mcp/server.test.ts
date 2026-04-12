@@ -111,12 +111,51 @@ describe("MCP Server Tools", () => {
       const client = await setupClient(mockManager);
       const result = await client.callTool({
         name: "shellwatch_create_session",
-        arguments: { endpointId: "dev-box" },
+        arguments: { endpointId: "dev-box", reason: "test session" },
       });
       const content = (result.content as { type: string; text: string }[])[0].text;
       const parsed = JSON.parse(content);
       expect(parsed.sessionId).toBe("sess_abc123");
       expect(parsed.status).toBe("open");
+    });
+
+    it("threads MCP clientInfo from the initialize handshake into the trigger", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
+      const client = await setupClient(mockManager);
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box", reason: "audit run" },
+      });
+      // setupClient() advertises Client({ name: "test-client", version: "1.0.0" }).
+      // The createMcpServer oninitialized hook should have cached that on the
+      // AgentSession, which then surfaces it on the trigger.
+      const create = mockManager.create as ReturnType<typeof vi.fn>;
+      const trigger = create.mock.calls[0][1];
+      expect(trigger).toMatchObject({
+        kind: "mcp",
+        reason: "audit run",
+        mcpClientName: "test-client",
+        mcpClientVersion: "1.0.0",
+      });
+    });
+
+    it("sanitizes a malicious clientInfo before exposing it on the trigger", async () => {
+      (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
+      const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
+      const keyRepo = new InMemorySshKeyRepository(testKeys);
+      const agentSession = new AgentSession(endpointRepo, mockManager, "mcp");
+      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await mcpServer.connect(serverTransport);
+      const client = new Client({ name: "evil\nclient\x00", version: "9.9.9" });
+      await client.connect(clientTransport);
+
+      await client.callTool({
+        name: "shellwatch_create_session",
+        arguments: { endpointId: "dev-box", reason: "x" },
+      });
+      const create = mockManager.create as ReturnType<typeof vi.fn>;
+      expect(create.mock.calls[0][1].mcpClientName).toBe("evilclient");
     });
   });
 
@@ -126,7 +165,7 @@ describe("MCP Server Tools", () => {
       const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
-        arguments: { endpointId: "dev-box" },
+        arguments: { endpointId: "dev-box", reason: "test session" },
       });
       const result = await client.callTool({
         name: "shellwatch_send_keys",
@@ -157,7 +196,7 @@ describe("MCP Server Tools", () => {
       const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
-        arguments: { endpointId: "dev-box" },
+        arguments: { endpointId: "dev-box", reason: "test session" },
       });
       const result = await client.callTool({
         name: "shellwatch_read_output",
@@ -174,7 +213,7 @@ describe("MCP Server Tools", () => {
       const client = await setupClient(mockManager);
       await client.callTool({
         name: "shellwatch_create_session",
-        arguments: { endpointId: "dev-box" },
+        arguments: { endpointId: "dev-box", reason: "test session" },
       });
       const result = await client.callTool({
         name: "shellwatch_close_session",
