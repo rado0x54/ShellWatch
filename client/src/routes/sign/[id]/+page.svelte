@@ -98,7 +98,7 @@
       clearAction(actionId);
       toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
       if (response.redirectTo && isSafeRedirect(response.redirectTo)) {
-        // Server-computed path (e.g. /terminal/:id). Use window.location
+        // Server-computed path (e.g. /session/:id). Use window.location
         // since typed routes can't validate a runtime string.
         window.location.href = response.redirectTo;
       }

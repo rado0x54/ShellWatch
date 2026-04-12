@@ -39,6 +39,8 @@
           redirect && redirect !== "/"
             ? `/login?redirect=${encodeURIComponent(redirect)}`
             : resolve("/login");
+        // Full-page reload (not goto) — typed routes can't validate a dynamic
+        // string, and this flushes any in-memory state from the unauth view.
         window.location.href = target;
         ready = true;
         return;

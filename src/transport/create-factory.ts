@@ -69,15 +69,14 @@ export function createSshTransportFactoryFromConfig(
         sessionId,
       });
 
-      const endpointAuthRedirectTo = `/session/${sessionId}`;
-      const forwardingRedirectTo = `/session/${sessionId}`;
+      const redirectTo = `/session/${sessionId}`;
 
       const onSignRequest = (request: SignRequest) => {
         signingBridge.handleSignRequest(
           request,
           endpoint.accountId,
           endpointAuthContext(),
-          endpointAuthRedirectTo,
+          redirectTo,
         );
       };
 
@@ -86,7 +85,7 @@ export function createSshTransportFactoryFromConfig(
           request,
           endpoint.accountId,
           endpointAuthContext(),
-          endpointAuthRedirectTo,
+          redirectTo,
         );
       };
 
@@ -95,7 +94,7 @@ export function createSshTransportFactoryFromConfig(
           request,
           endpoint.accountId,
           forwardingContext(),
-          forwardingRedirectTo,
+          redirectTo,
         );
       };
 
@@ -104,7 +103,7 @@ export function createSshTransportFactoryFromConfig(
           request,
           endpoint.accountId,
           forwardingContext(),
-          forwardingRedirectTo,
+          redirectTo,
         );
       };
 

@@ -65,7 +65,7 @@ export async function performSignCeremony(params: SignCeremonyParams): Promise<S
 }
 
 export interface ResolveResponse {
-  status: string;
+  status: "completed";
   redirectTo?: string;
 }
 

@@ -21,7 +21,7 @@ export class AgentSession {
     private source: AgentSource,
     private maxSessions = 5,
     /** Source IP of the calling agent (used when building the signing trigger). */
-    private sourceIp: string = "",
+    private sourceIp?: string,
   ) {}
 
   /** Sessions owned by this agent */

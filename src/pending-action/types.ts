@@ -9,8 +9,8 @@ export interface AgentProxyContext {
 }
 
 export type EndpointAuthTrigger =
-  | { kind: "ui"; sourceIp: string }
-  | { kind: "mcp"; sourceIp: string; mcpClientName?: string; mcpClientVersion?: string };
+  | { kind: "ui"; sourceIp?: string }
+  | { kind: "mcp"; sourceIp?: string; mcpClientName?: string; mcpClientVersion?: string };
 
 export interface EndpointAuthContext {
   source: "endpoint-auth";

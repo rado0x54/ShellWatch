@@ -9,13 +9,8 @@ import {
   type OutputReadResult,
   type TerminalEventMap,
   type TerminalSession,
-  type TerminalSource,
   type TerminalStatus,
 } from "./types.js";
-
-function triggerToSource(trigger: EndpointAuthTrigger): TerminalSource {
-  return trigger.kind;
-}
 
 interface ManagedTerminal {
   session: TerminalSession;
@@ -67,7 +62,10 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       status: "opening",
       createdAt: now,
       lastActivityAt: now,
-      source: triggerToSource(trigger),
+      // trigger.kind is intentionally the same string set as TerminalSource for
+      // the kinds we implement today (ui, mcp). When the planned "ssh" agent
+      // source lands (#12), extend EndpointAuthTrigger to include it.
+      source: trigger.kind,
     };
 
     const output = new OutputBuffer(this.maxOutputBufferSize);
