@@ -178,7 +178,7 @@ describe("action routes", () => {
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.status).toBe("completed");
+    expect(data.redirectTo).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
   });
 
@@ -269,7 +269,7 @@ describe("action routes", () => {
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.status).toBe("completed");
+    expect(data.redirectTo).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
   });
 
