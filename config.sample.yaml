@@ -12,6 +12,16 @@ server:
   # port: 3000                                        # HTTP port (default: 3000)
   externalUrl: http://localhost:3000 # External URL for deep links (required)
 
+  # Trust reverse-proxy headers (X-Forwarded-For, X-Forwarded-Proto). Default: false.
+  # When ShellWatch sits behind nginx / Caddy / a load balancer, set this to the
+  # CIDR(s) of the proxy you control so request.ip resolves to the real client.
+  # WARNING: setting `true` lets any client spoof their source IP via
+  # X-Forwarded-For. Always prefer the CIDR form for production.
+  # trustProxy: ["10.0.0.0/8", "172.16.0.0/12"]
+  # trustProxy: "127.0.0.1"
+  # trustProxy: 1                                     # number of hops to trust
+  # trustProxy: true                                  # trust all hops (only if network is trusted)
+
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
 
@@ -68,6 +78,12 @@ security:
   #     max: 10
   #     windowMinutes: 15
 
+  # IP allowlist for /mcp and /agent-proxy. CIDRs in standard notation.
+  # Default: loopback only. To disable the allowlist (e.g. behind a trusted
+  # proxy with `server.trustProxy` set), allow everything:
+  #   allowedNetworks:
+  #     - 0.0.0.0/0
+  #     - "::/0"
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"

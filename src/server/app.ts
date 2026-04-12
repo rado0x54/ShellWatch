@@ -82,7 +82,10 @@ export async function buildApp(params: BuildAppParams) {
     options = {},
   } = params;
 
-  const app = Fastify({ logger: options.logger ?? true });
+  const app = Fastify({
+    logger: options.logger ?? true,
+    trustProxy: config.server.trustProxy,
+  });
 
   // Cookie secret for session signing
   const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");

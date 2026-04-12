@@ -103,6 +103,7 @@ export const NotificationsSchema = z.object({
 
 export const serverDefaults = {
   port: 3000,
+  trustProxy: false as boolean | number | string | string[],
 };
 
 export const ServerSchema = z.object({
@@ -111,6 +112,19 @@ export const ServerSchema = z.object({
   externalUrl: z
     .string()
     .url("server.externalUrl must be a valid URL (e.g., 'http://localhost:3000')"),
+  /**
+   * Trust X-Forwarded-* headers when ShellWatch sits behind a reverse proxy.
+   * Passed straight to Fastify's `trustProxy` option.
+   *  - `false` (default): ignore proxy headers; `request.ip` is the TCP peer.
+   *  - `true`: trust all hops (only safe if the network path itself is trusted).
+   *  - `number`: trust this many hops back from the connection.
+   *  - CIDR string or array of CIDRs/IPs: trust hops from these proxies only.
+   * For deployments behind a known proxy, prefer the CIDR form to avoid
+   * client-side X-Forwarded-For spoofing.
+   */
+  trustProxy: z
+    .union([z.boolean(), z.number().int().min(0), z.string().min(1), z.array(z.string().min(1))])
+    .default(false),
 });
 
 export const SeedAdminPasskeySchema = z.object({

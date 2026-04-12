@@ -104,6 +104,31 @@ The production server auto-detects the built client in `dist/client/` and serves
 | `/agent-proxy` | SSH agent proxy (WebSocket, API key auth)               |
 | `/health`      | Health check                                            |
 
+### Deploying behind a reverse proxy
+
+When ShellWatch sits behind nginx, Caddy, an ALB, Cloudflare, etc., the TCP peer is the proxy — not the real client. Without configuration, every request looks like it came from the proxy, which breaks the sign-request "Source IP" display and the `security.allowedNetworks` allowlist.
+
+Configure `server.trustProxy` to the CIDR(s) of the proxy you control:
+
+```yaml
+server:
+  externalUrl: https://shellwatch.example.com
+  trustProxy:
+    - 10.0.0.0/8 # internal proxy CIDR(s) only
+    - 172.16.0.0/12
+
+security:
+  # Real client IPs are now visible to the allowlist. Either narrow it to your
+  # known clients, or open it up explicitly:
+  allowedNetworks:
+    - 0.0.0.0/0 # all IPv4
+    - "::/0" # all IPv6
+```
+
+> **Do not set `trustProxy: true` in production.** That trusts `X-Forwarded-For` from any source, letting clients spoof their own IP. Always pin to the CIDR(s) of the proxy you actually run. Make sure the proxy itself sets `X-Forwarded-For` (e.g. nginx `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+
+`trustProxy` also accepts a number (hops to trust) or a single CIDR string. See [Fastify's docs](https://fastify.dev/docs/latest/Reference/Server/#trustproxy) for the full grammar.
+
 ## Web UI
 
 Open `http://localhost:3000` in your browser.
