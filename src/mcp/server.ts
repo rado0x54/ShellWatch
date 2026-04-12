@@ -17,6 +17,13 @@ export async function createMcpServer(
     .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
     .join("\n");
 
+  const sudoSection = [
+    "",
+    "sudo:",
+    "- Do NOT pass -n (non-interactive). The human operator can attach to your session and type the password directly, so a [sudo] password: prompt is not a failure mode.",
+    "- If you see a [sudo] password: prompt, ask the operator (in your reply) to enter the password in the session, then continue once read_output shows the prompt has cleared.",
+  ];
+
   const instructions = [
     "ShellWatch is an SSH session broker. You can create terminal sessions to remote servers, send commands, and read output.",
     "",
@@ -38,9 +45,26 @@ export async function createMcpServer(
     "Notifications:",
     "- You will receive notifications/shellwatch/output_available when new output is ready (no need to poll)",
     "- You will receive notifications/shellwatch/session_status when your sessions change status",
+    ...sudoSection,
   ].join("\n");
 
   const mcpServer = new McpServer({ name: "shellwatch", version: "0.5.0" }, { instructions });
+
+  // Capture the calling client's advertised clientInfo from the initialize
+  // handshake so endpoint-auth sign requests can show "MCP Client" / version
+  // in the self-reported approval UI box. The MCP SDK doesn't surface
+  // clientInfo to per-tool handlers, so we cache it on the AgentSession.
+  //
+  // Per MCP spec the server rejects non-initialize requests until the
+  // initialize handshake completes, so this fires before any tool call from
+  // a spec-compliant client. A buggy client that skips initialize would
+  // produce sign requests with no clientInfo (the UI hides those rows).
+  // `oninitialized` is a single-slot field on the underlying Server — keep
+  // this the only assignment.
+  mcpServer.server.oninitialized = () => {
+    const info = mcpServer.server.getClientVersion();
+    if (info) agentSession.setMcpClientInfo(info);
+  };
 
   registerSessionTools(mcpServer, agentSession);
   registerEndpointTools(mcpServer, endpointRepo, accountId);

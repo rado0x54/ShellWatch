@@ -17,7 +17,13 @@
 
   type EndpointAuthTrigger =
     | { kind: "ui"; sourceIp: string }
-    | { kind: "mcp"; sourceIp: string; mcpClientName?: string; mcpClientVersion?: string };
+    | {
+        kind: "mcp";
+        reason: string;
+        sourceIp: string;
+        mcpClientName?: string;
+        mcpClientVersion?: string;
+      };
 
   type SignContext =
     | {
@@ -185,6 +191,9 @@
       if (ctx.clientOs) items.push({ label: "OS", value: ctx.clientOs, mono: true });
       if (ctx.clientVersion) items.push({ label: "Version", value: ctx.clientVersion, mono: true });
     } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "mcp") {
+      // Reason is asserted by the agent — same trust boundary as clientInfo,
+      // so it belongs in the self-reported box rather than the verified fields.
+      items.push({ label: "Reason", value: ctx.trigger.reason });
       if (ctx.trigger.mcpClientName)
         items.push({ label: "MCP Client", value: ctx.trigger.mcpClientName });
       if (ctx.trigger.mcpClientVersion)
@@ -505,6 +514,8 @@
 
   .sign-value {
     font-size: 0.9rem;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
   .sign-muted {

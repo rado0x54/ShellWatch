@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CLIENT_HEADER_MAX_LEN, readClientHeader } from "./agent-proxy-route.js";
+import { CLIENT_HEADER_MAX_LEN } from "../util/sanitize-client-info.js";
+import { readClientHeader } from "./agent-proxy-route.js";
 
 function req(headers: Record<string, string | undefined>) {
   return { headers } as Parameters<typeof readClientHeader>[0];

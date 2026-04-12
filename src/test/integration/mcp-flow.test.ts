@@ -53,6 +53,7 @@ describe("MCP Client Flow", () => {
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const parsed = JSON.parse(result.content);
       expect(parsed.sessionId).toMatch(/^sess_/);
@@ -70,6 +71,7 @@ describe("MCP Client Flow", () => {
     try {
       const createResult = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(createResult.content);
 
@@ -91,7 +93,12 @@ describe("MCP Client Flow", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       // Send a command
@@ -120,7 +127,12 @@ describe("MCP Client Flow", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       await mcp.callTool("shellwatch_send_keys", {
@@ -163,6 +175,7 @@ describe("MCP Client Flow", () => {
     try {
       const createResult = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(createResult.content);
 
@@ -185,7 +198,12 @@ describe("MCP Client Flow", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
       expect(session.status).toBe("open");
 
@@ -215,7 +233,12 @@ describe("MCP Client Flow", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       await mcp.callTool("shellwatch_send_keys", {
@@ -241,7 +264,12 @@ describe("MCP Client Flow", () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       const session = JSON.parse(
-        (await mcp.callTool("shellwatch_create_session", { endpointId: "test-server" })).content,
+        (
+          await mcp.callTool("shellwatch_create_session", {
+            endpointId: "test-server",
+            reason: "integration test",
+          })
+        ).content,
       );
 
       // Close the session — should trigger a closing/closed status notification

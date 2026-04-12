@@ -41,6 +41,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
       // Create session via MCP
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -65,6 +66,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
 
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -98,6 +100,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
 
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -145,6 +148,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     try {
       const result = await mcp.callTool("shellwatch_create_session", {
         endpointId: "test-server",
+        reason: "integration test",
       });
       const session = JSON.parse(result.content);
 
@@ -165,7 +169,7 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     const createRes = await appServer.fetch(`/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpointId: "test-server" }),
+      body: JSON.stringify({ endpointId: "test-server", reason: "integration test" }),
     });
     const session = await createRes.json();
 

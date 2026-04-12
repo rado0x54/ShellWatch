@@ -6,11 +6,25 @@ import { SUPPORTED_KEYS } from "../../terminal/index.js";
 export function registerSessionTools(mcpServer: McpServer, agentSession: AgentSession) {
   mcpServer.tool(
     "shellwatch_create_session",
-    "Create a new terminal session for a configured endpoint",
-    { endpointId: z.string().describe("ID of the endpoint to connect to") },
-    async ({ endpointId }) => {
+    [
+      "Create a new terminal session for a configured endpoint.",
+      "The `reason` parameter is required and shown to the human approver in the",
+      "passkey-tap UI — explain the user-visible intent (e.g. 'investigate disk",
+      "alert on web-01', 'deploy hotfix for incident #42'), not implementation",
+      "detail. Vague reasons like 'check things' will be rejected by approvers.",
+    ].join(" "),
+    {
+      endpointId: z.string().describe("ID of the endpoint to connect to"),
+      reason: z
+        .string()
+        .max(500)
+        .transform((s) => s.trim())
+        .refine((s) => s.length > 0, { message: "reason must not be empty" })
+        .describe("Why this session is being created. Shown to the human approver — be specific."),
+    },
+    async ({ endpointId, reason }) => {
       try {
-        const session = await agentSession.createSession(endpointId);
+        const session = await agentSession.createSession(endpointId, reason);
         return {
           content: [
             {

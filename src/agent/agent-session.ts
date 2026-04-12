@@ -2,6 +2,7 @@ import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import type { OutputReadResult, TerminalManager, TerminalSession } from "../terminal/index.js";
 import { resolveKeys } from "../terminal/keys.js";
+import { sanitizeClientReportedValue } from "../util/sanitize-client-info.js";
 
 export type AgentSource = "mcp" | "ssh";
 
@@ -15,6 +16,9 @@ export type AgentSource = "mcp" | "ssh";
 export class AgentSession {
   private ownedSessions = new Set<string>();
 
+  private mcpClientName?: string;
+  private mcpClientVersion?: string;
+
   constructor(
     private endpointRepo: EndpointRepository,
     private terminalManager: TerminalManager,
@@ -23,6 +27,17 @@ export class AgentSession {
     /** Source IP of the calling agent (used when building the signing trigger). */
     private sourceIp?: string,
   ) {}
+
+  /**
+   * Record the calling MCP client's advertised clientInfo (from the initialize
+   * handshake). Re-sanitizes defensively so any future caller can't bypass the
+   * trust-boundary cleaning by accident — sanitizeClientReportedValue is
+   * idempotent so callers that already sanitized pay nothing meaningful.
+   */
+  setMcpClientInfo(info: { name?: string; version?: string }): void {
+    this.mcpClientName = sanitizeClientReportedValue(info.name);
+    this.mcpClientVersion = sanitizeClientReportedValue(info.version);
+  }
 
   /** Sessions owned by this agent */
   get sessions(): ReadonlySet<string> {
@@ -42,14 +57,20 @@ export class AgentSession {
     }));
   }
 
-  async createSession(endpointId: string): Promise<TerminalSession> {
+  async createSession(endpointId: string, reason: string): Promise<TerminalSession> {
     if (this.ownedSessions.size >= this.maxSessions) {
       throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
     }
     // AgentSource is "mcp" | "ssh"; today only MCP is implemented. The SSH
     // server interface (issue #12) isn't wired in yet — when it lands, extend
     // EndpointAuthTrigger with an "ssh" kind and branch here.
-    const trigger: EndpointAuthTrigger = { kind: "mcp", sourceIp: this.sourceIp };
+    const trigger: EndpointAuthTrigger = {
+      kind: "mcp",
+      reason,
+      sourceIp: this.sourceIp,
+      mcpClientName: this.mcpClientName,
+      mcpClientVersion: this.mcpClientVersion,
+    };
     const session = await this.terminalManager.create(endpointId, trigger);
     this.ownedSessions.add(session.sessionId);
     return session;

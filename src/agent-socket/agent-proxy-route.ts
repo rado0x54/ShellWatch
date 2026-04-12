@@ -15,33 +15,23 @@ import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
+import { sanitizeClientReportedValue } from "../util/sanitize-client-info.js";
 import { createAgentHandler } from "./socket-agent-handler.js";
-
-/** Max length for client-reported header values, after stripping control chars. */
-export const CLIENT_HEADER_MAX_LEN = 128;
 
 /**
  * Read and sanitize a client-reported handshake header.
  *
  * These values are advertised by the agent client (`X-ShellWatch-Hostname`,
  * `-OS`, `-Version`) and are rendered as "self-reported" in the approval UI.
- * They cross the trust boundary here, so we:
- * - Look up by lowercased name (Fastify/Node HTTP always lowercase headers)
- * - Strip ASCII control chars (including newlines, tabs, DEL)
- * - Clamp length to keep pending-action payloads bounded
- *
- * Returns `undefined` for missing/empty values so downstream code can rely
- * on presence checks.
+ * Header lookup is by lowercased name (Fastify/Node HTTP normalize to lower);
+ * sanitization (control-char strip + length clamp) is shared with the MCP
+ * initialize-handshake path via sanitizeClientReportedValue.
  */
 export function readClientHeader(
   request: Pick<FastifyRequest, "headers">,
   lowercaseName: string,
 ): string | undefined {
-  const raw = request.headers[lowercaseName];
-  if (typeof raw !== "string") return undefined;
-  // eslint-disable-next-line no-control-regex
-  const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, "").slice(0, CLIENT_HEADER_MAX_LEN);
-  return cleaned.length > 0 ? cleaned : undefined;
+  return sanitizeClientReportedValue(request.headers[lowercaseName]);
 }
 
 export interface AgentProxyRouteParams {
