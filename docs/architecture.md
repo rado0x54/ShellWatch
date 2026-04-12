@@ -129,28 +129,57 @@ ShellWatch uses WebAuthn passkeys (e.g., YubiKeys, platform authenticators) for 
 
 **Components:**
 
-| File                     | Purpose                                                                          |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `ssh-agent.ts`           | `WebAuthnSshAgent` — custom ssh2 agent that delegates signing to the browser     |
-| `composite-ssh-agent.ts` | `CompositeSshAgent` — extends WebAuthnSshAgent with file key support             |
-| `signing-bridge.ts`      | `SigningBridge` — bridges sign requests between agents and browser via WebSocket |
-| `signature-format.ts`    | Converts WebAuthn assertions to SSH signature wire format (PROTOCOL.u2f)         |
-| `ssh-key-format.ts`      | Converts COSE public keys to OpenSSH authorized_keys format                      |
-| `routes.ts`              | WebAuthn registration and authentication HTTP routes                             |
+| File                     | Purpose                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `ssh-agent.ts`           | `WebAuthnSshAgent` — custom ssh2 agent that delegates signing via callbacks   |
+| `composite-ssh-agent.ts` | `CompositeSshAgent` — extends WebAuthnSshAgent with file key approval support |
+| `signing-bridge.ts`      | `SigningBridge` — converts raw sign callbacks into `PendingAction` records    |
+| `signature-format.ts`    | Converts WebAuthn assertions to SSH signature wire format (PROTOCOL.u2f)      |
+| `ssh-key-format.ts`      | Converts COSE public keys to OpenSSH authorized_keys format                   |
+| `routes.ts`              | WebAuthn registration and authentication HTTP routes                          |
 
-**Signing flow (browser-based SSH auth):**
+Approval flow (passkey signing, file-key approval) is decoupled from the browser connection via the **PendingAction** system — see the [PendingAction & Sign Requests](#pendingaction--sign-requests-srcpending-action) section below.
+
+### PendingAction & Sign Requests (`src/pending-action/`)
+
+Unified approval system for all human-in-the-loop interactions (passkey signing, file-key approval). Decouples sign requests from the browser's live WebSocket — an approver can be notified via WebSocket toast, Web Push, or any future channel, and can approve from any browser (or phone) that's authenticated to the account.
+
+**Components:**
+
+| File              | Purpose                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `types.ts`        | `SignRequestContext` discriminated union + `PendingAction` record shape                   |
+| `store.ts`        | `PendingActionStore` — in-memory TTL map (60s) with resolve/deny/expire                   |
+| `dispatcher.ts`   | `NotificationDispatcher` — fans the action out to registered `NotificationChannel`s       |
+| `ws-channel.ts`   | `WebSocketChannel` — sends `sign:request` / `sign:resolved` to connected account browsers |
+| `push-channel.ts` | `PushChannel` — Web Push notifications (when a browser isn't open / visible)              |
+
+**Sign request sources** — `SignRequestContext` is a discriminated union:
+
+| Source             | When                                                                         | Key fields                                                                      |
+| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `endpoint-auth`    | ShellWatch's own SSH client auth to an endpoint (UI- or MCP-triggered)       | `endpointLabel`, `endpointAddress`, `trigger: { kind: "ui" \| "mcp" }`          |
+| `agent-forwarding` | Downstream `auth-agent@openssh.com` channel from a running session           | `endpointLabel`, `endpointAddress`, `sessionId` of parent session               |
+| `agent-proxy`      | Remote `shellwatch-agent` Go client requesting a sign over `/agent-proxy` WS | `sourceIp`, `apiKeyLabel`, `apiKeyPrefix`, optional `clientHostname/OS/Version` |
+
+Client-reported fields on `agent-proxy` (hostname/OS/version from `X-ShellWatch-*` handshake headers) and MCP client name/version on `endpoint-auth` triggers are shown in a separate "self-reported" block on `/sign/:id` so approvers don't mistake spoofable data for authoritative identity.
+
+**Approval flow:**
 
 ```
-1. ssh2 needs auth → calls WebAuthnSshAgent.sign(challenge)
-2. Agent sends sign request to SigningBridge
-3. SigningBridge forwards fido:sign-request to browser via WebSocket
-4. Browser shows signing modal (or auto-signs for assigned passkeys)
-5. User touches security key → navigator.credentials.get()
-6. Browser returns fido:sign-response with WebAuthn assertion
-7. SigningBridge routes response to the waiting agent
-8. Agent converts assertion to SSH signature (PROTOCOL.u2f format)
-9. ssh2 completes authentication
+1. Agent's sign() fires onSignRequest callback with resolve/reject closures
+2. SigningBridge creates a PendingAction in the store (optional redirectTo)
+3. NotificationDispatcher fans out to all channels (WS + Push)
+4. Approver opens /sign/:id — GET /api/actions/:id returns the action
+5. For agent-forwarding, the page also fetches /api/sessions/:id/tail to
+   show the parent session's current output (pre-approval context)
+6. User approves → POST /api/actions/:id/resolve (with WebAuthn assertion
+   payload for webauthn-sign, empty body for key-approve)
+7. Store.resolve() fires the stored resolve callback → ssh2 gets signature
+8. Browser navigates to redirectTo (e.g. /session/<new-session-id>)
 ```
+
+Actions expire after 60s if no response; denied/expired actions surface back to ssh2 as a sign failure. WebSocket `sign:resolved` broadcasts clear toasts on any other tabs open for the account.
 
 ### Account System (`src/db/repositories/account-repo.ts`)
 
@@ -179,29 +208,34 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 | Route | View |
 |-------|------|
 | `/` | Terminal — single active session with xterm.js |
+| `/session/[id]` | Specific session terminal view |
 | `/observer` | Observer — multi-session grid (dynamic layout) |
+| `/sign/[id]` | Sign-request approval page (passkey ceremony or key approval) |
 | `/settings/endpoints` | SSH endpoint CRUD |
 | `/settings/keys` | SSH key listing |
 | `/settings/passkeys` | WebAuthn passkey management |
 | `/settings/api-keys` | API key management |
-| `/login` | WebAuthn passkey login |
+| `/settings/notifications` | Web Push subscription management |
+| `/login` | WebAuthn passkey login (supports `?redirect=` bounce-back) |
+| `/register` | WebAuthn passkey registration |
 
 **Communication:**
 
-- **REST API** (`/api/*`) — endpoint listing, session CRUD, key management, WebAuthn
-- **WebSocket** (`/ws`) — real-time terminal I/O, session status events, FIDO signing
+- **REST API** (`/api/*`) — endpoint/session/key/WebAuthn CRUD, action resolve/deny (`/api/actions/:id/resolve` & `/deny`), session tail (`/api/sessions/:id/tail`)
+- **WebSocket** (`/ws`) — real-time terminal I/O and session events; also carries `sign:request` / `sign:resolved` notifications from the PendingAction system
 
 **WebSocket protocol:**
 
 ```
 Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
-                 terminal:take-control, terminal:release-control,
-                 fido:sign-response, fido:sign-error, fido:sign-skip
+                 terminal:take-control, terminal:release-control
 Server → Client: terminal:output, terminal:status, terminal:closed, terminal:mode,
-                 sessions:changed, fido:sign-request, error
+                 sessions:changed, sign:request, sign:resolved, error
 ```
 
-**WebSocket extensions (`src/server/ws-extension.ts`):** Pluggable message interceptors. The `SigningBridge` implements `WsExtension` to intercept `fido:*` messages before the default terminal handler processes them.
+Sign approval itself (resolve/deny with WebAuthn assertion payload) goes over REST, not the WebSocket — see the [PendingAction section](#pendingaction--sign-requests-srcpending-action).
+
+**WebSocket extensions (`src/server/ws-extension.ts`):** Pluggable interface for sending server-initiated messages to account-scoped browser connections. `WebSocketChannel` (the notification-dispatcher channel) implements it to broadcast `sign:request` / `sign:resolved` to tabs owned by the target account.
 
 **State management:** Svelte stores provide reactive state shared across components:
 
@@ -263,10 +297,10 @@ ssh client → Unix socket → shellwatch-agent (Go) → WSS → ShellWatch /age
 ```
 
 - Each WebSocket connection gets its own `AgentProtocol` instance
-- File keys are signed server-side (no user interaction)
-- Passkey sign requests are forwarded to the browser via the `SigningBridge`
+- Both passkey signs _and_ file-key uses create `PendingAction`s for approval (no silent file-key auto-sign on this path — the whole point is human-in-the-loop)
 - Requires API key with `agent` scope
 - Requires OpenSSH 10.3+ on the client for passkey support (see [#36](https://github.com/rado0x54/ShellWatch/issues/36))
+- Client advertises `X-ShellWatch-Hostname` / `-OS` / `-Version` handshake headers so the approver can see which machine is asking (sanitized server-side, rendered as "self-reported")
 
 **OpenSSH 10.3 canonicalization:** OpenSSH canonicalizes `webauthn-sk-ecdsa` to `sk-ecdsa` in agent protocol messages. The ssh2 fork handles this by checking the key's application field (`"ssh:"` = standard FIDO2, web domain = webauthn) and using the correct PROTOCOL.u2f wire format in `signReply`. See [rado0x54/ssh2#1](https://github.com/rado0x54/ssh2/pull/1).
 
@@ -397,8 +431,11 @@ Everything runs in a single Node.js process:
 │  TerminalManager                        │
 │    └── SSH connections (ssh2)           │
 │                                         │
-│  SigningBridge                          │
-│    └── WebAuthn ↔ browser relay         │
+│  SigningBridge + PendingActionStore       │
+│    └── Approval queue (60s TTL)         │
+│                                         │
+│  NotificationDispatcher                 │
+│    └── WebSocket + Web Push channels    │
 │                                         │
 │  KeyDirectoryWatcher                    │
 │    └── SSH key auto-discovery           │
@@ -443,15 +480,20 @@ Everything runs in a single Node.js process:
 ```
 1. ssh client connects to shellwatch-agent Unix socket
 2. shellwatch-agent opens WSS to ShellWatch /agent-proxy
+   (advertises X-ShellWatch-Hostname / -OS / -Version headers)
 3. SSH client sends SSH_AGENTC_REQUEST_IDENTITIES
 4. AgentProtocol returns file keys + passkeys
 5. SSH client sends SSH_AGENTC_SIGN_REQUEST for a passkey
 6. CompositeSshAgent delegates to WebAuthnSshAgent
-7. WebAuthnSshAgent sends sign request via SigningBridge → browser
-8. Browser shows signing modal → user touches security key
-9. WebAuthn assertion flows back → converted to SSH signature
-10. Signature returned to SSH client via agent proxy
-11. SSH client authenticates with remote server
+7. WebAuthnSshAgent's onSignRequest → SigningBridge creates a PendingAction
+   with an agent-proxy context (API key label, client metadata)
+8. NotificationDispatcher fans out to connected browsers (sign:request via WS)
+   and/or Web Push; user sees a toast and/or native push notification
+9. User opens /sign/:id, taps passkey → WebAuthn ceremony in browser
+10. Browser POSTs the assertion to /api/actions/:id/resolve
+11. SigningBridge's resolve callback hands the signature back to ssh2
+12. Signature returned to SSH client via agent proxy
+13. SSH client authenticates with remote server
 ```
 
 ## File Structure
@@ -497,6 +539,12 @@ src/
     server.ts                   # MCP tool definitions (delegates to AgentSession)
     http-transport.ts           # Streamable HTTP transport wiring
     notifications.ts            # Debounced MCP notification dispatcher
+  pending-action/
+    types.ts                    # SignRequestContext union + PendingAction record
+    store.ts                    # In-memory TTL store with resolve/deny/expire
+    dispatcher.ts               # Fans actions out to NotificationChannels
+    ws-channel.ts               # sign:request / sign:resolved over WebSocket
+    push-channel.ts             # Web Push delivery
   webauthn/
     ssh-agent.ts                # WebAuthnSshAgent — browser-delegated signing
     composite-ssh-agent.ts      # CompositeSshAgent — file keys + passkeys
@@ -512,15 +560,18 @@ client/                           # SvelteKit frontend (adapter-static)
     app.html                    # HTML shell
     app.css                     # Global styles (CSS variables, shared classes)
     lib/
-      stores/                   # Svelte stores (ws, endpoints, keys, webauthn)
-      components/               # Reusable components (Terminal, Sidebar, SigningModal)
-      utils/                    # Utilities (FIDO signing)
+      stores/                   # Svelte stores (ws, endpoints, keys, webauthn, toasts, account, ...)
+      components/               # Reusable components (Terminal, TerminalSnapshot, Sidebar, ToastContainer, Identicon)
+      utils/                    # Utilities (WebAuthn ceremony helpers, error formatting)
     routes/
-      +layout.svelte            # Root layout (sidebar + mobile nav)
+      +layout.svelte            # Root layout (sidebar + mobile nav + auth gate)
       +page.svelte              # Terminal view (default route)
-      login/                    # WebAuthn login page
+      session/[id]/             # Specific session view
+      sign/[id]/                # Sign-request approval page (+ tail preview for agent-forwarding)
+      login/                    # WebAuthn login page (supports ?redirect= bounce-back)
+      register/                 # WebAuthn passkey registration
       observer/                 # Multi-session grid view
-      settings/                 # Settings with tab sub-routes
+      settings/                 # Settings with tab sub-routes (incl. notifications / Web Push)
   svelte.config.js              # SvelteKit config (adapter-static)
 agent-client/                     # Go thin client for SSH agent proxy
   cmd/shellwatch-agent/         # CLI entry point
@@ -536,6 +587,5 @@ See individual tickets for details:
 - **Guardrails (#13)** — input filtering layer in TerminalManager, before `sendInput()`
 - **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
 - **Audit Log (#16)** — subscribes to TerminalManager events, persists to database
-- **Unified notifications (#38)** — PendingAction store + NotificationDispatcher (WebSocket toast, Web Push, Telegram) for all human-in-the-loop interactions
-- **Release pipeline (#40)** — Docker image, GitHub Actions CI/CD, Proxmox deployment
+- **Telegram notification channel** — new `NotificationChannel` implementation alongside WS/Push
 - **Agent client distribution (#35)** — goreleaser, Homebrew tap, install script

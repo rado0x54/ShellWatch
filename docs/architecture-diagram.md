@@ -16,7 +16,7 @@ graph TB
         AgentProxy["Agent Proxy<br/><i>WebSocket /agent-proxy</i>"]
         AS["AgentSession<br/><i>Per-agent isolation</i>"]
         TM["TerminalManager<br/><i>Central session registry</i>"]
-        SB["SigningBridge<br/><i>WebAuthn relay</i>"]
+        SB["SigningBridge + PendingActions<br/><i>approval queue (WS + Web Push)</i>"]
         STF["SshTransportFactory<br/><i>File keys + passkeys</i>"]
         SSH["SSH Transport<br/><i>ssh2 library</i>"]
         KDW["KeyDirectoryWatcher<br/><i>Auto-discovery</i>"]
@@ -44,20 +44,20 @@ graph TB
     SSHCli -- "shellwatch-agent (Go)<br/>SSH agent protocol over WSS<br/>API key auth" --> AgentProxy
     SSH -- "SSH (key or passkey auth)" --> Remote
 
-    SB -. "fido:sign-request /<br/>fido:sign-response" .-> User
+    SB -. "sign:request (WS toast) /<br/>Web Push / resolve via REST" .-> User
     TM -. "events: output,<br/>status-change, close" .-> WebUI
     TM -. "events (debounced<br/>notifications)" .-> MCP
 ```
 
 ## Actor Roles
 
-| Actor             | Protocol                          | Access Level          | Description                                                                                                                                                                                                            |
-| ----------------- | --------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **User**          | REST + WebSocket + WebAuthn       | Admin (all sessions)  | Browser-based terminal UI. Sees all sessions regardless of source. Handles WebAuthn signing for passkey-based SSH auth.                                                                                                |
-| **Agent**         | MCP (HTTP)                        | Scoped (own sessions) | AI agent connecting via MCP. Each agent gets an isolated `AgentSession` and can only see/control sessions it created. Requires API key with `mcp` scope.                                                               |
-| **SSH Client**    | SSH agent protocol (via Go proxy) | Key-based             | System SSH clients (`ssh`, `scp`, `git`) using ShellWatch-managed keys via the agent proxy. Supports file keys (auto-sign) and passkeys (browser-signed, requires OpenSSH 10.3+). Requires API key with `agent` scope. |
-| **ShellWatch**    | &mdash;                           | &mdash;               | Session broker. Routes input/output, buffers terminal data, broadcasts events, enforces isolation between agents, manages key material and WebAuthn signing.                                                           |
-| **Target Server** | SSH                               | &mdash;               | Remote host accessed via ssh2 with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                              |
+| Actor             | Protocol                          | Access Level          | Description                                                                                                                                                                                                                                    |
+| ----------------- | --------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **User**          | REST + WebSocket + WebAuthn       | Admin (all sessions)  | Browser-based terminal UI. Sees all sessions regardless of source. Handles WebAuthn signing for passkey-based SSH auth.                                                                                                                        |
+| **Agent**         | MCP (HTTP)                        | Scoped (own sessions) | AI agent connecting via MCP. Each agent gets an isolated `AgentSession` and can only see/control sessions it created. Requires API key with `mcp` scope.                                                                                       |
+| **SSH Client**    | SSH agent protocol (via Go proxy) | Key-based             | System SSH clients (`ssh`, `scp`, `git`) using ShellWatch-managed keys via the agent proxy. Both passkey signs and file-key uses require browser approval on `/sign/:id`. Passkeys require OpenSSH 10.3+. Requires API key with `agent` scope. |
+| **ShellWatch**    | &mdash;                           | &mdash;               | Session broker. Routes input/output, buffers terminal data, broadcasts events, enforces isolation between agents, manages key material and WebAuthn signing.                                                                                   |
+| **Target Server** | SSH                               | &mdash;               | Remote host accessed via ssh2 with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                                                      |
 
 ## Data Flow — MCP Session
 
@@ -106,9 +106,10 @@ sequenceDiagram
 
     SC->>GA: SSH_AGENTC_SIGN_REQUEST (passkey)
     GA->>SW: relay via WebSocket
-    SW->>U: fido:sign-request (WebSocket)
-    Note over U: User touches<br/>security key
-    U-->>SW: fido:sign-response (WebAuthn assertion)
+    Note over SW: SigningBridge creates<br/>PendingAction (agent-proxy)
+    SW->>U: sign:request (WS toast) + Web Push
+    Note over U: User opens /sign/:id,<br/>touches security key
+    U->>SW: POST /api/actions/:id/resolve<br/>(WebAuthn assertion)
     SW-->>GA: SSH signature (PROTOCOL.u2f format)
     GA-->>SC: signature
 

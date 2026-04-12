@@ -115,6 +115,7 @@ Open `http://localhost:3000` in your browser.
 - Terminal auto-resizes with the browser window
 - Sessions created via MCP appear automatically — no refresh needed
 - **Observer mode** — grid view to monitor multiple sessions at once
+- **Sign-request approval** — when a sign is needed (passkey ceremony, SSH key approval), a toast and (optionally) a push notification link to a `/sign/:id` page where you approve or deny
 
 ## MCP
 
@@ -194,16 +195,18 @@ agentSocket:
 Then run the [`shellwatch-agent`](./agent-client/) thin client on your workstation:
 
 ```bash
-cd agent-client && go build -o shellwatch-agent ./cmd/shellwatch-agent/
+cd agent-client && make build       # or: go build -o shellwatch-agent ./cmd/shellwatch-agent/
 ./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
 
 # In your shell profile:
 export SSH_AUTH_SOCK=/tmp/shellwatch-agent-<uid>.sock
 ```
 
+`make build` injects the agent version via `-ldflags` (pulled from `git describe`) so it's surfaced to the approver on `/sign/:id`. Override with `make build VERSION=x.y.z`.
+
 The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this scope automatically.
 
-Both file-based keys (auto-sign) and WebAuthn passkeys (browser-signed) are supported. Passkeys require **OpenSSH 10.3+** on the client and a browser session open in ShellWatch for signing. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
+Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy signing — both require browser approval (no silent auto-sign for the agent-proxy path). Passkeys require **OpenSSH 10.3+** on the client. Approval happens on the `/sign/:id` page, which also shows the agent client's self-reported hostname/OS/version when available. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
 
 ## Scripts
 

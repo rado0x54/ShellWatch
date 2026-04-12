@@ -124,3 +124,13 @@ The ShellWatch agent client is a standalone Go binary that proxies SSH agent req
 Download platform-specific binaries from the [agent releases](https://github.com/rado0x54/ShellWatch/releases?q=agent) on GitHub.
 
 Available platforms: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64.
+
+### Building from source
+
+```bash
+cd agent-client
+make build                    # uses `git describe` for the version tag
+make build VERSION=0.1.0      # or pin a specific version
+```
+
+The version is injected at link time via `-ldflags "-X main.Version=..."` and advertised to the server on the WebSocket handshake so it shows up on the `/sign/:id` approval page.
