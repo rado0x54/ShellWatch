@@ -108,4 +108,56 @@ describe("OutputBuffer", () => {
     expect(result.data).toBe("");
     expect(result.hasMore).toBe(false);
   });
+
+  describe("tail", () => {
+    it("returns empty string when buffer is empty", () => {
+      const buf = new OutputBuffer();
+      expect(buf.tail(100)).toBe("");
+    });
+
+    it("returns the entire buffer when limit exceeds its length", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello");
+      expect(buf.tail(100)).toBe("hello");
+    });
+
+    it("returns the last `limit` chars when buffer is longer", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello world");
+      expect(buf.tail(5)).toBe("world");
+    });
+
+    it("returns empty string for non-positive limits", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello");
+      expect(buf.tail(0)).toBe("");
+      expect(buf.tail(-1)).toBe("");
+    });
+
+    it("respects ring-buffer truncation", () => {
+      const buf = new OutputBuffer(10);
+      buf.append("0123456789abcdef"); // exceeds maxSize=10, keeps last 10
+      expect(buf.tail(4)).toBe("cdef");
+      expect(buf.tail(100)).toBe("6789abcdef");
+    });
+
+    it("advances to first ESC when truncation cuts mid-sequence", () => {
+      const buf = new OutputBuffer();
+      // Prefix is "abc\x1b[31m..." — if the cut starts in the middle of the
+      // escape sequence, we'd want to resync at the next ESC.
+      buf.append("abc\x1b[31mred\x1b[0mreset");
+      // limit=9 grabs "ed\x1b[0mreset" — starts mid-plain-text (the "ed" from
+      // "red"). The ANSI-safe tail should start at the ESC so xterm parses a
+      // clean sequence.
+      const t = buf.tail(9);
+      expect(t.startsWith("\x1b[0m")).toBe(true);
+    });
+
+    it("leaves plain-text tails untouched when no ESC is present", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello world");
+      // limit=5 truncates; slice has no ESC so returned as-is.
+      expect(buf.tail(5)).toBe("world");
+    });
+  });
 });

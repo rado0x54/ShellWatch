@@ -3,6 +3,7 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
+  import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
   import {
     approveAction,
@@ -65,6 +66,7 @@
   let processing = $state(false);
   let error = $state<string | null>(null);
   let resultStatus = $state<string | null>(null);
+  let parentSessionTail = $state<string | null>(null);
 
   const isKeyApprove = $derived(action?.type === "key-approve");
 
@@ -80,6 +82,22 @@
         return;
       }
       action = await res.json();
+
+      // For agent-forwarding requests, surface what's happening in the parent
+      // session so the approver can see the command that triggered the forward
+      // (e.g. `git push`, nested `ssh`). Best-effort — if the fetch fails we
+      // just hide the preview rather than blocking approval.
+      if (action && action.context.source === "agent-forwarding") {
+        try {
+          const tailRes = await fetch(`/api/sessions/${action.context.sessionId}/tail?limit=2000`);
+          if (tailRes.ok) {
+            const body = (await tailRes.json()) as { data?: string };
+            parentSessionTail = body.data ?? "";
+          }
+        } catch {
+          // ignore — preview is non-essential
+        }
+      }
     } catch {
       error = "Failed to load action";
     } finally {
@@ -300,6 +318,18 @@
         {/if}
       </div>
 
+      {#if ctx && ctx.source === "agent-forwarding" && parentSessionTail}
+        <details class="sign-preview" open>
+          <summary class="sign-preview-header">
+            Parent session output
+            <span class="sign-preview-note">— tail of terminal at time of request</span>
+          </summary>
+          <div class="sign-preview-body">
+            <TerminalSnapshot data={parentSessionTail} />
+          </div>
+        </details>
+      {/if}
+
       {#if reportedItems.length > 0}
         <div class="sign-reported" role="group" aria-labelledby="reported-heading">
           <div class="sign-reported-header" id="reported-heading">
@@ -377,6 +407,59 @@
     flex-direction: column;
     gap: 0.6rem;
     margin-bottom: 1.5rem;
+  }
+
+  .sign-preview {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    background: var(--bg-primary);
+  }
+
+  .sign-preview-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+
+  /* Safari <details> shows a native disclosure triangle even with list-style:none;
+     suppress it so our custom ::before arrow isn't doubled up. */
+  .sign-preview-header::-webkit-details-marker {
+    display: none;
+  }
+
+  .sign-preview-header::before {
+    content: "▸";
+    display: inline-block;
+    font-size: 0.7rem;
+    transition: transform 0.15s ease;
+  }
+
+  .sign-preview[open] .sign-preview-header::before {
+    transform: rotate(90deg);
+  }
+
+  .sign-preview-note {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    font-style: italic;
+  }
+
+  .sign-preview-body {
+    margin-top: 0.6rem;
+    height: 14rem;
+    overflow: hidden;
+    border-radius: 4px;
   }
 
   .sign-reported {

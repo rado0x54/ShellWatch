@@ -34,6 +34,24 @@ export class OutputBuffer {
     return this.baseOffset + this.buffer.length;
   }
 
+  /**
+   * Return up to the last `limit` characters currently in the buffer.
+   *
+   * When truncation occurs we may cut mid-ANSI-escape-sequence, which would
+   * make downstream terminal renderers (xterm.js) interpret the trailing
+   * bytes as plain text until they resynchronize. To guarantee a clean
+   * parser state we advance the cut to the first `\x1b` in the slice when
+   * truncation happened; this may drop a few leading plain characters but
+   * never hands the renderer a half-sequence.
+   */
+  tail(limit: number): string {
+    if (limit <= 0) return "";
+    if (this.buffer.length <= limit) return this.buffer;
+    const slice = this.buffer.slice(-limit);
+    const escIdx = slice.indexOf("\x1b");
+    return escIdx <= 0 ? slice : slice.slice(escIdx);
+  }
+
   clear(): void {
     this.buffer = "";
     this.baseOffset = 0;
