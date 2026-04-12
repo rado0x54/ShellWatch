@@ -125,6 +125,12 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     return managed.output.read(afterOffset, limit);
   }
 
+  /** Return up to `limit` characters from the tail of the session's output. */
+  readOutputTail(sessionId: string, limit: number): string {
+    const managed = this.getManaged(sessionId);
+    return managed.output.tail(limit);
+  }
+
   resize(sessionId: string, cols: number, rows: number): void {
     const managed = this.getManaged(sessionId);
     if (managed.session.status !== "open") {

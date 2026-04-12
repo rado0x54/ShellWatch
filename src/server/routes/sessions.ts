@@ -65,6 +65,32 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
     return { sessions };
   });
 
+  app.get<{
+    Params: { sessionId: string };
+    Querystring: { limit?: string };
+  }>("/api/sessions/:sessionId/tail", async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    const session = terminalManager.getSession(request.params.sessionId);
+    if (!session) {
+      reply.status(404);
+      return { error: "Session not found" };
+    }
+    const endpoint = await endpointRepo.findByIdForAccount(session.endpointId, request.accountId);
+    if (!endpoint) {
+      reply.status(403);
+      return { error: "Access denied" };
+    }
+    // Clamp to a sane range so a malformed query string can't bloat the response.
+    const requested = Number(request.query.limit);
+    const limit =
+      Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 8000) : 2000;
+    const data = terminalManager.readOutputTail(request.params.sessionId, limit);
+    return { data };
+  });
+
   app.delete<{ Params: { sessionId: string } }>(
     "/api/sessions/:sessionId",
     async (request, reply) => {
