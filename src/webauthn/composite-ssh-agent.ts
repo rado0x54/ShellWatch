@@ -11,7 +11,12 @@
  */
 
 import ssh2 from "ssh2";
-import { toPublicKeyBlob, WebAuthnSshAgent, type WebAuthnSshAgentParams } from "./ssh-agent.js";
+import {
+  toPublicKeyBlob,
+  WebAuthnSshAgent,
+  type SignRequest,
+  type WebAuthnSshAgentParams,
+} from "./ssh-agent.js";
 
 const { utils } = ssh2;
 
@@ -102,13 +107,33 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
     options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
   ): void {
+    this.signWithCallbacks(pubKey, data, options, cb, {
+      onSignRequest: this.onSignRequest,
+      onFileKeySignRequest: this.onFileKeySignRequest,
+    });
+  }
+
+  /**
+   * Core sign routine; accepts explicit callbacks so that subclasses (e.g.
+   * ForwardingAgent) can route forwarded channel sign requests through
+   * different callbacks than those used for ShellWatch's own SSH-client auth.
+   */
+  protected signWithCallbacks(
+    pubKey: Buffer,
+    data: Buffer,
+    options: unknown,
+    cb: (err: Error | null, signature?: Buffer) => void,
+    callbacks: {
+      onSignRequest: (request: SignRequest) => void;
+      onFileKeySignRequest?: FileKeySignRequestCallback;
+    },
+  ): void {
     const pubKeyBlob = toPublicKeyBlob(pubKey);
     const fileKey = this.fileKeys.find((fk) => fk.publicKeyBlob.equals(pubKeyBlob));
     if (fileKey) {
       const opts = options as { hash?: string };
-      if (this.onFileKeySignRequest) {
-        // Route through approval — the resolve closure performs the actual signing
-        this.onFileKeySignRequest({
+      if (callbacks.onFileKeySignRequest) {
+        callbacks.onFileKeySignRequest({
           fileKey,
           dataToSign: data,
           hash: opts.hash,
@@ -116,14 +141,13 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
           reject: (err) => cb(err),
         });
       } else {
-        // No approval callback — auto-sign (backward compat for tests/simple setups)
         this.signWithFileKey(fileKey, data, opts, cb);
       }
       return;
     }
 
-    // Not a file key — delegate to WebAuthnSshAgent for passkey signing
-    super.sign(pubKey, data, options, cb);
+    // Not a file key — delegate to passkey signing
+    this.signPasskeyWithCallback(pubKey, data, options, cb, callbacks.onSignRequest);
   }
 
   private signWithFileKey(

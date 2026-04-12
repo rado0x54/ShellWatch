@@ -82,8 +82,8 @@ export function registerActionRoutes(params: ActionRoutesParams) {
       return { error: "Action could not be resolved" };
     }
 
-    wsChannel.broadcastResolved(action.id, action.accountId);
-    return { status: "completed" };
+    wsChannel.broadcastResolved(action.id, action.accountId, action.redirectTo);
+    return { status: "completed", redirectTo: action.redirectTo };
   });
 
   app.post<{ Params: { actionId: string } }>(

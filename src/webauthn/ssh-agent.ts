@@ -133,8 +133,23 @@ export class WebAuthnSshAgent extends BaseAgent {
   sign(
     pubKey: Buffer,
     data: Buffer,
+    options: unknown,
+    cb: (err: Error | null, signature?: Buffer) => void,
+  ): void {
+    this.signPasskeyWithCallback(pubKey, data, options, cb, this.onSignRequest);
+  }
+
+  /**
+   * Core passkey sign routine; takes an explicit sign-request callback so that
+   * subclasses (e.g. ForwardingAgent) can route forwarded channel sign requests
+   * through a different callback than the one used for ShellWatch's own auth.
+   */
+  protected signPasskeyWithCallback(
+    pubKey: Buffer,
+    data: Buffer,
     _options: unknown,
     cb: (err: Error | null, signature?: Buffer) => void,
+    signRequestCallback: SignRequestCallback,
   ): void {
     const pubKeyBlob = toPublicKeyBlob(pubKey);
     const passkey = this.passkeys.find((pk) => pk.publicKeyBlob.equals(pubKeyBlob));
@@ -161,7 +176,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       cb(error);
     };
 
-    this.onSignRequest({
+    signRequestCallback({
       credentialId: passkey.credential.credentialId,
       dataToSign: data,
       rpId: this.rpId,

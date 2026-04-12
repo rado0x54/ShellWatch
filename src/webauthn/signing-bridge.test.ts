@@ -70,17 +70,17 @@ describe("SigningBridge", () => {
     };
 
     bridge.handleKeyApproveRequest(request, "acc-1", {
-      source: "ui",
-      sourceIp: "127.0.0.1",
+      source: "endpoint-auth",
       endpointLabel: "Prod",
       endpointAddress: "deploy@host:22",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });
 
     expect(dispatchSpy).toHaveBeenCalledOnce();
     const action = dispatchSpy.mock.calls[0][0];
     expect(action.type).toBe("key-approve");
     expect(action.accountId).toBe("acc-1");
-    expect(action.context.source).toBe("ui");
+    expect(action.context.source).toBe("endpoint-auth");
     if (action.type !== "key-approve") throw new Error("expected key-approve");
     expect(action.keyLabel).toBe("Production Key");
     expect(action.keyFingerprint).toBe("SHA256:abc123");

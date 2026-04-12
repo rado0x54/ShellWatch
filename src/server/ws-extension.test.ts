@@ -94,10 +94,10 @@ describe("WebSocketChannel as WsExtension", () => {
       createdAt: Date.now(),
       expiresAt: Date.now() + 60_000,
       context: {
-        source: "ui" as const,
-        sourceIp: "127.0.0.1",
+        source: "endpoint-auth" as const,
         endpointLabel: "Prod",
         endpointAddress: "user@host:22",
+        trigger: { kind: "ui" as const, sourceIp: "127.0.0.1" },
       },
       keyLabel: "Test Key",
       keyFingerprint: "SHA256:abc123",

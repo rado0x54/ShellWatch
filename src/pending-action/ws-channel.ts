@@ -56,9 +56,13 @@ export class WebSocketChannel implements NotificationChannel, WsExtension {
     }
   }
 
-  /** Broadcast that an action has reached a terminal state (so toasts can be cleared). */
-  broadcastResolved(actionId: string, accountId: string): void {
-    const msg = JSON.stringify({ type: "sign:resolved", actionId });
+  /**
+   * Broadcast that an action has reached a terminal state (so toasts can be
+   * cleared). Optionally includes a redirectTo path so the signing page can
+   * navigate to the resulting session on success.
+   */
+  broadcastResolved(actionId: string, accountId: string, redirectTo?: string): void {
+    const msg = JSON.stringify({ type: "sign:resolved", actionId, redirectTo });
     for (const client of this.getOpenClientsForAccount(accountId)) {
       client.socket.send(msg);
     }

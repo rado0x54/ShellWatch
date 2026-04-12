@@ -109,7 +109,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   });
   const terminalManager = new TerminalManager(
     endpointRepo,
-    (id) => sshTransportFactory.create(id),
+    (params) => sshTransportFactory.create(params),
     {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,

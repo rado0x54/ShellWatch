@@ -1,7 +1,7 @@
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
 import { findCredentialsForAccount } from "../db/repositories/credential-queries.js";
-import type { SignRequestContext } from "../pending-action/index.js";
+import type { AgentForwardingContext, EndpointAuthContext } from "../pending-action/index.js";
 import {
   buildFileKeyEntry,
   buildPasskeyEntry,
@@ -48,32 +48,64 @@ export function createSshTransportFactoryFromConfig(
       isAdmin,
       rpId,
       agentForward,
-      sessionId: _sessionId,
+      sessionId,
+      trigger,
     }) => {
       const passkeyEntries = passkeys.map((c) => buildPasskeyEntry(c)).filter((e) => e !== null);
 
       const address = `${endpoint.username}@${endpoint.host}:${endpoint.port}`;
 
-      const buildContext = (): SignRequestContext =>
-        agentForward
-          ? {
-              source: "forwarding-agent",
-              endpointLabel: endpoint.label,
-              endpointAddress: address,
-            }
-          : {
-              source: "ui",
-              sourceIp: "127.0.0.1",
-              endpointLabel: endpoint.label,
-              endpointAddress: address,
-            };
+      const endpointAuthContext = (): EndpointAuthContext => ({
+        source: "endpoint-auth",
+        endpointLabel: endpoint.label,
+        endpointAddress: address,
+        trigger,
+      });
+
+      const forwardingContext = (): AgentForwardingContext => ({
+        source: "agent-forwarding",
+        endpointLabel: endpoint.label,
+        endpointAddress: address,
+        sessionId,
+      });
+
+      const endpointAuthRedirectTo = `/session/${sessionId}`;
+      const forwardingRedirectTo = `/session/${sessionId}`;
 
       const onSignRequest = (request: SignRequest) => {
-        signingBridge.handleSignRequest(request, endpoint.accountId, buildContext());
+        signingBridge.handleSignRequest(
+          request,
+          endpoint.accountId,
+          endpointAuthContext(),
+          endpointAuthRedirectTo,
+        );
       };
 
       const onFileKeySignRequest = (request: FileKeySignRequest) => {
-        signingBridge.handleKeyApproveRequest(request, endpoint.accountId, buildContext());
+        signingBridge.handleKeyApproveRequest(
+          request,
+          endpoint.accountId,
+          endpointAuthContext(),
+          endpointAuthRedirectTo,
+        );
+      };
+
+      const forwardingOnSignRequest = (request: SignRequest) => {
+        signingBridge.handleSignRequest(
+          request,
+          endpoint.accountId,
+          forwardingContext(),
+          forwardingRedirectTo,
+        );
+      };
+
+      const forwardingOnFileKeySignRequest = (request: FileKeySignRequest) => {
+        signingBridge.handleKeyApproveRequest(
+          request,
+          endpoint.accountId,
+          forwardingContext(),
+          forwardingRedirectTo,
+        );
       };
 
       const fileKeyEntries = isAdmin
@@ -96,7 +128,11 @@ export function createSshTransportFactoryFromConfig(
       };
 
       const agent = agentForward
-        ? new ForwardingAgent(baseParams)
+        ? new ForwardingAgent({
+            ...baseParams,
+            forwardingOnSignRequest,
+            forwardingOnFileKeySignRequest,
+          })
         : new CompositeSshAgent(baseParams);
 
       return {

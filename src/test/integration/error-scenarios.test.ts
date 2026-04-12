@@ -118,7 +118,7 @@ describe("Error Scenarios", () => {
         rpId: "localhost",
         createAgent: () => null,
       });
-      const tm = new TerminalManager(endpointRepo, (id) => factory.create(id));
+      const tm = new TerminalManager(endpointRepo, (params) => factory.create(params));
 
       const testSecret = "test-secret";
       const config = makeTestConfig({

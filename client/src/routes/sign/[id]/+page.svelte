@@ -9,9 +9,29 @@
     performSignCeremony,
     resolveAction,
     sourceLabels,
+    triggerKindLabels,
   } from "$lib/utils/webauthn-sign.js";
 
   const actionId = $derived($page.params.id);
+
+  type EndpointAuthTrigger =
+    | { kind: "ui"; sourceIp: string }
+    | { kind: "mcp"; sourceIp: string; mcpClientName?: string; mcpClientVersion?: string };
+
+  type SignContext =
+    | { source: "agent-proxy"; sourceIp: string; apiKeyPrefix: string }
+    | {
+        source: "endpoint-auth";
+        endpointLabel: string;
+        endpointAddress: string;
+        trigger: EndpointAuthTrigger;
+      }
+    | {
+        source: "agent-forwarding";
+        endpointLabel: string;
+        endpointAddress: string;
+        sessionId: string;
+      };
 
   interface ActionData {
     id: string;
@@ -20,16 +40,8 @@
     status: string;
     createdAt: number;
     expiresAt: number;
-    context: {
-      source: string;
-      sourceIp?: string;
-      apiKeyPrefix?: string;
-      endpointLabel?: string;
-      endpointAddress?: string;
-      sessionId?: string;
-      mcpClientName?: string;
-      mcpClientVersion?: string;
-    };
+    context: SignContext;
+    redirectTo?: string;
     // webauthn-sign fields
     credentialId?: string;
     challenge?: string;
@@ -73,23 +85,33 @@
     error = null;
 
     try {
+      let response;
       if (action.type === "key-approve") {
-        await approveAction(actionId);
+        response = await approveAction(actionId);
       } else {
         const result = await performSignCeremony(
           action as { credentialId: string; challenge: string; rpId: string },
         );
-        await resolveAction(actionId, result);
+        response = await resolveAction(actionId, result);
       }
       resultStatus = "completed";
       clearAction(actionId);
       toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
+      if (response.redirectTo && isSafeRedirect(response.redirectTo)) {
+        // Server-computed path (e.g. /terminal/:id). Use window.location
+        // since typed routes can't validate a runtime string.
+        window.location.href = response.redirectTo;
+      }
     } catch (err) {
       error = (err as Error).message;
       toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
     } finally {
       processing = false;
     }
+  }
+
+  function isSafeRedirect(path: string): boolean {
+    return path.startsWith("/") && !path.startsWith("//");
   }
 
   async function handleDeny() {
@@ -112,6 +134,7 @@
     goto(resolve(`/session/${sessionId}`));
   }
 
+  const ctx = $derived(action?.context);
   const displayStatus = $derived(resultStatus ?? action?.status);
   const isTerminal = $derived(displayStatus !== "pending");
 </script>
@@ -166,46 +189,50 @@
       <div class="sign-fields">
         <div class="sign-field">
           <span class="sign-label">Source</span>
-          <span class="sign-value"
-            >{sourceLabels[action.context.source] ?? action.context.source}</span
-          >
+          <span class="sign-value">{sourceLabels[ctx!.source] ?? ctx!.source}</span>
         </div>
 
-        {#if action.context.endpointLabel}
+        {#if ctx && (ctx.source === "endpoint-auth" || ctx.source === "agent-forwarding")}
           <div class="sign-field">
             <span class="sign-label">Endpoint</span>
             <span class="sign-value">
-              {action.context.endpointLabel}
-              {#if action.context.endpointAddress}
-                <span class="sign-muted">({action.context.endpointAddress})</span>
-              {/if}
+              {ctx.endpointLabel}
+              <span class="sign-muted">({ctx.endpointAddress})</span>
             </span>
           </div>
         {/if}
 
-        {#if action.context.sourceIp}
+        {#if ctx && ctx.source === "endpoint-auth"}
+          <div class="sign-field">
+            <span class="sign-label">Triggered by</span>
+            <span class="sign-value">
+              {triggerKindLabels[ctx.trigger.kind] ?? ctx.trigger.kind}
+              {#if ctx.trigger.sourceIp}
+                <span class="sign-muted sign-mono">({ctx.trigger.sourceIp})</span>
+              {/if}
+            </span>
+          </div>
+          {#if ctx.trigger.kind === "mcp" && ctx.trigger.mcpClientName}
+            <div class="sign-field">
+              <span class="sign-label">MCP Client</span>
+              <span class="sign-value">
+                {ctx.trigger.mcpClientName}
+                {#if ctx.trigger.mcpClientVersion}
+                  <span class="sign-muted">v{ctx.trigger.mcpClientVersion}</span>
+                {/if}
+              </span>
+            </div>
+          {/if}
+        {/if}
+
+        {#if ctx && ctx.source === "agent-proxy"}
           <div class="sign-field">
             <span class="sign-label">Source IP</span>
-            <span class="sign-value sign-mono">{action.context.sourceIp}</span>
+            <span class="sign-value sign-mono">{ctx.sourceIp}</span>
           </div>
-        {/if}
-
-        {#if action.context.apiKeyPrefix}
           <div class="sign-field">
             <span class="sign-label">API Key</span>
-            <span class="sign-value sign-mono">{action.context.apiKeyPrefix}...</span>
-          </div>
-        {/if}
-
-        {#if action.context.mcpClientName}
-          <div class="sign-field">
-            <span class="sign-label">MCP Client</span>
-            <span class="sign-value">
-              {action.context.mcpClientName}
-              {#if action.context.mcpClientVersion}
-                <span class="sign-muted">v{action.context.mcpClientVersion}</span>
-              {/if}
-            </span>
+            <span class="sign-value sign-mono">{ctx.apiKeyPrefix}...</span>
           </div>
         {/if}
 
@@ -229,10 +256,10 @@
           </div>
         {/if}
 
-        {#if action.context.sessionId}
+        {#if ctx && ctx.source === "agent-forwarding" && ctx.sessionId}
           <div class="sign-field">
             <span class="sign-label">Session</span>
-            <button class="sign-link" onclick={() => viewSession(action!.context.sessionId!)}>
+            <button class="sign-link" onclick={() => viewSession(ctx.sessionId)}>
               View Session
             </button>
           </div>

@@ -65,7 +65,13 @@ describe("SshTransportFactory", () => {
       { rpId: testRpId, createAgent: () => null },
     );
 
-    await expect(factory.create("nonexistent")).rejects.toThrow("Unknown endpoint: nonexistent");
+    await expect(
+      factory.create({
+        endpointId: "nonexistent",
+        sessionId: "sess_test",
+        trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+      }),
+    ).rejects.toThrow("Unknown endpoint: nonexistent");
   });
 
   it("throws if no keys available", async () => {
@@ -81,7 +87,13 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await expect(factory.create("ep-1")).rejects.toThrow("No SSH keys available");
+    await expect(
+      factory.create({
+        endpointId: "ep-1",
+        sessionId: "sess_test",
+        trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+      }),
+    ).rejects.toThrow("No SSH keys available");
   });
 
   it("throws if agent factory returns null (no keys)", async () => {
@@ -97,7 +109,13 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await expect(factory.create("ep-1")).rejects.toThrow("No SSH keys available for this endpoint");
+    await expect(
+      factory.create({
+        endpointId: "ep-1",
+        sessionId: "sess_test",
+        trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+      }),
+    ).rejects.toThrow("No SSH keys available for this endpoint");
   });
 
   it("connects with agent and passes agentForward flag", async () => {
@@ -120,7 +138,11 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    const transport = await factory.create("ep-1");
+    const transport = await factory.create({
+      endpointId: "ep-1",
+      sessionId: "sess_test",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+    });
 
     expect(transport).toBe(mockTransport);
     expect(createAgent).toHaveBeenCalledWith(
@@ -165,7 +187,11 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await factory.create("ep-1");
+    await factory.create({
+      endpointId: "ep-1",
+      sessionId: "sess_test",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+    });
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -193,7 +219,11 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await factory.create("ep-1");
+    await factory.create({
+      endpointId: "ep-1",
+      sessionId: "sess_test",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+    });
 
     expect(cleanup).not.toHaveBeenCalled();
     (mockTransport as unknown as EventEmitter).emit("close");
@@ -220,7 +250,11 @@ describe("SshTransportFactory", () => {
       },
     );
 
-    await factory.create("ep-1");
+    await factory.create({
+      endpointId: "ep-1",
+      sessionId: "sess_test",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
+    });
 
     expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ agentForward: true }));
     expect(mockConnectSshWithAgent).toHaveBeenCalledWith(expect.anything(), mockAgent, {

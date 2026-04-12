@@ -1,12 +1,21 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import { page } from "$app/stores";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
   let loading = $state(false);
   let error = $state("");
   let status = $state("");
+
+  function safeRedirect(): string {
+    const raw = $page.url.searchParams.get("redirect");
+    if (!raw) return "/";
+    // Only accept same-origin paths; reject protocol-relative and absolute URLs.
+    if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+    return raw;
+  }
 
   async function handleLogin() {
     loading = true;
@@ -15,7 +24,7 @@
 
     try {
       await login();
-      window.location.href = "/";
+      window.location.href = safeRedirect();
     } catch (err) {
       if (err instanceof NoPasskeysError) {
         await goto(resolve("/register"));

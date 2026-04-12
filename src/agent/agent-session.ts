@@ -1,4 +1,5 @@
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import type { OutputReadResult, TerminalManager, TerminalSession } from "../terminal/index.js";
 import { resolveKeys } from "../terminal/keys.js";
 
@@ -19,6 +20,8 @@ export class AgentSession {
     private terminalManager: TerminalManager,
     private source: AgentSource,
     private maxSessions = 5,
+    /** Source IP of the calling agent (used when building the signing trigger). */
+    private sourceIp: string = "",
   ) {}
 
   /** Sessions owned by this agent */
@@ -43,7 +46,11 @@ export class AgentSession {
     if (this.ownedSessions.size >= this.maxSessions) {
       throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
     }
-    const session = await this.terminalManager.create(endpointId, this.source);
+    // AgentSource is "mcp" | "ssh"; today only MCP is implemented. The SSH
+    // server interface (issue #12) isn't wired in yet — when it lands, extend
+    // EndpointAuthTrigger with an "ssh" kind and branch here.
+    const trigger: EndpointAuthTrigger = { kind: "mcp", sourceIp: this.sourceIp };
+    const session = await this.terminalManager.create(endpointId, trigger);
     this.ownedSessions.add(session.sessionId);
     return session;
   }

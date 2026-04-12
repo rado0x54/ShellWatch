@@ -26,10 +26,10 @@ function makeKeyApproveParams(overrides?: Partial<KeyApproveCreateParams>): KeyA
     type: "key-approve",
     accountId: "acc-1",
     context: {
-      source: "ui",
-      sourceIp: "127.0.0.1",
+      source: "endpoint-auth",
       endpointLabel: "Prod",
       endpointAddress: "user@host:22",
+      trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     },
     keyLabel: "Test Key",
     keyFingerprint: "SHA256:abc123",

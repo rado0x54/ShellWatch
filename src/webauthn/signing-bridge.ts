@@ -36,7 +36,12 @@ export class SigningBridge {
   /**
    * Handle a passkey sign request. Creates a webauthn-sign PendingAction.
    */
-  handleSignRequest(request: SignRequest, accountId: string, context: SignRequestContext): void {
+  handleSignRequest(
+    request: SignRequest,
+    accountId: string,
+    context: SignRequestContext,
+    redirectTo?: string,
+  ): void {
     // IMPORTANT: Use standard base64 (not base64url) — matches what
     // OpenSSH's verifier expects when reconstructing clientDataJSON
     const challenge = request.dataToSign.toString("base64");
@@ -45,6 +50,7 @@ export class SigningBridge {
       type: "webauthn-sign",
       accountId,
       context,
+      redirectTo,
       credentialId: request.credentialId,
       challenge,
       rpId: request.rpId,
@@ -65,11 +71,13 @@ export class SigningBridge {
     request: FileKeySignRequest,
     accountId: string,
     context: SignRequestContext,
+    redirectTo?: string,
   ): void {
     const action = this.actionStore.create({
       type: "key-approve",
       accountId,
       context,
+      redirectTo,
       keyLabel: request.fileKey.label,
       keyFingerprint: request.fileKey.fingerprint,
       resolve: request.resolve,
