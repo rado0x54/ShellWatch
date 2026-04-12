@@ -82,7 +82,11 @@ describe("SSH Agent Forwarding", () => {
           onSignRequest: () => {},
         };
         const agent = fwd
-          ? new ForwardingAgent({ ...params, forwardingOnSignRequest: () => {} })
+          ? new ForwardingAgent({
+              ...params,
+              forwardingOnSignRequest: () => {},
+              forwardingOnFileKeySignRequest: () => {},
+            })
           : new CompositeSshAgent(params);
         return { agent, cleanup: () => agent.destroy() };
       },
