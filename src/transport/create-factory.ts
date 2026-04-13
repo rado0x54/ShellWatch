@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
 import { findCredentialsForAccount } from "../db/repositories/credential-queries.js";
@@ -23,13 +24,28 @@ export interface CreateFactoryParams {
   signingBridge: SigningBridge;
   rpId: string;
   agentLog: { current?: { error(msg: string): void } };
+  /**
+   * Cancel all pending sign prompts tied to a given SSH connection when its
+   * client closes or errors. Prevents stranded popups that would otherwise
+   * try to resolve signing against a dead ssh2 client. See #91.
+   */
+  onConnectionEnded?: (connectionId: string, reason: string) => void;
 }
 
 export function createSshTransportFactoryFromConfig(
   params: CreateFactoryParams,
 ): SshTransportFactory {
-  const { db, endpointRepo, keyRepo, accountRepo, keyWatcher, signingBridge, rpId, agentLog } =
-    params;
+  const {
+    db,
+    endpointRepo,
+    keyRepo,
+    accountRepo,
+    keyWatcher,
+    signingBridge,
+    rpId,
+    agentLog,
+    onConnectionEnded,
+  } = params;
 
   return new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
     rpId,
@@ -115,12 +131,15 @@ export function createSshTransportFactoryFromConfig(
 
       if (fileKeyEntries.length === 0 && passkeyEntries.length === 0) return null;
 
+      const connectionId = randomUUID();
+
       const baseParams = {
         passkeys: passkeyEntries,
         fileKeys: fileKeyEntries,
         rpId,
         endpointLabel: endpoint.label,
         endpointAddress: address,
+        connectionId,
         onSignRequest,
         onFileKeySignRequest,
         logger: agentLog.current,
@@ -138,6 +157,7 @@ export function createSshTransportFactoryFromConfig(
         agent,
         cleanup: () => {
           agent.destroy();
+          onConnectionEnded?.(connectionId, "SSH connection closed");
         },
       };
     },

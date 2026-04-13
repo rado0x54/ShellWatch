@@ -76,6 +76,15 @@ try {
     signingBridge,
     rpId: config.security.rpId,
     agentLog,
+    onConnectionEnded: (connectionId, reason) => {
+      // When an SSH client dies, drop any sign prompts still tied to it so
+      // they don't linger on screen and try to resolve against a dead ssh2
+      // callback. The WS broadcast clears in-flight toasts on the client. #91
+      const cancelled = actionStore.cancelForConnection(connectionId, reason);
+      for (const action of cancelled) {
+        wsChannel.broadcastResolved(action.id, action.accountId);
+      }
+    },
   });
 
   const terminalManager = new TerminalManager(endpointRepo, (params) =>

@@ -56,6 +56,8 @@ export interface FileKeySignRequest {
   hash?: string;
   resolve: () => void;
   reject: (error: Error) => void;
+  /** Identifier for the owning SSH client connection, if known */
+  connectionId?: string;
 }
 
 type FileKeySignRequestCallback = (request: FileKeySignRequest) => void;
@@ -137,8 +139,16 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
           fileKey,
           dataToSign: data,
           hash: opts.hash,
+          connectionId: this.connectionId,
           resolve: () => this.signWithFileKey(fileKey, data, opts, cb),
-          reject: (err) => cb(err),
+          // Zero-length "signature" lets ssh2 try the next identity instead of
+          // tearing down the client — see matching comment in ssh-agent.ts. #91
+          reject: (err) => {
+            this.log.error(
+              `[Composite Agent] File key sign rejected, skipping identity: ${err.message}`,
+            );
+            cb(null, Buffer.alloc(0));
+          },
         });
       } else {
         this.signWithFileKey(fileKey, data, opts, cb);

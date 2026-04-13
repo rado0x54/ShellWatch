@@ -60,6 +60,8 @@ export interface SignRequest {
   resolve: (result: SignResponse) => void;
   /** Reject the ssh2 sign callback with an error */
   reject: (error: Error) => void;
+  /** Identifier for the owning SSH client connection, if known */
+  connectionId?: string;
 }
 
 export interface SignResponse {
@@ -83,6 +85,8 @@ export interface WebAuthnSshAgentParams {
   endpointLabel?: string;
   /** Endpoint address for display */
   endpointAddress?: string;
+  /** Identifier for the owning SSH client connection, propagated into SignRequests */
+  connectionId?: string;
   logger?: AgentLogger;
 }
 
@@ -99,6 +103,7 @@ export class WebAuthnSshAgent extends BaseAgent {
   protected rpId: string;
   protected endpointLabel?: string;
   protected endpointAddress?: string;
+  protected connectionId?: string;
   protected log: AgentLogger;
 
   constructor(params: WebAuthnSshAgentParams) {
@@ -108,6 +113,7 @@ export class WebAuthnSshAgent extends BaseAgent {
     this.onSignRequest = params.onSignRequest;
     this.endpointLabel = params.endpointLabel;
     this.endpointAddress = params.endpointAddress;
+    this.connectionId = params.connectionId;
     this.log = params.logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
 
@@ -172,8 +178,14 @@ export class WebAuthnSshAgent extends BaseAgent {
       }
     };
 
+    // Reject maps to a zero-length "signature" so ssh2 treats this identity as a
+    // failed pubkey attempt and advances to the next identity instead of tearing
+    // the client down. Without this, a user denying one key (e.g. a passkey only
+    // present on another device) would abort the entire SSH connection, leaving
+    // sibling sign prompts for valid keys stranded on a dead client. See #91.
     const reject = (error: Error) => {
-      cb(error);
+      this.log.error(`[WebAuthn Agent] Sign rejected, skipping identity: ${error.message}`);
+      cb(null, Buffer.alloc(0));
     };
 
     signRequestCallback({
@@ -183,6 +195,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       passkeyLabel: passkey.credential.label,
       endpointLabel: this.endpointLabel,
       endpointAddress: this.endpointAddress,
+      connectionId: this.connectionId,
       resolve,
       reject,
     });
