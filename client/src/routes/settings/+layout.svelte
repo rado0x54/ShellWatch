@@ -11,7 +11,7 @@
     { path: "/settings/keys", label: "Keys" },
     { path: "/settings/api-keys", label: "API Keys" },
     { path: "/settings/notifications", label: "Notifications" },
-  ];
+  ] as const;
 
   const currentPath = $derived($page.url.pathname);
 </script>

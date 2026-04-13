@@ -16,7 +16,7 @@
     if (prevSessionId && prevSessionId !== sessionId) {
       delete modes[prevSessionId];
     }
-    prevSessionId = sessionId;
+    prevSessionId = sessionId ?? null;
   });
 
   // Navigate home when session is removed from the list

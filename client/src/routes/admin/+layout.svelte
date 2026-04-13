@@ -9,7 +9,7 @@
   const tabs = [
     { path: "/admin/general", label: "General" },
     { path: "/admin/accounts", label: "Accounts" },
-  ];
+  ] as const;
 
   const currentPath = $derived($page.url.pathname);
 </script>

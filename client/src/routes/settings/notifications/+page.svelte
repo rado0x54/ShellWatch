@@ -71,6 +71,7 @@
             class:active={$pushEnabled}
             disabled={$pushLoading}
             onclick={handleToggle}
+            aria-label="Push Notifications"
             role="switch"
             aria-checked={$pushEnabled}
           >

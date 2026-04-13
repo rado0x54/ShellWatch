@@ -54,9 +54,6 @@ jobs:
   svelte-check:
     name: Svelte Check
     runs-on: ubuntu-latest
-    # Non-blocking until pre-existing errors are fixed (see issue #95).
-    # Once that lands, remove `continue-on-error` so this job gates merges.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -100,13 +100,13 @@ describe("keys store", () => {
       // Refresh response
       fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ keys: [] })));
 
-      const key = await generateApiKey("New");
+      const key = await generateApiKey("New", ["mcp"]);
 
       expect(key).toBe("sw_full_secret_key");
       const [url, opts] = fetchSpy.mock.calls[0];
       expect(url).toBe("/api/keys/api");
       expect(opts?.method).toBe("POST");
-      expect(JSON.parse(opts?.body as string)).toEqual({ label: "New" });
+      expect(JSON.parse(opts?.body as string)).toEqual({ label: "New", scopes: ["mcp"] });
     });
 
     it("generateApiKey throws on error", async () => {
@@ -114,7 +114,7 @@ describe("keys store", () => {
         new Response(JSON.stringify({ error: "Label required" }), { status: 400 }),
       );
 
-      await expect(generateApiKey("")).rejects.toThrow("Label required");
+      await expect(generateApiKey("", ["mcp"])).rejects.toThrow("Label required");
     });
 
     it("revokeApiKey sends DELETE and refreshes", async () => {

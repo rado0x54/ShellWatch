@@ -13,7 +13,7 @@
     triggerKindLabels,
   } from "$lib/utils/webauthn-sign.js";
 
-  const actionId = $derived($page.params.id);
+  const actionId = $derived($page.params.id as string);
 
   type EndpointAuthTrigger =
     | { kind: "ui"; sourceIp: string }

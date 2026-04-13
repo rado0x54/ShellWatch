@@ -104,7 +104,7 @@
     loading = true;
     error = "";
     try {
-      generatedKey = await generateApiKey(apiKeyLabel);
+      generatedKey = await generateApiKey(apiKeyLabel, ["mcp"]);
       apiKeyLabel = "";
     } catch (err) {
       error = (err as Error).message;
