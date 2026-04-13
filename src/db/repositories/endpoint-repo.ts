@@ -16,6 +16,8 @@ export function isUserVerification(value: unknown): value is UserVerification {
   );
 }
 
+export const ENDPOINT_DESCRIPTION_MAX_LENGTH = 1000;
+
 export interface EndpointInfo {
   id: string;
   accountId: string;
@@ -24,6 +26,7 @@ export interface EndpointInfo {
   port: number;
   username: string;
   userVerification: UserVerification;
+  description: string | null;
 }
 
 export interface EndpointRepository {
@@ -43,6 +46,7 @@ export interface EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    description?: string | null;
   }): Promise<void>;
   update(
     id: string,
@@ -53,6 +57,7 @@ export interface EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      description: string | null;
     }>,
   ): Promise<void>;
   delete(id: string, accountId: string): Promise<void>;
@@ -66,6 +71,7 @@ const ENDPOINT_COLUMNS = {
   port: endpoints.port,
   username: endpoints.username,
   userVerification: endpoints.userVerification,
+  description: endpoints.description,
 } as const;
 
 export class DrizzleEndpointRepository implements EndpointRepository {
@@ -109,6 +115,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    description?: string | null;
   }): Promise<void> {
     const now = new Date().toISOString();
     this.db
@@ -116,6 +123,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .values({
         ...data,
         userVerification: data.userVerification ?? "required",
+        description: data.description ?? null,
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -132,6 +140,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      description: string | null;
     }>,
   ): Promise<void> {
     this.db
@@ -155,9 +164,10 @@ export class InMemoryEndpointRepository implements EndpointRepository {
 
   constructor(
     initialEndpoints: Array<
-      Omit<EndpointInfo, "accountId" | "userVerification"> & {
+      Omit<EndpointInfo, "accountId" | "userVerification" | "description"> & {
         accountId?: string;
         userVerification?: UserVerification;
+        description?: string | null;
       }
     > = [],
     private defaultAccountId = "test-account",
@@ -166,6 +176,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       ...e,
       accountId: e.accountId ?? this.defaultAccountId,
       userVerification: e.userVerification ?? "required",
+      description: e.description ?? null,
     }));
   }
 
@@ -193,8 +204,13 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    description?: string | null;
   }): Promise<void> {
-    this.store.push({ ...data, userVerification: data.userVerification ?? "required" });
+    this.store.push({
+      ...data,
+      userVerification: data.userVerification ?? "required",
+      description: data.description ?? null,
+    });
   }
 
   async update(
@@ -206,6 +222,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      description: string | null;
     }>,
   ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id && e.accountId === accountId);

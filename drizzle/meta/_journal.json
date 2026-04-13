@@ -15,6 +15,13 @@
       "when": 1776111494874,
       "tag": "0001_tired_lilith",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776114332204,
+      "tag": "0002_vengeful_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

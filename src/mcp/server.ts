@@ -14,7 +14,10 @@ export async function createMcpServer(
 ): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
-    .map((s) => `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`)
+    .map((s) => {
+      const head = `- ${s.id}: ${s.label} (${s.username}@${s.host}:${s.port})`;
+      return s.description ? `${head}\n  description: ${s.description}` : head;
+    })
     .join("\n");
 
   const sudoSection = [

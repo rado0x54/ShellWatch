@@ -45,15 +45,23 @@ export class AgentSession {
   }
 
   async listEndpoints(): Promise<
-    { id: string; label: string; host: string; port: number; username: string }[]
+    {
+      id: string;
+      label: string;
+      host: string;
+      port: number;
+      username: string;
+      description: string | null;
+    }[]
   > {
     const endpoints = await this.endpointRepo.findAll();
-    return endpoints.map(({ id, label, host, port, username }) => ({
+    return endpoints.map(({ id, label, host, port, username, description }) => ({
       id,
       label,
       host,
       port,
       username,
+      description,
     }));
   }
 
