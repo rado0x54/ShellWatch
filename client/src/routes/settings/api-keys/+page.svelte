@@ -108,6 +108,7 @@
       />
       <button class="btn btn-primary" onclick={handleGenerate}>Generate</button>
     </div>
+    <h4 class="scope-heading">Scopes</h4>
     <div class="scope-row">
       <label class="scope-option">
         <input type="checkbox" bind:checked={scopeMcp} />
@@ -179,6 +180,13 @@
   .key-value {
     user-select: all;
     cursor: text;
+  }
+
+  .scope-heading {
+    margin: 0.75rem 0 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
   }
 
   .scope-row {
