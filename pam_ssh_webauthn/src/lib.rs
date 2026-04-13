@@ -127,20 +127,40 @@ fn do_authenticate(config: &Config, handle: &mut PamHandle) -> Result<bool, Box<
     }
     info!("Found {} WebAuthn key(s) in agent", agent_identities.len());
 
-    // Match agent identities against authorized keys
+    // Iterate every (agent identity × authorized key) match and try them in
+    // order. A failure on one key (user denied the prompt, signature invalid,
+    // agent returned SSH_AGENT_FAILURE, etc.) is logged and skipped — only an
+    // empty match set or all-keys-failed produces Ok(false). Mirrors standard
+    // ssh-client behavior of trying each available identity.
+    let mut tried = 0;
     for agent_id in &agent_identities {
         for auth_key in &authorized_keys {
-            if agent_id.key_blob == auth_key.key_blob {
-                debug!(
-                    "Matched key: {} (app: {})",
-                    auth_key.comment, auth_key.application
-                );
-                return try_authenticate(socket, auth_key, &agent_id.key_blob);
+            if agent_id.key_blob != auth_key.key_blob {
+                continue;
+            }
+            tried += 1;
+            debug!(
+                "Trying matched key: {} (app: {})",
+                auth_key.comment, auth_key.application
+            );
+            match try_authenticate(socket, auth_key, &agent_id.key_blob) {
+                Ok(true) => return Ok(true),
+                Ok(false) => continue,
+                Err(e) => {
+                    info!(
+                        "pam_ssh_webauthn: key '{}' failed, trying next: {e}",
+                        auth_key.comment
+                    );
+                }
             }
         }
     }
 
-    debug!("No agent key matched authorized keys");
+    if tried == 0 {
+        debug!("No agent key matched authorized keys");
+    } else {
+        info!("All {tried} matching key(s) failed to authenticate");
+    }
     Ok(false)
 }
 
@@ -186,10 +206,16 @@ pub fn authenticate(
         return Ok(false);
     }
 
+    // See `do_authenticate` for the rationale behind iterating all matches.
     for agent_id in &agent_identities {
         for auth_key in &authorized_keys {
-            if agent_id.key_blob == auth_key.key_blob {
-                return try_authenticate(socket_path, auth_key, &agent_id.key_blob);
+            if agent_id.key_blob != auth_key.key_blob {
+                continue;
+            }
+            match try_authenticate(socket_path, auth_key, &agent_id.key_blob) {
+                Ok(true) => return Ok(true),
+                Ok(false) => continue,
+                Err(_) => continue,
             }
         }
     }
