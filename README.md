@@ -235,23 +235,34 @@ Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy sig
 
 ### Enforcing user verification on the OpenSSH server
 
-ShellWatch always performs a WebAuthn ceremony with `userVerification: "required"`, so every signature sent over the agent proxy carries the UV flag. To make that guarantee load-bearing on the server side, configure the remote `sshd` to reject signatures whose UV flag is not set. OpenSSH enforces UV via two independent knobs that are OR'd together at authentication time:
+ShellWatch always performs a WebAuthn ceremony with `userVerification: "required"`, so every signature sent over the agent proxy carries the UV flag. To make that guarantee load-bearing on the server side, configure the remote `sshd` to reject signatures whose UV flag is not set.
 
-1. **Global, in `sshd_config`:**
+OpenSSH exposes two WebAuthn-related policy knobs for `sk-ecdsa-sha2-nistp256@openssh.com` and `sk-ssh-ed25519@openssh.com` keys, both settable globally in `sshd_config` via `PubkeyAuthOptions` or per-key as a comma-separated option prefix in `authorized_keys`:
 
-   ```
-   PubkeyAuthOptions verify-required
-   ```
+| Option              | Flag bit    | Default         | Effect                                                              |
+| ------------------- | ----------- | --------------- | ------------------------------------------------------------------- |
+| `verify-required`   | UV (`0x04`) | UV not required | Opt **in** to UV — reject signatures unless PIN/biometric was done. |
+| `no-touch-required` | UP (`0x01`) | UP required     | Opt **out** of UP — accept signatures without the touch bit.        |
 
-2. **Per-key, in the target account's `~/.ssh/authorized_keys`:**
+Note the asymmetric defaults: **UP (touch) is required unless you opt out; UV (PIN/biometric) is optional unless you opt in.** That mirrors the physical assumption — touch is cheap, PIN/biometric is a deliberate hardening step.
 
-   ```
-   verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAAInNr... user@host
-   ```
+Examples in `authorized_keys` (see `sshd(8)` AUTHORIZED_KEYS FILE FORMAT):
 
-Either source sets the requirement; if neither is set, a signature without UV is accepted. With either enabled, `sshd` parses the authenticator flags from the signature (`sk_flags`) and rejects when `SSH_SK_USER_VERIFICATION_REQD` (`0x04` — the same bit as WebAuthn's UV flag) is not set, with a log line like `user verification requirement not met`.
+```
+verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host
+no-touch-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host
+verify-required,no-touch-required sk-ssh-ed25519@openssh.com AAAA... user@host
+```
 
-For a hardened deployment, prefer the global `PubkeyAuthOptions verify-required` so the policy is enforced uniformly and can't be bypassed by a stale `authorized_keys` entry.
+Global equivalent in `sshd_config`:
+
+```
+PubkeyAuthOptions verify-required
+```
+
+At authentication time, `sshd` ORs the global option with the per-key option — either source sets the requirement. With UV enforced, `sshd` parses `sk_flags` from the signature and rejects when `SSH_SK_USER_VERIFICATION_REQD` (`0x04` — the same bit as WebAuthn's UV flag) is not set, logging `user verification requirement not met`.
+
+For a hardened deployment, prefer global `PubkeyAuthOptions verify-required` so the policy is enforced uniformly and can't be bypassed by a stale `authorized_keys` entry. Keep UP required (the default) unless you have a specific reason to opt out.
 
 ## Scripts
 
