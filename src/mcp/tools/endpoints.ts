@@ -1,6 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { EndpointRepository } from "../../db/repositories/endpoint-repo.js";
+import {
+  ENDPOINT_DESCRIPTION_MAX_LENGTH,
+  type EndpointRepository,
+} from "../../db/repositories/endpoint-repo.js";
 
 export function registerEndpointTools(
   mcpServer: McpServer,
@@ -19,6 +22,14 @@ export function registerEndpointTools(
           host: z.string().optional(),
           port: z.number().optional(),
           username: z.string().optional(),
+          description: z
+            .string()
+            .max(ENDPOINT_DESCRIPTION_MAX_LENGTH)
+            .nullable()
+            .optional()
+            .describe(
+              `Free-form context (max ${ENDPOINT_DESCRIPTION_MAX_LENGTH} chars) shown to agents on connect. Pass null to clear.`,
+            ),
         })
         .optional()
         .describe("Endpoint data (for create and update)"),
@@ -34,12 +45,13 @@ export function registerEndpointTools(
               };
             }
             const all = await endpointRepo.findAllForAccount(accountId);
-            const result = all.map(({ id, label, host, port, username }) => ({
+            const result = all.map(({ id, label, host, port, username, description }) => ({
               id,
               label,
               host,
               port,
               username,
+              description,
             }));
             return {
               content: [{ type: "text", text: JSON.stringify({ endpoints: result }, null, 2) }],
@@ -83,6 +95,7 @@ export function registerEndpointTools(
               host: data.host,
               port: data.port ?? 22,
               username: data.username,
+              description: data.description ?? null,
             });
             return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };
           }

@@ -79,6 +79,12 @@ export const endpoints = sqliteTable("endpoints", {
    * host / authenticator can't provide UV.
    */
   userVerification: text("user_verification").notNull().default("required"),
+  /**
+   * Optional free-form description (max 1000 chars). Surfaced to MCP agents in
+   * the per-endpoint instructions so they have context about what runs on the
+   * host (e.g., "production DB host, runs Postgres 15, /srv/data holds nightly dumps").
+   */
+  description: text("description"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

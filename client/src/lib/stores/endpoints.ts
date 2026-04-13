@@ -8,6 +8,8 @@ export const USER_VERIFICATION_OPTIONS: readonly UserVerification[] = [
   "discouraged",
 ] as const;
 
+export const ENDPOINT_DESCRIPTION_MAX_LENGTH = 1000;
+
 export interface Endpoint {
   id: string;
   label: string;
@@ -15,6 +17,7 @@ export interface Endpoint {
   port: number;
   username: string;
   userVerification: UserVerification;
+  description: string | null;
 }
 
 export const endpoints = writable<Endpoint[]>([]);
@@ -31,6 +34,7 @@ export async function createEndpoint(body: {
   port: number;
   username: string;
   userVerification?: UserVerification;
+  description?: string | null;
 }): Promise<void> {
   const res = await fetch("/api/endpoints", {
     method: "POST",

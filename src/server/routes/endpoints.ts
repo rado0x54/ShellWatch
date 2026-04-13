@@ -2,10 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository, EndpointRepository } from "../../db/index.js";
 import {
+  ENDPOINT_DESCRIPTION_MAX_LENGTH,
   isUserVerification,
   USER_VERIFICATION_VALUES,
   type UserVerification,
 } from "../../db/repositories/endpoint-repo.js";
+
+function normalizeDescription(value: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string") return { ok: false };
+  if (value.length > ENDPOINT_DESCRIPTION_MAX_LENGTH) return { ok: false };
+  const trimmed = value.trim();
+  return { ok: true, value: trimmed === "" ? null : value };
+}
 import type { TerminalManager } from "../../terminal/index.js";
 
 export interface EndpointRoutesParams {
@@ -25,13 +34,14 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     }
     const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
-      endpoints: all.map(({ id, label, host, port, username, userVerification }) => ({
+      endpoints: all.map(({ id, label, host, port, username, userVerification, description }) => ({
         id,
         label,
         host,
         port,
         username,
         userVerification,
+        description,
       })),
     };
   });
@@ -43,6 +53,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      description?: string | null;
     };
   }>("/api/endpoints", async (request, reply) => {
     if (!request.accountId) {
@@ -57,6 +68,13 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
       }
+      const desc = normalizeDescription(request.body.description);
+      if (!desc.ok) {
+        reply.status(400);
+        return {
+          error: `description must be a string up to ${ENDPOINT_DESCRIPTION_MAX_LENGTH} characters`,
+        };
+      }
       const id = randomUUID();
       await endpointRepo.create({
         id,
@@ -66,6 +84,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
         userVerification: uv as UserVerification | undefined,
+        description: desc.value,
       });
       return { status: "created", id };
     } catch (err) {
@@ -83,6 +102,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      description?: string | null;
     };
   }>("/api/endpoints/:id", async (request, reply) => {
     if (!request.accountId) {
@@ -97,9 +117,21 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
       }
+      let descriptionPatch: { description: string | null } | Record<string, never> = {};
+      if (body.description !== undefined) {
+        const desc = normalizeDescription(body.description);
+        if (!desc.ok) {
+          reply.status(400);
+          return {
+            error: `description must be a string up to ${ENDPOINT_DESCRIPTION_MAX_LENGTH} characters`,
+          };
+        }
+        descriptionPatch = { description: desc.value };
+      }
       await endpointRepo.update(request.params.id, request.accountId, {
         ...body,
         userVerification: body.userVerification as UserVerification | undefined,
+        ...descriptionPatch,
       });
       return { status: "updated" };
     } catch (err) {

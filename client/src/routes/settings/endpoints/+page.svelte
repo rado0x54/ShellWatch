@@ -4,6 +4,7 @@
     createEndpoint,
     deleteEndpoint,
     endpoints,
+    ENDPOINT_DESCRIPTION_MAX_LENGTH,
     fetchEndpoints,
     updateEndpoint,
     USER_VERIFICATION_OPTIONS,
@@ -16,6 +17,8 @@
   let epLabel = $state("");
   let epAddress = $state("");
   let epUserVerification = $state<UserVerification>("required");
+  let epDescription = $state("");
+  let descriptionDrafts = $state<Record<string, string>>({});
 
   onMount(() => {
     fetchEndpoints();
@@ -40,10 +43,12 @@
         port: parsed.port,
         username: parsed.username,
         userVerification: epUserVerification,
+        description: epDescription.trim() ? epDescription : null,
       });
       epLabel = "";
       epAddress = "";
       epUserVerification = "required";
+      epDescription = "";
     } catch (err) {
       toastError(errorMessage(err));
     }
@@ -52,6 +57,18 @@
   async function handleUserVerificationChange(id: string, value: UserVerification) {
     try {
       await updateEndpoint(id, { userVerification: value });
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  }
+
+  async function handleDescriptionSave(id: string, original: string | null) {
+    const draft = descriptionDrafts[id] ?? "";
+    const next = draft.trim() ? draft : null;
+    if (next === (original ?? null)) return;
+    try {
+      await updateEndpoint(id, { description: next });
+      delete descriptionDrafts[id];
     } catch (err) {
       toastError(errorMessage(err));
     }
@@ -76,6 +93,7 @@
         <th>Label</th>
         <th>Address</th>
         <th>User Verification</th>
+        <th>Description</th>
         <th></th>
       </tr>
     </thead>
@@ -99,12 +117,24 @@
             </select>
           </td>
           <td>
+            <textarea
+              class="desc-input"
+              rows="2"
+              maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
+              placeholder="Optional context shown to MCP agents"
+              value={descriptionDrafts[ep.id] ?? ep.description ?? ""}
+              oninput={(e) =>
+                (descriptionDrafts[ep.id] = (e.currentTarget as HTMLTextAreaElement).value)}
+              onblur={() => handleDescriptionSave(ep.id, ep.description)}
+            ></textarea>
+          </td>
+          <td>
             <button class="btn btn-secondary" onclick={() => handleDelete(ep.id)}>Delete</button>
           </td>
         </tr>
       {/each}
       {#if $endpoints.length === 0}
-        <tr><td colspan="4" class="empty">No endpoints configured</td></tr>
+        <tr><td colspan="5" class="empty">No endpoints configured</td></tr>
       {/if}
     </tbody>
   </table>
@@ -120,6 +150,15 @@
         {/each}
       </select>
       <button class="btn btn-primary" onclick={handleAdd}>Add</button>
+    </div>
+    <div class="form-row">
+      <textarea
+        class="desc-input desc-input-add"
+        rows="2"
+        maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
+        placeholder="Description (optional, shown to MCP agents on connect)"
+        bind:value={epDescription}
+      ></textarea>
     </div>
     <p class="hint">
       <strong>User Verification</strong> controls the WebAuthn <code>userVerification</code> option
@@ -175,5 +214,16 @@
   .hint code {
     font-family: monospace;
     font-size: 0.85em;
+  }
+
+  .desc-input {
+    width: 100%;
+    min-width: 12rem;
+    font: inherit;
+    resize: vertical;
+  }
+
+  .desc-input-add {
+    flex: 1;
   }
 </style>
