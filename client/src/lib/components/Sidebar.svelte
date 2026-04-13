@@ -54,7 +54,7 @@
     return ep?.label ?? endpointId;
   }
 
-  async function navTo(path: "/observer" | "/settings" | "/admin") {
+  async function navTo(path: import("$app/types").Pathname) {
     await goto(resolve(path));
     onMobileClose?.();
   }

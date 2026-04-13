@@ -5,13 +5,13 @@
 
   let { children } = $props();
 
-  const tabs = [
+  const tabs: { path: import("$app/types").Pathname; label: string }[] = [
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Keys" },
     { path: "/settings/api-keys", label: "API Keys" },
     { path: "/settings/notifications", label: "Notifications" },
-  ] as const;
+  ];
 
   const currentPath = $derived($page.url.pathname);
 </script>

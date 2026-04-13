@@ -1,1 +1,1 @@
-pnpm check:svelte
+pnpm typecheck && pnpm check:svelte
