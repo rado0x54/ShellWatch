@@ -1,0 +1,7 @@
+pnpm check:svelte || {
+  echo ""
+  echo "⚠️  svelte-check reported errors (non-blocking until #95 is fixed)."
+  echo "    Once #95 is closed, remove the '|| true' below and in ci.yml."
+  echo ""
+}
+true

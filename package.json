@@ -11,6 +11,7 @@
     "build:client": "cd client && npx svelte-kit sync && npx vite build",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "check:svelte": "cd client && npx svelte-kit sync && npx svelte-check",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "format": "prettier --write .",
