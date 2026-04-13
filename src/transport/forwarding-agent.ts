@@ -97,11 +97,11 @@ export class ForwardingAgent extends CompositeSshAgent {
           // On this forwarded path the equivalent of ssh2's "skip this identity"
           // sentinel is an SSH agent protocol failureReply — the remote ssh
           // client then tries the next identity on its side.
-          if (err || isSkipIdentitySignature(signature)) {
+          if (err || !signature || isSkipIdentitySignature(signature)) {
             protocol.failureReply(req);
             return;
           }
-          protocol.signReply(req, signature!);
+          protocol.signReply(req, signature);
         },
         {
           onSignRequest: this.forwardingOnSignRequest,

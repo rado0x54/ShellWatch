@@ -67,7 +67,9 @@ export class PendingActionStore {
    * on-screen waiting to sign into a session that no longer exists. Returns the
    * affected actions (after mutation) so the caller can broadcast resolution.
    */
-  cancelForConnection(connectionId: string, reason: string): PendingAction[] {
+  cancelForConnection(connectionId: string, _reason: string): PendingAction[] {
+    // `_reason` is logged by the caller in index.ts; kept in the signature as
+    // documentation of what onConnectionEnded propagates.
     const cancelled: PendingAction[] = [];
     for (const action of this.actions.values()) {
       if (action.status !== "pending") continue;
@@ -76,9 +78,7 @@ export class PendingActionStore {
       // closure (see PendingActionBase.reject) ultimately feeds the ssh2 sign
       // callback on the client we're tearing down. Calling it would be a
       // gesture against a dead client. Marking denied + letting the caller
-      // broadcast is enough to clear UI state. The `reason` is surfaced via
-      // the caller's log so operators can see why a popup vanished.
-      void reason;
+      // broadcast is enough to clear UI state.
       action.status = "denied";
       cancelled.push(action);
     }
