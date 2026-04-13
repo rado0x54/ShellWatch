@@ -86,7 +86,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     transport.on("data", (data: string) => {
       output.append(data);
       managed.session.lastActivityAt = new Date();
-      this.emit("output", { sessionId, data });
+      this.emit("output", { sessionId, data, offset: output.currentOffset });
     });
 
     transport.on("close", () => {
@@ -123,6 +123,15 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
   readOutput(sessionId: string, afterOffset?: number, limit?: number): OutputReadResult {
     const managed = this.getManaged(sessionId);
     return managed.output.read(afterOffset, limit);
+  }
+
+  /** Full-tail read from `afterOffset`, with `reset` when caller is behind the ring. */
+  readOutputFrom(
+    sessionId: string,
+    afterOffset?: number,
+  ): { data: string; offset: number; reset: boolean } {
+    const managed = this.getManaged(sessionId);
+    return managed.output.readFrom(afterOffset);
   }
 
   /** Return up to `limit` characters from the tail of the session's output. */

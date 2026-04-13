@@ -31,7 +31,7 @@ type SignRequestMessage = {
 };
 
 type ServerMessage =
-  | { type: "terminal:output"; sessionId: string; data: string }
+  | { type: "terminal:output"; sessionId: string; data: string; offset: number; reset?: true }
   | { type: "terminal:status"; sessionId: string; status: string }
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
@@ -46,6 +46,7 @@ export const sessions = writable<SessionListEntry[]>([]);
 
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
+const lastOffsetBySession = new Map<string, number>();
 
 function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
   const base = {
@@ -87,6 +88,15 @@ export function connectWs(): void {
 
       if (msg.type === "sessions:changed") {
         sessions.set(msg.sessions);
+      }
+
+      if (msg.type === "terminal:output") {
+        if (msg.reset) lastOffsetBySession.delete(msg.sessionId);
+        lastOffsetBySession.set(msg.sessionId, msg.offset);
+      }
+
+      if (msg.type === "terminal:closed") {
+        lastOffsetBySession.delete(msg.sessionId);
       }
 
       if (msg.type === "sign:request") {
@@ -134,11 +144,17 @@ export function wsSend(msg: Record<string, unknown>): void {
 }
 
 export function wsAttach(sessionId: string): void {
-  wsSend({ type: "terminal:attach", sessionId });
+  const afterOffset = lastOffsetBySession.get(sessionId);
+  wsSend({
+    type: "terminal:attach",
+    sessionId,
+    ...(afterOffset !== undefined ? { afterOffset } : {}),
+  });
 }
 
 export function wsDetach(sessionId: string): void {
   wsSend({ type: "terminal:detach", sessionId });
+  lastOffsetBySession.delete(sessionId);
 }
 
 export function wsSendInput(sessionId: string, data: string): void {

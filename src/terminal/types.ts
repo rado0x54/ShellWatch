@@ -19,7 +19,7 @@ export interface OutputReadResult {
 }
 
 export type TerminalEventMap = {
-  output: [{ sessionId: string; data: string }];
+  output: [{ sessionId: string; data: string; offset: number }];
   "status-change": [{ sessionId: string; status: TerminalStatus; previousStatus: TerminalStatus }];
   close: [{ sessionId: string }];
 };

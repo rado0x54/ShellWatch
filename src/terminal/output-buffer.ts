@@ -30,6 +30,33 @@ export class OutputBuffer {
     return { data: available, offset: newOffset, hasMore };
   }
 
+  /**
+   * Return the full tail from `afterOffset` (or the whole buffer if undefined).
+   *
+   * `reset` is true when the caller's offset has already been evicted from the
+   * ring — the client has a stale view and must clear its renderer before
+   * writing the returned data. The missing bytes are unrecoverable (nobody
+   * has them anymore).
+   */
+  readFrom(afterOffset?: number): { data: string; offset: number; reset: boolean } {
+    if (afterOffset === undefined) {
+      return { data: this.buffer, offset: this.currentOffset, reset: false };
+    }
+    if (afterOffset === this.currentOffset) {
+      return { data: "", offset: this.currentOffset, reset: false };
+    }
+    // Caller ahead of us (e.g. server restarted with a fresh buffer) or
+    // behind the ring — both mean the caller's view is unrecoverable, resync.
+    if (afterOffset > this.currentOffset || afterOffset < this.baseOffset) {
+      return { data: this.buffer, offset: this.currentOffset, reset: true };
+    }
+    return {
+      data: this.buffer.slice(afterOffset - this.baseOffset),
+      offset: this.currentOffset,
+      reset: false,
+    };
+  }
+
   get currentOffset(): number {
     return this.baseOffset + this.buffer.length;
   }

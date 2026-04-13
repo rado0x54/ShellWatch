@@ -66,6 +66,7 @@
 
     unsubscribe = onWsMessage((msg) => {
       if (msg.type === "terminal:output" && msg.sessionId === sessionId) {
+        if (msg.reset) terminal?.reset();
         terminal?.write(msg.data);
       }
       if (msg.type === "terminal:closed" && msg.sessionId === sessionId) {
