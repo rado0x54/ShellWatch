@@ -63,10 +63,18 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
       send({ type: "terminal:status", sessionId: msg.sessionId, status: session.status });
       send({ type: "terminal:mode", sessionId: msg.sessionId, mode });
 
-      // Send any buffered output so the client catches up
-      const buffered = terminalManager.readOutput(msg.sessionId);
-      if (buffered.data.length > 0) {
-        send({ type: "terminal:output", sessionId: msg.sessionId, data: buffered.data });
+      // Send buffered output so the client catches up. If `afterOffset` is
+      // provided, only the delta; if the offset has been evicted from the
+      // ring, send the full buffer with reset=true so xterm clears first.
+      const buffered = terminalManager.readOutputFrom(msg.sessionId, msg.afterOffset);
+      if (buffered.data.length > 0 || buffered.reset) {
+        send({
+          type: "terminal:output",
+          sessionId: msg.sessionId,
+          data: buffered.data,
+          offset: buffered.offset,
+          ...(buffered.reset ? { reset: true as const } : {}),
+        });
       }
       break;
     }

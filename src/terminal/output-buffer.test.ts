@@ -160,4 +160,34 @@ describe("OutputBuffer", () => {
       expect(buf.tail(5)).toBe("world");
     });
   });
+
+  describe("readFrom", () => {
+    it("returns the full buffer when afterOffset is undefined", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello world");
+      expect(buf.readFrom()).toEqual({ data: "hello world", offset: 11, reset: false });
+    });
+
+    it("returns empty when caller is already current", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello");
+      expect(buf.readFrom(5)).toEqual({ data: "", offset: 5, reset: false });
+    });
+
+    it("returns the delta when caller is mid-buffer", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello world");
+      expect(buf.readFrom(6)).toEqual({ data: "world", offset: 11, reset: false });
+    });
+
+    it("signals reset when caller's offset has been evicted", () => {
+      const buf = new OutputBuffer(10);
+      buf.append("0123456789");
+      buf.append("abcdefghij"); // baseOffset now 10, buffer = "abcdefghij"
+      const r = buf.readFrom(3);
+      expect(r.reset).toBe(true);
+      expect(r.data).toBe("abcdefghij");
+      expect(r.offset).toBe(20);
+    });
+  });
 });

@@ -66,9 +66,17 @@ export function registerWebSocket(
     send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions));
 
     // Listeners for terminal events — scoped per attached session
-    function onOutput({ sessionId, data }: { sessionId: string; data: string }) {
+    function onOutput({
+      sessionId,
+      data,
+      offset,
+    }: {
+      sessionId: string;
+      data: string;
+      offset: number;
+    }) {
       if (attachedSessions.has(sessionId)) {
-        send({ type: "terminal:output", sessionId, data });
+        send({ type: "terminal:output", sessionId, data, offset });
       }
     }
 

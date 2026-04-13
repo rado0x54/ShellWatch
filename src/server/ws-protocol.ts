@@ -2,7 +2,7 @@ import type { TerminalStatus } from "../terminal/index.js";
 
 // Client -> Server messages
 export type ClientMessage =
-  | { type: "terminal:attach"; sessionId: string }
+  | { type: "terminal:attach"; sessionId: string; afterOffset?: number }
   | { type: "terminal:detach"; sessionId: string }
   | { type: "terminal:input"; sessionId: string; data: string }
   | { type: "terminal:resize"; sessionId: string; cols: number; rows: number }
@@ -23,7 +23,7 @@ export interface SessionListEntry {
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "terminal:output"; sessionId: string; data: string }
+  | { type: "terminal:output"; sessionId: string; data: string; offset: number; reset?: true }
   | { type: "terminal:status"; sessionId: string; status: TerminalStatus }
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
