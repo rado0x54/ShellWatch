@@ -90,7 +90,12 @@ export class ForwardingAgent extends CompositeSshAgent {
         data,
         flags,
         (err, signature) => {
-          if (err || !signature) {
+          // A zero-length signature is the "skip this identity" sentinel used
+          // by WebAuthnSshAgent when the user denies a sign request. On this
+          // forwarded path the equivalent signal to the remote ssh client is
+          // a failureReply — it then tries the next identity on its side.
+          // ssh2's AgentProtocol.signReply rejects empty signatures outright.
+          if (err || !signature || signature.length === 0) {
             protocol.failureReply(req);
             return;
           }
