@@ -180,6 +180,15 @@ describe("OutputBuffer", () => {
       expect(buf.readFrom(6)).toEqual({ data: "world", offset: 11, reset: false });
     });
 
+    it("signals reset when caller is ahead of current (e.g. server restarted)", () => {
+      const buf = new OutputBuffer();
+      buf.append("hello");
+      const r = buf.readFrom(500);
+      expect(r.reset).toBe(true);
+      expect(r.data).toBe("hello");
+      expect(r.offset).toBe(5);
+    });
+
     it("signals reset when caller's offset has been evicted", () => {
       const buf = new OutputBuffer(10);
       buf.append("0123456789");

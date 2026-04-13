@@ -95,6 +95,10 @@ export function connectWs(): void {
         lastOffsetBySession.set(msg.sessionId, msg.offset);
       }
 
+      if (msg.type === "terminal:closed") {
+        lastOffsetBySession.delete(msg.sessionId);
+      }
+
       if (msg.type === "sign:request") {
         const message =
           msg.actionType === "key-approve"

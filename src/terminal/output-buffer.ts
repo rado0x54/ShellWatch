@@ -42,10 +42,12 @@ export class OutputBuffer {
     if (afterOffset === undefined) {
       return { data: this.buffer, offset: this.currentOffset, reset: false };
     }
-    if (afterOffset >= this.currentOffset) {
+    if (afterOffset === this.currentOffset) {
       return { data: "", offset: this.currentOffset, reset: false };
     }
-    if (afterOffset < this.baseOffset) {
+    // Caller ahead of us (e.g. server restarted with a fresh buffer) or
+    // behind the ring — both mean the caller's view is unrecoverable, resync.
+    if (afterOffset > this.currentOffset || afterOffset < this.baseOffset) {
       return { data: this.buffer, offset: this.currentOffset, reset: true };
     }
     return {
