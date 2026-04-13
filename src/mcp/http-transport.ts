@@ -42,6 +42,17 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
     let managed = sessionId ? sessions.get(sessionId) : undefined;
 
+    if (sessionId && !managed) {
+      // Stale session ID (e.g. client holding a session from a prior server
+      // instance). Return 404 so the client drops it and reinitializes.
+      reply.code(404).send({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Session not found" },
+        id: null,
+      });
+      return;
+    }
+
     if (!managed) {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
