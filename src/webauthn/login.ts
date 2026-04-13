@@ -121,6 +121,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
           expectedChallenge: challenge,
           expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
+          requireUserVerification: true,
           credential: {
             id: storedCred.credentialId,
             publicKey: new Uint8Array(storedCred.publicKey),
@@ -132,11 +133,6 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         if (!verification.verified) {
           reply.status(400);
           return { error: "Verification failed" };
-        }
-
-        if (!verification.authenticationInfo.userVerified) {
-          reply.status(400);
-          return { error: "User verification required" };
         }
 
         // Update counter and last used

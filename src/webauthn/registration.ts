@@ -92,16 +92,12 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           expectedChallenge: challenge,
           expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
+          requireUserVerification: true,
         });
 
         if (!verification.verified || !verification.registrationInfo) {
           reply.status(400);
           return { error: "Verification failed" };
-        }
-
-        if (!verification.registrationInfo.userVerified) {
-          reply.status(400);
-          return { error: "User verification required" };
         }
 
         const { credential: cred, aaguid } = verification.registrationInfo;
