@@ -20,6 +20,20 @@ const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Recor
 export { BaseAgent };
 
 /**
+ * Zero-length signature returned by the agent when the user denies a sign
+ * request (or the action expires / is cancelled). ssh2's auth handler treats
+ * this as a failed pubkey attempt and advances to the next identity instead
+ * of tearing down the client. The forwarding-agent path translates it into
+ * an SSH agent protocol `failureReply` for the same effect on remote ssh
+ * clients. See ShellWatch #91.
+ */
+export const SKIP_IDENTITY_SIGNATURE: Buffer = Buffer.alloc(0);
+
+export function isSkipIdentitySignature(sig: Buffer | undefined | null): boolean {
+  return !sig || sig.length === 0;
+}
+
+/**
  * ssh2 parses key blobs from getIdentities() into key objects before passing
  * them to sign(). Extract the raw public key blob for comparison.
  */
@@ -60,6 +74,8 @@ export interface SignRequest {
   resolve: (result: SignResponse) => void;
   /** Reject the ssh2 sign callback with an error */
   reject: (error: Error) => void;
+  /** Identifier for the owning SSH client connection, if known */
+  connectionId?: string;
 }
 
 export interface SignResponse {
@@ -83,6 +99,8 @@ export interface WebAuthnSshAgentParams {
   endpointLabel?: string;
   /** Endpoint address for display */
   endpointAddress?: string;
+  /** Identifier for the owning SSH client connection, propagated into SignRequests */
+  connectionId?: string;
   logger?: AgentLogger;
 }
 
@@ -99,6 +117,7 @@ export class WebAuthnSshAgent extends BaseAgent {
   protected rpId: string;
   protected endpointLabel?: string;
   protected endpointAddress?: string;
+  protected connectionId?: string;
   protected log: AgentLogger;
 
   constructor(params: WebAuthnSshAgentParams) {
@@ -108,6 +127,7 @@ export class WebAuthnSshAgent extends BaseAgent {
     this.onSignRequest = params.onSignRequest;
     this.endpointLabel = params.endpointLabel;
     this.endpointAddress = params.endpointAddress;
+    this.connectionId = params.connectionId;
     this.log = params.logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
 
@@ -173,7 +193,8 @@ export class WebAuthnSshAgent extends BaseAgent {
     };
 
     const reject = (error: Error) => {
-      cb(error);
+      this.log.error(`[WebAuthn Agent] Sign rejected, skipping identity: ${error.message}`);
+      cb(null, SKIP_IDENTITY_SIGNATURE);
     };
 
     signRequestCallback({
@@ -183,6 +204,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       passkeyLabel: passkey.credential.label,
       endpointLabel: this.endpointLabel,
       endpointAddress: this.endpointAddress,
+      connectionId: this.connectionId,
       resolve,
       reject,
     });

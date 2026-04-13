@@ -15,7 +15,11 @@ import {
   type CompositeAgentParams,
   type FileKeySignRequest,
 } from "../webauthn/composite-ssh-agent.js";
-import { toPublicKeyBlob, type SignRequest } from "../webauthn/ssh-agent.js";
+import {
+  isSkipIdentitySignature,
+  toPublicKeyBlob,
+  type SignRequest,
+} from "../webauthn/ssh-agent.js";
 
 export interface ForwardingAgentParams extends CompositeAgentParams {
   /** Callback for passkey signing triggered by the auth-agent@openssh.com channel. */
@@ -90,7 +94,10 @@ export class ForwardingAgent extends CompositeSshAgent {
         data,
         flags,
         (err, signature) => {
-          if (err || !signature) {
+          // On this forwarded path the equivalent of ssh2's "skip this identity"
+          // sentinel is an SSH agent protocol failureReply — the remote ssh
+          // client then tries the next identity on its side.
+          if (err || !signature || isSkipIdentitySignature(signature)) {
             protocol.failureReply(req);
             return;
           }

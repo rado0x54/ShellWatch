@@ -12,6 +12,7 @@
 
 import ssh2 from "ssh2";
 import {
+  SKIP_IDENTITY_SIGNATURE,
   toPublicKeyBlob,
   WebAuthnSshAgent,
   type SignRequest,
@@ -56,6 +57,8 @@ export interface FileKeySignRequest {
   hash?: string;
   resolve: () => void;
   reject: (error: Error) => void;
+  /** Identifier for the owning SSH client connection, if known */
+  connectionId?: string;
 }
 
 type FileKeySignRequestCallback = (request: FileKeySignRequest) => void;
@@ -137,8 +140,14 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
           fileKey,
           dataToSign: data,
           hash: opts.hash,
+          connectionId: this.connectionId,
           resolve: () => this.signWithFileKey(fileKey, data, opts, cb),
-          reject: (err) => cb(err),
+          reject: (err) => {
+            this.log.error(
+              `[Composite Agent] File key sign rejected, skipping identity: ${err.message}`,
+            );
+            cb(null, SKIP_IDENTITY_SIGNATURE);
+          },
         });
       } else {
         this.signWithFileKey(fileKey, data, opts, cb);

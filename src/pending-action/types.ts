@@ -59,6 +59,19 @@ interface PendingActionBase {
   context: SignRequestContext;
   /** Optional path to navigate to after successful resolution (e.g. "/terminal/:id"). */
   redirectTo?: string;
+  /**
+   * Identifier for the SSH client connection that spawned this action. When set,
+   * the store can cancel all actions for a connection when the client dies so
+   * stranded sign prompts don't outlive the SSH session they were meant for.
+   */
+  connectionId?: string;
+  /**
+   * Reject the request. Every current producer (WebAuthnSshAgent,
+   * CompositeSshAgent's file-key path, ForwardingAgent) ultimately feeds the
+   * ssh2 sign callback on the owning SSH client — there are no other
+   * awaiters. PendingActionStore.cancelForConnection relies on that invariant
+   * to skip calling reject after the client has been torn down.
+   */
   reject: (error: Error) => void;
 }
 

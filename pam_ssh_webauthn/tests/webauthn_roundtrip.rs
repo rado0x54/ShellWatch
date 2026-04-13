@@ -267,11 +267,172 @@ fn test_webauthn_roundtrip() {
 fn test_webauthn_wrong_challenge() {
     let setup = setup(true);
 
+    // With multi-key iteration, a key whose signature fails verification is
+    // treated as "this key didn't authenticate" and the loop continues. Here
+    // we only have one matching key, so all matches are exhausted and we get
+    // Ok(false) — auth failed, but cleanly (so PAM falls through to the next
+    // module rather than reporting a service error).
     let result = pam_ssh_webauthn::authenticate(&setup.socket_path, &setup.key_file);
-    assert!(
-        result.is_err(),
-        "should fail with mismatched challenge: {result:?}"
-    );
+    assert!(matches!(result, Ok(false)), "expected Ok(false), got {result:?}");
+}
+
+/// Mock SSH agent that serves two WebAuthn keys; signing the first always
+/// returns SSH_AGENT_FAILURE (simulating a user-denied prompt), signing the
+/// second returns a valid signature. Used to verify that the PAM module
+/// iterates past a denied key instead of giving up after the first match.
+fn run_skip_first_agent(
+    listener: UnixListener,
+    fail_key_blob: Vec<u8>,
+    succeed_signing_key: SigningKey,
+    succeed_key_blob: Vec<u8>,
+    stop: Arc<AtomicBool>,
+) {
+    listener.set_nonblocking(true).expect("set_nonblocking failed");
+
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).is_err() {
+                    continue;
+                }
+                let msg_len = u32::from_be_bytes(len_buf) as usize;
+                let mut msg = vec![0u8; msg_len];
+                if stream.read_exact(&mut msg).is_err() {
+                    continue;
+                }
+
+                match msg[0] {
+                    SSH_AGENTC_REQUEST_IDENTITIES => {
+                        let mut response = Vec::new();
+                        response.push(SSH_AGENT_IDENTITIES_ANSWER);
+                        response.extend(&2u32.to_be_bytes());
+                        write_ssh_string(&mut response, &fail_key_blob);
+                        write_ssh_string(&mut response, b"deny-key");
+                        write_ssh_string(&mut response, &succeed_key_blob);
+                        write_ssh_string(&mut response, b"allow-key");
+
+                        let len = (response.len() as u32).to_be_bytes();
+                        stream.write_all(&len).unwrap();
+                        stream.write_all(&response).unwrap();
+                        stream.flush().unwrap();
+                    }
+                    SSH_AGENTC_SIGN_REQUEST => {
+                        let mut reader: &[u8] = &msg[1..];
+                        let requested_key = read_ssh_bytes(&mut reader).unwrap_or(b"");
+                        let data = read_ssh_bytes(&mut reader).unwrap_or(b"");
+
+                        let response = if requested_key == fail_key_blob.as_slice() {
+                            // Simulate user-denied prompt → SSH_AGENT_FAILURE
+                            vec![5u8] // SSH_AGENT_FAILURE
+                        } else {
+                            let sig_blob = build_webauthn_signature(&succeed_signing_key, data);
+                            let mut r = Vec::new();
+                            r.push(SSH_AGENT_SIGN_RESPONSE);
+                            write_ssh_string(&mut r, &sig_blob);
+                            r
+                        };
+
+                        let len = (response.len() as u32).to_be_bytes();
+                        stream.write_all(&len).unwrap();
+                        stream.write_all(&response).unwrap();
+                        stream.flush().unwrap();
+                    }
+                    _ => {}
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+#[test]
+fn test_skip_failing_key_then_succeed() {
+    // Two keys both authorized; the first returns SSH_AGENT_FAILURE on sign
+    // (user denied), the second signs successfully. PAM should iterate past
+    // the failed key and authenticate via the second. Regression for the
+    // case where pam_ssh_webauthn previously returned PAM_AUTH_ERR after the
+    // first matching key failed to sign. See ShellWatch #91.
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let fail_key = SigningKey::from_bytes(&TEST_KEY_BYTES.into()).unwrap();
+    let fail_blob = make_webauthn_key_blob(&fail_key);
+
+    let succeed_key_bytes: [u8; 32] = [
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+        0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e,
+        0x5f, 0x60,
+    ];
+    let succeed_key = SigningKey::from_bytes(&succeed_key_bytes.into()).unwrap();
+    let succeed_blob = make_webauthn_key_blob(&succeed_key);
+
+    let key_file = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_multi_keys_{}_{id}.pub",
+        std::process::id()
+    ));
+    let line1 = format!("{WEBAUTHN_SK_ALGO} {} deny-key\n", BASE64_STANDARD.encode(&fail_blob));
+    let line2 = format!("{WEBAUTHN_SK_ALGO} {} allow-key\n", BASE64_STANDARD.encode(&succeed_blob));
+    std::fs::write(&key_file, format!("{line1}{line2}")).unwrap();
+
+    let socket_path = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_multi_agent_{}_{id}.sock",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+
+    let fail_blob_clone = fail_blob.clone();
+    let succeed_blob_clone = succeed_blob.clone();
+    let thread = std::thread::spawn(move || {
+        run_skip_first_agent(listener, fail_blob_clone, succeed_key, succeed_blob_clone, stop_clone);
+    });
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let result = pam_ssh_webauthn::authenticate(&socket_path, &key_file);
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = thread.join();
+    let _ = std::fs::remove_file(&socket_path);
+    let _ = std::fs::remove_file(&key_file);
+
+    assert!(matches!(result, Ok(true)), "expected Ok(true), got {result:?}");
+}
+
+#[test]
+fn test_transport_error_bubbles_up() {
+    // The agent socket doesn't exist. Transport-level failures (broken
+    // socket, malformed reply, etc.) must surface as Err instead of being
+    // silently converted to Ok(false) — otherwise operators can't tell
+    // "agent is down" from "no key matched." See review of #91.
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let bogus_socket = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_nonexistent_{}_{id}.sock",
+        std::process::id()
+    ));
+    // Build a valid authorized_keys file so the code reaches the agent step.
+    let signing_key = SigningKey::from_bytes(&TEST_KEY_BYTES.into()).unwrap();
+    let key_blob = make_webauthn_key_blob(&signing_key);
+    let key_file = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_transport_keys_{}_{id}.pub",
+        std::process::id()
+    ));
+    let line = format!("{WEBAUTHN_SK_ALGO} {} test-key\n", BASE64_STANDARD.encode(&key_blob));
+    std::fs::write(&key_file, &line).unwrap();
+
+    let result = pam_ssh_webauthn::authenticate(&bogus_socket, &key_file);
+    let _ = std::fs::remove_file(&key_file);
+
+    assert!(result.is_err(), "expected transport Err, got {result:?}");
 }
 
 #[test]

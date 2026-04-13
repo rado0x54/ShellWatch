@@ -118,7 +118,16 @@ export class SshTransportFactory {
       throw new Error("No SSH keys available for this endpoint.");
     }
 
-    const transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
+    let transport: TerminalTransport;
+    try {
+      transport = await connectSshWithAgent(endpoint, result.agent, { agentForward });
+    } catch (err) {
+      // Also run cleanup on connection failure so pending sign prompts tied to
+      // this (doomed) connection don't linger on screen after the SSH client
+      // has been torn down. See #91.
+      result.cleanup();
+      throw err;
+    }
     transport.on("close", () => result.cleanup());
     return transport;
   }

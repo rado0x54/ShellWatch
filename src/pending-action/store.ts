@@ -61,6 +61,30 @@ export class PendingActionStore {
     return true;
   }
 
+  /**
+   * Cancel every pending action tied to a given SSH connection. Used when the
+   * owning ssh2 Client closes or errors out so sibling sign prompts don't sit
+   * on-screen waiting to sign into a session that no longer exists. Returns the
+   * affected actions (after mutation) so the caller can broadcast resolution.
+   */
+  cancelForConnection(connectionId: string, _reason: string): PendingAction[] {
+    // `_reason` is logged by the caller in index.ts; kept in the signature as
+    // documentation of what onConnectionEnded propagates.
+    const cancelled: PendingAction[] = [];
+    for (const action of this.actions.values()) {
+      if (action.status !== "pending") continue;
+      if (action.connectionId !== connectionId) continue;
+      // Intentionally don't call action.reject: every current action.reject
+      // closure (see PendingActionBase.reject) ultimately feeds the ssh2 sign
+      // callback on the client we're tearing down. Calling it would be a
+      // gesture against a dead client. Marking denied + letting the caller
+      // broadcast is enough to clear UI state.
+      action.status = "denied";
+      cancelled.push(action);
+    }
+    return cancelled;
+  }
+
   deny(id: string): boolean {
     const action = this.actions.get(id);
     if (!action || action.status !== "pending") return false;

@@ -34,6 +34,37 @@ pub struct AgentIdentity {
     pub comment: String,
 }
 
+/// Error from `sign_raw`, split so callers can distinguish a protocol-level
+/// refusal (try the next key) from an infrastructure problem (bubble up).
+#[derive(Debug)]
+pub enum SignError {
+    /// Agent replied with SSH_AGENT_FAILURE — e.g. user denied the prompt,
+    /// key not loaded, or agent-side policy rejected the request. Caller
+    /// should try the next matching identity.
+    Refused(String),
+    /// Socket I/O failure, malformed agent reply, or other transport-level
+    /// issue. Caller should surface this to the operator rather than silently
+    /// falling through to the next auth mechanism.
+    Transport(io::Error),
+}
+
+impl std::fmt::Display for SignError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SignError::Refused(msg) => write!(f, "agent refused signing: {msg}"),
+            SignError::Transport(e) => write!(f, "agent transport error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SignError {}
+
+impl From<io::Error> for SignError {
+    fn from(e: io::Error) -> Self {
+        SignError::Transport(e)
+    }
+}
+
 /// List identities from the SSH agent, returning only those with the
 /// `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` algorithm.
 pub fn list_webauthn_identities(socket_path: &Path) -> io::Result<Vec<AgentIdentity>> {
@@ -65,7 +96,7 @@ pub fn list_webauthn_identities(socket_path: &Path) -> io::Result<Vec<AgentIdent
 
 /// Send a sign request to the SSH agent and return the raw signature blob.
 /// The blob preserves all WebAuthn fields (origin, clientDataJSON, extensions).
-pub fn sign_raw(socket_path: &Path, key_blob: &[u8], data: &[u8]) -> io::Result<Vec<u8>> {
+pub fn sign_raw(socket_path: &Path, key_blob: &[u8], data: &[u8]) -> Result<Vec<u8>, SignError> {
     let mut stream = connect_with_timeout(socket_path)?;
 
     // Build SSH_AGENTC_SIGN_REQUEST message
@@ -84,16 +115,20 @@ pub fn sign_raw(socket_path: &Path, key_blob: &[u8], data: &[u8]) -> io::Result<
     let response = read_msg(&mut stream)?;
 
     if response.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Empty response"));
+        return Err(SignError::Transport(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Empty response",
+        )));
     }
     if response[0] == SSH_AGENT_FAILURE {
-        return Err(io::Error::other("Agent refused signing"));
+        // Protocol-level refusal (e.g. user denied the prompt). Callers iterate.
+        return Err(SignError::Refused("SSH_AGENT_FAILURE".to_string()));
     }
     if response[0] != SSH_AGENT_SIGN_RESPONSE {
-        return Err(io::Error::new(
+        return Err(SignError::Transport(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Expected SIGN_RESPONSE (14), got {}", response[0]),
-        ));
+        )));
     }
 
     // Response body: string signature_blob
