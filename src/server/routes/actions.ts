@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { PendingActionStore } from "../../pending-action/index.js";
 import type { WebSocketChannel } from "../../pending-action/ws-channel.js";
 import { toActionView } from "../../pending-action/index.js";
+import { isUserVerified } from "../../webauthn/signature-format.js";
 
 export interface ActionRoutesParams {
   app: FastifyInstance;
@@ -66,9 +67,14 @@ export function registerActionRoutes(params: ActionRoutesParams) {
         reply.status(400);
         return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
       }
+      const authDataBuf = Buffer.from(authenticatorData, "base64url");
+      if (!isUserVerified(authDataBuf)) {
+        reply.status(400);
+        return { error: "User verification required" };
+      }
       resolved = actionStore.resolve(action.id, {
         requestId: action.id,
-        authenticatorData: Buffer.from(authenticatorData, "base64url"),
+        authenticatorData: authDataBuf,
         signature: Buffer.from(signature, "base64url"),
         clientDataJSON,
       });

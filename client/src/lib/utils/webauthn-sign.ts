@@ -46,7 +46,7 @@ export async function performSignCeremony(params: SignCeremonyParams): Promise<S
           transports: ["usb", "nfc", "ble", "internal"],
         },
       ],
-      userVerification: "discouraged",
+      userVerification: "required",
       timeout: 60000,
     },
   })) as PublicKeyCredential;

@@ -48,7 +48,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
       const options = await generateAuthenticationOptions({
         rpID: rpId,
-        userVerification: "preferred",
+        userVerification: "required",
         allowCredentials: creds.map((c) => ({ id: c.credentialId })),
       });
 
@@ -132,6 +132,11 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         if (!verification.verified) {
           reply.status(400);
           return { error: "Verification failed" };
+        }
+
+        if (!verification.authenticationInfo.userVerified) {
+          reply.status(400);
+          return { error: "User verification required" };
         }
 
         // Update counter and last used

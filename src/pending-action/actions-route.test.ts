@@ -168,6 +168,13 @@ describe("action routes", () => {
     expect(data.error).toMatch(/Missing required fields/);
   });
 
+  // 37-byte authenticatorData with UV flag set (byte 32 = 0x04)
+  const authDataUV = (() => {
+    const buf = Buffer.alloc(37);
+    buf[32] = 0x04;
+    return buf.toString("base64url");
+  })();
+
   it("resolve completes a pending action", async () => {
     const resolve = vi.fn();
     const action = actionStore.create(makeWebAuthnParams({ resolve }));
@@ -176,7 +183,7 @@ describe("action routes", () => {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        authenticatorData: "AAAA",
+        authenticatorData: authDataUV,
         signature: "BBBB",
         clientDataJSON: '{"type":"webauthn.get"}',
       }),
@@ -185,6 +192,23 @@ describe("action routes", () => {
     const data = await res.json();
     expect(data.redirectTo).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
+  });
+
+  it("resolve rejects when UV flag is not set in authenticatorData", async () => {
+    const action = actionStore.create(makeWebAuthnParams());
+    const authDataNoUV = Buffer.alloc(37).toString("base64url"); // flags byte = 0x00
+    const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        authenticatorData: authDataNoUV,
+        signature: "BBBB",
+        clientDataJSON: "{}",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/user verification/i);
   });
 
   it("resolve returns 409 for already-resolved action", async () => {

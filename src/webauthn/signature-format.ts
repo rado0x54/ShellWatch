@@ -94,6 +94,19 @@ export function parseAsn1Signature(derSig: Buffer): { r: Buffer; s: Buffer } {
 }
 
 /**
+ * WebAuthn authenticatorData flag bits.
+ * See https://www.w3.org/TR/webauthn-2/#authenticator-data
+ */
+export const AUTH_DATA_FLAG_UP = 0x01;
+export const AUTH_DATA_FLAG_UV = 0x04;
+
+/** True if authenticatorData's UV (user verified) flag is set. */
+export function isUserVerified(authenticatorData: Buffer): boolean {
+  if (authenticatorData.length < 33) return false;
+  return (authenticatorData[32] & AUTH_DATA_FLAG_UV) !== 0;
+}
+
+/**
  * Parse the WebAuthn assertion response to extract signature components.
  */
 export function parseWebAuthnSignature(

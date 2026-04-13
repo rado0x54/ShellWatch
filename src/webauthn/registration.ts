@@ -53,7 +53,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",
-          userVerification: "preferred",
+          userVerification: "required",
         },
         supportedAlgorithmIDs: [-7, -8], // ES256 (P-256) and EdDSA (Ed25519)
         excludeCredentials: existing.map((c) => ({
@@ -97,6 +97,11 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         if (!verification.verified || !verification.registrationInfo) {
           reply.status(400);
           return { error: "Verification failed" };
+        }
+
+        if (!verification.registrationInfo.userVerified) {
+          reply.status(400);
+          return { error: "User verification required" };
         }
 
         const { credential: cred, aaguid } = verification.registrationInfo;
