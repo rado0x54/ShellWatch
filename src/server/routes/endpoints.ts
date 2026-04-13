@@ -75,34 +75,39 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     }
   });
 
-  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/endpoints/:id",
-    async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-      try {
-        const body = request.body;
-        if ("userVerification" in body && !isUserVerification(body.userVerification)) {
-          reply.status(400);
-          return {
-            error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
-          };
-        }
-        await endpointRepo.update(
-          request.params.id,
-          request.accountId,
-          body as Parameters<EndpointRepository["update"]>[2],
-        );
-        return { status: "updated" };
-      } catch (err) {
-        app.log.error(err, "request failed");
+  app.put<{
+    Params: { id: string };
+    Body: {
+      label?: string;
+      host?: string;
+      port?: number;
+      username?: string;
+      userVerification?: string;
+    };
+  }>("/api/endpoints/:id", async (request, reply) => {
+    if (!request.accountId) {
+      reply.status(401);
+      return { error: "Not authenticated" };
+    }
+    try {
+      const body = request.body;
+      if (body.userVerification !== undefined && !isUserVerification(body.userVerification)) {
         reply.status(400);
-        return { error: (err as Error).message };
+        return {
+          error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
+        };
       }
-    },
-  );
+      await endpointRepo.update(request.params.id, request.accountId, {
+        ...body,
+        userVerification: body.userVerification as UserVerification | undefined,
+      });
+      return { status: "updated" };
+    } catch (err) {
+      app.log.error(err, "request failed");
+      reply.status(400);
+      return { error: (err as Error).message };
+    }
+  });
 
   app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
     if (!request.accountId) {

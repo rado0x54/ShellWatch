@@ -126,6 +126,28 @@
       used for passkey sign ceremonies to this endpoint. Defaults to <code>required</code> (PIN / biometric
       always enforced). Relax only if a specific authenticator can't provide UV.
     </p>
+    <p class="hint">
+      This is a <em>client-side</em> setting — ShellWatch requests UV from the authenticator and
+      rejects responses without it when set to <code>required</code>, but the authoritative gate is
+      the <strong>OpenSSH server</strong>. To make UV load-bearing, configure the target host to
+      require it:
+    </p>
+    <ul class="hint">
+      <li>
+        <strong>Globally</strong> in <code>sshd_config</code>:
+        <code>PubkeyAuthOptions verify-required</code>
+      </li>
+      <li>
+        <strong>Per-key</strong> in <code>~/.ssh/authorized_keys</code> on the server:
+        <code>verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host</code>
+      </li>
+    </ul>
+    <p class="hint">
+      Either source enables enforcement; <code>sshd</code> rejects signatures without the UV bit (<code
+        >SSH_SK_USER_VERIFICATION_REQD</code
+      >, <code>0x04</code>) set, logging
+      <code>user verification requirement not met</code>. See the project README for details.
+    </p>
   </div>
 </section>
 

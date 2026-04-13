@@ -68,15 +68,6 @@ const ENDPOINT_COLUMNS = {
   userVerification: endpoints.userVerification,
 } as const;
 
-function normalizeRow(
-  row: { userVerification: string } & Omit<EndpointInfo, "userVerification">,
-): EndpointInfo {
-  return {
-    ...row,
-    userVerification: isUserVerification(row.userVerification) ? row.userVerification : "required",
-  };
-}
-
 export class DrizzleEndpointRepository implements EndpointRepository {
   constructor(private db: ShellWatchDB) {}
 
@@ -85,8 +76,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(and(eq(endpoints.accountId, accountId), eq(endpoints.enabled, true)))
-      .all()
-      .map(normalizeRow);
+      .all() as EndpointInfo[];
   }
 
   async findAll(): Promise<EndpointInfo[]> {
@@ -94,8 +84,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(eq(endpoints.enabled, true))
-      .all()
-      .map(normalizeRow);
+      .all() as EndpointInfo[];
   }
 
   async findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null> {
@@ -104,12 +93,12 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .from(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.accountId, accountId)))
       .get();
-    return row ? normalizeRow(row) : null;
+    return (row as EndpointInfo | undefined) ?? null;
   }
 
   async findById(id: string): Promise<EndpointInfo | null> {
     const row = this.db.select(ENDPOINT_COLUMNS).from(endpoints).where(eq(endpoints.id, id)).get();
-    return row ? normalizeRow(row) : null;
+    return (row as EndpointInfo | undefined) ?? null;
   }
 
   async create(data: {
