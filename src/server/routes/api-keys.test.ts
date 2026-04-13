@@ -5,7 +5,7 @@ import { registerApiKeyRoutes } from "./api-keys.js";
 
 async function buildApp() {
   const app = Fastify();
-  const apiKeyRepo = new InMemoryApiKeyRepository([]);
+  const apiKeyRepo = new InMemoryApiKeyRepository();
   app.addHook("onRequest", async (request) => {
     request.accountId = "acct-test";
   });
