@@ -12,6 +12,7 @@
 
 import ssh2 from "ssh2";
 import {
+  SKIP_IDENTITY_SIGNATURE,
   toPublicKeyBlob,
   WebAuthnSshAgent,
   type SignRequest,
@@ -141,13 +142,11 @@ export class CompositeSshAgent extends WebAuthnSshAgent {
           hash: opts.hash,
           connectionId: this.connectionId,
           resolve: () => this.signWithFileKey(fileKey, data, opts, cb),
-          // Zero-length "signature" lets ssh2 try the next identity instead of
-          // tearing down the client — see matching comment in ssh-agent.ts. #91
           reject: (err) => {
             this.log.error(
               `[Composite Agent] File key sign rejected, skipping identity: ${err.message}`,
             );
-            cb(null, Buffer.alloc(0));
+            cb(null, SKIP_IDENTITY_SIGNATURE);
           },
         });
       } else {

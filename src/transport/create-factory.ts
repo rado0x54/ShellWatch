@@ -153,6 +153,10 @@ export function createSshTransportFactoryFromConfig(
           })
         : new CompositeSshAgent(baseParams);
 
+      // Guards against double-invocation: the factory calls cleanup() in the
+      // connect-failure catch, and the transport's "close" listener also
+      // calls it on normal teardown. Idempotence means we don't double-cancel
+      // actions or fire onConnectionEnded twice.
       let cleanedUp = false;
       return {
         agent,

@@ -409,6 +409,33 @@ fn test_skip_failing_key_then_succeed() {
 }
 
 #[test]
+fn test_transport_error_bubbles_up() {
+    // The agent socket doesn't exist. Transport-level failures (broken
+    // socket, malformed reply, etc.) must surface as Err instead of being
+    // silently converted to Ok(false) — otherwise operators can't tell
+    // "agent is down" from "no key matched." See review of #91.
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let bogus_socket = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_nonexistent_{}_{id}.sock",
+        std::process::id()
+    ));
+    // Build a valid authorized_keys file so the code reaches the agent step.
+    let signing_key = SigningKey::from_bytes(&TEST_KEY_BYTES.into()).unwrap();
+    let key_blob = make_webauthn_key_blob(&signing_key);
+    let key_file = std::env::temp_dir().join(format!(
+        "pam_webauthn_test_transport_keys_{}_{id}.pub",
+        std::process::id()
+    ));
+    let line = format!("{WEBAUTHN_SK_ALGO} {} test-key\n", BASE64_STANDARD.encode(&key_blob));
+    std::fs::write(&key_file, &line).unwrap();
+
+    let result = pam_ssh_webauthn::authenticate(&bogus_socket, &key_file);
+    let _ = std::fs::remove_file(&key_file);
+
+    assert!(result.is_err(), "expected transport Err, got {result:?}");
+}
+
+#[test]
 fn test_no_matching_key() {
     let setup = setup(false);
 

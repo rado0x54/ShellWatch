@@ -25,7 +25,7 @@ pub mod agent;
 pub mod keys;
 pub mod webauthn;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use pam::constants::{PamFlag, PamResultCode};
 use pam::module::{PamHandle, PamHooks};
 use std::ffi::CStr;
@@ -147,7 +147,21 @@ fn do_authenticate(config: &Config, handle: &mut PamHandle) -> Result<bool, Box<
                 Ok(true) => return Ok(true),
                 Ok(false) => continue,
                 Err(e) => {
-                    info!(
+                    // Distinguish protocol refusal (user denied, key not
+                    // loaded, agent policy) from transport errors (broken
+                    // socket, malformed reply). Only the former should move
+                    // on silently — transport problems need to surface so
+                    // "agent is down" doesn't look like "no key matched."
+                    if let Some(agent::SignError::Transport(_)) =
+                        e.downcast_ref::<agent::SignError>()
+                    {
+                        error!(
+                            "pam_ssh_webauthn: transport error talking to agent for key '{}': {e}",
+                            auth_key.comment
+                        );
+                        return Err(e);
+                    }
+                    warn!(
                         "pam_ssh_webauthn: key '{}' failed, trying next: {e}",
                         auth_key.comment
                     );
@@ -207,6 +221,8 @@ pub fn authenticate(
     }
 
     // See `do_authenticate` for the rationale behind iterating all matches.
+    // Transport errors bubble up; protocol refusals / verification failures
+    // fall through to the next match.
     for agent_id in &agent_identities {
         for auth_key in &authorized_keys {
             if agent_id.key_blob != auth_key.key_blob {
@@ -215,7 +231,14 @@ pub fn authenticate(
             match try_authenticate(socket_path, auth_key, &agent_id.key_blob) {
                 Ok(true) => return Ok(true),
                 Ok(false) => continue,
-                Err(_) => continue,
+                Err(e) => {
+                    if let Some(agent::SignError::Transport(_)) =
+                        e.downcast_ref::<agent::SignError>()
+                    {
+                        return Err(e);
+                    }
+                    continue;
+                }
             }
         }
     }

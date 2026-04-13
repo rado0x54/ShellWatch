@@ -20,6 +20,20 @@ const BaseAgent = (ssh2 as Record<string, unknown>).BaseAgent as new () => Recor
 export { BaseAgent };
 
 /**
+ * Zero-length signature returned by the agent when the user denies a sign
+ * request (or the action expires / is cancelled). ssh2's auth handler treats
+ * this as a failed pubkey attempt and advances to the next identity instead
+ * of tearing down the client. The forwarding-agent path translates it into
+ * an SSH agent protocol `failureReply` for the same effect on remote ssh
+ * clients. See ShellWatch #91.
+ */
+export const SKIP_IDENTITY_SIGNATURE: Buffer = Buffer.alloc(0);
+
+export function isSkipIdentitySignature(sig: Buffer | undefined | null): boolean {
+  return !sig || sig.length === 0;
+}
+
+/**
  * ssh2 parses key blobs from getIdentities() into key objects before passing
  * them to sign(). Extract the raw public key blob for comparison.
  */
@@ -178,14 +192,9 @@ export class WebAuthnSshAgent extends BaseAgent {
       }
     };
 
-    // Reject maps to a zero-length "signature" so ssh2 treats this identity as a
-    // failed pubkey attempt and advances to the next identity instead of tearing
-    // the client down. Without this, a user denying one key (e.g. a passkey only
-    // present on another device) would abort the entire SSH connection, leaving
-    // sibling sign prompts for valid keys stranded on a dead client. See #91.
     const reject = (error: Error) => {
       this.log.error(`[WebAuthn Agent] Sign rejected, skipping identity: ${error.message}`);
-      cb(null, Buffer.alloc(0));
+      cb(null, SKIP_IDENTITY_SIGNATURE);
     };
 
     signRequestCallback({

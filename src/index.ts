@@ -81,6 +81,11 @@ try {
       // they don't linger on screen and try to resolve against a dead ssh2
       // callback. The WS broadcast clears in-flight toasts on the client. #91
       const cancelled = actionStore.cancelForConnection(connectionId, reason);
+      if (cancelled.length > 0) {
+        app.log.info(
+          `Cancelled ${cancelled.length} pending sign prompt(s) for connection ${connectionId}: ${reason}`,
+        );
+      }
       for (const action of cancelled) {
         wsChannel.broadcastResolved(action.id, action.accountId);
       }

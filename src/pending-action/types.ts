@@ -65,6 +65,13 @@ interface PendingActionBase {
    * stranded sign prompts don't outlive the SSH session they were meant for.
    */
   connectionId?: string;
+  /**
+   * Reject the request. Every current producer (WebAuthnSshAgent,
+   * CompositeSshAgent's file-key path, ForwardingAgent) ultimately feeds the
+   * ssh2 sign callback on the owning SSH client — there are no other
+   * awaiters. PendingActionStore.cancelForConnection relies on that invariant
+   * to skip calling reject after the client has been torn down.
+   */
   reject: (error: Error) => void;
 }
 
