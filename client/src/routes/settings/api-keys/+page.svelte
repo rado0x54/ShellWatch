@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Modal from "$lib/components/Modal.svelte";
   import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
@@ -124,24 +125,17 @@
   </div>
 
   {#if showKeyModal}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-overlay" onclick={handleCloseModal}>
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
-        <h3>API Key Created</h3>
-        <p class="modal-desc">Copy this key now — it will not be shown again.</p>
-        <pre class="code-block key-value">{generatedKey}</pre>
-        <div class="modal-actions">
-          <button
-            class="btn btn-primary"
-            onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
-          >
-          <button class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
-        </div>
-      </div>
-    </div>
+    <Modal title="API Key Created" onClose={handleCloseModal}>
+      <p class="modal-desc">Copy this key now — it will not be shown again.</p>
+      <pre class="code-block key-value">{generatedKey}</pre>
+      {#snippet actions()}
+        <button
+          class="btn btn-primary"
+          onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
+        >
+        <button class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
+      {/snippet}
+    </Modal>
   {/if}
 </section>
 
@@ -168,13 +162,6 @@
     color: var(--text-muted);
     font-size: 0.85rem;
     margin: 0.75rem 0;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
-    margin-top: 1rem;
   }
 
   .key-value {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Modal from "$lib/components/Modal.svelte";
   import {
     createEndpoint,
     deleteEndpoint,
@@ -8,76 +9,94 @@
     fetchEndpoints,
     updateEndpoint,
     USER_VERIFICATION_OPTIONS,
+    type Endpoint,
     type UserVerification,
   } from "$lib/stores/endpoints.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
 
-  let epLabel = $state("");
-  let epAddress = $state("");
-  let epUserVerification = $state<UserVerification>("required");
-  let epDescription = $state("");
-  let descriptionDrafts = $state<Record<string, string>>({});
+  type ModalMode = { kind: "create" } | { kind: "edit"; id: string };
+
+  let modal = $state<ModalMode | null>(null);
+  let saving = $state(false);
+  let formLabel = $state("");
+  let formAddress = $state("");
+  let formUserVerification = $state<UserVerification>("required");
+  let formDescription = $state("");
 
   onMount(() => {
     fetchEndpoints();
   });
 
-  async function handleAdd() {
-    if (!epLabel || !epAddress) {
+  function openCreate() {
+    modal = { kind: "create" };
+    formLabel = "";
+    formAddress = "";
+    formUserVerification = "required";
+    formDescription = "";
+  }
+
+  function openEdit(ep: Endpoint) {
+    modal = { kind: "edit", id: ep.id };
+    formLabel = ep.label;
+    formAddress = formatEndpointAddress(ep);
+    formUserVerification = ep.userVerification;
+    formDescription = ep.description ?? "";
+  }
+
+  function closeModal() {
+    if (saving) return;
+    modal = null;
+  }
+
+  async function handleSave() {
+    if (!modal || saving) return;
+    if (!formLabel.trim() || !formAddress.trim()) {
       toastError("Label and Address are required");
       return;
     }
     let parsed;
     try {
-      parsed = parseEndpointAddress(epAddress);
+      parsed = parseEndpointAddress(formAddress);
     } catch (err) {
       toastError(errorMessage(err));
       return;
     }
+    const description = formDescription.trim() ? formDescription.trim() : null;
+    saving = true;
     try {
-      await createEndpoint({
-        label: epLabel,
-        host: parsed.host,
-        port: parsed.port,
-        username: parsed.username,
-        userVerification: epUserVerification,
-        description: epDescription.trim() ? epDescription : null,
-      });
-      epLabel = "";
-      epAddress = "";
-      epUserVerification = "required";
-      epDescription = "";
+      if (modal.kind === "create") {
+        await createEndpoint({
+          label: formLabel.trim(),
+          host: parsed.host,
+          port: parsed.port,
+          username: parsed.username,
+          userVerification: formUserVerification,
+          description,
+        });
+      } else {
+        await updateEndpoint(modal.id, {
+          label: formLabel.trim(),
+          host: parsed.host,
+          port: parsed.port,
+          username: parsed.username,
+          userVerification: formUserVerification,
+          description,
+        });
+      }
+      modal = null;
     } catch (err) {
       toastError(errorMessage(err));
+    } finally {
+      saving = false;
     }
   }
 
-  async function handleUserVerificationChange(id: string, value: UserVerification) {
-    try {
-      await updateEndpoint(id, { userVerification: value });
-    } catch (err) {
-      toastError(errorMessage(err));
-    }
-  }
-
-  async function handleDescriptionSave(id: string, original: string | null) {
-    const draft = descriptionDrafts[id] ?? "";
-    const next = draft.trim() ? draft : null;
-    if (next === (original ?? null)) return;
-    try {
-      await updateEndpoint(id, { description: next });
-      delete descriptionDrafts[id];
-    } catch (err) {
-      toastError(errorMessage(err));
-    }
-  }
-
-  async function handleDelete(id: string) {
-    if (confirm(`Delete endpoint "${id}"?`)) {
+  async function handleDelete(ep: Endpoint) {
+    if (confirm(`Delete endpoint "${ep.label}"?`)) {
       try {
-        await deleteEndpoint(id);
+        await deleteEndpoint(ep.id);
       } catch (err) {
         toastError(errorMessage(err));
       }
@@ -86,7 +105,11 @@
 </script>
 
 <section>
-  <h2>SSH Endpoints</h2>
+  <div class="header">
+    <h2>SSH Endpoints</h2>
+    <button class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
+  </div>
+
   <table class="settings-table">
     <thead>
       <tr>
@@ -101,35 +124,12 @@
       {#each $endpoints as ep (ep.id)}
         <tr>
           <td>{ep.label}</td>
-          <td>{formatEndpointAddress(ep)}</td>
-          <td>
-            <select
-              value={ep.userVerification}
-              onchange={(e) =>
-                handleUserVerificationChange(
-                  ep.id,
-                  (e.currentTarget as HTMLSelectElement).value as UserVerification,
-                )}
-            >
-              {#each USER_VERIFICATION_OPTIONS as opt (opt)}
-                <option value={opt}>{opt}</option>
-              {/each}
-            </select>
-          </td>
-          <td>
-            <textarea
-              class="desc-input"
-              rows="2"
-              maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
-              placeholder="Optional context shown to MCP agents"
-              value={descriptionDrafts[ep.id] ?? ep.description ?? ""}
-              oninput={(e) =>
-                (descriptionDrafts[ep.id] = (e.currentTarget as HTMLTextAreaElement).value)}
-              onblur={() => handleDescriptionSave(ep.id, ep.description)}
-            ></textarea>
-          </td>
-          <td>
-            <button class="btn btn-secondary" onclick={() => handleDelete(ep.id)}>Delete</button>
+          <td class="monospace">{formatEndpointAddress(ep)}</td>
+          <td class="monospace">{ep.userVerification}</td>
+          <td class="description-cell">{ep.description ?? ""}</td>
+          <td class="actions-cell">
+            <button class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
+            <button class="btn btn-secondary" onclick={() => handleDelete(ep)}>Delete</button>
           </td>
         </tr>
       {/each}
@@ -139,27 +139,7 @@
     </tbody>
   </table>
 
-  <div class="settings-form">
-    <h3>Add Endpoint</h3>
-    <div class="form-row">
-      <input type="text" placeholder="Label" bind:value={epLabel} />
-      <input type="text" placeholder="user@host:port" bind:value={epAddress} />
-      <select bind:value={epUserVerification}>
-        {#each USER_VERIFICATION_OPTIONS as opt (opt)}
-          <option value={opt}>UV: {opt}</option>
-        {/each}
-      </select>
-      <button class="btn btn-primary" onclick={handleAdd}>Add</button>
-    </div>
-    <div class="form-row">
-      <textarea
-        class="desc-input desc-input-add"
-        rows="2"
-        maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
-        placeholder="Description (optional, shown to MCP agents on connect)"
-        bind:value={epDescription}
-      ></textarea>
-    </div>
+  <div class="hint-block">
     <p class="hint">
       <strong>User Verification</strong> controls the WebAuthn <code>userVerification</code> option
       used for passkey sign ceremonies to this endpoint. Defaults to <code>required</code> (PIN / biometric
@@ -188,24 +168,103 @@
       <code>user verification requirement not met</code>. See the project README for details.
     </p>
   </div>
+
+  {#if modal}
+    <Modal
+      title={modal.kind === "create" ? "Add Endpoint" : "Edit Endpoint"}
+      onClose={closeModal}
+      onSubmit={handleSave}
+      width="520px"
+    >
+      <div class="field">
+        <label for="ep-label">Label</label>
+        <input id="ep-label" type="text" placeholder="My server" bind:value={formLabel} />
+      </div>
+
+      <div class="field">
+        <label for="ep-address">Address</label>
+        <input id="ep-address" type="text" placeholder="user@host:port" bind:value={formAddress} />
+      </div>
+
+      <div class="field">
+        <label for="ep-uv">User Verification</label>
+        <select id="ep-uv" bind:value={formUserVerification}>
+          {#each USER_VERIFICATION_OPTIONS as opt (opt)}
+            <option value={opt}>{opt}</option>
+          {/each}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="ep-desc">
+          Description <span class="field-hint">(optional, shown to MCP agents)</span>
+        </label>
+        <textarea
+          id="ep-desc"
+          rows="4"
+          maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
+          placeholder="e.g., production DB host, runs Postgres 15, /srv/data holds nightly dumps"
+          bind:value={formDescription}
+        ></textarea>
+        <div class="char-count">{formDescription.length} / {ENDPOINT_DESCRIPTION_MAX_LENGTH}</div>
+      </div>
+
+      {#snippet actions()}
+        <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={saving}>
+          Cancel
+        </button>
+        <button type="submit" class="btn btn-primary" disabled={saving}>
+          {saving ? "Saving…" : modal?.kind === "create" ? "Add" : "Save"}
+        </button>
+      {/snippet}
+    </Modal>
+  {/if}
 </section>
 
 <style>
   h2 {
     font-size: 0.75rem;
     font-weight: 600;
-    margin-bottom: 0.75rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
   }
 
   .empty {
     color: #555;
   }
 
+  .monospace {
+    font-family: monospace;
+    font-size: 0.75rem;
+  }
+
+  .description-cell {
+    max-width: 24rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .actions-cell {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+  }
+
+  .hint-block {
+    margin-top: 1rem;
+  }
+
   .hint {
-    margin-top: 0.75rem;
     font-size: 0.8rem;
     color: var(--text-muted);
     line-height: 1.5;
@@ -216,14 +275,60 @@
     font-size: 0.85em;
   }
 
-  .desc-input {
-    width: 100%;
-    min-width: 12rem;
-    font: inherit;
-    resize: vertical;
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.85rem;
   }
 
-  .desc-input-add {
-    flex: 1;
+  .field label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .field-hint {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-muted);
+  }
+
+  .field select,
+  .field textarea {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .field input {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .field textarea {
+    resize: vertical;
+    min-height: 4rem;
+  }
+
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .char-count {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
   }
 </style>

@@ -7,15 +7,15 @@ import {
   USER_VERIFICATION_VALUES,
   type UserVerification,
 } from "../../db/repositories/endpoint-repo.js";
+import type { TerminalManager } from "../../terminal/index.js";
 
 function normalizeDescription(value: unknown): { ok: true; value: string | null } | { ok: false } {
   if (value === undefined || value === null) return { ok: true, value: null };
   if (typeof value !== "string") return { ok: false };
   if (value.length > ENDPOINT_DESCRIPTION_MAX_LENGTH) return { ok: false };
   const trimmed = value.trim();
-  return { ok: true, value: trimmed === "" ? null : value };
+  return { ok: true, value: trimmed === "" ? null : trimmed };
 }
-import type { TerminalManager } from "../../terminal/index.js";
 
 export interface EndpointRoutesParams {
   app: FastifyInstance;
@@ -117,7 +117,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
       }
-      let descriptionPatch: { description: string | null } | Record<string, never> = {};
+      const descriptionPatch: Partial<{ description: string | null }> = {};
       if (body.description !== undefined) {
         const desc = normalizeDescription(body.description);
         if (!desc.ok) {
@@ -126,7 +126,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
             error: `description must be a string up to ${ENDPOINT_DESCRIPTION_MAX_LENGTH} characters`,
           };
         }
-        descriptionPatch = { description: desc.value };
+        descriptionPatch.description = desc.value;
       }
       await endpointRepo.update(request.params.id, request.accountId, {
         ...body,
