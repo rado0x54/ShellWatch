@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "pam_ssh_webauthn"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "base64",
  "env_logger",
