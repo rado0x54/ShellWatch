@@ -8,8 +8,31 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Verify release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches Cargo.toml + CHANGELOG entry exists
+        run: |
+          VERSION=${GITHUB_REF_NAME#pam/v}
+          CARGO_VERSION=$(grep -E '^version' pam_ssh_webauthn/Cargo.toml | head -1 | sed -E 's/^version = "(.+)"$/\1/')
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version $VERSION but pam_ssh_webauthn/Cargo.toml is $CARGO_VERSION."
+            echo "::error::Bump Cargo.toml in a PR before tagging the release."
+            exit 1
+          fi
+          if ! grep -qE "^## v${VERSION//./\\.}( |\\\$)" pam_ssh_webauthn/CHANGELOG.md; then
+            echo "::error::pam_ssh_webauthn/CHANGELOG.md is missing a '## v${VERSION}' section."
+            echo "::error::Add the entry in the release PR before tagging."
+            exit 1
+          fi
+          echo "Verified: tag $GITHUB_REF_NAME, Cargo.toml $CARGO_VERSION, CHANGELOG entry present."
+
   test:
     name: Lint & Test
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -215,33 +238,7 @@ jobs:
             pam_ssh_webauthn-${VERSION}-source.tar.gz \
             pam_ssh_webauthn-${VERSION}-source.tar.gz.sha256
 
-      - name: Update PAM CHANGELOG
-        run: |
-          VERSION=${GITHUB_REF_NAME#pam/}
-          NOTES=$(grep "^\\*" /tmp/release-notes.md || echo "* Initial release")
-
-          ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
-          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
-
-          CHANGELOG="pam_ssh_webauthn/CHANGELOG.md"
-          if [ -f "$CHANGELOG" ]; then
-            echo -e "${NEW_CONTENT}\n\n$(cat $CHANGELOG)" > "$CHANGELOG"
-          else
-            echo -e "# Changelog\n\n${NEW_CONTENT}" > "$CHANGELOG"
-          fi
-
-      - name: Commit changelog
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main develop
-          git checkout main
-          git add pam_ssh_webauthn/CHANGELOG.md
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: update pam_ssh_webauthn CHANGELOG.md for ${GITHUB_REF_NAME}"
-          COMMIT=$(git rev-parse HEAD)
-          git push origin main
-          # Sync changelog to develop
-          git checkout develop
-          git cherry-pick "$COMMIT" || git cherry-pick --abort
-          git push origin develop || true
+      # CHANGELOG is now hand-edited in the release PR and verified by the
+      # `verify` job above — no auto-commit back to main/develop. This avoids
+      # the prior pattern where the bot pushed malformed entries to a
+      # protected branch and broke format:check on the next CI run.
