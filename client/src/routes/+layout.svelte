@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
@@ -18,7 +18,7 @@
   let sessionModes = $state<Record<string, string>>({});
 
   const isFullscreenPage = $derived(
-    $page.url.pathname.endsWith("/login") || $page.url.pathname.endsWith("/register"),
+    page.url.pathname.endsWith("/login") || page.url.pathname.endsWith("/register"),
   );
 
   onMount(async () => {

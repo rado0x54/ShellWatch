@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { account } from "$lib/stores/account.js";
 
   let { children } = $props();
@@ -11,7 +11,7 @@
     { path: "/admin/accounts", label: "Accounts" },
   ];
 
-  const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived(page.url.pathname);
 </script>
 
 <div class="settings-page">

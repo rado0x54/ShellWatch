@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import Identicon from "$lib/components/Identicon.svelte";
   import { account } from "$lib/stores/account.js";
   import { endpoints } from "$lib/stores/endpoints.js";
@@ -19,7 +19,7 @@
 
   let { sessionModes, onMobileClose }: Props = $props();
 
-  const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived(page.url.pathname);
   const activeSessionId = $derived(
     currentPath.startsWith("/session/") ? currentPath.split("/session/")[1] : null,
   );

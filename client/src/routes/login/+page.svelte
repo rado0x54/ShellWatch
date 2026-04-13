@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
@@ -10,7 +10,7 @@
   let status = $state("");
 
   function safeRedirect(): string {
-    const raw = $page.url.searchParams.get("redirect");
+    const raw = page.url.searchParams.get("redirect");
     if (!raw) return "/";
     // Only accept same-origin paths: must start with `/` followed by a character
     // that is neither `/` nor `\` (some browsers normalize `\` to `/`, which
