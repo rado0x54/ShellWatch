@@ -233,6 +233,26 @@ The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this s
 
 Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy signing — both require browser approval (no silent auto-sign for the agent-proxy path). Passkeys require **OpenSSH 10.3+** on the client. Approval happens on the `/sign/:id` page, which also shows the agent client's self-reported hostname/OS/version when available. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
 
+### Enforcing user verification on the OpenSSH server
+
+ShellWatch always performs a WebAuthn ceremony with `userVerification: "required"`, so every signature sent over the agent proxy carries the UV flag. To make that guarantee load-bearing on the server side, configure the remote `sshd` to reject signatures whose UV flag is not set. OpenSSH enforces UV via two independent knobs that are OR'd together at authentication time:
+
+1. **Global, in `sshd_config`:**
+
+   ```
+   PubkeyAuthOptions verify-required
+   ```
+
+2. **Per-key, in the target account's `~/.ssh/authorized_keys`:**
+
+   ```
+   verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAAInNr... user@host
+   ```
+
+Either source sets the requirement; if neither is set, a signature without UV is accepted. With either enabled, `sshd` parses the authenticator flags from the signature (`sk_flags`) and rejects when `SSH_SK_USER_VERIFICATION_REQD` (`0x04` — the same bit as WebAuthn's UV flag) is not set, with a log line like `user verification requirement not met`.
+
+For a hardened deployment, prefer the global `PubkeyAuthOptions verify-required` so the policy is enforced uniformly and can't be bypassed by a stale `authorized_keys` entry.
+
 ## Scripts
 
 | Script               | Description                                            |
