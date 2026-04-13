@@ -68,12 +68,13 @@ export function registerActionRoutes(params: ActionRoutesParams) {
         return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
       }
       const authDataBuf = Buffer.from(authenticatorData, "base64url");
-      // Defense-in-depth: reject responses whose UV flag isn't set so we fail
-      // fast with a clear error. Cryptographic enforcement happens downstream
-      // when the SSH server verifies the signature against the sk-* pubkey
-      // registered with no-touch-required=false; this check alone is not a
-      // primary gate.
-      if (!isUserVerified(authDataBuf)) {
+      // Defense-in-depth: when the action (typically the originating endpoint)
+      // requires UV, reject responses without the UV bit set so we fail fast
+      // with a clear error. Cryptographic enforcement still happens downstream
+      // when the SSH server verifies the signature against the sk-* pubkey and
+      // its `verify-required` option; this check alone is not a primary gate.
+      // For "preferred"/"discouraged" endpoints we accept either UV state.
+      if (action.userVerification === "required" && !isUserVerified(authDataBuf)) {
         reply.status(400);
         return { error: "User verification required" };
       }

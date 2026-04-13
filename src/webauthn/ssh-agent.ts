@@ -11,6 +11,7 @@
 
 import ssh2 from "ssh2";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
+import type { UserVerification } from "../db/repositories/endpoint-repo.js";
 import { buildSshSignatureBlob, parseWebAuthnSignature } from "./signature-format.js";
 import { buildPublicKeyBlob } from "./ssh-key-format.js";
 
@@ -70,6 +71,12 @@ export interface SignRequest {
   endpointLabel?: string;
   /** Endpoint address (user@host:port) */
   endpointAddress?: string;
+  /**
+   * WebAuthn userVerification setting for the ceremony. Defaults to "required"
+   * when not provided by the caller (endpoint-scoped flows set this per
+   * endpoint; the agent-proxy path keeps the default).
+   */
+  userVerification?: UserVerification;
   /** Resolve the ssh2 sign callback with a WebAuthn assertion */
   resolve: (result: SignResponse) => void;
   /** Reject the ssh2 sign callback with an error */
@@ -99,6 +106,8 @@ export interface WebAuthnSshAgentParams {
   endpointLabel?: string;
   /** Endpoint address for display */
   endpointAddress?: string;
+  /** Per-endpoint WebAuthn userVerification policy. Defaults to "required". */
+  userVerification?: UserVerification;
   /** Identifier for the owning SSH client connection, propagated into SignRequests */
   connectionId?: string;
   logger?: AgentLogger;
@@ -117,6 +126,7 @@ export class WebAuthnSshAgent extends BaseAgent {
   protected rpId: string;
   protected endpointLabel?: string;
   protected endpointAddress?: string;
+  protected userVerification: UserVerification;
   protected connectionId?: string;
   protected log: AgentLogger;
 
@@ -127,6 +137,7 @@ export class WebAuthnSshAgent extends BaseAgent {
     this.onSignRequest = params.onSignRequest;
     this.endpointLabel = params.endpointLabel;
     this.endpointAddress = params.endpointAddress;
+    this.userVerification = params.userVerification ?? "required";
     this.connectionId = params.connectionId;
     this.log = params.logger ?? { error: (msg) => process.stderr.write(`${msg}\n`) };
   }
@@ -204,6 +215,7 @@ export class WebAuthnSshAgent extends BaseAgent {
       passkeyLabel: passkey.credential.label,
       endpointLabel: this.endpointLabel,
       endpointAddress: this.endpointAddress,
+      userVerification: this.userVerification,
       connectionId: this.connectionId,
       resolve,
       reject,

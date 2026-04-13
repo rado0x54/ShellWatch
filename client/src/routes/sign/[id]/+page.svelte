@@ -63,6 +63,7 @@
     challenge?: string;
     rpId?: string;
     passkeyLabel?: string;
+    userVerification?: "required" | "preferred" | "discouraged";
     // key-approve fields
     keyLabel?: string;
     keyFingerprint?: string;
@@ -122,9 +123,12 @@
       if (action.type === "key-approve") {
         response = await approveAction(actionId);
       } else {
-        const result = await performSignCeremony(
-          action as { credentialId: string; challenge: string; rpId: string },
-        );
+        const result = await performSignCeremony({
+          credentialId: action.credentialId as string,
+          challenge: action.challenge as string,
+          rpId: action.rpId as string,
+          userVerification: action.userVerification,
+        });
         response = await resolveAction(actionId, result);
       }
       resultStatus = "completed";

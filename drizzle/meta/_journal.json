@@ -8,6 +8,13 @@
       "when": 1775921985655,
       "tag": "0000_silly_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776111494874,
+      "tag": "0001_tired_lilith",
+      "breakpoints": true
     }
   ]
 }

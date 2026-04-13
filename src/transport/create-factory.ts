@@ -139,6 +139,7 @@ export function createSshTransportFactoryFromConfig(
         rpId,
         endpointLabel: endpoint.label,
         endpointAddress: address,
+        userVerification: endpoint.userVerification,
         connectionId,
         onSignRequest,
         onFileKeySignRequest,

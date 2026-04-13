@@ -1,3 +1,4 @@
+import type { UserVerification } from "../db/repositories/endpoint-repo.js";
 import type { SignResponse } from "../webauthn/ssh-agent.js";
 
 // --- Source contexts (discriminated union) ---
@@ -81,6 +82,12 @@ export interface WebAuthnSignAction extends PendingActionBase {
   challenge: string;
   rpId: string;
   passkeyLabel?: string;
+  /**
+   * WebAuthn userVerification policy for the ceremony, typically taken from
+   * the originating endpoint. Drives both the `credentials.get()` option on
+   * the client and whether the server enforces UV on the resolve payload.
+   */
+  userVerification: UserVerification;
   resolve: (result: SignResponse) => void;
 }
 

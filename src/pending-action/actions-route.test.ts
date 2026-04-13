@@ -25,6 +25,7 @@ function makeWebAuthnParams(overrides?: Partial<WebAuthnParams>): WebAuthnParams
     challenge: "dGVzdA==",
     rpId: "localhost",
     passkeyLabel: "YubiKey",
+    userVerification: "required",
     resolve: vi.fn(),
     reject: vi.fn(),
     ...overrides,
@@ -194,7 +195,7 @@ describe("action routes", () => {
     expect(resolve).toHaveBeenCalled();
   });
 
-  it("resolve rejects when UV flag is not set in authenticatorData", async () => {
+  it("resolve rejects when UV flag is not set and action requires UV", async () => {
     const action = actionStore.create(makeWebAuthnParams());
     const authDataNoUV = Buffer.alloc(37).toString("base64url"); // flags byte = 0x00
     const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
@@ -209,6 +210,25 @@ describe("action routes", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/user verification/i);
+  });
+
+  it("resolve accepts UV=0 when action userVerification is 'discouraged'", async () => {
+    const resolve = vi.fn();
+    const action = actionStore.create(
+      makeWebAuthnParams({ userVerification: "discouraged", resolve }),
+    );
+    const authDataNoUV = Buffer.alloc(37).toString("base64url");
+    const res = await fetch(url(`/api/actions/${action.id}/resolve`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        authenticatorData: authDataNoUV,
+        signature: "BBBB",
+        clientDataJSON: '{"type":"webauthn.get"}',
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(resolve).toHaveBeenCalled();
   });
 
   it("resolve returns 409 for already-resolved action", async () => {

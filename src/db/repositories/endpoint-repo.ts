@@ -2,6 +2,20 @@ import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { endpoints } from "../schema.js";
 
+export type UserVerification = "required" | "preferred" | "discouraged";
+
+export const USER_VERIFICATION_VALUES: readonly UserVerification[] = [
+  "required",
+  "preferred",
+  "discouraged",
+] as const;
+
+export function isUserVerification(value: unknown): value is UserVerification {
+  return (
+    typeof value === "string" && (USER_VERIFICATION_VALUES as readonly string[]).includes(value)
+  );
+}
+
 export interface EndpointInfo {
   id: string;
   accountId: string;
@@ -9,6 +23,7 @@ export interface EndpointInfo {
   host: string;
   port: number;
   username: string;
+  userVerification: UserVerification;
 }
 
 export interface EndpointRepository {
@@ -27,6 +42,7 @@ export interface EndpointRepository {
     host: string;
     port: number;
     username: string;
+    userVerification?: UserVerification;
   }): Promise<void>;
   update(
     id: string,
@@ -36,6 +52,7 @@ export interface EndpointRepository {
       host: string;
       port: number;
       username: string;
+      userVerification: UserVerification;
     }>,
   ): Promise<void>;
   delete(id: string, accountId: string): Promise<void>;
@@ -48,7 +65,17 @@ const ENDPOINT_COLUMNS = {
   host: endpoints.host,
   port: endpoints.port,
   username: endpoints.username,
+  userVerification: endpoints.userVerification,
 } as const;
+
+function normalizeRow(
+  row: { userVerification: string } & Omit<EndpointInfo, "userVerification">,
+): EndpointInfo {
+  return {
+    ...row,
+    userVerification: isUserVerification(row.userVerification) ? row.userVerification : "required",
+  };
+}
 
 export class DrizzleEndpointRepository implements EndpointRepository {
   constructor(private db: ShellWatchDB) {}
@@ -58,7 +85,8 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(and(eq(endpoints.accountId, accountId), eq(endpoints.enabled, true)))
-      .all();
+      .all()
+      .map(normalizeRow);
   }
 
   async findAll(): Promise<EndpointInfo[]> {
@@ -66,7 +94,8 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(eq(endpoints.enabled, true))
-      .all();
+      .all()
+      .map(normalizeRow);
   }
 
   async findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null> {
@@ -75,12 +104,12 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .from(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.accountId, accountId)))
       .get();
-    return row ?? null;
+    return row ? normalizeRow(row) : null;
   }
 
   async findById(id: string): Promise<EndpointInfo | null> {
     const row = this.db.select(ENDPOINT_COLUMNS).from(endpoints).where(eq(endpoints.id, id)).get();
-    return row ?? null;
+    return row ? normalizeRow(row) : null;
   }
 
   async create(data: {
@@ -90,12 +119,14 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     host: string;
     port: number;
     username: string;
+    userVerification?: UserVerification;
   }): Promise<void> {
     const now = new Date().toISOString();
     this.db
       .insert(endpoints)
       .values({
         ...data,
+        userVerification: data.userVerification ?? "required",
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -111,6 +142,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       host: string;
       port: number;
       username: string;
+      userVerification: UserVerification;
     }>,
   ): Promise<void> {
     this.db
@@ -133,12 +165,18 @@ export class InMemoryEndpointRepository implements EndpointRepository {
   private store: EndpointInfo[];
 
   constructor(
-    initialEndpoints: Array<Omit<EndpointInfo, "accountId"> & { accountId?: string }> = [],
+    initialEndpoints: Array<
+      Omit<EndpointInfo, "accountId" | "userVerification"> & {
+        accountId?: string;
+        userVerification?: UserVerification;
+      }
+    > = [],
     private defaultAccountId = "test-account",
   ) {
     this.store = initialEndpoints.map((e) => ({
       ...e,
       accountId: e.accountId ?? this.defaultAccountId,
+      userVerification: e.userVerification ?? "required",
     }));
   }
 
@@ -165,8 +203,9 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     host: string;
     port: number;
     username: string;
+    userVerification?: UserVerification;
   }): Promise<void> {
-    this.store.push({ ...data });
+    this.store.push({ ...data, userVerification: data.userVerification ?? "required" });
   }
 
   async update(
@@ -177,6 +216,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       host: string;
       port: number;
       username: string;
+      userVerification: UserVerification;
     }>,
   ): Promise<void> {
     const idx = this.store.findIndex((e) => e.id === id && e.accountId === accountId);

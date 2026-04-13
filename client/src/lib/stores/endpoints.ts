@@ -1,11 +1,20 @@
 import { writable } from "svelte/store";
 
+export type UserVerification = "required" | "preferred" | "discouraged";
+
+export const USER_VERIFICATION_OPTIONS: readonly UserVerification[] = [
+  "required",
+  "preferred",
+  "discouraged",
+] as const;
+
 export interface Endpoint {
   id: string;
   label: string;
   host: string;
   port: number;
   username: string;
+  userVerification: UserVerification;
 }
 
 export const endpoints = writable<Endpoint[]>([]);
@@ -21,6 +30,7 @@ export async function createEndpoint(body: {
   host: string;
   port: number;
   username: string;
+  userVerification?: UserVerification;
 }): Promise<void> {
   const res = await fetch("/api/endpoints", {
     method: "POST",

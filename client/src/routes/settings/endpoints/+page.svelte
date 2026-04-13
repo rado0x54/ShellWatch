@@ -5,6 +5,9 @@
     deleteEndpoint,
     endpoints,
     fetchEndpoints,
+    updateEndpoint,
+    USER_VERIFICATION_OPTIONS,
+    type UserVerification,
   } from "$lib/stores/endpoints.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
@@ -12,6 +15,7 @@
 
   let epLabel = $state("");
   let epAddress = $state("");
+  let epUserVerification = $state<UserVerification>("required");
 
   onMount(() => {
     fetchEndpoints();
@@ -35,9 +39,19 @@
         host: parsed.host,
         port: parsed.port,
         username: parsed.username,
+        userVerification: epUserVerification,
       });
       epLabel = "";
       epAddress = "";
+      epUserVerification = "required";
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  }
+
+  async function handleUserVerificationChange(id: string, value: UserVerification) {
+    try {
+      await updateEndpoint(id, { userVerification: value });
     } catch (err) {
       toastError(errorMessage(err));
     }
@@ -61,6 +75,7 @@
       <tr>
         <th>Label</th>
         <th>Address</th>
+        <th>User Verification</th>
         <th></th>
       </tr>
     </thead>
@@ -70,12 +85,26 @@
           <td>{ep.label}</td>
           <td>{formatEndpointAddress(ep)}</td>
           <td>
+            <select
+              value={ep.userVerification}
+              onchange={(e) =>
+                handleUserVerificationChange(
+                  ep.id,
+                  (e.currentTarget as HTMLSelectElement).value as UserVerification,
+                )}
+            >
+              {#each USER_VERIFICATION_OPTIONS as opt (opt)}
+                <option value={opt}>{opt}</option>
+              {/each}
+            </select>
+          </td>
+          <td>
             <button class="btn btn-secondary" onclick={() => handleDelete(ep.id)}>Delete</button>
           </td>
         </tr>
       {/each}
       {#if $endpoints.length === 0}
-        <tr><td colspan="3" class="empty">No endpoints configured</td></tr>
+        <tr><td colspan="4" class="empty">No endpoints configured</td></tr>
       {/if}
     </tbody>
   </table>
@@ -85,8 +114,18 @@
     <div class="form-row">
       <input type="text" placeholder="Label" bind:value={epLabel} />
       <input type="text" placeholder="user@host:port" bind:value={epAddress} />
+      <select bind:value={epUserVerification}>
+        {#each USER_VERIFICATION_OPTIONS as opt (opt)}
+          <option value={opt}>UV: {opt}</option>
+        {/each}
+      </select>
       <button class="btn btn-primary" onclick={handleAdd}>Add</button>
     </div>
+    <p class="hint">
+      <strong>User Verification</strong> controls the WebAuthn <code>userVerification</code> option
+      used for passkey sign ceremonies to this endpoint. Defaults to <code>required</code> (PIN / biometric
+      always enforced). Relax only if a specific authenticator can't provide UV.
+    </p>
   </div>
 </section>
 
@@ -102,5 +141,17 @@
 
   .empty {
     color: #555;
+  }
+
+  .hint {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .hint code {
+    font-family: monospace;
+    font-size: 0.85em;
   }
 </style>

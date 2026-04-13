@@ -13,6 +13,8 @@ export interface SignCeremonyParams {
   /** Standard base64-encoded challenge (not base64url) */
   challenge: string;
   rpId: string;
+  /** Per-endpoint WebAuthn userVerification policy. Defaults to "required". */
+  userVerification?: "required" | "preferred" | "discouraged";
 }
 
 export interface SignCeremonyResult {
@@ -46,7 +48,7 @@ export async function performSignCeremony(params: SignCeremonyParams): Promise<S
           transports: ["usb", "nfc", "ble", "internal"],
         },
       ],
-      userVerification: "required",
+      userVerification: params.userVerification ?? "required",
       timeout: 60000,
     },
   })) as PublicKeyCredential;
