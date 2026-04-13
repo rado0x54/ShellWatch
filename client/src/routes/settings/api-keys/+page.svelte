@@ -5,6 +5,8 @@
   import { errorMessage } from "$lib/utils/error-message.js";
 
   let label = $state("");
+  let scopeMcp = $state(true);
+  let scopeAgent = $state(false);
   let showKeyModal = $state(false);
   let generatedKey = $state("");
 
@@ -14,10 +16,19 @@
 
   async function handleGenerate() {
     if (!label.trim()) return;
+    const scopes: string[] = [];
+    if (scopeMcp) scopes.push("mcp");
+    if (scopeAgent) scopes.push("agent");
+    if (scopes.length === 0) {
+      toastError("Select at least one scope");
+      return;
+    }
     try {
-      generatedKey = await generateApiKey(label.trim());
+      generatedKey = await generateApiKey(label.trim(), scopes);
       showKeyModal = true;
       label = "";
+      scopeMcp = true;
+      scopeAgent = false;
     } catch (err) {
       toastError(errorMessage(err));
     }
@@ -45,12 +56,13 @@
 </script>
 
 <section>
-  <h2>API Keys (MCP)</h2>
+  <h2>API Keys</h2>
   <table class="settings-table">
     <thead>
       <tr>
         <th>Label</th>
         <th>Prefix</th>
+        <th>Scopes</th>
         <th>Status</th>
         <th>Created</th>
         <th></th>
@@ -61,6 +73,7 @@
         <tr>
           <td>{k.label}</td>
           <td class="monospace">{k.keyPrefix}...</td>
+          <td class="monospace">{k.scopes.join(", ")}</td>
           <td>
             <span
               class="badge"
@@ -79,7 +92,7 @@
         </tr>
       {/each}
       {#if $apiKeys.length === 0}
-        <tr><td colspan="5" class="empty">No API keys configured</td></tr>
+        <tr><td colspan="6" class="empty">No API keys configured</td></tr>
       {/if}
     </tbody>
   </table>
@@ -94,6 +107,18 @@
         style="flex: 1"
       />
       <button class="btn btn-primary" onclick={handleGenerate}>Generate</button>
+    </div>
+    <div class="scope-row">
+      <label class="scope-option">
+        <input type="checkbox" bind:checked={scopeMcp} />
+        <span>mcp</span>
+        <span class="scope-hint">— MCP server access</span>
+      </label>
+      <label class="scope-option">
+        <input type="checkbox" bind:checked={scopeAgent} />
+        <span>agent</span>
+        <span class="scope-hint">— SSH agent socket forwarding</span>
+      </label>
     </div>
   </div>
 
@@ -154,5 +179,24 @@
   .key-value {
     user-select: all;
     cursor: text;
+  }
+
+  .scope-row {
+    display: flex;
+    gap: 1.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .scope-option {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
+
+  .scope-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
   }
 </style>

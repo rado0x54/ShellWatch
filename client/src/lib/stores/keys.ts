@@ -45,11 +45,11 @@ export async function fetchApiKeys(): Promise<void> {
   }
 }
 
-export async function generateApiKey(label: string): Promise<string> {
+export async function generateApiKey(label: string, scopes: string[]): Promise<string> {
   const res = await fetch("/api/keys/api", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, scopes }),
   });
   if (!res.ok) {
     const err = await res.json();

@@ -28,30 +28,48 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
     };
   });
 
-  app.post<{ Body: { label: string } }>("/api/keys/api", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const { label } = request.body;
-    if (!label) {
-      reply.status(400);
-      return { error: "Label is required" };
-    }
-    const raw = `sw_${randomBytes(24).toString("hex")}`;
-    const keyHash = hashApiKey(raw);
-    const keyPrefix = raw.slice(0, 10);
-    const id = randomUUID();
-    await apiKeyRepo.create({
-      id,
-      accountId: request.accountId,
-      label,
-      keyHash,
-      keyPrefix,
-      scopes: ["mcp"],
-    });
-    return { id, label, keyPrefix, key: raw };
-  });
+  const VALID_SCOPES = ["mcp", "agent"] as const;
+  type Scope = (typeof VALID_SCOPES)[number];
+
+  app.post<{ Body: { label: string; scopes?: string[] } }>(
+    "/api/keys/api",
+    async (request, reply) => {
+      if (!request.accountId) {
+        reply.status(401);
+        return { error: "Not authenticated" };
+      }
+      const { label, scopes: requestedScopes } = request.body;
+      if (!label) {
+        reply.status(400);
+        return { error: "Label is required" };
+      }
+      let scopes: Scope[] = ["mcp"];
+      if (requestedScopes !== undefined) {
+        if (
+          !Array.isArray(requestedScopes) ||
+          requestedScopes.length === 0 ||
+          !requestedScopes.every((s): s is Scope => (VALID_SCOPES as readonly string[]).includes(s))
+        ) {
+          reply.status(400);
+          return { error: `Scopes must be a non-empty subset of: ${VALID_SCOPES.join(", ")}` };
+        }
+        scopes = Array.from(new Set(requestedScopes));
+      }
+      const raw = `sw_${randomBytes(24).toString("hex")}`;
+      const keyHash = hashApiKey(raw);
+      const keyPrefix = raw.slice(0, 10);
+      const id = randomUUID();
+      await apiKeyRepo.create({
+        id,
+        accountId: request.accountId,
+        label,
+        keyHash,
+        keyPrefix,
+        scopes,
+      });
+      return { id, label, keyPrefix, scopes, key: raw };
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/api/keys/api/:id", async (request, reply) => {
     if (!request.accountId) {
