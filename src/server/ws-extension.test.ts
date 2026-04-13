@@ -62,6 +62,7 @@ describe("WebSocketChannel as WsExtension", () => {
       challenge: "dGVzdA==",
       rpId: "localhost",
       passkeyLabel: "YubiKey",
+      userVerification: "required" as const,
       resolve: vi.fn(),
       reject: vi.fn(),
     };

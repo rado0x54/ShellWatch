@@ -20,6 +20,7 @@ function makeWebAuthnParams(overrides?: Partial<WebAuthnCreateParams>): WebAuthn
     challenge: "dGVzdC1jaGFsbGVuZ2U=",
     rpId: "localhost",
     passkeyLabel: "YubiKey",
+    userVerification: "required",
     resolve: vi.fn(),
     reject: vi.fn(),
     ...overrides,

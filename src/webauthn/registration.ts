@@ -53,7 +53,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",
-          userVerification: "preferred",
+          userVerification: "required",
         },
         supportedAlgorithmIDs: [-7, -8], // ES256 (P-256) and EdDSA (Ed25519)
         excludeCredentials: existing.map((c) => ({
@@ -92,6 +92,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           expectedChallenge: challenge,
           expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
+          requireUserVerification: true,
         });
 
         if (!verification.verified || !verification.registrationInfo) {

@@ -56,6 +56,7 @@ export class SigningBridge {
       challenge,
       rpId: request.rpId,
       passkeyLabel: request.passkeyLabel,
+      userVerification: request.userVerification ?? "required",
       resolve: request.resolve,
       reject: request.reject,
     });

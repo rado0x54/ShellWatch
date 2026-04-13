@@ -72,6 +72,13 @@ export const endpoints = sqliteTable("endpoints", {
   port: integer("port").notNull().default(22),
   username: text("username").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /**
+   * WebAuthn `userVerification` setting used for agent-proxy sign ceremonies
+   * to this endpoint. One of "required" | "preferred" | "discouraged".
+   * Defaults to "required" — the user can relax it per endpoint if a given
+   * host / authenticator can't provide UV.
+   */
+  userVerification: text("user_verification").notNull().default("required"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

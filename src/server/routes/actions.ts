@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { PendingActionStore } from "../../pending-action/index.js";
 import type { WebSocketChannel } from "../../pending-action/ws-channel.js";
 import { toActionView } from "../../pending-action/index.js";
+import { isUserVerified } from "../../webauthn/signature-format.js";
 
 export interface ActionRoutesParams {
   app: FastifyInstance;
@@ -66,9 +67,20 @@ export function registerActionRoutes(params: ActionRoutesParams) {
         reply.status(400);
         return { error: "Missing required fields: authenticatorData, signature, clientDataJSON" };
       }
+      const authDataBuf = Buffer.from(authenticatorData, "base64url");
+      // Defense-in-depth: when the action (typically the originating endpoint)
+      // requires UV, reject responses without the UV bit set so we fail fast
+      // with a clear error. Cryptographic enforcement still happens downstream
+      // when the SSH server verifies the signature against the sk-* pubkey and
+      // its `verify-required` option; this check alone is not a primary gate.
+      // For "preferred"/"discouraged" endpoints we accept either UV state.
+      if (action.userVerification === "required" && !isUserVerified(authDataBuf)) {
+        reply.status(400);
+        return { error: "User verification required" };
+      }
       resolved = actionStore.resolve(action.id, {
         requestId: action.id,
-        authenticatorData: Buffer.from(authenticatorData, "base64url"),
+        authenticatorData: authDataBuf,
         signature: Buffer.from(signature, "base64url"),
         clientDataJSON,
       });

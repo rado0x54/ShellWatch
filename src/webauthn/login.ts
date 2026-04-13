@@ -48,7 +48,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
       const options = await generateAuthenticationOptions({
         rpID: rpId,
-        userVerification: "preferred",
+        userVerification: "required",
         allowCredentials: creds.map((c) => ({ id: c.credentialId })),
       });
 
@@ -121,6 +121,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
           expectedChallenge: challenge,
           expectedOrigin: trustedOrigins,
           expectedRPID: rpId,
+          requireUserVerification: true,
           credential: {
             id: storedCred.credentialId,
             publicKey: new Uint8Array(storedCred.publicKey),

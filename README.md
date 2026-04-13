@@ -233,6 +233,28 @@ The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this s
 
 Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy signing — both require browser approval (no silent auto-sign for the agent-proxy path). Passkeys require **OpenSSH 10.3+** on the client. Approval happens on the `/sign/:id` page, which also shows the agent client's self-reported hostname/OS/version when available. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
 
+### Enforcing user verification on the OpenSSH server
+
+By default, ShellWatch performs the WebAuthn signing ceremony with `userVerification: "required"`, so every signature sent over the agent proxy carries the UV flag. (The setting is configurable per endpoint in Settings → Endpoints if you need to relax it for a specific host.) To make the UV guarantee load-bearing on the server side, configure the remote `sshd` to reject signatures whose UV flag is not set.
+
+OpenSSH enforces UV on `sk-ecdsa-sha2-nistp256@openssh.com` and `sk-ssh-ed25519@openssh.com` keys via `verify-required` (UV flag bit `0x04`), settable globally in `sshd_config` or per-key in `authorized_keys`.
+
+Per-key in `authorized_keys` (see `sshd(8)` AUTHORIZED_KEYS FILE FORMAT):
+
+```
+verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host
+```
+
+Global equivalent in `sshd_config`:
+
+```
+PubkeyAuthOptions verify-required
+```
+
+At authentication time, `sshd` ORs the global option with the per-key option — either source sets the requirement. With UV enforced, `sshd` parses `sk_flags` from the signature and rejects when `SSH_SK_USER_VERIFICATION_REQD` (`0x04` — the same bit as WebAuthn's UV flag) is not set, logging `user verification requirement not met`.
+
+For a hardened deployment, prefer global `PubkeyAuthOptions verify-required` so the policy is enforced uniformly and can't be bypassed by a stale `authorized_keys` entry.
+
 ## Scripts
 
 | Script               | Description                                            |
