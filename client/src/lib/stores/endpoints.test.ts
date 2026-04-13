@@ -42,7 +42,6 @@ describe("endpoints store", () => {
     );
 
     await createEndpoint({
-      id: "new",
       label: "New",
       host: "new.example.com",
       port: 22,
@@ -53,7 +52,10 @@ describe("endpoints store", () => {
     const [url, opts] = fetchSpy.mock.calls[0];
     expect(url).toBe("/api/endpoints");
     expect(opts?.method).toBe("POST");
-    expect(JSON.parse(opts?.body as string)).toMatchObject({ id: "new", host: "new.example.com" });
+    expect(JSON.parse(opts?.body as string)).toMatchObject({
+      label: "New",
+      host: "new.example.com",
+    });
     expect(get(endpoints)).toHaveLength(1);
   });
 
@@ -64,7 +66,6 @@ describe("endpoints store", () => {
 
     await expect(
       createEndpoint({
-        id: "dup",
         label: "Dup",
         host: "h",
         port: 22,

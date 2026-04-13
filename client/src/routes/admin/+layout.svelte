@@ -1,17 +1,17 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { account } from "$lib/stores/account.js";
 
   let { children } = $props();
 
-  const tabs = [
+  const tabs: { path: import("$app/types").Pathname; label: string }[] = [
     { path: "/admin/general", label: "General" },
     { path: "/admin/accounts", label: "Accounts" },
   ];
 
-  const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived(page.url.pathname);
 </script>
 
 <div class="settings-page">

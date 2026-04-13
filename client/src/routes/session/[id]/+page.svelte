@@ -1,13 +1,14 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import Terminal from "$lib/components/Terminal.svelte";
   import { type SessionMode, sessions } from "$lib/stores/ws.js";
+  import type { PageProps } from "./$types";
 
   let modes = $state<Record<string, SessionMode>>({});
 
-  const sessionId = $derived($page.params.id);
+  const sessionId = $derived((page.params as PageProps["params"]).id);
   const session = $derived($sessions.find((s) => s.sessionId === sessionId));
 
   // Clean up stale mode entries when navigating away from a session

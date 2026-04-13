@@ -1,8 +1,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { onMount } from "svelte";
+  import type { PageProps } from "./$types";
   import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
   import {
@@ -13,7 +14,7 @@
     triggerKindLabels,
   } from "$lib/utils/webauthn-sign.js";
 
-  const actionId = $derived($page.params.id);
+  const actionId = $derived((page.params as PageProps["params"]).id);
 
   type EndpointAuthTrigger =
     | { kind: "ui"; sourceIp: string }

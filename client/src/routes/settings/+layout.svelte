@@ -1,11 +1,11 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
 
   let { children } = $props();
 
-  const tabs = [
+  const tabs: { path: import("$app/types").Pathname; label: string }[] = [
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Keys" },
@@ -13,7 +13,7 @@
     { path: "/settings/notifications", label: "Notifications" },
   ];
 
-  const currentPath = $derived($page.url.pathname);
+  const currentPath = $derived(page.url.pathname);
 </script>
 
 <div class="settings-page">

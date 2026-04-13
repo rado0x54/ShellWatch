@@ -86,6 +86,7 @@
             class:active={$account.agentForward}
             disabled={agentForwardSaving}
             onclick={handleAgentForwardToggle}
+            aria-label="SSH Agent Forwarding"
             role="switch"
             aria-checked={$account.agentForward}
           >
