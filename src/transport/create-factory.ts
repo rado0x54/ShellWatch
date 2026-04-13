@@ -153,9 +153,12 @@ export function createSshTransportFactoryFromConfig(
           })
         : new CompositeSshAgent(baseParams);
 
+      let cleanedUp = false;
       return {
         agent,
         cleanup: () => {
+          if (cleanedUp) return;
+          cleanedUp = true;
           agent.destroy();
           onConnectionEnded?.(connectionId, "SSH connection closed");
         },

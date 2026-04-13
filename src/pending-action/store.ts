@@ -67,13 +67,16 @@ export class PendingActionStore {
    * on-screen waiting to sign into a session that no longer exists. Returns the
    * affected actions (after mutation) so the caller can broadcast resolution.
    */
-  cancelForConnection(connectionId: string, reason: string): PendingAction[] {
+  cancelForConnection(connectionId: string, _reason: string): PendingAction[] {
     const cancelled: PendingAction[] = [];
     for (const action of this.actions.values()) {
       if (action.status !== "pending") continue;
       if (action.connectionId !== connectionId) continue;
+      // Intentionally don't call action.reject: the ssh2 client owning these
+      // sign callbacks has already been torn down, so invoking its cb would
+      // just be an empty gesture against a dead client. Marking the action
+      // denied + broadcasting (caller's job) is enough to clear UI state.
       action.status = "denied";
-      action.reject(new Error(reason));
       cancelled.push(action);
     }
     return cancelled;
