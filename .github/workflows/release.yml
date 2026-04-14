@@ -59,6 +59,50 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  deploy-dev:
+    name: Deploy to app-dev
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /srv/shellwatch-dev
+            docker compose pull
+            docker compose up -d --wait --wait-timeout 60
+            docker image prune -f
+
+      - name: Smoke test
+        run: curl -fsS --retry 5 --retry-delay 3 https://app-dev.shellwatch.ai/health
+
+  deploy-preprod:
+    name: Deploy to app-preprod
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /srv/shellwatch-preprod
+            docker compose pull
+            docker compose up -d --wait --wait-timeout 60
+            docker image prune -f
+
+      - name: Smoke test
+        run: curl -fsS --retry 5 --retry-delay 3 https://app-preprod.shellwatch.ai/health
+
   retag:
     name: Retag Docker image
     needs: ci
@@ -95,6 +139,29 @@ jobs:
           crane tag "$SRC" "${VERSION}"
           crane tag "$SRC" "${MINOR}"
           crane tag "$SRC" "latest"
+
+  deploy-prod:
+    name: Deploy to app (prod)
+    needs: retag
+    runs-on: ubuntu-latest
+    environment: production
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /srv/shellwatch
+            docker compose pull
+            docker compose up -d --wait --wait-timeout 60
+            docker image prune -f
+
+      - name: Smoke test
+        run: curl -fsS --retry 5 --retry-delay 3 https://app.shellwatch.ai/health
 
   release:
     name: GitHub Release
