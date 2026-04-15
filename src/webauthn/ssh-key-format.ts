@@ -14,6 +14,10 @@
 import { decode as cborDecode } from "cbor-x";
 
 const ALGORITHM = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+/** OpenSSH key type for SK keys — same wire-format key, used for fingerprinting
+ * to match `ssh-add -l` / `ssh-keygen -lf` output. The `webauthn-` prefix is a
+ * signature algorithm, not a key type. */
+const SK_KEY_TYPE = "sk-ecdsa-sha2-nistp256@openssh.com";
 
 /** Write a uint32 big-endian */
 function writeUint32(buf: Buffer, offset: number, value: number): void {
@@ -93,6 +97,19 @@ export function buildPublicKeyBlob(keyInfo: { publicKey: string }): Buffer {
     throw new Error("Invalid public key format");
   }
   return Buffer.from(parts[1], "base64");
+}
+
+/**
+ * Take a `webauthn-sk-ecdsa-...` public-key blob and return the equivalent
+ * blob with the OpenSSH `sk-ecdsa-...` key type prefix. Hashing the result
+ * yields the fingerprint OpenSSH displays in `ssh-add -l` / `ssh-keygen -lf`
+ * (the `webauthn-` prefix is a signature algorithm, not a key type).
+ */
+export function toSkPublicKeyBlob(webauthnBlob: Buffer): Buffer {
+  // Wire format starts with `string type`: uint32 length + bytes.
+  const typeLen = webauthnBlob.readUInt32BE(0);
+  const rest = webauthnBlob.subarray(4 + typeLen);
+  return Buffer.concat([sshString(SK_KEY_TYPE), rest]);
 }
 
 export { ALGORITHM as WEBAUTHN_SSH_ALGORITHM };
