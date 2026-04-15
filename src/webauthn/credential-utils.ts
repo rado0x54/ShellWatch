@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Fingerprint } from "./fingerprint.js";
 
 /** Detect algorithm from COSE key (first bytes of the map) */
 export function detectAlgorithm(coseKey: Buffer): string {
@@ -8,7 +8,7 @@ export function detectAlgorithm(coseKey: Buffer): string {
   return "unknown";
 }
 
-/** Compute SHA-256 fingerprint of the COSE public key */
+/** Compute OpenSSH-style SHA-256 fingerprint of the COSE public key */
 export function computeFingerprint(coseKey: Buffer): string {
-  return `SHA256:${createHash("sha256").update(coseKey).digest("base64url")}`;
+  return sha256Fingerprint(coseKey);
 }

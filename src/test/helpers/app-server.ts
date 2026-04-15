@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +21,7 @@ import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
+import { sha256Fingerprint } from "../../webauthn/fingerprint.js";
 import { buildFileKeyEntry, CompositeSshAgent } from "../../webauthn/index.js";
 import type { TestSshServer } from "./ssh-server.js";
 import type { TestLog } from "./test-log.js";
@@ -49,7 +49,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   const parsed = utils.parseKey(sshServer.clientPrivateKey);
   if (!parsed || parsed instanceof Error) throw new Error("Failed to parse test SSH key");
   const pubKeyBuf = parsed.getPublicSSH();
-  const fingerprint = `SHA256:${createHash("sha256").update(pubKeyBuf).digest("base64url")}`;
+  const fingerprint = sha256Fingerprint(pubKeyBuf);
   const publicKeyOpenSsh = `${parsed.type} ${pubKeyBuf.toString("base64")}`;
 
   const scannedKey: ScannedKey = {

@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import ssh2 from "ssh2";
+import { sha256Fingerprint } from "../webauthn/fingerprint.js";
 
 const { utils } = ssh2;
 
@@ -46,7 +46,7 @@ export function scanKeyDirectory(directory: string): ScannedKey[] {
 
       const pubKeyBuf = parsed.getPublicSSH();
       const pubKeyBase64 = pubKeyBuf.toString("base64");
-      const fingerprint = `SHA256:${createHash("sha256").update(pubKeyBuf).digest("base64url")}`;
+      const fingerprint = sha256Fingerprint(pubKeyBuf);
       const publicKeyOpenSsh = `${parsed.type} ${pubKeyBase64}`;
 
       keys.push({

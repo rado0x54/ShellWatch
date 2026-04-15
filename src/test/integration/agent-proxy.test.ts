@@ -5,7 +5,7 @@
  * round-trip over WebSocket.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
@@ -23,6 +23,7 @@ import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
+import { sha256Fingerprint } from "../../webauthn/fingerprint.js";
 import type { FastifyInstance } from "fastify";
 
 const { utils } = ssh2;
@@ -47,7 +48,7 @@ const testPrivateKey = testKeyPair.private;
 const testParsed = utils.parseKey(testPrivateKey)!;
 if (testParsed instanceof Error) throw testParsed;
 const testPubBuf = testParsed.getPublicSSH();
-const testFingerprint = `SHA256:${createHash("sha256").update(testPubBuf).digest("base64url")}`;
+const testFingerprint = sha256Fingerprint(testPubBuf);
 const testPublicKeyOpenSsh = `${testParsed.type} ${testPubBuf.toString("base64")}`;
 
 describe("agent-proxy WebSocket endpoint", () => {
