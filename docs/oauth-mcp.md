@@ -40,9 +40,10 @@ be the same entity. That is what we do here — **ShellWatch is both**.
 - **No redirect-based OAuth flow for the Web UI.** The UI is a
   first-party confidential client; tokens are minted server-side
   immediately on passkey success. No code+PKCE dance against ourselves.
-- **No removal of API keys.** They remain the right choice for headless
-  CI agents. The API-key verifier stays in the chain alongside the
-  OAuth verifier.
+- **No removal of API keys.** They remain the right choice for
+  headless CI agents. The API-key verifier stays in the chain
+  alongside the OAuth verifier. They do move to a dedicated
+  `X-API-Key` header (see above).
 
 ## Non-obvious design choices
 
@@ -55,6 +56,22 @@ be the same entity. That is what we do here — **ShellWatch is both**.
   keep the principal-resolution story uniform with API keys. Libraries like
   `@civic/auth-mcp` are JWT-only and come with IdP-specific defaults — a
   poor fit for opaque tokens + co-located AS.
+- **Deliberate deviation from textbook OAuth for the first-party UI.**
+  When AS, RS, and SPA share an origin, the canonical "SPA redirects
+  to `/authorize`, AS redirects to login, AS redirects back with code,
+  SPA exchanges code for tokens" flow degenerates into five
+  same-origin 302s. We bypass the redirect dance: after passkey
+  verify, the server mints an access + refresh token directly via
+  panva's token constructors and sets HttpOnly cookies. Security
+  properties are identical (passkey is the authentication step either
+  way); only the HTTP choreography is simpler. This is called out
+  here because a reviewer will notice it isn't in the OAuth spec.
+- **API keys move to `X-API-Key`.** Today they share the
+  `Authorization: Bearer` header with what will become OAuth tokens —
+  two token formats on the same header is a smell that makes
+  extraction brittle. Moving API keys to a dedicated `X-API-Key`
+  header gives each verifier its own input source and matches
+  widespread convention (OpenAI, Anthropic, Stripe-ish variants).
 
 ## Shape
 
@@ -172,13 +189,19 @@ export function chainVerifiers(
 ): (bearer: string) => Promise<Principal | null>;
 ```
 
-### Bearer extraction (`src/server/auth/extract-bearer.ts`)
+### Credential presentation (`src/server/auth/extract-bearer.ts`)
 
-Single helper used by every protected route. Checks two sources, in
-order:
+The two credential types arrive on different inputs, so each verifier
+reads its own source and the two paths never mix:
+
+| Credential                               | Presented as                     |
+| ---------------------------------------- | -------------------------------- |
+| OAuth access token (third-party clients) | `Authorization: Bearer <opaque>` |
+| OAuth access token (browser)             | `sw_session` HttpOnly cookie     |
+| API key                                  | `X-API-Key: sw_<hex>`            |
 
 ```ts
-export function extractBearer(req: FastifyRequest): string | null {
+export function extractOAuthBearer(req: FastifyRequest): string | null {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) return auth.slice(7);
 
@@ -187,22 +210,38 @@ export function extractBearer(req: FastifyRequest): string | null {
 
   return null;
 }
+
+export function extractApiKey(req: FastifyRequest): string | null {
+  const header = req.headers["x-api-key"];
+  return typeof header === "string" ? header : null;
+}
 ```
 
 Wiring (shape — not final code):
 
 ```ts
-const resolver = chainVerifiers([apiKeyVerifier, oauthTokenVerifier]);
 app.decorateRequest("principal", null);
 app.addHook("preHandler", async (req) => {
-  const bearer = extractBearer(req);
-  if (bearer) req.principal = await resolver(bearer);
+  const apiKey = extractApiKey(req);
+  if (apiKey) {
+    req.principal = await apiKeyVerifier.verify(apiKey);
+    if (req.principal) return;
+  }
+
+  const bearer = extractOAuthBearer(req);
+  if (bearer) {
+    req.principal = await oauthTokenVerifier.verify(bearer);
+  }
 });
 ```
 
-API-key lookup runs first (one indexed hash lookup); OAuth token lookup
-is the same cost (panva's adapter reads by jti). Either ordering is
-cheap.
+Each verifier handles its own input; no "try-in-order-on-the-same-string"
+fallback path. Cheap and unambiguous.
+
+**Migration:** Phase 1 also accepts legacy `Authorization: Bearer sw_...`
+for API keys (runs the API-key verifier on that as a last resort) so
+existing `/mcp` users don't break the day OAuth ships. Phase 3 drops
+the fallback, same cutover as agent-client OAuth migration.
 
 ### `OAuthTokenVerifier` (`src/oauth/verifier.ts`)
 
@@ -287,25 +326,53 @@ reply.setCookie("sw_refresh", refreshToken, {
   httpOnly: true,
   secure: isHttps,
   sameSite: "strict",
-  path: "/api/auth/refresh",
+  path: "/",
   expires: refreshTokenExpiresAt,
 });
 ```
 
-The `sw_refresh` cookie is scoped to a single refresh endpoint so it is
-never sent on normal UI requests — only when the access token is being
-rotated.
+Both cookies are scoped to `path: "/"` so the server-side rolling
+refresh below can rotate them on _any_ request.
 
-### Silent refresh (`src/oauth/first-party.ts`)
+### Rolling session refresh (`src/oauth/first-party.ts`)
 
-A Fastify preHandler on the UI routes checks whether the access token
-is close to expiry (<20% TTL left). If so, it transparently:
+The UI implements **no** refresh logic. Refresh happens entirely
+server-side, on every request, transparent to the browser:
 
-1. Reads `sw_refresh` (via a dedicated `/api/auth/refresh` POST).
-2. Calls panva to rotate the refresh token and mint a new access.
-3. Writes both new cookies, retries the original request.
+```
+preHandler on every protected route (UI / WS / /mcp / /agent-proxy):
 
-No SPA involvement. No refresh loops in the browser.
+  1. Read sw_session cookie → oauthTokenVerifier.verify → Principal
+  2. If Principal is null (expired) OR access expires within 5 min:
+       - Read sw_refresh cookie
+       - Ask panva to refresh → new { access, refresh }
+       - Panva rotates: old refresh is consumed, a new one issued
+       - setCookie(sw_session, new access)
+       - setCookie(sw_refresh, new refresh)
+       - Verify new access → Principal
+  3. Attach req.principal, continue
+```
+
+Effect:
+
+- User stays signed in as long as they're active — every request
+  silently rolls the session forward.
+- 30 days of inactivity → refresh expires → next request returns 401
+  → `/login` redirect.
+- Browser does nothing. No SPA interceptor, no 401-and-retry loop,
+  no JS visibility into any token.
+
+MCP clients (third-party) don't touch this path — they handle refresh
+themselves against `/oidc/token` per the OAuth spec.
+
+**Security note on broad `sw_refresh` scope.** Sending the refresh
+token on every request (rather than path-scoping to a dedicated
+refresh endpoint) is a deliberate trade. `HttpOnly` + `SameSite=Strict`
+
+- `Secure` block the realistic threats: XSS can't read either cookie,
+  cross-site nav can't send them. Path-scoping would add defense in
+  depth at the cost of forcing the SPA into a 401-retry dance, which
+  buys nothing against XSS (unreadable either way) and costs real UX.
 
 ### Login bridge (`src/oauth/interactions/login-bridge.ts`)
 
@@ -448,22 +515,23 @@ dance) and **third-party** (DCR-registered MCP clients, full code+PKCE).
      - WebAuthn verify (unchanged)
      - mintFirstPartyToken({ accountId }) → { access, refresh }
      - setCookie("sw_session", access, HttpOnly; SameSite=Strict; Secure)
-     - setCookie("sw_refresh", refresh, HttpOnly; scoped to /api/auth/refresh)
+     - setCookie("sw_refresh", refresh, HttpOnly; path=/)
      → 200 OK
 
 2. Browser → GET /api/endpoints    Cookie: sw_session=<opaque>
-   PrincipalResolver → extractBearer (from cookie)
+   PrincipalResolver → extractOAuthBearer (from cookie)
                     → oauthTokenVerifier.verify(<opaque>)
                     → Principal{ accountId, scopes:["mcp","agent"],
                                  source:"oauth", clientId:"ui-app" }
    Route handler sees req.principal — same shape as an MCP request.
 
-3. Near access-token expiry, Browser → POST /api/auth/refresh
-   Server:
-     - Read sw_refresh cookie
-     - panva rotates refresh → new access + new refresh
-     - Set both cookies again
-     → 204 No Content, browser retries its in-flight request
+3. Some hours later: Browser → GET /api/whatever   (access token expired)
+   preHandler:
+     - sw_session expired → Principal null
+     - read sw_refresh cookie → panva.refresh() → new pair
+     - setCookie(sw_session, new access), setCookie(sw_refresh, new refresh)
+     - verify new access → Principal
+   Request continues normally. Browser was never aware.
 
 4. Browser logout → POST /api/auth/logout
    Server:
@@ -695,10 +763,11 @@ agent-client/
   mode. 10/min is plenty for legitimate clients.
 - **Token storage** — server-side, opaque tokens are hashed at rest in
   the adapter (panva does this by default). We never log bearer values.
-- **Cookie flags** — `sw_session` and `sw_refresh` are `HttpOnly`,
-  `SameSite=Strict`, `Secure` (on HTTPS). `sw_refresh` is
-  path-scoped to `/api/auth/refresh` so it is never sent on normal
-  requests. No bearer value is ever readable from JavaScript.
+- **Cookie flags** — both `sw_session` and `sw_refresh` are
+  `HttpOnly`, `SameSite=Strict`, `Secure` (on HTTPS), `path=/`. No
+  bearer value is ever readable from JavaScript. Refresh rotation
+  happens server-side on any request (see "Rolling session refresh"),
+  so the refresh cookie rides along with every request by design.
 - **CSRF** — `SameSite=Strict` handles the classic cases. For
   WebSocket upgrades and non-idempotent API calls, an `Origin` header
   check is added as defense in depth.
