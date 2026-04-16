@@ -29,6 +29,19 @@ export interface MintFirstPartyTokenInput {
   scopes: string[];
 }
 
+/**
+ * Input to {@link FirstPartyTokenMinter.mintUnderGrant}. Used by the
+ * rolling-refresh path to issue a fresh token pair under the existing
+ * grant rather than creating a new one — otherwise every silent refresh
+ * would leak a Grant row.
+ */
+export interface MintUnderGrantInput {
+  accountId: string;
+  grantId: string;
+  audience: string;
+  scopes: string[];
+}
+
 export interface MintedFirstPartyTokens {
   accessToken: string;
   accessTokenExpiresAt: Date;
@@ -37,7 +50,10 @@ export interface MintedFirstPartyTokens {
 }
 
 export interface FirstPartyTokenMinter {
+  /** Fresh login: creates a new Grant and a token pair under it. */
   mint(input: MintFirstPartyTokenInput): Promise<MintedFirstPartyTokens>;
+  /** Refresh: reuses an existing Grant so rotation doesn't leak rows. */
+  mintUnderGrant(input: MintUnderGrantInput): Promise<MintedFirstPartyTokens>;
 }
 
 export interface FirstPartyTokenMinterOptions {
@@ -66,6 +82,75 @@ export function createFirstPartyTokenMinter(
   provider: Provider,
   options: FirstPartyTokenMinterOptions,
 ): FirstPartyTokenMinter {
+  async function mintPairUnderGrant(input: {
+    accountId: string;
+    grantId: string;
+    audience: string;
+    scopes: string[];
+  }): Promise<MintedFirstPartyTokens> {
+    const client = await provider.Client.find(FIRST_PARTY_CLIENT_ID);
+    if (!client) {
+      throw new Error(
+        `first-party: client "${FIRST_PARTY_CLIENT_ID}" is not registered — Provider config is out of sync`,
+      );
+    }
+
+    const scopeString = input.scopes.join(" ");
+
+    const accessToken = new provider.AccessToken({
+      client,
+      accountId: input.accountId,
+      grantId: input.grantId,
+      gty: FIRST_PARTY_GRANT_TYPE,
+      aud: input.audience,
+      scope: scopeString,
+      // Force opaque format for this deployment even though the token
+      // is minted outside the resourceIndicators code path that
+      // normally carries the format decision.
+      resourceServer: {
+        scope: scopeString,
+        audience: input.audience,
+        accessTokenTTL: options.accessTokenSeconds,
+        accessTokenFormat: "opaque",
+      },
+    });
+    const accessTokenValue = await accessToken.save();
+
+    const refreshToken = new provider.RefreshToken({
+      client,
+      accountId: input.accountId,
+      grantId: input.grantId,
+      gty: FIRST_PARTY_GRANT_TYPE,
+      scope: scopeString,
+      resource: input.audience,
+    });
+    const refreshTokenValue = await refreshToken.save();
+
+    // panva's `save()` writes `exp` into the stored payload but does
+    // not mutate the in-memory instance. To return an expiry that
+    // truly matches the server-side lifetime (otherwise cookie
+    // Max-Age drifts from the actual token and we get silent 401s on
+    // refresh), re-`find` each token and read `exp` off the
+    // reconstructed record. Two extra reads per mint — cheap, and
+    // guarantees the returned shape can't lie about storage.
+    const [savedAccess, savedRefresh] = await Promise.all([
+      provider.AccessToken.find(accessTokenValue),
+      provider.RefreshToken.find(refreshTokenValue),
+    ]);
+    if (!savedAccess?.exp || !savedRefresh?.exp) {
+      throw new Error(
+        "first-party: could not read exp from a just-saved token — unexpected provider state",
+      );
+    }
+
+    return {
+      accessToken: accessTokenValue,
+      accessTokenExpiresAt: new Date(savedAccess.exp * 1000),
+      refreshToken: refreshTokenValue,
+      refreshTokenExpiresAt: new Date(savedRefresh.exp * 1000),
+    };
+  }
+
   return {
     async mint({ accountId, audience, scopes }) {
       if (!accountId) {
@@ -82,83 +167,30 @@ export function createFirstPartyTokenMinter(
         throw new Error("first-party: at least one scope is required");
       }
 
-      const client = await provider.Client.find(FIRST_PARTY_CLIENT_ID);
-      if (!client) {
-        throw new Error(
-          `first-party: client "${FIRST_PARTY_CLIENT_ID}" is not registered — Provider config is out of sync`,
-        );
-      }
-
-      const scopeString = scopes.join(" ");
-
       // Persistent consent record. Panva's revokeByGrantId sweeps all
       // tokens under a grant, so logout can be implemented by destroying
-      // this single grant if we ever need server-side invalidation.
+      // this single grant. Rolling refresh reuses the same grant via
+      // `mintUnderGrant`, so a long-lived session is one Grant + many
+      // rotated (access, refresh) pairs.
       //
-      // TODO: every successful login creates a fresh Grant row. Until we
-      // wire a logout path (PR 5b or later) or a nightly reaper, the
-      // table grows one row per (login, account). At ShellWatch scale
-      // this takes years to become noticeable, but it is tracked and
-      // should be cleaned up alongside the logout endpoint.
+      // TODO: still no nightly reaper for Grants left behind after
+      // logout-less sessions. Tracked alongside the logout cleanup.
       const grant = new provider.Grant({
         clientId: FIRST_PARTY_CLIENT_ID,
         accountId,
       });
-      grant.addResourceScope(audience, scopeString);
+      grant.addResourceScope(audience, scopes.join(" "));
       const grantId = await grant.save();
 
-      const accessToken = new provider.AccessToken({
-        client,
-        accountId,
-        grantId,
-        gty: FIRST_PARTY_GRANT_TYPE,
-        aud: audience,
-        scope: scopeString,
-        // Force opaque format for this deployment even though the token
-        // is minted outside the resourceIndicators code path that
-        // normally carries the format decision.
-        resourceServer: {
-          scope: scopeString,
-          audience,
-          accessTokenTTL: options.accessTokenSeconds,
-          accessTokenFormat: "opaque",
-        },
-      });
-      const accessTokenValue = await accessToken.save();
+      return mintPairUnderGrant({ accountId, grantId, audience, scopes });
+    },
 
-      const refreshToken = new provider.RefreshToken({
-        client,
-        accountId,
-        grantId,
-        gty: FIRST_PARTY_GRANT_TYPE,
-        scope: scopeString,
-        resource: audience,
-      });
-      const refreshTokenValue = await refreshToken.save();
-
-      // panva's `save()` writes `exp` into the stored payload but does
-      // not mutate the in-memory instance. To return an expiry that
-      // truly matches the server-side lifetime (otherwise cookie
-      // Max-Age drifts from the actual token and we get silent 401s on
-      // refresh), re-`find` each token and read `exp` off the
-      // reconstructed record. Two extra reads per login — cheap, and
-      // guarantees the returned shape can't lie about storage.
-      const [savedAccess, savedRefresh] = await Promise.all([
-        provider.AccessToken.find(accessTokenValue),
-        provider.RefreshToken.find(refreshTokenValue),
-      ]);
-      if (!savedAccess?.exp || !savedRefresh?.exp) {
-        throw new Error(
-          "first-party: could not read exp from a just-saved token — unexpected provider state",
-        );
-      }
-
-      return {
-        accessToken: accessTokenValue,
-        accessTokenExpiresAt: new Date(savedAccess.exp * 1000),
-        refreshToken: refreshTokenValue,
-        refreshTokenExpiresAt: new Date(savedRefresh.exp * 1000),
-      };
+    async mintUnderGrant({ accountId, grantId, audience, scopes }) {
+      if (!accountId) throw new Error("first-party: accountId is required");
+      if (!grantId) throw new Error("first-party: grantId is required");
+      if (!audience) throw new Error("first-party: audience is required");
+      if (!scopes.length) throw new Error("first-party: at least one scope is required");
+      return mintPairUnderGrant({ accountId, grantId, audience, scopes });
     },
   };
 }

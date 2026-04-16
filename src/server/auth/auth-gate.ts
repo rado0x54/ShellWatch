@@ -104,7 +104,19 @@ export function registerAuthGate({
     // a handful of requests apart, not hundreds per second.
     if (!hasPasskeys()) return;
 
-    const principal = await resolveUiPrincipal(request, oauthVerifier);
+    let principal = await resolveUiPrincipal(request, oauthVerifier);
+    if (!principal) {
+      // Access token missing or expired. Try the rolling-refresh path
+      // before declaring the session dead: if `sw_refresh` is still
+      // valid and unconsumed, uiSession.tryRefresh rotates both
+      // cookies and hands us back the new access token, which we
+      // re-verify through the same verifier.
+      const refreshed = await uiSession.tryRefresh(request, reply);
+      if (refreshed) {
+        principal = await oauthVerifier.verify(refreshed.accessToken);
+      }
+    }
+
     if (principal) {
       request.principal = principal;
       if (principal.accountId) {
