@@ -22,6 +22,7 @@ import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
+import { registerOAuth } from "../oauth/index.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
@@ -112,6 +113,27 @@ export async function buildApp(params: BuildAppParams) {
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
   if (apiKeyRepo) {
     registerApiKeyAuth(app, apiKeyRepo, "/mcp", accountRepo);
+  }
+
+  // OAuth provider (panva) mounted at /oidc/*. Gated on `config.oauth.enabled`
+  // so existing deployments see no behaviour change. Requires a DB — disabled
+  // by default until explicitly enabled in config.yaml.
+  if (db && config.oauth.enabled) {
+    if (!config.security.cookieSecret) {
+      throw new Error(
+        "oauth.enabled=true requires security.cookieSecret to be set in config. " +
+          "OAuth signing keys are encrypted at rest with a key derived from " +
+          "cookieSecret; without a stable persisted secret, stored keys become " +
+          "undecryptable on the next server restart.",
+      );
+    }
+    await registerOAuth({
+      app,
+      db,
+      config: config.oauth,
+      baseUrl: config.server.externalUrl,
+      sessionSecret: cookieSecret,
+    });
   }
 
   app.get("/health", async () => ({ status: "ok" }));

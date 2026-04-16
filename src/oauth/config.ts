@@ -20,10 +20,15 @@ export const OAuthConfigSchema = z
     /**
      * DCR policy:
      *  - "open": anonymous POST to /oidc/reg. Best UX, matches MCP default.
-     *  - "admin-only": requires a valid sw_session cookie on /oidc/reg.
      *  - "disabled": no DCR; clients must be pre-registered.
+     *
+     * An `"admin-only"` mode that gates /oidc/reg on a valid `sw_session`
+     * cookie is planned but not yet implemented — it requires the
+     * cookie-session verifier landed by a later PR. The enum is
+     * deliberately narrow here so an operator setting `admin-only` gets a
+     * parse error instead of silent `open` behaviour.
      */
-    dynamicClientRegistration: z.enum(["open", "admin-only", "disabled"]).default("open"),
+    dynamicClientRegistration: z.enum(["open", "disabled"]).default("open"),
 
     /** Lifetimes in seconds. */
     accessTokenTtlSeconds: z.number().int().positive().default(3600),

@@ -11,6 +11,10 @@ export { panvaModelTables, type PanvaModelName } from "./adapter/schema.js";
 export { DrizzleOidcAdapter, createDrizzleAdapterFactory } from "./adapter/drizzle-adapter.js";
 export {
   createSigningKeyService,
+  deriveEncryptionKey,
   type SigningKeyService,
   type ActiveSigningKey,
 } from "./signing-keys.js";
+export { createOAuthProvider, FIRST_PARTY_CLIENT_ID } from "./provider.js";
+export { mountOAuthProvider } from "./mount.js";
+export { registerOAuth, type RegisterOAuthParams, type RegisterOAuthResult } from "./register.js";

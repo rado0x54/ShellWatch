@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OAuthConfigSchema, defaultOAuthConfig } from "../oauth/config.js";
 import { parseEndpointAddress } from "../utils/endpoint-address.js";
 
 export const SeedEndpointSchema = z.object({
@@ -159,6 +160,7 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  oauth: OAuthConfigSchema.default(defaultOAuthConfig),
   vapid: VapidSchema.optional(),
 });
 
