@@ -1,10 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type Provider from "oidc-provider";
 import type { ShellWatchDB } from "../db/connection.js";
+import type { Config } from "../config/index.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { OAuthConfig } from "./config.js";
 import { createFirstPartyTokenMinter, type FirstPartyTokenMinter } from "./first-party.js";
+import { registerInteractionRoutes } from "./interactions/routes.js";
 import { mountOAuthProvider } from "./mount.js";
 import { createOAuthProvider } from "./provider.js";
+import { registerDcrRateLimit } from "./rate-limit.js";
 import {
   createSigningKeyService,
   deriveEncryptionKey,
@@ -28,6 +32,15 @@ export interface RegisterOAuthParams {
    * pre-derived key) keeps the derivation pinned to a single place.
    */
   sessionSecret: string;
+  /**
+   * Passed through to the interaction routes so they can reuse the
+   * Web UI's passkey infrastructure (rpId, trustedOrigins, account
+   * lookup). Kept as a dep rather than re-reading from `config` to
+   * keep this module's interface narrow.
+   */
+  accountRepo: AccountRepository;
+  /** Full security config — used for rpId + trusted origins. */
+  security: Config["security"];
 }
 
 const OAUTH_PATH_PREFIX = "/oidc";
@@ -87,7 +100,27 @@ export async function registerOAuth(params: RegisterOAuthParams): Promise<Regist
     signingKeyService,
   });
 
+  // DCR rate limit must be attached BEFORE panva's mount hook. Fastify
+  // runs `onRequest` hooks in registration order; panva's hook hijacks
+  // and writes the response synchronously, so any rate-limit hook
+  // registered after it arrives too late to short-circuit. When DCR is
+  // disabled this whole block is skipped.
+  if (params.config.dynamicClientRegistration === "open") {
+    registerDcrRateLimit(params.app, {
+      perMinute: params.config.registrationRateLimitPerMinute,
+    });
+  }
+
   mountOAuthProvider(params.app, provider, { prefix: OAUTH_PATH_PREFIX });
+
+  registerInteractionRoutes({
+    app: params.app,
+    provider,
+    db: params.db,
+    accountRepo: params.accountRepo,
+    rpId: params.security.rpId,
+    trustedOrigins: params.security.trustedWebauthnOrigins,
+  });
 
   params.app.log.info({ issuer, prefix: OAUTH_PATH_PREFIX }, "OAuth provider mounted");
 

@@ -66,7 +66,14 @@ export class DrizzleOidcAdapter implements Adapter {
 
   async upsert(id: string, payload: AdapterPayload, expiresIn: number): Promise<void> {
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + expiresIn * 1000).toISOString();
+    // Some models never expire — panva hands us `undefined` /
+    // non-finite `expiresIn` for those (e.g. `Client`). Storing NULL
+    // keeps `expires_at` a cleanup-job-friendly signal for rows that
+    // *do* have a TTL and leaves non-expiring rows alone.
+    const expiresAt =
+      typeof expiresIn === "number" && Number.isFinite(expiresIn)
+        ? new Date(now.getTime() + expiresIn * 1000).toISOString()
+        : null;
 
     // Panva's AdapterPayload is typed loosely; these fields may or may not
     // be present depending on model and state.
