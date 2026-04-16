@@ -24,30 +24,6 @@ CREATE TABLE `oauth_authorization_codes` (
 --> statement-breakpoint
 CREATE INDEX `oauth_authorization_codes_grant_id_idx` ON `oauth_authorization_codes` (`grant_id`);--> statement-breakpoint
 CREATE INDEX `oauth_authorization_codes_expires_at_idx` ON `oauth_authorization_codes` (`expires_at`);--> statement-breakpoint
-CREATE TABLE `oauth_backchannel_authentication_requests` (
-	`id` text PRIMARY KEY NOT NULL,
-	`payload` text NOT NULL,
-	`grant_id` text,
-	`user_code` text,
-	`uid` text,
-	`consumed_at` text,
-	`expires_at` text,
-	`created_at` text NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `oauth_backchannel_authentication_requests_expires_at_idx` ON `oauth_backchannel_authentication_requests` (`expires_at`);--> statement-breakpoint
-CREATE TABLE `oauth_client_credentials` (
-	`id` text PRIMARY KEY NOT NULL,
-	`payload` text NOT NULL,
-	`grant_id` text,
-	`user_code` text,
-	`uid` text,
-	`consumed_at` text,
-	`expires_at` text,
-	`created_at` text NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `oauth_client_credentials_expires_at_idx` ON `oauth_client_credentials` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `oauth_clients` (
 	`id` text PRIMARY KEY NOT NULL,
 	`payload` text NOT NULL,
@@ -59,20 +35,6 @@ CREATE TABLE `oauth_clients` (
 	`created_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `oauth_device_codes` (
-	`id` text PRIMARY KEY NOT NULL,
-	`payload` text NOT NULL,
-	`grant_id` text,
-	`user_code` text,
-	`uid` text,
-	`consumed_at` text,
-	`expires_at` text,
-	`created_at` text NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `oauth_device_codes_user_code_idx` ON `oauth_device_codes` (`user_code`);--> statement-breakpoint
-CREATE INDEX `oauth_device_codes_grant_id_idx` ON `oauth_device_codes` (`grant_id`);--> statement-breakpoint
-CREATE INDEX `oauth_device_codes_expires_at_idx` ON `oauth_device_codes` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `oauth_grants` (
 	`id` text PRIMARY KEY NOT NULL,
 	`payload` text NOT NULL,
@@ -84,18 +46,6 @@ CREATE TABLE `oauth_grants` (
 	`created_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `oauth_initial_access_tokens` (
-	`id` text PRIMARY KEY NOT NULL,
-	`payload` text NOT NULL,
-	`grant_id` text,
-	`user_code` text,
-	`uid` text,
-	`consumed_at` text,
-	`expires_at` text,
-	`created_at` text NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `oauth_initial_access_tokens_expires_at_idx` ON `oauth_initial_access_tokens` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `oauth_interactions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`payload` text NOT NULL,
@@ -108,18 +58,6 @@ CREATE TABLE `oauth_interactions` (
 );
 --> statement-breakpoint
 CREATE INDEX `oauth_interactions_expires_at_idx` ON `oauth_interactions` (`expires_at`);--> statement-breakpoint
-CREATE TABLE `oauth_pushed_authorization_requests` (
-	`id` text PRIMARY KEY NOT NULL,
-	`payload` text NOT NULL,
-	`grant_id` text,
-	`user_code` text,
-	`uid` text,
-	`consumed_at` text,
-	`expires_at` text,
-	`created_at` text NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `oauth_pushed_authorization_requests_expires_at_idx` ON `oauth_pushed_authorization_requests` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `oauth_refresh_tokens` (
 	`id` text PRIMARY KEY NOT NULL,
 	`payload` text NOT NULL,

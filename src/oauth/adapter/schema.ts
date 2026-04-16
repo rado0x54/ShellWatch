@@ -44,28 +44,10 @@ export const oauthRefreshTokens = sqliteTable("oauth_refresh_tokens", panvaModel
   index("oauth_refresh_tokens_expires_at_idx").on(t.expiresAt),
 ]);
 
-export const oauthDeviceCodes = sqliteTable("oauth_device_codes", panvaModelCols, (t) => [
-  index("oauth_device_codes_user_code_idx").on(t.userCode),
-  index("oauth_device_codes_grant_id_idx").on(t.grantId),
-  index("oauth_device_codes_expires_at_idx").on(t.expiresAt),
-]);
-
-export const oauthClientCredentials = sqliteTable(
-  "oauth_client_credentials",
-  panvaModelCols,
-  (t) => [index("oauth_client_credentials_expires_at_idx").on(t.expiresAt)],
-);
-
 // Dynamic (DCR-registered) clients. `expires_at` is always NULL on this
 // model — registered clients live until explicitly deleted — so no TTL
 // index is declared.
 export const oauthClients = sqliteTable("oauth_clients", panvaModelCols);
-
-export const oauthInitialAccessTokens = sqliteTable(
-  "oauth_initial_access_tokens",
-  panvaModelCols,
-  (t) => [index("oauth_initial_access_tokens_expires_at_idx").on(t.expiresAt)],
-);
 
 export const oauthRegistrationAccessTokens = sqliteTable(
   "oauth_registration_access_tokens",
@@ -80,18 +62,6 @@ export const oauthInteractions = sqliteTable("oauth_interactions", panvaModelCol
 export const oauthReplayDetection = sqliteTable("oauth_replay_detection", panvaModelCols, (t) => [
   index("oauth_replay_detection_expires_at_idx").on(t.expiresAt),
 ]);
-
-export const oauthPushedAuthorizationRequests = sqliteTable(
-  "oauth_pushed_authorization_requests",
-  panvaModelCols,
-  (t) => [index("oauth_pushed_authorization_requests_expires_at_idx").on(t.expiresAt)],
-);
-
-export const oauthBackchannelAuthenticationRequests = sqliteTable(
-  "oauth_backchannel_authentication_requests",
-  panvaModelCols,
-  (t) => [index("oauth_backchannel_authentication_requests_expires_at_idx").on(t.expiresAt)],
-);
 
 // Grants are persistent consent records — they never expire on their own,
 // and `grant_id` is meaningless for the Grant model itself (the row *is*
@@ -113,20 +83,24 @@ export const oauthSigningKeys = sqliteTable("oauth_signing_keys", {
 
 // ----- Name → table lookup used by the adapter factory -----
 
+/**
+ * Only the panva models our flows actually exercise are declared as
+ * tables. Panva's complete model list is 14 items; we use 9 of them.
+ * The missing five (DeviceCode, ClientCredentials, InitialAccessToken,
+ * PushedAuthorizationRequest, BackchannelAuthenticationRequest)
+ * correspond to OAuth features we have explicitly disabled in the
+ * Provider config — if any of them are ever enabled, a new migration
+ * adds the table at that point rather than carrying empty tables now.
+ */
 export const panvaModelTables = {
   Session: oauthSessions,
   AccessToken: oauthAccessTokens,
   AuthorizationCode: oauthAuthorizationCodes,
   RefreshToken: oauthRefreshTokens,
-  DeviceCode: oauthDeviceCodes,
-  ClientCredentials: oauthClientCredentials,
   Client: oauthClients,
-  InitialAccessToken: oauthInitialAccessTokens,
   RegistrationAccessToken: oauthRegistrationAccessTokens,
   Interaction: oauthInteractions,
   ReplayDetection: oauthReplayDetection,
-  PushedAuthorizationRequest: oauthPushedAuthorizationRequests,
-  BackchannelAuthenticationRequest: oauthBackchannelAuthenticationRequests,
   Grant: oauthGrants,
 } as const;
 

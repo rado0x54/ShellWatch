@@ -197,26 +197,34 @@ describe("createDrizzleAdapterFactory", () => {
     expect(() => factory("NotAModel")).toThrow(/unknown panva model/);
   });
 
-  it("supports all 14 panva models", () => {
+  it("supports the 9 panva models exercised by our flows", () => {
+    // The unused five (DeviceCode, ClientCredentials,
+    // InitialAccessToken, PushedAuthorizationRequest,
+    // BackchannelAuthenticationRequest) map to OAuth features we
+    // have disabled in the Provider config — enabling any of them in
+    // the future means adding the table at that point rather than
+    // carrying empty tables now.
     const factory = createDrizzleAdapterFactory(setup.db as never);
-    const allModels = [
+    const enabledModels = [
       "Session",
       "AccessToken",
       "AuthorizationCode",
       "RefreshToken",
-      "DeviceCode",
-      "ClientCredentials",
       "Client",
-      "InitialAccessToken",
       "RegistrationAccessToken",
       "Interaction",
       "ReplayDetection",
-      "PushedAuthorizationRequest",
-      "BackchannelAuthenticationRequest",
       "Grant",
     ];
-    for (const m of allModels) {
+    for (const m of enabledModels) {
       expect(() => factory(m)).not.toThrow();
     }
+
+    // Sanity check: a model that *isn't* wired produces the generic
+    // "unknown panva model" error — so if the Provider config ever
+    // drifts and requests one, the failure is loud rather than
+    // silently succeeding against an empty table.
+    expect(() => factory("DeviceCode")).toThrow(/unknown panva model/);
+    expect(() => factory("PushedAuthorizationRequest")).toThrow(/unknown panva model/);
   });
 });
