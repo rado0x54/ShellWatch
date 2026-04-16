@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import ssh2 from "ssh2";
 
@@ -10,6 +9,7 @@ import { ForwardingAgent } from "../../transport/forwarding-agent.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
 import { SshTransportFactory } from "../../transport/ssh-transport-factory.js";
+import { sha256Fingerprint } from "../../webauthn/fingerprint.js";
 import { buildFileKeyEntry, CompositeSshAgent } from "../../webauthn/index.js";
 import {
   createTestLog,
@@ -40,7 +40,7 @@ describe("SSH Agent Forwarding", () => {
     const parsed = utils.parseKey(sshServer.clientPrivateKey);
     if (!parsed || parsed instanceof Error) throw new Error("Failed to parse test SSH key");
     const pubKeyBuf = parsed.getPublicSSH();
-    const fingerprint = `SHA256:${createHash("sha256").update(pubKeyBuf).digest("base64url")}`;
+    const fingerprint = sha256Fingerprint(pubKeyBuf);
     const publicKeyOpenSsh = `${parsed.type} ${pubKeyBuf.toString("base64")}`;
 
     const scannedKey: ScannedKey = {

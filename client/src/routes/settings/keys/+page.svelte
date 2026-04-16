@@ -124,7 +124,8 @@
     if (e.key === "Escape") cancelRename();
   }
 
-  function shortFingerprint(fp: string): string {
+  function shortFingerprint(fp: string | null): string {
+    if (!fp) return "—";
     return fp.length > 20 ? `${fp.slice(0, 20)}...` : fp;
   }
 

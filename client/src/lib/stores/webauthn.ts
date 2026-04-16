@@ -6,7 +6,7 @@ export interface WebAuthnCredential {
   credentialId: string;
   label: string;
   algorithm: string;
-  fingerprint: string;
+  fingerprint: string | null;
   authorizedKeysEntry: string | null;
   revoked: boolean;
   createdAt: string;

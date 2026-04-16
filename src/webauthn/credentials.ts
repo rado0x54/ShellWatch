@@ -2,8 +2,9 @@ import { and, eq, ne } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { detectAlgorithm, computeFingerprint } from "./credential-utils.js";
-import { getSshdConfigLine } from "./ssh-key-format.js";
+import { detectAlgorithm } from "./credential-utils.js";
+import { sha256Fingerprint } from "./fingerprint.js";
+import { buildPublicKeyBlob, getSshdConfigLine, toSkPublicKeyBlob } from "./ssh-key-format.js";
 
 export interface CredentialRoutesParams {
   app: FastifyInstance;
@@ -40,7 +41,11 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         credentialId: c.credentialId,
         label: c.label,
         algorithm: detectAlgorithm(c.publicKey),
-        fingerprint: computeFingerprint(c.publicKey),
+        fingerprint: c.publicKeyOpenSsh
+          ? sha256Fingerprint(
+              toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: c.publicKeyOpenSsh })),
+            )
+          : null,
         authorizedKeysEntry: c.publicKeyOpenSsh ?? null,
         revoked: c.revoked,
         createdAt: c.createdAt,
