@@ -1,10 +1,16 @@
 /**
  * OAuth module — single entry point.
  *
- * See docs/oauth-mcp.md for the full design. This PR lands the dependency,
- * schema, and config skeleton only. Subsequent PRs wire in panva's Provider,
- * the Drizzle adapter, the verifier chain, interaction routes, and the
- * first-party token minter, all behind `oauth.enabled`.
+ * See docs/oauth-mcp.md for the full design. The module is built up across
+ * multiple PRs on feature/oauth; nothing here is wired into the running
+ * application yet. Each public export is consumed later by `registerOAuth`
+ * in a subsequent PR.
  */
 export { OAuthConfigSchema, defaultOAuthConfig, type OAuthConfig } from "./config.js";
 export { panvaModelTables, type PanvaModelName } from "./adapter/schema.js";
+export { DrizzleOidcAdapter, createDrizzleAdapterFactory } from "./adapter/drizzle-adapter.js";
+export {
+  createSigningKeyService,
+  type SigningKeyService,
+  type ActiveSigningKey,
+} from "./signing-keys.js";
