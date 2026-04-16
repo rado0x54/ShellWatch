@@ -18,3 +18,17 @@ export {
 export { createOAuthProvider, FIRST_PARTY_CLIENT_ID } from "./provider.js";
 export { mountOAuthProvider } from "./mount.js";
 export { registerOAuth, type RegisterOAuthParams, type RegisterOAuthResult } from "./register.js";
+export {
+  createFirstPartyTokenMinter,
+  FIRST_PARTY_GRANT_TYPE,
+  type FirstPartyTokenMinter,
+  type FirstPartyTokenMinterOptions,
+  type MintFirstPartyTokenInput,
+  type MintedFirstPartyTokens,
+} from "./first-party.js";
+export {
+  ACCESS_COOKIE_NAME,
+  REFRESH_COOKIE_NAME,
+  clearFirstPartyCookies,
+  setFirstPartyCookies,
+} from "./cookie.js";
