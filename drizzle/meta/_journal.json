@@ -29,6 +29,13 @@
       "when": 1776300000000,
       "tag": "0003_fingerprint_standard_base64",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1776347560680,
+      "tag": "0004_fancy_justin_hammer",
+      "breakpoints": true
     }
   ]
 }
