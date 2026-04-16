@@ -22,7 +22,7 @@ import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
-import { registerOAuth } from "../oauth/index.js";
+import { createUiSessionService, registerOAuth } from "../oauth/index.js";
 import { createOAuthTokenVerifier } from "../oauth/verifier.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { createApiKeyVerifier } from "./auth/api-key-verifier.js";
@@ -43,6 +43,17 @@ import { registerWebSocket } from "./ws-handler.js";
 export interface AppOptions {
   logger?: boolean;
   skipStaticFiles?: boolean;
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    /**
+     * In-process handle to the OAuth registration. `null` when the server
+     * runs without a database (headless / test harness mode) — every
+     * production deployment has it.
+     */
+    oauth: Awaited<ReturnType<typeof registerOAuth>> | null;
+  }
 }
 
 export interface BuildAppParams {
@@ -91,11 +102,21 @@ export async function buildApp(params: BuildAppParams) {
     trustProxy: config.server.trustProxy,
   });
 
-  // Cookie secret for session signing
-  const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");
-  if (!config.security.cookieSecret) {
-    app.log.warn("No cookieSecret in config — sessions will not survive server restarts");
+  // `cookieSecret` is required whenever the server has a database
+  // (which is also the condition under which OAuth is wired). The
+  // OAuth signing keys are encrypted at rest with a key derived from
+  // cookieSecret; a restart without the same secret makes stored keys
+  // undecryptable and the provider refuses to start. Fail fast at
+  // boot instead of silently regenerating a key per process.
+  if (db && !config.security.cookieSecret) {
+    throw new Error(
+      "security.cookieSecret is required when the server runs with a database. " +
+        "OAuth signing keys are encrypted at rest with a key derived from it; " +
+        "without a stable persisted secret, stored keys become undecryptable " +
+        "on the next server restart.",
+    );
   }
+  const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyRateLimit, { global: false });
@@ -104,40 +125,57 @@ export async function buildApp(params: BuildAppParams) {
   // Decorate request with accountId (set by auth gate / API key auth)
   app.decorateRequest("accountId", null);
 
-  // Auth gate: onboarding + login enforcement
-  registerAuthGate({
-    app,
-    secret: cookieSecret,
-    accountRepo,
-    checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
-  });
+  const normalizedExternalUrl = config.server.externalUrl.replace(/\/$/, "");
+  const uiResource = normalizedExternalUrl;
+  const mcpResource = `${normalizedExternalUrl}/mcp`;
 
-  // IP allowlist for /mcp (unchanged).
-  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
+  // OAuth provider (panva) mounted at /oidc/*. Must run before the auth
+  // gate — the gate's verifier needs the provider instance. OAuth is
+  // wired whenever we have a DB; the only mode in which OAuth is
+  // absent is a `db: null` test harness, which also skips the UI.
+  const oauthRegistration = db
+    ? await registerOAuth({
+        app,
+        db,
+        config: config.oauth,
+        baseUrl: config.server.externalUrl,
+        sessionSecret: cookieSecret,
+      })
+    : null;
 
-  // OAuth provider (panva) mounted at /oidc/*. Gated on `config.oauth.enabled`
-  // so existing deployments see no behaviour change. Requires a DB — disabled
-  // by default until explicitly enabled in config.yaml.
-  let oauthRegistration: Awaited<ReturnType<typeof registerOAuth>> = null;
-  if (db && config.oauth.enabled) {
-    if (!config.security.cookieSecret) {
-      throw new Error(
-        "oauth.enabled=true requires security.cookieSecret to be set in config. " +
-          "OAuth signing keys are encrypted at rest with a key derived from " +
-          "cookieSecret; without a stable persisted secret, stored keys become " +
-          "undecryptable on the next server restart.",
-      );
-    }
-    oauthRegistration = await registerOAuth({
+  // In-process handle to the OAuth registration. Used by tests, by
+  // PR 5c's rolling refresh, and by any later feature that needs the
+  // provider / minter without reconstructing them.
+  app.decorate("oauth", oauthRegistration);
+
+  // Web UI session owns login mint + logout cookie clearing + grant
+  // revocation. Handed to the auth-gate (for logout) and to webauthn
+  // (for login handler) so both reach through this one seam.
+  const uiSession = oauthRegistration
+    ? createUiSessionService({
+        provider: oauthRegistration.provider,
+        minter: oauthRegistration.minter,
+        audience: uiResource,
+        scopes: config.oauth.scopes,
+      })
+    : null;
+
+  // Auth gate: onboarding + login enforcement. Replaces the HMAC cookie
+  // path with OAuth token validation.
+  if (uiSession && oauthRegistration) {
+    registerAuthGate({
       app,
-      db,
-      config: config.oauth,
-      baseUrl: config.server.externalUrl,
-      sessionSecret: cookieSecret,
+      accountRepo,
+      oauthVerifier: createOAuthTokenVerifier(oauthRegistration.provider, {
+        expectedResource: () => uiResource,
+      }),
+      uiSession,
+      checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
     });
   }
 
-  const normalizedExternalUrl = config.server.externalUrl.replace(/\/$/, "");
+  // IP allowlist for /mcp (unchanged).
+  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
 
   // RFC 9728 Protected Resource Metadata. Only published when an AS is
   // actually available — emitting the document without an AS behind it
@@ -157,7 +195,6 @@ export async function buildApp(params: BuildAppParams) {
   // API-key users (Authorization: Bearer sw_… still works) plus new
   // support for X-API-Key and opaque OAuth tokens.
   if (apiKeyRepo) {
-    const mcpResource = `${normalizedExternalUrl}/mcp`;
     registerAuthChain({
       app,
       protectedPath: "/mcp",
@@ -231,7 +268,9 @@ export async function buildApp(params: BuildAppParams) {
       accountRepo,
       rpId: config.security.rpId,
       trustedOrigins: config.security.trustedWebauthnOrigins,
-      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
+      onLoginSuccess: uiSession
+        ? (request, reply, input) => uiSession.onLoginSuccess(request, reply, input)
+        : undefined,
       selfRegistrationEnabled: config.security.selfRegistrationEnabled,
       rateLimitConfig: config.security.rateLimit,
     });

@@ -10,11 +10,16 @@ import { z } from "zod";
  */
 export const OAuthConfigSchema = z
   .object({
-    /** Master toggle. When false, the rest of this config is ignored and
-     *  no routes are mounted. */
-    enabled: z.boolean().default(false),
-
-    /** Scopes advertised in metadata and accepted on /oidc/auth. */
+    /**
+     * Scopes advertised in metadata and accepted on /oidc/auth.
+     *
+     * OAuth is always mounted when the server has a database — it
+     * underpins the Web UI session cookie, `/mcp` auth, and the
+     * third-party DCR flow. There is deliberately no `enabled` flag:
+     * the only way to run ShellWatch without OAuth is to run it
+     * without a database, which means no UI and no persisted state
+     * (test / headless-MCP harnesses only).
+     */
     scopes: z.array(z.string().min(1)).default(["mcp", "agent"]),
 
     /**

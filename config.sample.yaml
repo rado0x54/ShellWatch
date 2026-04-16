@@ -101,17 +101,20 @@ security:
 # agentSocket:
 #   proxyEnabled: true                                  # Enable /agent-proxy WebSocket endpoint (default: false)
 
-# OAuth — MCP-conformant authorization for /mcp (and, later, /agent-proxy
-# and the Web UI). Off by default; existing API keys continue to work
-# unchanged. See docs/oauth-mcp.md for the design.
+# OAuth — MCP-conformant authorization for /mcp and the Web UI session.
+# ALWAYS ON when the server runs with a database (which is the only
+# supported production mode). The Web UI's session cookie carries an
+# opaque OAuth token minted on passkey login; existing API keys still
+# work unchanged. See docs/oauth-mcp.md for the design.
 #
-# Enabling OAuth requires `security.cookieSecret` above to be set — a
-# stable secret is required to keep OAuth signing keys decryptable across
-# restarts. The server refuses to start with a clear error otherwise.
+# REQUIRED: `security.cookieSecret` above. A stable secret is needed to
+# keep OAuth signing keys decryptable across restarts. The server
+# refuses to start with a clear error if this is missing.
+#
+# There is no `oauth.enabled` knob — the UI depends on it and a
+# partial-OAuth mode has no coherent shape.
 #
 # oauth:
-#   enabled: true
-#
 #   # Scopes surfaced in metadata and accepted on /oidc/auth
 #   scopes: ["mcp", "agent"]
 #

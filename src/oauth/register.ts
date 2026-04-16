@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type Provider from "oidc-provider";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { OAuthConfig } from "./config.js";
+import { createFirstPartyTokenMinter, type FirstPartyTokenMinter } from "./first-party.js";
 import { mountOAuthProvider } from "./mount.js";
 import { createOAuthProvider } from "./provider.js";
 import {
@@ -45,24 +46,25 @@ export interface RegisterOAuthResult {
    * reconstruct the service.
    */
   signingKeyService: SigningKeyService;
+  /**
+   * First-party token minter bound to this provider. The Web UI's
+   * passkey-login handler delegates here to turn a successful WebAuthn
+   * verify into an opaque access + refresh token pair.
+   */
+  minter: FirstPartyTokenMinter;
 }
 
 /**
  * Single entry point for wiring OAuth into a Fastify app.
  *
- * Idempotency: calling this once at startup is sufficient. If `config.enabled`
- * is false, nothing is mounted and the function returns `null`.
+ * Idempotency: calling this once at startup is sufficient.
  *
- * Ordering: this must be called *before* any route handlers that rely on the
- * OAuth verifier chain (PR 4 adds that). It is safe to call before routes
- * are registered because the `onRequest` hook used for mounting runs for
+ * Ordering: this must be called *before* any route handlers that rely on
+ * the OAuth verifier chain. It is safe to call before routes are
+ * registered because the `onRequest` hook used for mounting runs for
  * every request regardless of route-registration order.
  */
-export async function registerOAuth(
-  params: RegisterOAuthParams,
-): Promise<RegisterOAuthResult | null> {
-  if (!params.config.enabled) return null;
-
+export async function registerOAuth(params: RegisterOAuthParams): Promise<RegisterOAuthResult> {
   // Normalise a possible trailing slash on the external URL so the issuer
   // is e.g. "https://host/oidc" rather than "https://host//oidc".
   const normalizedBaseUrl = params.baseUrl.replace(/\/$/, "");
@@ -89,5 +91,9 @@ export async function registerOAuth(
 
   params.app.log.info({ issuer, prefix: OAUTH_PATH_PREFIX }, "OAuth provider mounted");
 
-  return { provider, signingKeyService };
+  const minter = createFirstPartyTokenMinter(provider, {
+    accessTokenSeconds: params.config.accessTokenTtlSeconds,
+  });
+
+  return { provider, signingKeyService, minter };
 }

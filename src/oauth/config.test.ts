@@ -4,7 +4,6 @@ import { OAuthConfigSchema, defaultOAuthConfig } from "./config.js";
 describe("OAuthConfigSchema", () => {
   it("applies defaults for an empty object", () => {
     const parsed = OAuthConfigSchema.parse({});
-    expect(parsed.enabled).toBe(false);
     expect(parsed.scopes).toEqual(["mcp", "agent"]);
     expect(parsed.dynamicClientRegistration).toBe("open");
     expect(parsed.accessTokenTtlSeconds).toBe(3600);
@@ -22,12 +21,10 @@ describe("OAuthConfigSchema", () => {
 
   it("accepts user overrides", () => {
     const parsed = OAuthConfigSchema.parse({
-      enabled: true,
       scopes: ["mcp"],
       dynamicClientRegistration: "disabled",
       accessTokenTtlSeconds: 900,
     });
-    expect(parsed.enabled).toBe(true);
     expect(parsed.scopes).toEqual(["mcp"]);
     expect(parsed.dynamicClientRegistration).toBe("disabled");
     expect(parsed.accessTokenTtlSeconds).toBe(900);

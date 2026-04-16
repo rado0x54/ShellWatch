@@ -8,7 +8,7 @@ import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
-import type { RateLimitConfig, SessionConfig } from "./routes.js";
+import type { OnLoginSuccess, RateLimitConfig } from "./routes.js";
 
 export interface LoginRoutesParams {
   app: FastifyInstance;
@@ -17,12 +17,12 @@ export interface LoginRoutesParams {
   rpId: string;
   trustedOrigins: string[];
 
-  sessionConfig?: SessionConfig;
+  onLoginSuccess?: OnLoginSuccess;
   rateLimitConfig: RateLimitConfig;
 }
 
 export function registerLoginRoutes(params: LoginRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, sessionConfig, rateLimitConfig } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, onLoginSuccess, rateLimitConfig } = params;
 
   // --- Login (Assertion): Generate Options ---
   app.post(
@@ -69,9 +69,9 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
       },
     },
     async (request, reply) => {
-      if (!sessionConfig) {
+      if (!onLoginSuccess) {
         reply.status(500);
-        return { error: "Session config not available" };
+        return { error: "Login handler not configured" };
       }
 
       const { challengeId, credential } = request.body;
@@ -147,18 +147,10 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         // Update account lastUsedAt
         accountRepo.touchLastUsed(storedCred.accountId);
 
-        // Set session cookie with account ID
-        const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-        const cookieValue = createSessionCookie(
-          sessionConfig.secret,
-          sessionConfig.ttlSeconds,
-          storedCred.accountId,
-        );
-        const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
-        reply.header(
-          "Set-Cookie",
-          `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${sessionConfig.ttlSeconds}`,
-        );
+        // Session minting + cookie wiring happens outside passkey code:
+        // the OAuth module's UiSessionService owns the token shape and
+        // cookie attributes. Keeps this file OAuth-agnostic.
+        await onLoginSuccess(request, reply, { accountId: storedCred.accountId });
 
         return { verified: true };
       } catch (err) {

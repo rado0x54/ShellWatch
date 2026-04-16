@@ -8,7 +8,7 @@ import { accounts, webauthnCredentials } from "../db/schema.js";
 import { consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
-import type { RateLimitConfig, SessionConfig } from "./routes.js";
+import type { OnLoginSuccess, RateLimitConfig } from "./routes.js";
 
 export interface SelfRegisterRoutesParams {
   app: FastifyInstance;
@@ -17,7 +17,7 @@ export interface SelfRegisterRoutesParams {
   rpId: string;
   trustedOrigins: string[];
 
-  sessionConfig?: SessionConfig;
+  onLoginSuccess?: OnLoginSuccess;
   selfRegistrationEnabled: boolean;
   rateLimitConfig: RateLimitConfig;
 }
@@ -29,7 +29,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
     accountRepo,
     rpId,
     trustedOrigins,
-    sessionConfig,
+    onLoginSuccess,
     selfRegistrationEnabled,
     rateLimitConfig,
   } = params;
@@ -160,19 +160,9 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           return { error: "Self-registration is disabled" };
         }
 
-        // Auto-login: set session cookie
-        if (sessionConfig) {
-          const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-          const cookieValue = createSessionCookie(
-            sessionConfig.secret,
-            sessionConfig.ttlSeconds,
-            account.id,
-          );
-          const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
-          reply.header(
-            "Set-Cookie",
-            `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${sessionConfig.ttlSeconds}`,
-          );
+        // Auto-login: delegate to the OAuth-backed session handler.
+        if (onLoginSuccess) {
+          await onLoginSuccess(request, reply, { accountId: account.id });
         }
 
         return {
