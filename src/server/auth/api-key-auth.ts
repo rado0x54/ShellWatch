@@ -1,39 +1,11 @@
 import { createHash } from "node:crypto";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { AccountRepository, ApiKeyRepository } from "../../db/index.js";
 
+/**
+ * SHA-256 hash of a raw API key, matching what the DB stores. Kept here
+ * so callers that only need to compute the hash (seeding, the
+ * `/api/keys` issuance route, tests) don't need to depend on the full
+ * verifier wiring in `./api-key-verifier.ts`.
+ */
 export function hashApiKey(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
-}
-
-export function registerApiKeyAuth(
-  app: FastifyInstance,
-  apiKeyRepo: ApiKeyRepository,
-  mcpPath: string,
-  accountRepo: AccountRepository,
-): void {
-  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.url.startsWith(mcpPath)) return;
-
-    const auth = request.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      reply.status(401).send({ error: "API key required. Use Authorization: Bearer sw_..." });
-      return;
-    }
-
-    const token = auth.slice(7);
-    const hash = hashApiKey(token);
-    const key = await apiKeyRepo.findByHash(hash);
-
-    if (!key) {
-      reply.status(401).send({ error: "Invalid API key" });
-      return;
-    }
-
-    // Decorate request with account ID
-    if (key.accountId) {
-      request.accountId = key.accountId;
-      accountRepo.touchLastUsed(key.accountId);
-    }
-  });
 }

@@ -23,10 +23,13 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerOAuth } from "../oauth/index.js";
+import { createOAuthTokenVerifier } from "../oauth/verifier.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
-import { registerApiKeyAuth } from "./auth/api-key-auth.js";
+import { createApiKeyVerifier } from "./auth/api-key-verifier.js";
+import { registerAuthChain } from "./auth/register-auth-chain.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
+import { registerProtectedResourceMetadata } from "./routes/well-known.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
 import { registerApiKeyRoutes } from "./routes/api-keys.js";
@@ -109,15 +112,13 @@ export async function buildApp(params: BuildAppParams) {
     checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
   });
 
-  // IP allowlist + API key auth for MCP
+  // IP allowlist for /mcp (unchanged).
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
-  if (apiKeyRepo) {
-    registerApiKeyAuth(app, apiKeyRepo, "/mcp", accountRepo);
-  }
 
   // OAuth provider (panva) mounted at /oidc/*. Gated on `config.oauth.enabled`
   // so existing deployments see no behaviour change. Requires a DB — disabled
   // by default until explicitly enabled in config.yaml.
+  let oauthRegistration: Awaited<ReturnType<typeof registerOAuth>> = null;
   if (db && config.oauth.enabled) {
     if (!config.security.cookieSecret) {
       throw new Error(
@@ -127,12 +128,48 @@ export async function buildApp(params: BuildAppParams) {
           "undecryptable on the next server restart.",
       );
     }
-    await registerOAuth({
+    oauthRegistration = await registerOAuth({
       app,
       db,
       config: config.oauth,
       baseUrl: config.server.externalUrl,
       sessionSecret: cookieSecret,
+    });
+  }
+
+  const normalizedExternalUrl = config.server.externalUrl.replace(/\/$/, "");
+
+  // RFC 9728 Protected Resource Metadata. Only published when an AS is
+  // actually available — emitting the document without an AS behind it
+  // would be misleading.
+  if (oauthRegistration) {
+    registerProtectedResourceMetadata({
+      app,
+      baseUrl: normalizedExternalUrl,
+      scopes: config.oauth.scopes,
+      resources: ["/mcp"],
+    });
+  }
+
+  // Unified auth chain on /mcp. API-key verifier always in play; OAuth
+  // verifier folded in only when the provider is mounted. Replaces the
+  // previous registerApiKeyAuth hook with the same external contract for
+  // API-key users (Authorization: Bearer sw_… still works) plus new
+  // support for X-API-Key and opaque OAuth tokens.
+  if (apiKeyRepo) {
+    const mcpResource = `${normalizedExternalUrl}/mcp`;
+    registerAuthChain({
+      app,
+      protectedPath: "/mcp",
+      apiKeyVerifier: createApiKeyVerifier(apiKeyRepo, accountRepo),
+      oauthVerifier: oauthRegistration
+        ? createOAuthTokenVerifier(oauthRegistration.provider, {
+            expectedResource: () => mcpResource,
+          })
+        : undefined,
+      resourceMetadataUrl: oauthRegistration
+        ? `${normalizedExternalUrl}/.well-known/oauth-protected-resource`
+        : undefined,
     });
   }
 

@@ -100,3 +100,44 @@ security:
 # Requires the shellwatch-agent thin client on the user's workstation.
 # agentSocket:
 #   proxyEnabled: true                                  # Enable /agent-proxy WebSocket endpoint (default: false)
+
+# OAuth — MCP-conformant authorization for /mcp (and, later, /agent-proxy
+# and the Web UI). Off by default; existing API keys continue to work
+# unchanged. See docs/oauth-mcp.md for the design.
+#
+# Enabling OAuth requires `security.cookieSecret` above to be set — a
+# stable secret is required to keep OAuth signing keys decryptable across
+# restarts. The server refuses to start with a clear error otherwise.
+#
+# oauth:
+#   enabled: true
+#
+#   # Scopes surfaced in metadata and accepted on /oidc/auth
+#   scopes: ["mcp", "agent"]
+#
+#   # DCR policy:
+#   #   open      — anonymous DCR (best UX, matches MCP spec default)
+#   #   disabled  — no DCR; clients must be pre-registered
+#   # (An "admin-only" mode is planned but not yet implemented.)
+#   # dynamicClientRegistration: open
+#
+#   # Token lifetimes (seconds)
+#   # accessTokenTtlSeconds: 3600                        # 1h
+#   # refreshTokenTtlSeconds: 2592000                    # 30d
+#   # authorizationCodeTtlSeconds: 60
+#
+#   # Resource indicators bound into issued tokens (RFC 8707). Clients
+#   # must pass `resource=<one of these>` on /authorize. `${issuer}` is
+#   # substituted at runtime with the server's external URL + "/oidc".
+#   # resourceIndicators:
+#   #   - "${issuer}/mcp"
+#   #   - "${issuer}/agent-proxy"
+#
+#   # JWKS rotation cadence (days). Overlap must be strictly less than
+#   # rotation so the previous key stays verifiable while in-flight
+#   # tokens drain.
+#   # signingKeyRotationDays: 90
+#   # signingKeyOverlapDays: 30
+#
+#   # Per-IP rate limit on anonymous DCR (/oidc/reg)
+#   # registrationRateLimitPerMinute: 10
