@@ -84,6 +84,7 @@
     "cbor-x": "^1.6.4",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.4",
+    "oidc-provider": "^9.8.1",
     "ssh2": "github:rado0x54/ssh2#shellwatch",
     "web-push": "^3.6.7",
     "ws": "^8.20.0",
