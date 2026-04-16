@@ -53,11 +53,11 @@ async function setupOAuthApp(overrides: Partial<typeof defaultOAuthConfig> = {})
   const result = await registerOAuth({
     app,
     db: db as never,
-    config: { ...defaultOAuthConfig, enabled: true, ...overrides },
+    config: { ...defaultOAuthConfig, ...overrides },
     baseUrl,
     sessionSecret: randomBytes(32).toString("hex"),
   });
-  if (!result) throw new Error("registerOAuth returned null despite enabled=true");
+  if (!result) throw new Error("registerOAuth unexpectedly returned null");
 
   await app.listen({ port, host: "127.0.0.1" });
 
@@ -80,28 +80,10 @@ describe("registerOAuth", () => {
     if (setup) await setup.close();
   });
 
-  it("mounts nothing when disabled", async () => {
-    const app = Fastify({ logger: false });
-    const sqlite = new Database(":memory:");
-    const db = drizzle(sqlite, { schema: {} });
-    migrate(db, { migrationsFolder: resolve(import.meta.dirname, "../../drizzle") });
-
-    await registerOAuth({
-      app,
-      db: db as never,
-      config: { ...defaultOAuthConfig, enabled: false },
-      baseUrl: "http://localhost",
-      sessionSecret: "anything",
-    });
-
-    const address = await app.listen({ port: 0, host: "127.0.0.1" });
-    const res = await fetch(`${address}/oidc/.well-known/openid-configuration`);
-    // Nothing mounted → Fastify 404.
-    expect(res.status).toBe(404);
-
-    await app.close();
-    sqlite.close();
-  });
+  // The previous "mounts nothing when disabled" test is obsolete: the
+  // `oauth.enabled` config knob has been removed. Callers that want
+  // OAuth absent simply don't call `registerOAuth` — there is no
+  // partial-OAuth shape in the schema to assert against.
 
   it("serves RFC 8414 authorization server metadata at the issuer path", async () => {
     setup = await setupOAuthApp();
@@ -167,7 +149,7 @@ describe("registerOAuth", () => {
     await registerOAuth({
       app,
       db: db as never,
-      config: { ...defaultOAuthConfig, enabled: true },
+      config: { ...defaultOAuthConfig },
       baseUrl: "http://localhost",
       sessionSecret: randomBytes(32).toString("hex"),
     });

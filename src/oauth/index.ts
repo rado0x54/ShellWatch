@@ -32,3 +32,8 @@ export {
   clearFirstPartyCookies,
   setFirstPartyCookies,
 } from "./cookie.js";
+export {
+  createUiSessionService,
+  type UiSessionService,
+  type UiSessionServiceDeps,
+} from "./ui-session.js";

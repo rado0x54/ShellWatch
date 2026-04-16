@@ -47,6 +47,12 @@ export function mountOAuthProvider(
 
   const handler = provider.callback();
 
+  // NB: every onRequest hook in the app runs for every request
+  // regardless of hijack. After this hook calls `reply.hijack()`,
+  // downstream `onRequest` hooks still fire — but on a reply that
+  // panva is mid-writing. Any of those downstream hooks must be
+  // reply-side-effect-safe (no `reply.send`, no double-write). The
+  // mirror of this note lives in `src/server/auth/auth-gate.ts`.
   app.addHook("onRequest", async (request, reply) => {
     const originalUrl = request.raw.url ?? "";
     if (!matches(originalUrl)) return;
