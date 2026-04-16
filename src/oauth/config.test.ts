@@ -24,13 +24,20 @@ describe("OAuthConfigSchema", () => {
     const parsed = OAuthConfigSchema.parse({
       enabled: true,
       scopes: ["mcp"],
-      dynamicClientRegistration: "admin-only",
+      dynamicClientRegistration: "disabled",
       accessTokenTtlSeconds: 900,
     });
     expect(parsed.enabled).toBe(true);
     expect(parsed.scopes).toEqual(["mcp"]);
-    expect(parsed.dynamicClientRegistration).toBe("admin-only");
+    expect(parsed.dynamicClientRegistration).toBe("disabled");
     expect(parsed.accessTokenTtlSeconds).toBe(900);
+  });
+
+  it("rejects admin-only DCR (not implemented in Phase 1)", () => {
+    // admin-only is documented as a future mode; narrowing the enum
+    // ensures operators who try it get an explicit parse failure rather
+    // than silent "open" behaviour.
+    expect(() => OAuthConfigSchema.parse({ dynamicClientRegistration: "admin-only" })).toThrow();
   });
 
   it("rejects unknown keys (strict mode)", () => {

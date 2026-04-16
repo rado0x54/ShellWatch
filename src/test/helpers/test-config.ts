@@ -1,4 +1,5 @@
 import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
+import { defaultOAuthConfig } from "../../oauth/config.js";
 
 const defaults: Config = {
   keyDirectory: "/tmp",
@@ -13,6 +14,7 @@ const defaults: Config = {
   },
   notifications: { mcp: { debounceMs: 50 } },
   agentSocket: { proxyEnabled: false },
+  oauth: defaultOAuthConfig,
 };
 
 export function makeTestConfig(
