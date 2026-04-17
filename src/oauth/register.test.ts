@@ -6,9 +6,25 @@ import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type Provider from "oidc-provider";
 import { afterEach, describe, expect, it } from "vitest";
+import type { Config } from "../config/index.js";
+import { StubAccountRepository } from "../db/index.js";
 import { defaultOAuthConfig } from "./config.js";
 import { FIRST_PARTY_CLIENT_ID } from "./provider.js";
 import { registerOAuth } from "./register.js";
+
+const testSecurity: Config["security"] = {
+  rpId: "localhost",
+  allowedNetworks: ["127.0.0.1/32"],
+  sessionTtlSeconds: 86400,
+  selfRegistrationEnabled: false,
+  rateLimit: {
+    selfRegister: { max: 5, windowMinutes: 15 },
+    passkeyRegister: { max: 10, windowMinutes: 15 },
+    loginOptions: { max: 20, windowMinutes: 15 },
+    loginVerify: { max: 10, windowMinutes: 15 },
+  },
+  trustedWebauthnOrigins: ["http://localhost"],
+};
 
 type AnyDb = BetterSQLite3Database<Record<string, never>>;
 
@@ -56,6 +72,8 @@ async function setupOAuthApp(overrides: Partial<typeof defaultOAuthConfig> = {})
     config: { ...defaultOAuthConfig, ...overrides },
     baseUrl,
     sessionSecret: randomBytes(32).toString("hex"),
+    accountRepo: new StubAccountRepository(),
+    security: testSecurity,
   });
   if (!result) throw new Error("registerOAuth unexpectedly returned null");
 
@@ -152,6 +170,8 @@ describe("registerOAuth", () => {
       config: { ...defaultOAuthConfig },
       baseUrl: "http://localhost",
       sessionSecret: randomBytes(32).toString("hex"),
+      accountRepo: new StubAccountRepository(),
+      security: testSecurity,
     });
 
     const address = await app.listen({ port: 0, host: "127.0.0.1" });

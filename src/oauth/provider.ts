@@ -67,6 +67,14 @@ export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Prov
       },
     ],
 
+    // Our JWKS is Ed25519-only. Without this default, DCR-registered
+    // clients get RS256 as their id_token_signed_response_alg, and panva
+    // blows up at signing time because it has no RS256 key. Setting the
+    // default here means MCP clients don't need to know our key type.
+    clientDefaults: {
+      id_token_signed_response_alg: "EdDSA",
+    },
+
     scopes: deps.config.scopes,
 
     ttl: {
@@ -100,6 +108,16 @@ export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Prov
       accountId: id,
       claims: async () => ({ sub: id }),
     }),
+
+    interactions: {
+      // Interaction UID lands in the URL we own; our Fastify handler
+      // renders login / consent + calls back to
+      // `provider.interactionFinished`. Panva puts this string into a
+      // `Location` header, so it must be the full path including the
+      // `/oidc` mount prefix — a root-relative URL would send the
+      // browser to `/interaction/:uid` (missing prefix), 404.
+      url: (_ctx, interaction) => `/oidc/interaction/${interaction.uid}`,
+    },
 
     features: {
       devInteractions: { enabled: false },

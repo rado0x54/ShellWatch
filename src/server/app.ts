@@ -140,6 +140,8 @@ export async function buildApp(params: BuildAppParams) {
         config: config.oauth,
         baseUrl: config.server.externalUrl,
         sessionSecret: cookieSecret,
+        accountRepo,
+        security: config.security,
       })
     : null;
 

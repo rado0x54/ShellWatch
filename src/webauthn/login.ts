@@ -1,13 +1,11 @@
-import {
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-} from "@simplewebauthn/server";
+import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { storeChallenge, consumeChallenge } from "./challenge-store.js";
+import { storeChallenge } from "./challenge-store.js";
+import { type AuthenticationResponseLike, verifyPasskeyAssertion } from "./passkey-verify.js";
 import type { OnLoginSuccess, RateLimitConfig } from "./routes.js";
 
 export interface LoginRoutesParams {
@@ -74,89 +72,26 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         return { error: "Login handler not configured" };
       }
 
-      const { challengeId, credential } = request.body;
+      const result = await verifyPasskeyAssertion({
+        db,
+        accountRepo,
+        rpId,
+        trustedOrigins,
+        challengeId: request.body.challengeId,
+        credential: request.body.credential as AuthenticationResponseLike,
+      });
 
-      const challenge = consumeChallenge(challengeId);
-      if (!challenge) {
-        reply.status(400);
-        return { error: "Challenge expired or not found" };
+      if (!result.ok) {
+        reply.status(result.status);
+        return { error: result.error };
       }
 
-      // Find the credential in DB
-      const assertionResponse = credential as {
-        id: string;
-        rawId: string;
-        response: unknown;
-        type: string;
-        authenticatorAttachment?: string;
-        clientExtensionResults?: unknown;
-      };
-      const storedCred = db
-        .select({
-          id: webauthnCredentials.id,
-          accountId: webauthnCredentials.accountId,
-          credentialId: webauthnCredentials.credentialId,
-          publicKey: webauthnCredentials.publicKey,
-          counter: webauthnCredentials.counter,
-          transports: webauthnCredentials.transports,
-          revoked: webauthnCredentials.revoked,
-        })
-        .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.credentialId, assertionResponse.id))
-        .get();
+      // Session minting + cookie wiring happens outside passkey code:
+      // the OAuth module's UiSessionService owns the token shape and
+      // cookie attributes. Keeps this file OAuth-agnostic.
+      await onLoginSuccess(request, reply, { accountId: result.accountId });
 
-      if (!storedCred) {
-        reply.status(400);
-        return { error: "Unknown credential" };
-      }
-
-      if (storedCred.revoked) {
-        reply.status(403);
-        return { error: "This passkey has been revoked" };
-      }
-
-      try {
-        const verification = await verifyAuthenticationResponse({
-          response: credential as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
-          expectedChallenge: challenge,
-          expectedOrigin: trustedOrigins,
-          expectedRPID: rpId,
-          requireUserVerification: true,
-          credential: {
-            id: storedCred.credentialId,
-            publicKey: new Uint8Array(storedCred.publicKey),
-            counter: storedCred.counter,
-            transports: storedCred.transports ? JSON.parse(storedCred.transports) : undefined,
-          },
-        });
-
-        if (!verification.verified) {
-          reply.status(400);
-          return { error: "Verification failed" };
-        }
-
-        // Update counter and last used
-        db.update(webauthnCredentials)
-          .set({
-            counter: verification.authenticationInfo.newCounter,
-            lastUsedAt: new Date().toISOString(),
-          })
-          .where(eq(webauthnCredentials.id, storedCred.id))
-          .run();
-
-        // Update account lastUsedAt
-        accountRepo.touchLastUsed(storedCred.accountId);
-
-        // Session minting + cookie wiring happens outside passkey code:
-        // the OAuth module's UiSessionService owns the token shape and
-        // cookie attributes. Keeps this file OAuth-agnostic.
-        await onLoginSuccess(request, reply, { accountId: storedCred.accountId });
-
-        return { verified: true };
-      } catch (err) {
-        reply.status(400);
-        return { error: (err as Error).message };
-      }
+      return { verified: true };
     },
   );
 }
