@@ -130,11 +130,12 @@ security:
 #   # authorizationCodeTtlSeconds: 60
 #
 #   # Resource indicators bound into issued tokens (RFC 8707). Clients
-#   # must pass `resource=<one of these>` on /authorize. `${issuer}` is
-#   # substituted at runtime with the server's external URL + "/oidc".
+#   # pass `resource=<one of these>` on /authorize; omitting the
+#   # parameter defaults to the first entry. `${baseUrl}` is substituted
+#   # at runtime with the server's external URL (e.g. "http://localhost:3000").
 #   # resourceIndicators:
-#   #   - "${issuer}/mcp"
-#   #   - "${issuer}/agent-proxy"
+#   #   - "${baseUrl}/mcp"
+#   #   - "${baseUrl}/agent-proxy"
 #
 #   # JWKS rotation cadence (days). Overlap must be strictly less than
 #   # rotation so the previous key stays verifiable while in-flight

@@ -78,6 +78,27 @@ describe("DCR (Dynamic Client Registration)", () => {
     if (s) await s.close();
   });
 
+  it("accepts grant_types containing refresh_token (RFC 7591 compat)", async () => {
+    s = await setup();
+    const res = await fetch(`${s.baseUrl}/oidc/reg`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "MCP Inspector",
+        redirect_uris: ["http://127.0.0.1:6274/oauth/callback"],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.client_id).toBeTruthy();
+    // refresh_token is silently stripped — panva only stores the
+    // grant types it recognises at the client level.
+    expect(body.grant_types).toEqual(["authorization_code"]);
+  });
+
   it("registers a public client and returns client_id", async () => {
     s = await setup();
     const res = await fetch(`${s.baseUrl}/oidc/reg`, {

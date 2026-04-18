@@ -222,12 +222,33 @@ export function renderConsentPage(vm: ConsentViewModel): string {
        and scoped to a single authorization request. A traditional
        hidden CSRF field would add nothing that the UID doesn't already
        provide. -->
-  <form method="POST" action="/oidc/interaction/${esc(vm.uid)}/confirm" style="margin-top: 20px;">
-    <button class="primary" type="submit">Approve</button>
-    <button class="secondary" type="button" onclick="document.getElementById('deny').submit()">Deny</button>
-  </form>
-  <form id="deny" method="POST" action="/oidc/interaction/${esc(vm.uid)}/abort" style="display: none;"></form>
+  <div style="margin-top: 20px;">
+    <button id="approve" class="primary" type="button">Approve</button>
+    <button id="deny" class="secondary" type="button">Deny</button>
+  </div>
+  <div id="err" class="error" role="alert"></div>
 </main>
+<script>
+const uid = ${safeJsonEmbed(vm.uid)};
+async function postAction(path) {
+  const res = await fetch("/oidc/interaction/" + uid + "/" + path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+    redirect: "manual",
+  });
+  if (res.status >= 300 && res.status < 400) {
+    location.href = res.headers.get("location") || "/";
+    return;
+  }
+  const body = await res.json().catch(() => ({}));
+  if (body.redirect) { location.href = body.redirect; return; }
+  if (res.redirected) { location.href = res.url; return; }
+  document.getElementById("err").textContent = body.error || "Unexpected error";
+}
+document.getElementById("approve").addEventListener("click", () => postAction("confirm"));
+document.getElementById("deny").addEventListener("click", () => postAction("abort"));
+</script>
 </body>
 </html>`;
 }

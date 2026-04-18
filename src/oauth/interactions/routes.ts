@@ -184,7 +184,7 @@ export function registerInteractionRoutes(params: RegisterInteractionRoutesParam
         { consent: { grantId } },
         { mergeWithLastSubmission: true },
       );
-      reply.redirect(redirect);
+      return { redirect };
     },
   );
 

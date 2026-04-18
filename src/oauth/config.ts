@@ -45,22 +45,19 @@ export const OAuthConfigSchema = z
     authorizationCodeTtlSeconds: z.number().int().positive().default(60),
 
     /**
-     * Resource indicators bound into issued tokens (RFC 8707). Clients MUST
-     * pass `resource=<one of these>` on /authorize.
+     * Resource indicators bound into issued tokens (RFC 8707). Clients
+     * pass `resource=<one of these>` on /authorize; if they omit the
+     * parameter the first entry is used as the default.
      *
-     * The literal token `${issuer}` is substituted with the runtime issuer
-     * URL when the config is consumed by the Provider factory. Users who
+     * The literal token `${baseUrl}` is substituted at runtime with the
+     * server's external URL (e.g. `http://localhost:3000`). Users who
      * override this list can either:
-     *   - include `${issuer}` to get the same substitution, or
+     *   - include `${baseUrl}` to get the same substitution, or
      *   - write a fully-qualified URL directly (e.g. "https://shellwatch.example/mcp").
-     *
-     * Written literally here because the issuer URL isn't known at config
-     * load time — it's derived from the incoming request (reverse-proxy
-     * aware) when the Provider is constructed.
      */
     resourceIndicators: z
       .array(z.string().min(1))
-      .default(["${issuer}/mcp", "${issuer}/agent-proxy"]),
+      .default(["${baseUrl}/mcp", "${baseUrl}/agent-proxy"]),
 
     /**
      * JWKS rotation cadence. New key becomes active every

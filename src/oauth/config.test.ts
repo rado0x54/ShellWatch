@@ -9,7 +9,7 @@ describe("OAuthConfigSchema", () => {
     expect(parsed.accessTokenTtlSeconds).toBe(3600);
     expect(parsed.refreshTokenTtlSeconds).toBe(60 * 60 * 24 * 30);
     expect(parsed.authorizationCodeTtlSeconds).toBe(60);
-    expect(parsed.resourceIndicators).toEqual(["${issuer}/mcp", "${issuer}/agent-proxy"]);
+    expect(parsed.resourceIndicators).toEqual(["${baseUrl}/mcp", "${baseUrl}/agent-proxy"]);
     expect(parsed.signingKeyRotationDays).toBe(90);
     expect(parsed.signingKeyOverlapDays).toBe(30);
     expect(parsed.registrationRateLimitPerMinute).toBe(10);

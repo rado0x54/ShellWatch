@@ -47,4 +47,18 @@ export function registerProtectedResourceMetadata(
     reply.type("application/json");
     return body;
   });
+
+  // RFC 8414 Authorization Server Metadata — MCP clients may request
+  // this instead of (or in addition to) the OIDC Discovery endpoint at
+  // `${issuer}/.well-known/openid-configuration`. Both serve the same
+  // content; redirect to panva's canonical endpoint so there's a single
+  // source of truth. Two paths are needed because RFC 8414 §3 uses
+  // `${origin}/.well-known/oauth-authorization-server${issuerPath}`.
+  const oidcDiscovery = "/oidc/.well-known/openid-configuration";
+  app.get("/.well-known/oauth-authorization-server", async (_req, reply) => {
+    reply.redirect(oidcDiscovery);
+  });
+  app.get("/.well-known/oauth-authorization-server/oidc", async (_req, reply) => {
+    reply.redirect(oidcDiscovery);
+  });
 }

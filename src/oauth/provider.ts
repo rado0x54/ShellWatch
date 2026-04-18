@@ -16,6 +16,8 @@ export const FIRST_PARTY_CLIENT_ID = "ui-app";
 export interface OAuthProviderDeps {
   /** Absolute base URL including the `/oidc` prefix, e.g. `https://host/oidc`. */
   issuer: string;
+  /** External base URL without `/oidc`, e.g. `https://host`. Used for resource-indicator substitution. */
+  baseUrl: string;
   db: ShellWatchDB;
   config: OAuthConfig;
   signingKeyService: SigningKeyService;
@@ -29,6 +31,11 @@ export interface OAuthProviderDeps {
  * wiring layer (PR 4+) just passes the object through.
  */
 export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Provider> {
+  // Resolve `${baseUrl}` in configured resource indicators.
+  const allowedResources = deps.config.resourceIndicators.map((r) =>
+    r.replace("${baseUrl}", deps.baseUrl),
+  );
+
   // Panva needs at least one JWK at construction. `ensureSigningKey()` must
   // have been called before us, otherwise this list is empty and panva
   // fails to boot — the wiring layer is responsible for that ordering.
@@ -73,6 +80,12 @@ export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Prov
     // default here means MCP clients don't need to know our key type.
     clientDefaults: {
       id_token_signed_response_alg: "EdDSA",
+      // Most MCP clients register with grant_types=["authorization_code"].
+      // Panva only issues refresh tokens when the client's grant_types
+      // includes "refresh_token". Including it in the defaults means DCR
+      // clients get refresh tokens automatically without needing to know
+      // about this requirement.
+      grant_types: ["authorization_code", "refresh_token"],
     },
 
     scopes: deps.config.scopes,
@@ -125,8 +138,6 @@ export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Prov
       registration: {
         enabled: deps.config.dynamicClientRegistration !== "disabled",
         initialAccessToken: false, // anonymous DCR
-        // Policies and idFactory overrides come in later PRs. Defaults are
-        // spec-conformant for Phase 1.
       },
 
       // RFC 7592 management endpoint — panva requires registration to be
@@ -140,18 +151,46 @@ export async function createOAuthProvider(deps: OAuthProviderDeps): Promise<Prov
         enabled: true,
         defaultResource: (ctx) => {
           const resource = ctx.oidc.params?.resource;
-          return typeof resource === "string" ? resource : "";
+          if (typeof resource === "string" && resource) return resource;
+          // MCP clients (and others) that omit the `resource` parameter
+          // get the first configured resource so the token carries a
+          // usable audience rather than an empty one.
+          return allowedResources[0] ?? "";
         },
-        getResourceServerInfo: (_ctx, resource) => ({
-          scope: deps.config.scopes.join(" "),
-          audience: resource,
-          accessTokenTTL: deps.config.accessTokenTtlSeconds,
-          accessTokenFormat: "opaque",
-        }),
+        getResourceServerInfo: (_ctx, resource) => {
+          if (!allowedResources.includes(resource)) {
+            throw new Error(`oauth: unknown resource indicator "${resource}"`);
+          }
+          // Only include ShellWatch-defined scopes — NOT `openid`.
+          // panva is an OIDC provider so it always accepts `openid`,
+          // but our access tokens are pure OAuth 2.1 bearer tokens
+          // consumed by /mcp and /agent-proxy, which have no use for
+          // OIDC identity claims. Filtering here keeps the AT scope
+          // clean; the id_token (if the client asked for openid) is
+          // still issued by panva but is harmless and ignorable.
+          const scope = deps.config.scopes.join(" ");
+          return {
+            scope,
+            audience: resource,
+            accessTokenTTL: deps.config.accessTokenTtlSeconds,
+            accessTokenFormat: "opaque" as const,
+          };
+        },
       },
 
       revocation: { enabled: true },
       introspection: { enabled: false }, // in-process via adapter; no HTTP hop needed
+    },
+
+    // Always issue refresh tokens for authorization_code grants so
+    // third-party MCP clients can renew silently. Without this, panva
+    // only issues them when the `offline_access` scope is requested,
+    // which most MCP clients don't send.
+    issueRefreshToken: async (_ctx, client, code) => {
+      if (!client.grantTypeAllowed("refresh_token")) return false;
+      // code is present for authorization_code grants, undefined for
+      // other grant types. Only refresh on code exchanges.
+      return code !== undefined;
     },
   };
 

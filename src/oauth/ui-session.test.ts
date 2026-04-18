@@ -37,6 +37,7 @@ async function setupSession(): Promise<Setup> {
 
   const provider = await createOAuthProvider({
     issuer: "http://localhost/oidc",
+    baseUrl: "http://localhost",
     db: db as never,
     config: { ...defaultOAuthConfig },
     signingKeyService,
@@ -198,6 +199,7 @@ describe("UiSessionService.tryRefresh", () => {
 
       const provider = await createOAuthProvider({
         issuer: "http://localhost/oidc",
+        baseUrl: "http://localhost",
         db: db as never,
         config: { ...defaultOAuthConfig, refreshTokenTtlSeconds: 1 },
         signingKeyService,

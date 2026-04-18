@@ -95,6 +95,7 @@ export async function registerOAuth(params: RegisterOAuthParams): Promise<Regist
 
   const provider = await createOAuthProvider({
     issuer,
+    baseUrl: normalizedBaseUrl,
     db: params.db,
     config: params.config,
     signingKeyService,

@@ -32,6 +32,7 @@ async function setupProvider(): Promise<Setup> {
 
   const provider = await createOAuthProvider({
     issuer: "http://localhost/oidc",
+    baseUrl: "http://localhost",
     db: db as never,
     config: { ...defaultOAuthConfig },
     signingKeyService,
