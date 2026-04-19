@@ -47,6 +47,9 @@ export function registerAuthGate({
     "/mcp",
     "/agent-proxy",
     "/config.js",
+    // OAuth endpoints reached by the MCP client directly (no human, no session):
+    "/oauth/register",
+    "/oauth/token",
   ]);
 
   // Only exempt during onboarding (no passkeys registered yet — admin bootstrap)
@@ -74,6 +77,9 @@ export function registerAuthGate({
     // Always-exempt paths
     if (alwaysExempt.has(url)) return;
 
+    // Discovery metadata is always public
+    if (url.startsWith("/.well-known/")) return;
+
     // Onboarding-only paths (registration, /onboarding) — exempt only when no passkeys exist
     if (!hasPasskeys()) {
       if (onboardingOnly.has(url)) return;
@@ -99,7 +105,7 @@ export function registerAuthGate({
     if (isApi) {
       reply.status(401).send({ error: "Authentication required" });
     } else {
-      reply.redirect("/login");
+      reply.redirect(`/login?redirect=${encodeURIComponent(request.url)}`);
     }
   });
 }

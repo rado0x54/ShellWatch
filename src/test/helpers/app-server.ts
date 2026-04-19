@@ -13,6 +13,7 @@ import {
   InMemoryApiKeyRepository,
   InMemoryEndpointRepository,
   InMemorySshKeyRepository,
+  type ApiKeyRepository,
 } from "../../db/index.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { buildApp } from "../../server/app.js";
@@ -30,11 +31,17 @@ export interface TestAppServer {
   port: number;
   url: string;
   app: FastifyInstance;
+  /** Live config reference — mutate to test config-driven behavior (e.g. externalUrl). */
+  config: Config;
   terminalManager: TerminalManager;
   /** Session cookie header value (e.g. "sw_session=...") for authenticated requests */
   sessionCookie: string;
-  /** Raw API key for MCP authentication */
+  /** Raw API key for MCP authentication (has `mcp` scope) */
   apiKey: string;
+  /** Raw API key that exists but lacks the `mcp` scope (agent-only) */
+  nonMcpApiKey: string;
+  /** Live reference to the in-memory API-key repo (for repo-level assertions). */
+  apiKeyRepo: ApiKeyRepository;
   /** Fetch with session cookie pre-attached */
   fetch(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -117,6 +124,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   );
 
   const testApiKey = "sw_test_000000000000000000000000";
+  const testNonMcpApiKey = "sw_test_agent_00000000000000000";
   const apiKeyRepo = new InMemoryApiKeyRepository();
   await apiKeyRepo.create({
     id: "test-api-key",
@@ -125,6 +133,14 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     keyHash: hashApiKey(testApiKey),
     keyPrefix: testApiKey.slice(0, 10),
     scopes: ["mcp"],
+  });
+  await apiKeyRepo.create({
+    id: "test-api-key-agent-only",
+    accountId: testAccountId,
+    label: "Agent-only Test Key",
+    keyHash: hashApiKey(testNonMcpApiKey),
+    keyPrefix: testNonMcpApiKey.slice(0, 10),
+    scopes: ["agent"],
   });
 
   const app = await buildApp({
@@ -146,14 +162,22 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   log.add("app-server", `listening on port ${port}`);
 
   const baseUrl = `http://127.0.0.1:${port}`;
+  // externalUrl is the source of truth for discovery metadata + WWW-Authenticate
+  // hints. In prod it's the config value; in tests we only know the port after
+  // listen(), so patch it here — the oauth + api-key-auth modules read it
+  // dynamically at request time.
+  config.server.externalUrl = baseUrl;
 
   return {
     port,
     url: baseUrl,
     app,
+    config,
     terminalManager,
     sessionCookie,
     apiKey: testApiKey,
+    nonMcpApiKey: testNonMcpApiKey,
+    apiKeyRepo,
     fetch(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);
       headers.set("cookie", sessionCookie);
