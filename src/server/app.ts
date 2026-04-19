@@ -23,6 +23,7 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
+import { registerOAuthMini } from "../oauth-mini/index.js";
 import { registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -108,10 +109,15 @@ export async function buildApp(params: BuildAppParams) {
     checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
   });
 
-  // IP allowlist + API key auth for MCP
+  // IP allowlist + API key auth + OAuth-mini shim for MCP.
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
   if (apiKeyRepo) {
-    registerApiKeyAuth(app, apiKeyRepo, "/mcp", accountRepo);
+    const mcpPath = "/mcp";
+    registerApiKeyAuth({ app, apiKeyRepo, accountRepo, mcpPath, config });
+    const oauthMini = registerOAuthMini({ app, apiKeyRepo, config, mcpPath });
+    app.addHook("onClose", async () => oauthMini.destroy());
+  } else {
+    app.log.warn("apiKeyRepo not provided — /mcp auth and OAuth-mini shim are disabled");
   }
 
   app.get("/health", async () => ({ status: "ok" }));
