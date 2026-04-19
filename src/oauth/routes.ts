@@ -25,7 +25,7 @@ import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 import { verifyPkceS256 } from "./pkce.js";
 import { renderAuthorizePage, type AuthorizeMode } from "./render.js";
 
-export interface RegisterOAuthMiniParams {
+export interface RegisterOAuthParams {
   app: FastifyInstance;
   /** Required — pasted keys are verified against this repo (must also carry `mcp` scope). */
   apiKeyRepo: ApiKeyRepository;
@@ -45,7 +45,7 @@ export interface RegisterOAuthMiniParams {
   codeTtlMs?: number;
 }
 
-export interface OAuthMiniHandle {
+export interface OAuthHandle {
   /** Stop the internal sweep timer and clear pending codes. */
   destroy(): void;
   /** Expose the code store for tests that need to seed / inspect. */
@@ -69,13 +69,13 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-export function registerOAuthMini({
+export function registerOAuth({
   app,
   apiKeyRepo,
   config,
   mcpPath,
   codeTtlMs,
-}: RegisterOAuthMiniParams): OAuthMiniHandle {
+}: RegisterOAuthParams): OAuthHandle {
   const store = createAuthCodeStore({ ttlMs: codeTtlMs });
   // Read at each request — test helpers mutate `config.server.externalUrl`
   // after `app.listen()` to make discovery URLs match the random test port.

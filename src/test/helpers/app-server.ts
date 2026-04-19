@@ -164,7 +164,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   const baseUrl = `http://127.0.0.1:${port}`;
   // externalUrl is the source of truth for discovery metadata + WWW-Authenticate
   // hints. In prod it's the config value; in tests we only know the port after
-  // listen(), so patch it here — the oauth-mini + api-key-auth modules read it
+  // listen(), so patch it here — the oauth + api-key-auth modules read it
   // dynamically at request time.
   config.server.externalUrl = baseUrl;
 

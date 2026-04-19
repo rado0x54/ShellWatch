@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import { InMemoryApiKeyRepository } from "../../db/index.js";
-import { computePkceS256 } from "../../oauth-mini/index.js";
-import { registerOAuthMini } from "../../oauth-mini/routes.js";
+import { computePkceS256 } from "../../oauth/index.js";
+import { registerOAuth } from "../../oauth/routes.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { makeTestConfig } from "../helpers/test-config.js";
 import {
@@ -15,7 +15,7 @@ import {
   type TestSshServer,
 } from "../helpers/index.js";
 
-describe("OAuth-mini DCR flow", () => {
+describe("OAuth DCR flow", () => {
   let log: TestLog;
   let sshServer: TestSshServer;
   let appServer: TestAppServer;
@@ -237,7 +237,7 @@ describe("OAuth-mini DCR flow", () => {
         params: {
           protocolVersion: "2024-11-05",
           capabilities: {},
-          clientInfo: { name: "oauth-mini-test", version: "0.0.0" },
+          clientInfo: { name: "oauth-test", version: "0.0.0" },
         },
       }),
     });
@@ -423,7 +423,7 @@ describe("OAuth-mini DCR flow", () => {
         params: {
           protocolVersion: "2024-11-05",
           capabilities: {},
-          clientInfo: { name: "oauth-mini-create-test", version: "0.0.0" },
+          clientInfo: { name: "oauth-create-test", version: "0.0.0" },
         },
       }),
     });
@@ -572,7 +572,7 @@ describe("OAuth-mini DCR flow", () => {
       scopes: ["mcp"],
     });
     const cfg = makeTestConfig({});
-    const handle = registerOAuthMini({
+    const handle = registerOAuth({
       app,
       apiKeyRepo,
       config: cfg,
