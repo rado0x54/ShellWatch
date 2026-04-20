@@ -10,6 +10,8 @@
     renamePasskey,
     startPasskeyRegistration,
   } from "$lib/stores/webauthn.js";
+  import SettingsList from "$lib/components/SettingsList.svelte";
+  import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   let revoking = $state(false);
   let registering = $state(false);
@@ -141,79 +143,64 @@
 <section>
   <!-- Passkeys -->
   <h2>Passkeys</h2>
-  <table class="settings-table">
-    <thead>
-      <tr>
-        <th>Label</th>
-        <th>Algorithm</th>
-        <th>Fingerprint</th>
-        <th>Status</th>
-        <th>Created</th>
-        <th>Last Used</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each $credentials as pk (pk.id)}
-        <tr class:revoked={pk.revoked}>
-          <td>
-            {#if editingId === pk.id}
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                type="text"
-                class="inline-rename"
-                bind:value={editLabel}
-                onkeydown={handleRenameKeydown}
-                onblur={cancelRename}
-                autofocus
-              />
-            {:else}
-              <button
-                class="label-btn"
-                title="Rename"
-                disabled={pk.revoked}
-                onclick={() => startRename(pk.id, pk.label)}>{pk.label}</button
-              >
-            {/if}
-          </td>
-          <td>{pk.algorithm}</td>
-          <td class="fingerprint">{shortFingerprint(pk.fingerprint)}</td>
-          <td>
-            {#if pk.revoked}
-              <span class="badge badge-revoked">revoked</span>
-            {:else}
-              <span class="badge badge-available">active</span>
-            {/if}
-          </td>
-          <td>{formatDate(pk.createdAt)}</td>
-          <td>{formatDate(pk.lastUsedAt)}</td>
-          <td class="actions">
-            {#if pk.authorizedKeysEntry && !pk.revoked}
-              <button
-                class="btn-icon"
-                title="Copy SSH public key"
-                onclick={(e) =>
-                  copyKey(
-                    `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
-                    e.currentTarget as HTMLButtonElement,
-                  )}>&#128203; SSH PubKey</button
-              >
-            {/if}
-            {#if !pk.revoked}
-              <button
-                class="btn btn-secondary btn-sm"
-                disabled={revoking}
-                onclick={() => handleRevoke(pk.id)}>Revoke</button
-              >
-            {/if}
-          </td>
-        </tr>
-      {/each}
-      {#if $credentials.length === 0}
-        <tr><td colspan="7" class="empty">No passkeys registered</td></tr>
-      {/if}
-    </tbody>
-  </table>
+  <SettingsList empty={$credentials.length === 0} emptyText="No passkeys registered">
+    {#each $credentials as pk (pk.id)}
+      <SettingsRow>
+        {#snippet primary()}
+          {#if editingId === pk.id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              class="inline-rename"
+              bind:value={editLabel}
+              onkeydown={handleRenameKeydown}
+              onblur={cancelRename}
+              autofocus
+            />
+          {:else}
+            <button
+              class="row-label label-btn"
+              class:revoked={pk.revoked}
+              title="Rename"
+              disabled={pk.revoked}
+              onclick={() => startRename(pk.id, pk.label)}>{pk.label}</button
+            >
+          {/if}
+          {#if pk.revoked}
+            <span class="badge badge-unavailable">revoked</span>
+          {:else}
+            <span class="badge badge-available">active</span>
+          {/if}
+          <span class="meta-mono">{pk.algorithm}</span>
+        {/snippet}
+        {#snippet secondary()}
+          <span title={pk.fingerprint ?? ""}>{shortFingerprint(pk.fingerprint)}</span>
+          <span class="row-dot">·</span>created {formatDate(pk.createdAt)}
+          <span class="row-dot">·</span>last used {formatDate(pk.lastUsedAt)}
+        {/snippet}
+        {#snippet actions()}
+          {#if pk.authorizedKeysEntry && !pk.revoked}
+            <button
+              class="btn btn-secondary"
+              title="Copy SSH public key"
+              onclick={(e) =>
+                copyKey(
+                  `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
+                  e.currentTarget as HTMLButtonElement,
+                )}>Copy SSH PubKey</button
+            >
+          {/if}
+          {#if !pk.revoked}
+            <button
+              class="btn btn-secondary"
+              disabled={revoking}
+              onclick={() => handleRevoke(pk.id)}>Revoke</button
+            >
+          {/if}
+        {/snippet}
+      </SettingsRow>
+    {/each}
+  </SettingsList>
 
   <div class="register-section">
     <button class="btn btn-primary" disabled={registering} onclick={handleRegister}>
@@ -234,57 +221,46 @@
   <!-- File-based SSH Keys (admin only) -->
   {#if $account?.isAdmin && fileKeys.length > 0}
     <h2 class="section-divider">File-Based SSH Keys</h2>
-    <table class="settings-table">
-      <thead>
-        <tr>
-          <th>Label</th>
-          <th>Algorithm</th>
-          <th>Fingerprint</th>
-          <th>Status</th>
-          <th>Created</th>
-          <th>Last Used</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each fileKeys as k (k.id)}
-          <tr class:revoked={k.revoked}>
-            <td>{k.label}</td>
-            <td>{k.algorithm}</td>
-            <td class="fingerprint">{shortFingerprint(k.fingerprint)}</td>
-            <td>
-              {#if k.revoked}
-                <span class="badge badge-revoked">revoked</span>
-              {:else if !k.available}
-                <span class="badge badge-unavailable">unavailable</span>
-              {:else}
-                <span class="badge badge-available">available</span>
-              {/if}
-            </td>
-            <td>{formatDate(k.createdAt)}</td>
-            <td>{formatDate(k.lastUsedAt)}</td>
-            <td class="actions">
-              {#if k.authorizedKeysEntry && !k.revoked}
-                <button
-                  class="btn-icon"
-                  title="Copy SSH public key"
-                  onclick={(e) =>
-                    copyKey(k.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
-                  >&#128203; SSH PubKey</button
-                >
-              {/if}
-              {#if !k.revoked}
-                <button
-                  class="btn btn-secondary btn-sm"
-                  disabled={revoking}
-                  onclick={() => handleRevokeFileKey(k.id)}>Revoke</button
-                >
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <SettingsList>
+      {#each fileKeys as k (k.id)}
+        <SettingsRow>
+          {#snippet primary()}
+            <span class="row-label" class:revoked={k.revoked}>{k.label}</span>
+            {#if k.revoked}
+              <span class="badge badge-unavailable">revoked</span>
+            {:else if !k.available}
+              <span class="badge badge-unavailable">unavailable</span>
+            {:else}
+              <span class="badge badge-available">available</span>
+            {/if}
+            <span class="meta-mono">{k.algorithm}</span>
+          {/snippet}
+          {#snippet secondary()}
+            <span title={k.fingerprint ?? ""}>{shortFingerprint(k.fingerprint)}</span>
+            <span class="row-dot">·</span>created {formatDate(k.createdAt)}
+            <span class="row-dot">·</span>last used {formatDate(k.lastUsedAt)}
+          {/snippet}
+          {#snippet actions()}
+            {#if k.authorizedKeysEntry && !k.revoked}
+              <button
+                class="btn btn-secondary"
+                title="Copy SSH public key"
+                onclick={(e) =>
+                  copyKey(k.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
+                >Copy SSH PubKey</button
+              >
+            {/if}
+            {#if !k.revoked}
+              <button
+                class="btn btn-secondary"
+                disabled={revoking}
+                onclick={() => handleRevokeFileKey(k.id)}>Revoke</button
+              >
+            {/if}
+          {/snippet}
+        </SettingsRow>
+      {/each}
+    </SettingsList>
   {/if}
 </section>
 
@@ -302,66 +278,41 @@
     margin-top: 2rem;
   }
 
-  .fingerprint {
-    font-family: monospace;
-    font-size: 0.75rem;
+  .row-label {
+    font-weight: 600;
+    font-size: var(--body-md);
+    color: var(--on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
-  .actions {
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
-  }
-
-  .btn-icon {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    padding: 0.15rem 0.35rem;
-    border-radius: 3px;
-    font-size: 0.75rem;
-    cursor: pointer;
-    line-height: 1;
-  }
-
-  .btn-icon:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .btn-sm {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.5rem;
-  }
-
-  .badge-revoked {
-    color: var(--red);
-  }
-
-  .badge-unavailable {
-    color: #b8860b;
-  }
-
-  .badge-available {
-    color: var(--green, #4ade80);
-  }
-
-  tr.revoked td {
+  .row-label.revoked {
     opacity: 0.5;
   }
 
-  .empty {
-    color: #555;
+  .meta-mono {
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .row-dot {
+    color: var(--on-surface-faint);
+    margin: 0 var(--space-2);
   }
 
   .register-section {
-    margin-top: 1rem;
+    margin-top: var(--space-5);
   }
 
   .label-btn {
     background: none;
     border: none;
-    color: var(--text-primary);
+    color: var(--on-surface);
     cursor: pointer;
     padding: 0;
     font: inherit;
@@ -369,7 +320,7 @@
   }
 
   .label-btn:hover:not(:disabled) {
-    color: var(--accent);
+    color: var(--primary);
     text-decoration: underline;
   }
 
@@ -379,12 +330,17 @@
 
   .inline-rename {
     width: 100%;
-    padding: 0.15rem 0.3rem;
-    border: 1px solid var(--accent);
-    border-radius: 3px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    padding: var(--space-1) 0;
+    border: none;
+    border-bottom: 1px solid var(--primary);
+    background: transparent;
+    color: var(--on-surface);
     font: inherit;
-    font-size: 0.85rem;
+    font-size: var(--body-md);
+  }
+
+  .inline-rename:focus {
+    outline: none;
+    box-shadow: 0 2px 0 -1px var(--primary);
   }
 </style>

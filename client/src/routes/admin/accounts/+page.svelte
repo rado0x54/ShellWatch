@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Identicon from "$lib/components/Identicon.svelte";
+  import SettingsList from "$lib/components/SettingsList.svelte";
+  import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   interface AccountEntry {
     id: string;
@@ -51,51 +53,37 @@
 <section>
   <h2>Accounts</h2>
 
-  <table class="settings-table">
-    <thead>
-      <tr>
-        <th></th>
-        <th>Name</th>
-        <th>Role</th>
-        <th>Max Sessions</th>
-        <th>Created</th>
-        <th>Last Active</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each accounts as acct (acct.id)}
-        <tr>
-          <td><Identicon uuid={acct.id} size={28} /></td>
-          <td>{acct.name}</td>
-          <td>
-            {#if acct.isAdmin}
-              <span class="badge badge-admin">admin</span>
-            {:else}
-              <span class="badge badge-user">user</span>
-            {/if}
-          </td>
-          <td class="muted">{acct.maxSessions}</td>
-          <td>{formatDate(acct.createdAt)}</td>
-          <td>{formatDate(acct.lastUsedAt)}</td>
-          <td>
-            {#if !acct.isAdmin}
-              <button
-                class="btn btn-secondary btn-sm"
-                disabled={deleting}
-                onclick={() => handleDelete(acct.id, acct.name)}
-              >
-                Delete
-              </button>
-            {/if}
-          </td>
-        </tr>
-      {/each}
-      {#if accounts.length === 0}
-        <tr><td colspan="7" class="empty">No accounts found</td></tr>
-      {/if}
-    </tbody>
-  </table>
+  <SettingsList empty={accounts.length === 0} emptyText="No accounts found">
+    {#each accounts as acct (acct.id)}
+      <SettingsRow>
+        {#snippet primary()}
+          <Identicon uuid={acct.id} size={28} />
+          <span class="row-label">{acct.name}</span>
+          {#if acct.isAdmin}
+            <span class="badge badge-available">admin</span>
+          {:else}
+            <span class="badge">user</span>
+          {/if}
+        {/snippet}
+        {#snippet secondary()}
+          max sessions {acct.maxSessions}
+          <span class="row-dot">·</span>created {formatDate(acct.createdAt)}
+          <span class="row-dot">·</span>last active {formatDate(acct.lastUsedAt)}
+        {/snippet}
+        {#snippet actions()}
+          {#if !acct.isAdmin}
+            <button
+              class="btn btn-secondary"
+              disabled={deleting}
+              onclick={() => handleDelete(acct.id, acct.name)}
+            >
+              Delete
+            </button>
+          {/if}
+        {/snippet}
+      </SettingsRow>
+    {/each}
+  </SettingsList>
 </section>
 
 <style>
@@ -108,31 +96,17 @@
     letter-spacing: 0.05em;
   }
 
-  .badge-admin {
-    color: var(--accent);
+  .row-label {
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: var(--body-md);
+    color: var(--on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .badge-user {
-    color: var(--text-muted);
-    font-size: 0.75rem;
-  }
-
-  .btn-sm {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.5rem;
-  }
-
-  .muted {
-    color: var(--text-muted);
-  }
-
-  .empty {
+  .row-dot {
     color: var(--on-surface-faint);
-    font-family: var(--font-mono);
-    font-size: var(--label-md);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
+    margin: 0 var(--space-2);
   }
 </style>

@@ -4,6 +4,8 @@
   import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
+  import SettingsList from "$lib/components/SettingsList.svelte";
+  import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   let label = $state("");
   let scopeMcp = $state(true);
@@ -58,45 +60,29 @@
 
 <section>
   <h2>API Keys</h2>
-  <table class="settings-table">
-    <thead>
-      <tr>
-        <th>Label</th>
-        <th>Prefix</th>
-        <th>Scopes</th>
-        <th>Status</th>
-        <th>Created</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each $apiKeys as k (k.id)}
-        <tr>
-          <td>{k.label}</td>
-          <td class="monospace">{k.keyPrefix}...</td>
-          <td class="monospace">{k.scopes.join(", ")}</td>
-          <td>
-            <span
-              class="badge"
-              class:badge-available={k.enabled}
-              class:badge-unavailable={!k.enabled}
-            >
-              {k.enabled ? "active" : "revoked"}
-            </span>
-          </td>
-          <td>{k.createdAt.slice(0, 10)}</td>
-          <td>
-            {#if k.enabled}
-              <button class="btn btn-secondary" onclick={() => handleRevoke(k.id)}>Revoke</button>
-            {/if}
-          </td>
-        </tr>
-      {/each}
-      {#if $apiKeys.length === 0}
-        <tr><td colspan="6" class="empty">No API keys configured</td></tr>
-      {/if}
-    </tbody>
-  </table>
+  <SettingsList empty={$apiKeys.length === 0} emptyText="No API keys configured">
+    {#each $apiKeys as k (k.id)}
+      <SettingsRow>
+        {#snippet primary()}
+          <span class="row-label">{k.label}</span>
+          {#if k.enabled}
+            <span class="badge badge-available">active</span>
+          {:else}
+            <span class="badge badge-unavailable">revoked</span>
+          {/if}
+          <span class="meta-mono">{k.scopes.join(" ")}</span>
+        {/snippet}
+        {#snippet secondary()}
+          {k.keyPrefix}…<span class="row-dot">·</span>created {k.createdAt.slice(0, 10)}
+        {/snippet}
+        {#snippet actions()}
+          {#if k.enabled}
+            <button class="btn btn-secondary" onclick={() => handleRevoke(k.id)}>Revoke</button>
+          {/if}
+        {/snippet}
+      </SettingsRow>
+    {/each}
+  </SettingsList>
 
   <div class="settings-form">
     <h3>Generate API Key</h3>
@@ -149,17 +135,27 @@
     letter-spacing: 0.05em;
   }
 
-  .monospace {
-    font-family: var(--font-mono);
-    font-size: var(--label-md);
+  .row-label {
+    font-weight: 600;
+    font-size: var(--body-md);
+    color: var(--on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
-  .empty {
-    color: var(--on-surface-faint);
+  .meta-mono {
     font-family: var(--font-mono);
-    font-size: var(--label-md);
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.04em;
+  }
+
+  .row-dot {
+    color: var(--on-surface-faint);
+    margin: 0 var(--space-2);
   }
 
   .modal-desc {

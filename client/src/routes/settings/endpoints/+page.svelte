@@ -16,6 +16,8 @@
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
+  import SettingsList from "$lib/components/SettingsList.svelte";
+  import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   type ModalMode = { kind: "create" } | { kind: "edit"; id: string };
 
@@ -111,34 +113,21 @@
     <button class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
   </div>
 
-  <table class="settings-table">
-    <thead>
-      <tr>
-        <th>Label</th>
-        <th>Address</th>
-        <th>User Verification</th>
-        <th>Description</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each $endpoints as ep (ep.id)}
-        <tr>
-          <td>{ep.label}</td>
-          <td class="monospace">{formatEndpointAddress(ep)}</td>
-          <td class="monospace">{ep.userVerification}</td>
-          <td class="description-cell">{ep.description ?? ""}</td>
-          <td class="actions-cell">
-            <button class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
-            <button class="btn btn-secondary" onclick={() => handleDelete(ep)}>Delete</button>
-          </td>
-        </tr>
-      {/each}
-      {#if $endpoints.length === 0}
-        <tr><td colspan="5" class="empty">No endpoints configured</td></tr>
-      {/if}
-    </tbody>
-  </table>
+  <SettingsList empty={$endpoints.length === 0} emptyText="No endpoints configured">
+    {#each $endpoints as ep (ep.id)}
+      <SettingsRow detail={ep.description ?? null} detailLabel="Description">
+        {#snippet primary()}
+          <span class="row-label">{ep.label}</span>
+          <span class="badge badge-available">{ep.userVerification}</span>
+        {/snippet}
+        {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
+        {#snippet actions()}
+          <button class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
+          <button class="btn btn-secondary" onclick={() => handleDelete(ep)}>Delete</button>
+        {/snippet}
+      </SettingsRow>
+    {/each}
+  </SettingsList>
 
   <div class="hint-block">
     <p class="hint">
@@ -238,35 +227,18 @@
     margin-bottom: 0.75rem;
   }
 
-  .empty {
-    color: var(--on-surface-faint);
-    font-family: var(--font-mono);
-    font-size: var(--label-md);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-
-  .monospace {
-    font-family: var(--font-mono);
-    font-size: var(--label-md);
-  }
-
-  .description-cell {
-    max-width: 24rem;
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .actions-cell {
-    display: flex;
-    gap: 0.4rem;
-    justify-content: flex-end;
+  .row-label {
+    font-weight: 600;
+    font-size: var(--body-md);
+    color: var(--on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
   .hint-block {
-    margin-top: 1rem;
+    margin-top: var(--space-6);
   }
 
   .hint {
