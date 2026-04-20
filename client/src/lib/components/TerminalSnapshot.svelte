@@ -22,14 +22,22 @@
       disableStdin: true,
       scrollback: 5000,
       fontSize,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+      fontFamily:
+        "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
       rows,
       theme: {
-        background: "#1a1a2e",
-        foreground: "#e0e0e0",
+        background: "#0e0e0e",
+        foreground: "#f2f2f2",
         // 8-digit hex: fully transparent cursor — this is a read-only snapshot.
         cursor: "#00000000",
-        selectionBackground: "#4a9eff44",
+        selectionBackground: "rgba(105, 246, 184, 0.25)",
+        green: "#69f6b8",
+        yellow: "#f8a010",
+        red: "#ff5a5a",
+        brightGreen: "#69f6b8",
+        brightYellow: "#f8a010",
+        brightRed: "#ff5a5a",
+        brightWhite: "#f2f2f2",
       },
     });
 

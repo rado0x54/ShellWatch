@@ -8,7 +8,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #555;
-    font-size: 1.1rem;
+    color: var(--on-surface-faint);
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    background: var(--surface-dim);
   }
 </style>

@@ -238,12 +238,16 @@
   }
 
   .empty {
-    color: #555;
+    color: var(--on-surface-faint);
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
 
   .monospace {
-    font-family: monospace;
-    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
   }
 
   .description-cell {
@@ -271,8 +275,9 @@
   }
 
   .hint code {
-    font-family: monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
+    color: var(--primary);
   }
 
   .field {

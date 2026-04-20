@@ -172,8 +172,7 @@
   .sidebar {
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border);
+    background: var(--surface-container-low);
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -181,16 +180,17 @@
   }
 
   .sidebar-section {
-    padding: 1rem;
-    border-bottom: 1px solid var(--border);
+    padding: var(--space-5) var(--space-4);
   }
 
   .sidebar-section h2 {
-    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 0.75rem;
+    letter-spacing: 0.14em;
+    color: var(--on-surface-variant);
+    margin-bottom: var(--space-4);
   }
 
   .sidebar-section ul {
@@ -198,54 +198,80 @@
   }
 
   .sidebar-section li {
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
   }
 
   .no-sessions {
-    color: #555;
-    font-size: 0.8rem;
-    padding: 0.25rem;
+    color: var(--on-surface-faint);
+    font-size: var(--body-md);
+    padding: var(--space-2) 0;
+    font-family: var(--font-mono);
   }
 
   .endpoint-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    padding: var(--space-3) var(--space-4);
+    background: transparent;
+    position: relative;
+  }
+
+  .endpoint-item:hover {
+    background: var(--surface-container);
   }
 
   .endpoint-info {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    min-width: 0;
   }
 
   .endpoint-label {
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: var(--body-md);
+    color: var(--on-surface);
   }
 
   .endpoint-detail {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .session-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    padding: var(--space-3) var(--space-4);
+    background: transparent;
     cursor: pointer;
+    position: relative;
+    transition: background 0.15s;
+  }
+
+  .session-item:hover {
+    background: var(--surface-container);
   }
 
   .session-item.active {
-    border-color: var(--accent);
+    background: var(--surface-container-high);
+  }
+
+  /* Power Rail — 2px vertical primary strip on active row */
+  .session-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--primary);
+    box-shadow: 0 0 12px rgba(105, 246, 184, 0.6);
   }
 
   .session-info {
@@ -256,60 +282,78 @@
   }
 
   .session-label {
-    font-size: 0.875rem;
+    font-size: var(--body-md);
     font-weight: 500;
+    color: var(--on-surface);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .session-detail {
-    font-size: 0.7rem;
-    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
   }
 
   .session-actions {
     display: flex;
-    gap: 0.25rem;
+    gap: var(--space-1);
     flex-shrink: 0;
   }
 
   .sidebar-footer {
     margin-top: auto;
-    padding: 1rem;
-    border-top: 1px solid var(--border);
+    padding: var(--space-5) var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
 
   .btn-nav {
     width: 100%;
-    background: #2a2a4a;
-    color: var(--text-muted);
-    padding: 0.5rem;
+    background: transparent;
+    color: var(--on-surface-variant);
+    padding: var(--space-3) var(--space-3);
     border: none;
-    border-radius: 4px;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
+    text-align: left;
+    letter-spacing: 0.02em;
+    transition:
+      background 0.15s,
+      color 0.15s;
+    position: relative;
   }
 
   .btn-nav:hover {
-    background: #3a3a5a;
-    color: var(--text-primary);
+    color: var(--primary);
+    background: var(--surface-container);
   }
 
   .btn-nav.active {
-    background: var(--accent);
-    color: #fff;
+    color: var(--on-surface);
+    background: var(--surface-container-high);
+  }
+
+  .btn-nav.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--primary);
+    box-shadow: 0 0 12px rgba(105, 246, 184, 0.6);
   }
 
   .account-info {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.25rem;
-    margin-bottom: 0.5rem;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    margin-bottom: var(--space-2);
   }
 
   .account-details {
@@ -320,24 +364,37 @@
   }
 
   .account-name {
-    font-size: 0.8rem;
+    font-size: var(--body-md);
     font-weight: 600;
+    color: var(--on-surface);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .badge-admin {
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent);
-    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    color: var(--primary);
+    font-weight: 500;
+  }
+
+  .badge-admin::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--primary);
+    display: inline-block;
   }
 
   .btn-logout:hover {
-    background: var(--red);
-    color: #fff;
+    color: var(--error);
+    background: var(--surface-container);
   }
 
   @media (max-width: 768px) {

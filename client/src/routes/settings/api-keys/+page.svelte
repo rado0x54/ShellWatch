@@ -150,12 +150,16 @@
   }
 
   .monospace {
-    font-family: monospace;
-    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
   }
 
   .empty {
-    color: #555;
+    color: var(--on-surface-faint);
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
 
   .modal-desc {

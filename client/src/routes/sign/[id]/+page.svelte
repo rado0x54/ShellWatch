@@ -389,18 +389,19 @@
   }
 
   .sign-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 12px;
+    background: var(--surface-container-low);
     padding: 2rem;
     min-width: 360px;
     max-width: 500px;
     width: 100%;
+    box-shadow: var(--glow-primary);
   }
 
   .sign-card h2 {
-    font-size: 1.1rem;
+    font-family: var(--font-display);
+    font-size: var(--title-lg);
     font-weight: 600;
+    letter-spacing: -0.02em;
     margin-bottom: 1.25rem;
   }
 
@@ -424,11 +425,10 @@
   }
 
   .sign-preview {
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    border: 1px solid var(--outline-variant);
     padding: 0.75rem 1rem;
     margin-bottom: 1.5rem;
-    background: var(--bg-primary);
+    background: var(--surface-dim);
   }
 
   .sign-preview-header {
@@ -477,19 +477,19 @@
   }
 
   .sign-reported {
-    border: 1px dashed var(--border);
-    border-radius: 8px;
+    border: 1px dashed var(--outline-variant);
     padding: 0.75rem 1rem;
     margin-bottom: 1.5rem;
-    background: rgba(255, 255, 255, 0.015);
+    background: var(--surface-container);
   }
 
   .sign-reported-header {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
+    letter-spacing: 0.14em;
+    color: var(--on-surface-variant);
     margin-bottom: 0.6rem;
   }
 
@@ -529,8 +529,9 @@
   }
 
   .sign-mono {
-    font-family: monospace;
-    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    font-size: var(--body-md);
+    color: var(--primary);
   }
 
   .sign-link {
@@ -548,13 +549,13 @@
   }
 
   .sign-error {
-    background: rgba(248, 113, 113, 0.1);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    border-radius: 6px;
+    background: rgba(255, 90, 90, 0.08);
+    border: 1px solid rgba(255, 90, 90, 0.25);
     padding: 0.6rem 0.75rem;
-    font-size: 0.8rem;
-    color: var(--red);
+    font-size: var(--body-md);
+    color: var(--error);
     margin-bottom: 1rem;
+    box-shadow: var(--glow-error);
   }
 
   .sign-actions {

@@ -66,74 +66,85 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-primary);
+    background: var(--surface-dim);
   }
 
   .login-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 2.5rem;
+    background: var(--surface-container-low);
+    padding: var(--space-7);
     text-align: center;
     max-width: 380px;
     width: 90%;
+    box-shadow: var(--glow-primary);
   }
 
   h1 {
-    font-size: 1.5rem;
+    font-family: var(--font-display);
+    font-size: var(--display-md);
     font-weight: 600;
-    margin-bottom: 0.5rem;
+    letter-spacing: -0.035em;
+    margin-bottom: var(--space-2);
   }
 
   .subtitle {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 2rem;
+    font-family: var(--font-mono);
+    color: var(--on-surface-variant);
+    font-size: var(--label-md);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: var(--space-7);
   }
 
   .login-btn {
     display: inline-block;
     padding: 0.75rem 2rem;
-    background: var(--accent);
-    color: #fff;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
     border: none;
-    border-radius: 6px;
-    font-size: 1rem;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     width: 100%;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
   }
 
   .login-btn:hover {
-    background: var(--accent-hover);
+    box-shadow: var(--glow-primary-strong);
   }
 
   .login-btn:disabled {
-    background: #3a3a5a;
-    color: #666;
+    background: var(--surface-container-high);
+    color: var(--on-surface-faint);
+    box-shadow: none;
     cursor: default;
   }
 
   .error {
-    color: var(--red);
-    font-size: 0.85rem;
-    margin-top: 1rem;
+    color: var(--error);
+    font-size: var(--body-md);
+    margin-top: var(--space-4);
   }
 
   .status {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin-top: 1rem;
+    font-family: var(--font-mono);
+    color: var(--on-surface-variant);
+    font-size: var(--label-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-top: var(--space-4);
   }
 
   .register-link {
-    margin-top: 1.5rem;
-    font-size: 0.85rem;
-    color: var(--text-muted);
+    margin-top: var(--space-5);
+    font-size: var(--body-md);
+    color: var(--on-surface-variant);
   }
 
   .register-link a {
-    color: var(--accent);
+    color: var(--primary);
     text-decoration: none;
   }
 

@@ -112,8 +112,11 @@
     align-items: center;
     justify-content: center;
     height: 100vh;
-    color: var(--text-muted);
-    font-size: 1.1rem;
+    color: var(--on-surface-variant);
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
 
   .app-shell {
@@ -125,26 +128,27 @@
   .mobile-header {
     display: none;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 1rem;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-5);
+    background: var(--surface-container-low);
     flex-shrink: 0;
   }
 
   .hamburger {
     background: none;
     border: none;
-    color: var(--text-primary);
+    color: var(--on-surface);
     font-size: 1.5rem;
     cursor: pointer;
-    padding: 0.25rem;
+    padding: var(--space-1);
     line-height: 1;
   }
 
   .mobile-title {
+    font-family: var(--font-display);
     font-weight: 600;
-    font-size: 1rem;
+    font-size: var(--body-lg);
+    letter-spacing: -0.01em;
   }
 
   .app-body {

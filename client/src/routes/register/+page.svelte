@@ -343,13 +343,20 @@
 
   .input {
     width: 100%;
-    padding: 0.625rem;
+    padding: 0.5rem 0;
     margin-bottom: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.85rem;
+    border: none;
+    border-bottom: 1px solid var(--outline-variant);
+    background: transparent;
+    color: var(--on-surface);
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
+    transition: border-color 0.2s;
+  }
+
+  .input:focus {
+    outline: none;
+    border-bottom-color: var(--primary);
   }
 
   .form-row {
@@ -370,23 +377,27 @@
 
   .btn-primary {
     padding: 0.625rem 1.5rem;
-    background: var(--accent);
-    color: #fff;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
     border: none;
-    border-radius: 6px;
-    font-size: 0.9rem;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     min-width: 120px;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
   }
 
   .btn-primary:hover {
-    background: var(--accent-hover);
+    box-shadow: var(--glow-primary-strong);
   }
 
   .btn-primary:disabled {
-    background: #3a3a5a;
-    color: #666;
+    background: var(--surface-container-high);
+    color: var(--on-surface-faint);
+    box-shadow: none;
     cursor: default;
   }
 
