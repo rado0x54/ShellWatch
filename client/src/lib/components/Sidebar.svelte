@@ -194,8 +194,8 @@
   }
 
   .sidebar-logo {
-    width: 28px;
-    height: 28px;
+    width: 56px;
+    height: 56px;
     flex-shrink: 0;
   }
 
