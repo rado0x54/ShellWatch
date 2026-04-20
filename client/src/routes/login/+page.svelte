@@ -41,6 +41,7 @@
 
 <div class="login-page">
   <div class="login-card">
+    <img class="login-logo" src="/icon-192.png" alt="" />
     <h1>ShellWatch</h1>
     <p class="subtitle">Touch your passkey to sign in</p>
     <button class="login-btn" disabled={loading} onclick={handleLogin}>
@@ -76,6 +77,14 @@
     max-width: 380px;
     width: 90%;
     box-shadow: var(--glow-primary);
+  }
+
+  .login-logo {
+    width: 88px;
+    height: 88px;
+    display: block;
+    margin: 0 auto var(--space-4);
+    filter: drop-shadow(0 0 24px rgba(105, 246, 184, 0.35));
   }
 
   h1 {

@@ -61,6 +61,11 @@
 </script>
 
 <nav class="sidebar">
+  <div class="sidebar-brand">
+    <img class="sidebar-logo" src="/icon-64.png" alt="" />
+    <span class="sidebar-wordmark">ShellWatch</span>
+  </div>
+
   <div class="sidebar-section">
     <h2>Endpoints</h2>
     <ul>
@@ -177,6 +182,28 @@
     flex-direction: column;
     overflow-y: auto;
     height: 100%;
+  }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .sidebar-logo {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 12px rgba(105, 246, 184, 0.4));
+  }
+
+  .sidebar-wordmark {
+    font-family: var(--font-display);
+    font-size: var(--title-md);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--on-surface);
   }
 
   .sidebar-section {
