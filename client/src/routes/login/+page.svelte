@@ -83,12 +83,12 @@
     width: 176px;
     height: 176px;
     display: block;
-    margin: 0 auto var(--space-5);
+    margin: 0 auto var(--space-2);
   }
 
   .wordmark {
     font-family: var(--font-display);
-    font-size: var(--display-md);
+    font-size: var(--title-lg);
     font-weight: 600;
     letter-spacing: -0.01em;
     text-transform: uppercase;
