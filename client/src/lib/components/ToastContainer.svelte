@@ -269,4 +269,60 @@
       opacity: 1;
     }
   }
+
+  @keyframes slide-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  /* ----------------------------------------------------------------
+   * Mobile — bottom sheet: stack fields, full-width actions, slide-up
+   * ---------------------------------------------------------------- */
+  @media (max-width: 768px) {
+    .toast-container {
+      top: auto;
+      left: var(--space-3);
+      right: var(--space-3);
+      bottom: var(--space-3);
+      max-width: none;
+      flex-direction: column-reverse;
+    }
+
+    .toast {
+      animation: slide-up 0.2s ease-out;
+      padding: var(--space-5);
+    }
+
+    .toast-field {
+      flex-direction: column;
+      gap: var(--space-1);
+      align-items: stretch;
+    }
+
+    .toast-label {
+      min-width: 0;
+    }
+
+    .toast-mono {
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+
+    .toast-actions {
+      justify-content: stretch;
+      gap: var(--space-3);
+    }
+
+    .toast-actions :global(.btn) {
+      flex: 1;
+      padding: var(--space-4);
+      font-size: var(--body-md);
+    }
+  }
 </style>
