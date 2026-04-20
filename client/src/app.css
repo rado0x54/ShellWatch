@@ -325,7 +325,6 @@ pre,
   padding: 1.5rem;
   min-width: 340px;
   max-width: 480px;
-  box-shadow: var(--glow-primary);
 }
 
 .modal h3 {
@@ -488,7 +487,6 @@ pre,
 
 .code-block:hover {
   border-color: var(--primary);
-  box-shadow: var(--glow-primary);
 }
 
 /* Selection color */

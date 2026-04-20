@@ -149,7 +149,6 @@
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--outline-variant);
     padding: var(--space-4) var(--space-5);
-    box-shadow: var(--glow-primary);
     animation: slide-in 0.2s ease-out;
   }
 

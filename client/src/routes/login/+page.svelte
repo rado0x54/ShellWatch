@@ -76,7 +76,6 @@
     text-align: center;
     max-width: 380px;
     width: 90%;
-    box-shadow: var(--glow-primary);
   }
 
   .login-logo {
@@ -84,7 +83,6 @@
     height: 88px;
     display: block;
     margin: 0 auto var(--space-4);
-    filter: drop-shadow(0 0 24px rgba(105, 246, 184, 0.35));
   }
 
   h1 {

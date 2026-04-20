@@ -195,7 +195,6 @@
     width: 28px;
     height: 28px;
     flex-shrink: 0;
-    filter: drop-shadow(0 0 12px rgba(105, 246, 184, 0.4));
   }
 
   .sidebar-wordmark {

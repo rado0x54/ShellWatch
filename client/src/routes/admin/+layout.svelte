@@ -90,9 +90,7 @@
 
   .tab.active {
     color: var(--primary);
-    box-shadow:
-      inset 0 -2px 0 var(--primary),
-      var(--glow-primary);
+    box-shadow: inset 0 -2px 0 var(--primary);
   }
 
   .settings-content {

@@ -204,7 +204,6 @@
     display: flex;
     flex-direction: column;
     background: var(--surface-container-highest);
-    box-shadow: var(--glow-primary);
     overflow: hidden;
     min-height: 0;
   }

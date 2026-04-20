@@ -394,7 +394,6 @@
     min-width: 360px;
     max-width: 500px;
     width: 100%;
-    box-shadow: var(--glow-primary);
   }
 
   .sign-card h2 {
