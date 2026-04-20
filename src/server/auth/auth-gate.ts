@@ -47,10 +47,14 @@ export function registerAuthGate({
     "/mcp",
     "/agent-proxy",
     "/config.js",
+    "/manifest.json",
     // OAuth endpoints reached by the MCP client directly (no human, no session):
     "/oauth/register",
     "/oauth/token",
   ]);
+
+  // Public static asset extensions — icons, logos, fonts. Not used by any API route.
+  const publicAssetExtensions = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
 
   // Only exempt during onboarding (no passkeys registered yet — admin bootstrap)
   const onboardingOnly = new Set(["/api/webauthn/register/verify"]);
@@ -73,6 +77,7 @@ export function registerAuthGate({
 
     // Static assets
     if (url.startsWith("/_app/")) return;
+    if (publicAssetExtensions.some((ext) => url.endsWith(ext))) return;
 
     // Always-exempt paths
     if (alwaysExempt.has(url)) return;
