@@ -63,7 +63,9 @@
 <nav class="sidebar">
   <div class="sidebar-brand">
     <img class="sidebar-logo" src="/logo.svg" alt="" />
-    <span class="sidebar-wordmark">ShellWatch</span>
+    <span class="sidebar-wordmark"
+      ><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></span
+    >
   </div>
 
   <div class="sidebar-section">
@@ -201,8 +203,16 @@
     font-family: var(--font-display);
     font-size: var(--title-md);
     font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--on-surface);
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+  }
+
+  .sidebar-wordmark .wordmark-shell {
+    color: #12a26f;
+  }
+
+  .sidebar-wordmark .wordmark-watch {
+    color: #f0efea;
   }
 
   .sidebar-section {
