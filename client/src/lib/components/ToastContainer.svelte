@@ -51,7 +51,7 @@
           {@const isProcessing = activeActionId === toast.action.actionId}
           {@const isKeyApprove = toast.action.actionType === "key-approve"}
           <div class="toast-header">
-            <span class="toast-icon">{isKeyApprove ? "&#128272;" : "&#128273;"}</span>
+            <span class="toast-icon">{isKeyApprove ? "🔐" : "🔑"}</span>
             <span class="toast-title">
               {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
             </span>
