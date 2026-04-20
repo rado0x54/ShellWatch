@@ -42,8 +42,9 @@
 <div class="login-page">
   <div class="login-card">
     <img class="login-logo" src="/logo.svg" alt="" />
-    <h1>ShellWatch</h1>
-    <p class="subtitle">Touch your passkey to sign in</p>
+    <h1 class="wordmark">
+      <span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span>
+    </h1>
     <button class="login-btn" disabled={loading} onclick={handleLogin}>
       Sign in with Passkey
     </button>
@@ -79,27 +80,28 @@
   }
 
   .login-logo {
-    width: 88px;
-    height: 88px;
+    width: 176px;
+    height: 176px;
     display: block;
-    margin: 0 auto var(--space-4);
+    margin: 0 auto var(--space-5);
   }
 
-  h1 {
+  .wordmark {
     font-family: var(--font-display);
     font-size: var(--display-md);
     font-weight: 600;
-    letter-spacing: -0.035em;
-    margin-bottom: var(--space-2);
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    margin-bottom: var(--space-7);
+    line-height: 1;
   }
 
-  .subtitle {
-    font-family: var(--font-mono);
-    color: var(--on-surface-variant);
-    font-size: var(--label-md);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: var(--space-7);
+  .wordmark-shell {
+    color: #12a26f;
+  }
+
+  .wordmark-watch {
+    color: #f0efea;
   }
 
   .login-btn {
