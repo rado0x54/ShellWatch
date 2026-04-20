@@ -41,7 +41,7 @@
 
 <div class="login-page">
   <div class="login-card">
-    <img class="login-logo" src="/icon-192.png" alt="" />
+    <img class="login-logo" src="/logo.svg" alt="" />
     <h1>ShellWatch</h1>
     <p class="subtitle">Touch your passkey to sign in</p>
     <button class="login-btn" disabled={loading} onclick={handleLogin}>

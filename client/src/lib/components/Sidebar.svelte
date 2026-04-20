@@ -62,7 +62,7 @@
 
 <nav class="sidebar">
   <div class="sidebar-brand">
-    <img class="sidebar-logo" src="/icon-64.png" alt="" />
+    <img class="sidebar-logo" src="/logo.svg" alt="" />
     <span class="sidebar-wordmark">ShellWatch</span>
   </div>
 
