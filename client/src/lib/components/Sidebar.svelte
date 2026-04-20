@@ -3,6 +3,7 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import Identicon from "$lib/components/Identicon.svelte";
+  import Wordmark from "$lib/components/Wordmark.svelte";
   import { account } from "$lib/stores/account.js";
   import { endpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
@@ -63,9 +64,7 @@
 <nav class="sidebar">
   <div class="sidebar-brand">
     <img class="sidebar-logo" src="/logo.svg" alt="" />
-    <span class="sidebar-wordmark"
-      ><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></span
-    >
+    <span class="sidebar-wordmark"><Wordmark /></span>
   </div>
 
   <div class="sidebar-section">
@@ -200,19 +199,7 @@
   }
 
   .sidebar-wordmark {
-    font-family: var(--font-display);
     font-size: var(--title-md);
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    text-transform: uppercase;
-  }
-
-  .sidebar-wordmark .wordmark-shell {
-    color: #12a26f;
-  }
-
-  .sidebar-wordmark .wordmark-watch {
-    color: #f0efea;
   }
 
   .sidebar-section {

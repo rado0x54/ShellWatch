@@ -8,6 +8,7 @@
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
   import { registerAccount } from "$lib/stores/webauthn.js";
+  import Wordmark from "$lib/components/Wordmark.svelte";
 
   let isAdminSetup = $state(false);
   let loading = $state(false);
@@ -131,7 +132,7 @@
 
     <!-- Step 1: Welcome -->
     {#if currentStep === 0}
-      <h1>Welcome to ShellWatch</h1>
+      <h1>Welcome to <Wordmark /></h1>
       {#if isAdminSetup}
         <div class="admin-badge">Admin Setup</div>
         <p class="description">
@@ -140,9 +141,8 @@
         </p>
       {/if}
       <p class="description">
-        ShellWatch is an SSH session broker that lets you and your AI agents securely manage remote
-        servers through a unified interface. Authentication is passkey-only — no passwords, no
-        emails.
+        <Wordmark /> is an SSH session broker that lets you and your AI agents securely manage remote
+        servers through a unified interface. Authentication is passkey-only — no passwords, no emails.
       </p>
       {#if !isAdminSetup}
         <p class="hint">
@@ -206,7 +206,7 @@
     {:else if currentStep === 3}
       <h1>MCP for Agents</h1>
       <p class="description">
-        AI agents connect to ShellWatch via the Model Context Protocol. Give each agent its own API
+        AI agents connect to <Wordmark /> via the Model Context Protocol. Give each agent its own API
         key.
       </p>
 

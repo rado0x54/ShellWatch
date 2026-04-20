@@ -15,6 +15,7 @@
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
+  import Wordmark from "$lib/components/Wordmark.svelte";
 
   type ModalMode = { kind: "create" } | { kind: "edit"; id: string };
 
@@ -146,10 +147,10 @@
       always enforced). Relax only if a specific authenticator can't provide UV.
     </p>
     <p class="hint">
-      This is a <em>client-side</em> setting — ShellWatch requests UV from the authenticator and
-      rejects responses without it when set to <code>required</code>, but the authoritative gate is
-      the <strong>OpenSSH server</strong>. To make UV load-bearing, configure the target host to
-      require it:
+      This is a <em>client-side</em> setting — <Wordmark /> requests UV from the authenticator and rejects
+      responses without it when set to <code>required</code>, but the authoritative gate is the
+      <strong>OpenSSH server</strong>. To make UV load-bearing, configure the target host to require
+      it:
     </p>
     <ul class="hint">
       <li>

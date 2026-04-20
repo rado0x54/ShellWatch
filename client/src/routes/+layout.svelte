@@ -5,6 +5,7 @@
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import Wordmark from "$lib/components/Wordmark.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
@@ -82,7 +83,8 @@
           &#9776;
         {/if}
       </button>
-      <span class="mobile-title">ShellWatch</span>
+      <img class="mobile-logo" src="/logo.svg" alt="" />
+      <span class="mobile-title"><Wordmark /></span>
     </header>
 
     <div class="app-body">
@@ -144,11 +146,14 @@
     line-height: 1;
   }
 
+  .mobile-logo {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
   .mobile-title {
-    font-family: var(--font-display);
-    font-weight: 600;
     font-size: var(--body-lg);
-    letter-spacing: -0.01em;
   }
 
   .app-body {

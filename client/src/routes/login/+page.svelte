@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
+  import Wordmark from "$lib/components/Wordmark.svelte";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
@@ -42,9 +43,7 @@
 <div class="login-page">
   <div class="login-card">
     <img class="login-logo" src="/logo.svg" alt="" />
-    <h1 class="wordmark">
-      <span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span>
-    </h1>
+    <h1 class="wordmark-h1"><Wordmark /></h1>
     <button class="login-btn" disabled={loading} onclick={handleLogin}>
       Sign in with Passkey
     </button>
@@ -86,22 +85,10 @@
     margin: 0 auto var(--space-2);
   }
 
-  .wordmark {
-    font-family: var(--font-display);
+  .wordmark-h1 {
     font-size: 2rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    text-transform: uppercase;
     margin-bottom: var(--space-7);
     line-height: 1;
-  }
-
-  .wordmark-shell {
-    color: #12a26f;
-  }
-
-  .wordmark-watch {
-    color: #f0efea;
   }
 
   .login-btn {
