@@ -74,8 +74,7 @@
         <li>
           <div class="endpoint-item">
             <div class="endpoint-info">
-              <span class="endpoint-label">{ep.label}</span>
-              <span class="endpoint-detail">{formatEndpointAddress(ep)}</span>
+              <span class="endpoint-label" title={formatEndpointAddress(ep)}>{ep.label}</span>
             </div>
             <button class="btn btn-primary" onclick={() => handleConnect(ep.id)}>Connect</button>
           </div>
@@ -235,6 +234,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
     background: transparent;
     position: relative;
@@ -249,21 +249,20 @@
     flex-direction: column;
     gap: 0.15rem;
     min-width: 0;
+    flex: 1;
   }
 
   .endpoint-label {
     font-weight: 600;
     font-size: var(--body-md);
     color: var(--on-surface);
-  }
-
-  .endpoint-detail {
-    font-family: var(--font-mono);
-    font-size: var(--label-sm);
-    color: var(--on-surface-variant);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .endpoint-item > :global(.btn) {
+    flex-shrink: 0;
   }
 
   .session-item {
