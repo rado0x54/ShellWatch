@@ -40,23 +40,40 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ShellWatch — Authorize MCP client</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
 <style>
   :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --border: #2a2a4a;
-    --text-primary: #e0e0e0;
-    --text-muted: #8888aa;
-    --accent: #4a9eff;
-    --accent-hover: #3b8de6;
-    --amber: #fbbf24;
-    --red: #f87171;
+    --surface-dim: #0e0e0e;
+    --surface-container-low: #131313;
+    --surface-container: #1a1a1a;
+    --surface-container-high: #1f1f1f;
+    --surface-container-highest: #262626;
+    --primary: #69f6b8;
+    --primary-container: #06b77f;
+    --on-primary-container: #002919;
+    --secondary: #f8a010;
+    --error: #ff5a5a;
+    --on-surface: #f2f2f2;
+    --on-surface-variant: #adaaaa;
+    --on-surface-faint: #6a6866;
+    --outline-variant: rgba(73, 72, 71, 0.15);
+    --grad-primary: linear-gradient(135deg, #69f6b8 0%, #06b77f 100%);
+    --glow-primary: 0 0 24px rgba(105, 246, 184, 0.10);
+    --glow-primary-strong: 0 0 32px rgba(105, 246, 184, 0.22);
+    --glow-secondary: 0 0 24px rgba(248, 160, 16, 0.14);
+    --glow-error: 0 0 24px rgba(255, 90, 90, 0.14);
+    --font-display: "Geist", system-ui, sans-serif;
+    --font-ui: "Geist", system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, monospace;
   }
-  * { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; border-radius: 0 !important; }
   body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    font-family: var(--font-ui);
+    background: var(--surface-dim);
+    color: var(--on-surface);
     line-height: 1.5;
     min-height: 100vh;
     display: flex;
@@ -64,147 +81,204 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
     justify-content: center;
     padding: 3rem 1rem;
     margin: 0;
+    -webkit-font-smoothing: antialiased;
   }
   .card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 2rem 2.25rem;
+    background: var(--surface-container-low);
+    padding: 2.4rem;
     width: 100%;
     max-width: 520px;
   }
-  h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--text-primary); }
-  p { margin: 0.5rem 0; color: var(--text-primary); }
-  code { font-family: ui-monospace, monospace; background: var(--bg-primary); padding: 0.1em 0.35em; border-radius: 3px; color: var(--text-primary); }
-  .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 1.8rem;
+  }
+  .brand img { width: 32px; height: 32px; }
+  .wordmark {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+  }
+  .wordmark .shell { color: #12a26f; }
+  .wordmark .watch { color: #f0efea; }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.4rem;
+    color: var(--on-surface);
+  }
+  p { margin: 0.5rem 0; color: var(--on-surface); }
+  code {
+    font-family: var(--font-mono);
+    background: var(--surface-container-highest);
+    padding: 0.1em 0.35em;
+    color: var(--primary);
+    font-size: 0.9em;
+  }
+  .subtitle {
+    color: var(--on-surface-variant);
+    font-size: 0.875rem;
+    margin-bottom: 1.25rem;
+  }
 
   .error {
-    background: rgba(248, 113, 113, 0.12);
-    border: 1px solid rgba(248, 113, 113, 0.4);
-    color: var(--red);
+    background: rgba(255, 90, 90, 0.08);
+    border: 1px solid rgba(255, 90, 90, 0.25);
+    color: var(--error);
     padding: 0.75rem 0.9rem;
-    border-radius: 6px;
     margin: 1rem 0;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
+    box-shadow: var(--glow-error);
   }
 
   .danger {
-    background: rgba(251, 191, 36, 0.08);
-    border: 1px solid rgba(251, 191, 36, 0.35);
-    border-radius: 8px;
+    background: var(--surface-container);
+    border-left: 2px solid var(--secondary);
     padding: 1rem 1.15rem;
     margin: 1.25rem 0;
+    box-shadow: var(--glow-secondary);
   }
   .danger h2 {
-    font-size: 0.75rem;
-    color: var(--amber);
-    margin: 0 0 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--secondary);
+    margin: 0 0 0.6rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 600;
+    letter-spacing: 0.14em;
+    font-weight: 500;
   }
-  .danger p { margin: 0.4rem 0; font-size: 0.9rem; color: var(--text-primary); }
-  .danger strong { color: var(--amber); }
+  .danger p { margin: 0.4rem 0; font-size: 0.875rem; color: var(--on-surface); }
+  .danger strong { color: var(--secondary); }
   .danger .url {
-    font-family: ui-monospace, monospace;
-    font-size: 0.9rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    background: var(--surface-container-highest);
     padding: 0.5rem 0.7rem;
-    border-radius: 4px;
     word-break: break-all;
     display: block;
-    margin: 0.5rem 0;
-    color: var(--text-primary);
-    font-weight: 500;
+    margin: 0.6rem 0;
+    color: var(--primary);
   }
 
   .meta {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--on-surface-variant);
+    background: var(--surface-container);
     padding: 0.75rem 0.9rem;
-    border-radius: 6px;
     word-break: break-all;
     margin-top: 1rem;
   }
-  .meta strong { color: var(--text-primary); font-weight: 600; }
+  .meta strong {
+    color: var(--on-surface-variant);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.65rem;
+    display: inline-block;
+    margin-right: 0.4rem;
+  }
   .meta div + div { margin-top: 0.25rem; }
 
   .mode-toggle {
     display: flex;
     margin: 1.5rem 0 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-    background: var(--bg-primary);
+    background: var(--surface-container);
   }
   .mode-option {
     flex: 1;
-    padding: 0.7rem 0.8rem;
+    padding: 0.75rem 0.8rem;
     text-align: center;
     cursor: pointer;
-    color: var(--text-muted);
-    font-size: 0.9rem;
+    color: var(--on-surface-variant);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 500;
     user-select: none;
     position: relative;
-    transition: background 0.1s, color 0.1s;
+    box-shadow: inset 0 -2px 0 transparent;
+    transition: color 0.15s, box-shadow 0.15s;
   }
-  .mode-option + .mode-option { border-left: 1px solid var(--border); }
-  .mode-option:hover { color: var(--text-primary); }
+  .mode-option:hover { color: var(--on-surface); }
   .mode-option input { position: absolute; opacity: 0; pointer-events: none; }
-  .mode-option.selected { background: var(--accent); color: #fff; font-weight: 600; }
+  .mode-option.selected {
+    color: var(--primary);
+    box-shadow: inset 0 -2px 0 var(--primary);
+  }
 
-  .field { margin: 1rem 0; }
+  .field { margin: 1.2rem 0; }
   .field[hidden] { display: none; }
   .field label {
     display: block;
     margin-bottom: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
     font-weight: 500;
-    color: var(--text-primary);
-    font-size: 0.9rem;
+    color: var(--on-surface-variant);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
   .field input[type="password"],
   .field input[type="text"] {
     width: 100%;
-    padding: 0.6rem 0.75rem;
-    font-family: ui-monospace, monospace;
+    padding: 0.5rem 0;
+    font-family: var(--font-mono);
     font-size: 0.95rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    border-radius: 6px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--outline-variant);
+    color: var(--on-surface);
     outline: none;
-    transition: border-color 0.1s;
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  .field input[type="text"] { font-family: inherit; }
-  .field input::placeholder { color: var(--text-muted); }
-  .field input:focus { border-color: var(--accent); }
+  .field input[type="text"] { font-family: var(--font-ui); }
+  .field input::placeholder { color: var(--on-surface-faint); }
+  .field input:focus {
+    border-bottom-color: var(--primary);
+    box-shadow: 0 2px 0 -1px var(--primary);
+  }
 
-  .help { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.4rem; }
+  .help { font-size: 0.8rem; color: var(--on-surface-variant); margin-top: 0.5rem; }
   .help code { font-size: 0.85em; }
 
   button {
-    padding: 0.7rem 1.4rem;
-    background: var(--accent);
-    color: #fff;
+    padding: 0.75rem 1.4rem;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
     border: 0;
-    border-radius: 6px;
     cursor: pointer;
-    font-size: 0.95rem;
-    font-weight: 500;
+    font-family: var(--font-ui);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     width: 100%;
-    margin-top: 0.5rem;
-    transition: background 0.1s;
+    margin-top: 0.8rem;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
   }
-  button:hover { background: var(--accent-hover); }
+  button:hover { box-shadow: var(--glow-primary-strong); }
+
+  ::selection { background: rgba(105, 246, 184, 0.25); color: var(--on-surface); }
 </style>
 </head>
 <body>
 <div class="card">
+<div class="brand">
+  <img src="/logo.svg" alt="" />
+  <span class="wordmark"><span class="shell">SHELL</span><span class="watch">WATCH</span></span>
+</div>
 <h1>Authorize MCP client</h1>
-<p class="subtitle">A client is requesting access to this ShellWatch instance's <code>/mcp</code> endpoint.</p>
+<p class="subtitle">A client is requesting access to this instance's <code>/mcp</code> endpoint.</p>
 
 <div class="danger">
   <h2>Review before you continue</h2>
