@@ -79,7 +79,9 @@
       });
     }
 
-    wsAttach(sessionId);
+    // Fresh xterm has no backlog — force full replay so a stale offset from a
+    // previous mount (e.g. observer mode) doesn't cause an empty attach.
+    wsAttach(sessionId, { fresh: true });
     wsSendResize(sessionId, terminal.cols, terminal.rows);
 
     unsubscribe = onWsMessage((msg) => {

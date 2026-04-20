@@ -143,7 +143,8 @@ export function wsSend(msg: Record<string, unknown>): void {
   }
 }
 
-export function wsAttach(sessionId: string): void {
+export function wsAttach(sessionId: string, options: { fresh?: boolean } = {}): void {
+  if (options.fresh) lastOffsetBySession.delete(sessionId);
   const afterOffset = lastOffsetBySession.get(sessionId);
   wsSend({
     type: "terminal:attach",
