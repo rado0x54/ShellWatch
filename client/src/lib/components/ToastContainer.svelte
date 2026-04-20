@@ -10,6 +10,16 @@
 
   let activeActionId = $state<string | null>(null);
 
+  // Collapse the middle of a long identifier for compact toast display.
+  // Preserves a `prefix:` (e.g. `SHA256:`) when present.
+  function shortFingerprint(s: string, head = 8, tail = 8): string {
+    const colon = s.indexOf(":");
+    const [prefix, body] = colon === -1 ? ["", s] : [s.slice(0, colon + 1), s.slice(colon + 1)];
+    return body.length > head + tail + 1
+      ? `${prefix}${body.slice(0, head)}…${body.slice(-tail)}`
+      : `${prefix}${body}`;
+  }
+
   async function handleAction(action: SignRequestAction, toastId: string) {
     activeActionId = action.actionId;
     try {
@@ -82,14 +92,24 @@
               {#if toast.action.keyFingerprint}
                 <div class="toast-field">
                   <span class="toast-label">Fingerprint</span>
-                  <span class="toast-value toast-mono">{toast.action.keyFingerprint}</span>
+                  <span class="toast-value toast-mono" title={toast.action.keyFingerprint}
+                    >{shortFingerprint(toast.action.keyFingerprint)}</span
+                  >
                 </div>
               {/if}
             {/if}
-            {#if toast.action.actionType === "webauthn-sign" && toast.action.passkeyLabel}
+            {#if toast.action.actionType === "webauthn-sign"}
+              {#if toast.action.passkeyLabel}
+                <div class="toast-field">
+                  <span class="toast-label">Passkey</span>
+                  <span class="toast-value">{toast.action.passkeyLabel}</span>
+                </div>
+              {/if}
               <div class="toast-field">
-                <span class="toast-label">Passkey</span>
-                <span class="toast-value">{toast.action.passkeyLabel}</span>
+                <span class="toast-label">Fingerprint</span>
+                <span class="toast-value toast-mono" title={toast.action.credentialId}
+                  >{shortFingerprint(toast.action.credentialId)}</span
+                >
               </div>
             {/if}
           </div>
