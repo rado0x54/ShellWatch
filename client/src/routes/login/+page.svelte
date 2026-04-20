@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
+  import Wordmark from "$lib/components/Wordmark.svelte";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
 
@@ -41,8 +42,8 @@
 
 <div class="login-page">
   <div class="login-card">
-    <h1>ShellWatch</h1>
-    <p class="subtitle">Touch your passkey to sign in</p>
+    <img class="login-logo" src="/logo.svg" alt="" />
+    <h1 class="wordmark-h1"><Wordmark /></h1>
     <button class="login-btn" disabled={loading} onclick={handleLogin}>
       Sign in with Passkey
     </button>
@@ -66,74 +67,80 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-primary);
+    background: var(--surface-dim);
   }
 
   .login-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 2.5rem;
+    background: var(--surface-container-low);
+    padding: var(--space-7);
     text-align: center;
     max-width: 380px;
     width: 90%;
   }
 
-  h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
+  .login-logo {
+    width: 176px;
+    height: 176px;
+    display: block;
+    margin: 0 auto var(--space-2);
   }
 
-  .subtitle {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 2rem;
+  .wordmark-h1 {
+    font-size: 2rem;
+    margin-bottom: var(--space-7);
+    line-height: 1;
   }
 
   .login-btn {
     display: inline-block;
     padding: 0.75rem 2rem;
-    background: var(--accent);
-    color: #fff;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
     border: none;
-    border-radius: 6px;
-    font-size: 1rem;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     width: 100%;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
   }
 
   .login-btn:hover {
-    background: var(--accent-hover);
+    box-shadow: var(--glow-primary-strong);
   }
 
   .login-btn:disabled {
-    background: #3a3a5a;
-    color: #666;
+    background: var(--surface-container-high);
+    color: var(--on-surface-faint);
+    box-shadow: none;
     cursor: default;
   }
 
   .error {
-    color: var(--red);
-    font-size: 0.85rem;
-    margin-top: 1rem;
+    color: var(--error);
+    font-size: var(--body-md);
+    margin-top: var(--space-4);
   }
 
   .status {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin-top: 1rem;
+    font-family: var(--font-mono);
+    color: var(--on-surface-variant);
+    font-size: var(--label-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-top: var(--space-4);
   }
 
   .register-link {
-    margin-top: 1.5rem;
-    font-size: 0.85rem;
-    color: var(--text-muted);
+    margin-top: var(--space-5);
+    font-size: var(--body-md);
+    color: var(--on-surface-variant);
   }
 
   .register-link a {
-    color: var(--accent);
+    color: var(--primary);
     text-decoration: none;
   }
 

@@ -8,6 +8,7 @@
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
   import { registerAccount } from "$lib/stores/webauthn.js";
+  import Wordmark from "$lib/components/Wordmark.svelte";
 
   let isAdminSetup = $state(false);
   let loading = $state(false);
@@ -131,7 +132,7 @@
 
     <!-- Step 1: Welcome -->
     {#if currentStep === 0}
-      <h1>Welcome to ShellWatch</h1>
+      <h1>Welcome to <Wordmark /></h1>
       {#if isAdminSetup}
         <div class="admin-badge">Admin Setup</div>
         <p class="description">
@@ -140,9 +141,8 @@
         </p>
       {/if}
       <p class="description">
-        ShellWatch is an SSH session broker that lets you and your AI agents securely manage remote
-        servers through a unified interface. Authentication is passkey-only — no passwords, no
-        emails.
+        <Wordmark /> is an SSH session broker that lets you and your AI agents securely manage remote
+        servers through a unified interface. Authentication is passkey-only — no passwords, no emails.
       </p>
       {#if !isAdminSetup}
         <p class="hint">
@@ -206,7 +206,7 @@
     {:else if currentStep === 3}
       <h1>MCP for Agents</h1>
       <p class="description">
-        AI agents connect to ShellWatch via the Model Context Protocol. Give each agent its own API
+        AI agents connect to <Wordmark /> via the Model Context Protocol. Give each agent its own API
         key.
       </p>
 
@@ -343,13 +343,20 @@
 
   .input {
     width: 100%;
-    padding: 0.625rem;
+    padding: 0.5rem 0;
     margin-bottom: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.85rem;
+    border: none;
+    border-bottom: 1px solid var(--outline-variant);
+    background: transparent;
+    color: var(--on-surface);
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
+    transition: border-color 0.2s;
+  }
+
+  .input:focus {
+    outline: none;
+    border-bottom-color: var(--primary);
   }
 
   .form-row {
@@ -370,23 +377,27 @@
 
   .btn-primary {
     padding: 0.625rem 1.5rem;
-    background: var(--accent);
-    color: #fff;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
     border: none;
-    border-radius: 6px;
-    font-size: 0.9rem;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     min-width: 120px;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
   }
 
   .btn-primary:hover {
-    background: var(--accent-hover);
+    box-shadow: var(--glow-primary-strong);
   }
 
   .btn-primary:disabled {
-    background: #3a3a5a;
-    color: #666;
+    background: var(--surface-container-high);
+    color: var(--on-surface-faint);
+    box-shadow: none;
     cursor: default;
   }
 

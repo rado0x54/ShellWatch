@@ -10,6 +10,16 @@
 
   let activeActionId = $state<string | null>(null);
 
+  // Collapse the middle of a long identifier for compact toast display.
+  // Preserves a `prefix:` (e.g. `SHA256:`) when present.
+  function shortFingerprint(s: string, head = 8, tail = 8): string {
+    const colon = s.indexOf(":");
+    const [prefix, body] = colon === -1 ? ["", s] : [s.slice(0, colon + 1), s.slice(colon + 1)];
+    return body.length > head + tail + 1
+      ? `${prefix}${body.slice(0, head)}…${body.slice(-tail)}`
+      : `${prefix}${body}`;
+  }
+
   async function handleAction(action: SignRequestAction, toastId: string) {
     activeActionId = action.actionId;
     try {
@@ -51,7 +61,7 @@
           {@const isProcessing = activeActionId === toast.action.actionId}
           {@const isKeyApprove = toast.action.actionType === "key-approve"}
           <div class="toast-header">
-            <span class="toast-icon">{isKeyApprove ? "&#128272;" : "&#128273;"}</span>
+            <span class="toast-icon">{isKeyApprove ? "🔐" : "🔑"}</span>
             <span class="toast-title">
               {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
             </span>
@@ -82,14 +92,24 @@
               {#if toast.action.keyFingerprint}
                 <div class="toast-field">
                   <span class="toast-label">Fingerprint</span>
-                  <span class="toast-value toast-mono">{toast.action.keyFingerprint}</span>
+                  <span class="toast-value toast-mono" title={toast.action.keyFingerprint}
+                    >{shortFingerprint(toast.action.keyFingerprint)}</span
+                  >
                 </div>
               {/if}
             {/if}
-            {#if toast.action.actionType === "webauthn-sign" && toast.action.passkeyLabel}
+            {#if toast.action.actionType === "webauthn-sign"}
+              {#if toast.action.passkeyLabel}
+                <div class="toast-field">
+                  <span class="toast-label">Passkey</span>
+                  <span class="toast-value">{toast.action.passkeyLabel}</span>
+                </div>
+              {/if}
               <div class="toast-field">
-                <span class="toast-label">Passkey</span>
-                <span class="toast-value">{toast.action.passkeyLabel}</span>
+                <span class="toast-label">Fingerprint</span>
+                <span class="toast-value toast-mono" title={toast.action.credentialId}
+                  >{shortFingerprint(toast.action.credentialId)}</span
+                >
               </div>
             {/if}
           </div>
@@ -144,108 +164,119 @@
 
   .toast {
     pointer-events: auto;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.75rem 1rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    background: rgba(44, 44, 44, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--outline-variant);
+    padding: var(--space-4) var(--space-5);
     animation: slide-in 0.2s ease-out;
   }
 
   .toast-error {
-    border-color: var(--red);
+    box-shadow: var(--glow-error);
+    border-color: rgba(255, 90, 90, 0.25);
   }
 
   .toast-sign-request {
-    border-color: var(--accent);
+    box-shadow: var(--glow-primary-strong);
+    border-color: rgba(105, 246, 184, 0.25);
   }
 
   .toast-header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
   }
 
   .toast-title {
-    font-size: 0.85rem;
+    font-family: var(--font-display);
+    font-size: var(--body-md);
     font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--on-surface);
   }
 
   .toast-icon {
-    font-size: 0.9rem;
+    font-size: 1rem;
   }
 
   .toast-icon-error {
-    color: var(--red);
+    color: var(--error);
   }
 
   .toast-icon-info {
-    color: var(--accent);
+    color: var(--primary);
   }
 
   .toast-body {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 0.75rem;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
   }
 
   .toast-field {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-3);
     align-items: baseline;
   }
 
   .toast-label {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    min-width: 4.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--on-surface-variant);
+    min-width: 5.5rem;
   }
 
   .toast-value {
-    font-size: 0.8rem;
+    font-size: var(--body-md);
+    color: var(--on-surface);
   }
 
   .toast-muted {
-    color: var(--text-muted);
-    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    font-size: var(--label-md);
   }
 
   .toast-mono {
-    font-family: monospace;
-    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    color: var(--primary);
   }
 
   .toast-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.5rem;
+    gap: var(--space-3);
   }
 
   .toast-simple {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-3);
   }
 
   .toast-message {
     flex: 1;
-    font-size: 0.8rem;
+    font-size: var(--body-md);
+    color: var(--on-surface);
   }
 
   .toast-close {
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
-    font-size: 0.8rem;
-    padding: 0.2rem;
+    font-size: var(--body-md);
+    padding: var(--space-1);
     line-height: 1;
   }
 
   .toast-close:hover {
-    color: var(--text-primary);
+    color: var(--primary);
   }
 
   @keyframes slide-in {
@@ -256,6 +287,62 @@
     to {
       transform: translateX(0);
       opacity: 1;
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  /* ----------------------------------------------------------------
+   * Mobile — bottom sheet: stack fields, full-width actions, slide-up
+   * ---------------------------------------------------------------- */
+  @media (max-width: 768px) {
+    .toast-container {
+      top: auto;
+      left: var(--space-3);
+      right: var(--space-3);
+      bottom: var(--space-3);
+      max-width: none;
+      flex-direction: column-reverse;
+    }
+
+    .toast {
+      animation: slide-up 0.2s ease-out;
+      padding: var(--space-5);
+    }
+
+    .toast-field {
+      flex-direction: column;
+      gap: var(--space-1);
+      align-items: stretch;
+    }
+
+    .toast-label {
+      min-width: 0;
+    }
+
+    .toast-mono {
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+
+    .toast-actions {
+      justify-content: stretch;
+      gap: var(--space-3);
+    }
+
+    .toast-actions :global(.btn) {
+      flex: 1;
+      padding: var(--space-4);
+      font-size: var(--body-md);
     }
   }
 </style>

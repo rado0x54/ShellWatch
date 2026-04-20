@@ -65,12 +65,20 @@
         const terminal = new Terminal({
           cursorBlink: false,
           fontSize: 11,
-          fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+          fontFamily:
+            "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
           theme: {
-            background: "#1a1a2e",
-            foreground: "#e0e0e0",
-            cursor: "#4a9eff",
-            selectionBackground: "#4a9eff44",
+            background: "#0e0e0e",
+            foreground: "#f2f2f2",
+            cursor: "#69f6b8",
+            selectionBackground: "rgba(105, 246, 184, 0.25)",
+            green: "#69f6b8",
+            yellow: "#f8a010",
+            red: "#ff5a5a",
+            brightGreen: "#69f6b8",
+            brightYellow: "#f8a010",
+            brightRed: "#ff5a5a",
+            brightWhite: "#f2f2f2",
           },
           disableStdin: true,
           scrollback: 1000,
@@ -161,36 +169,41 @@
   .observer-header {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface-container-low);
     flex-shrink: 0;
   }
 
   .observer-header h1 {
-    font-size: 1rem;
+    font-family: var(--font-display);
+    font-size: var(--title-md);
     font-weight: 600;
+    letter-spacing: -0.02em;
   }
 
   .observer-session-count {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--on-surface-variant);
     flex: 1;
   }
 
   .observer-grid {
     flex: 1;
     display: grid;
-    gap: 4px;
-    padding: 4px;
+    gap: var(--space-2);
+    padding: var(--space-2);
     min-height: 0;
+    background: var(--surface-dim);
   }
 
   .observer-cell {
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    background: var(--surface-container-highest);
     overflow: hidden;
     min-height: 0;
   }
@@ -199,23 +212,23 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-container-low);
     flex-shrink: 0;
   }
 
   .observer-cell-label {
-    font-size: 0.7rem;
+    font-size: var(--label-md);
     font-weight: 600;
     display: flex;
     align-items: center;
+    color: var(--on-surface);
   }
 
   .observer-cell-detail {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    font-family: monospace;
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
+    font-family: var(--font-mono);
   }
 
   .observer-cell-terminal {

@@ -146,9 +146,9 @@
   }
 
   .account-id {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    font-family: monospace;
+    font-size: var(--label-sm);
+    color: var(--on-surface-variant);
+    font-family: var(--font-mono);
   }
 
   .field {

@@ -50,37 +50,45 @@
   }
 
   .settings-header h1 {
-    font-size: 1.5rem;
+    font-family: var(--font-display);
+    font-size: var(--display-md);
     font-weight: 600;
+    letter-spacing: -0.035em;
   }
 
   .settings-tabs {
     display: flex;
     gap: 0;
-    border-bottom: 1px solid var(--border);
     margin-bottom: 1.5rem;
     overflow-x: auto;
+    background: var(--surface-container-low);
   }
 
   .tab {
-    padding: 0.5rem 1rem;
+    padding: var(--space-3) var(--space-5);
     background: none;
     border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted);
+    box-shadow: inset 0 -2px 0 transparent;
+    color: var(--on-surface-variant);
+    font-family: var(--font-mono);
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--label-sm);
     font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
     white-space: nowrap;
+    transition:
+      color 0.15s,
+      box-shadow 0.15s;
   }
 
   .tab:hover {
-    color: var(--text-primary);
+    color: var(--on-surface);
   }
 
   .tab.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
+    color: var(--primary);
+    box-shadow: inset 0 -2px 0 var(--primary);
   }
 
   .settings-content {
