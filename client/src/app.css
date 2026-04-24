@@ -443,27 +443,6 @@ textarea:focus {
   align-items: center;
 }
 
-.form-row input,
-.form-row select,
-.form-row textarea {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--outline-variant);
-  color: var(--on-surface);
-  padding: 0.4rem 0;
-  font-size: var(--body-md);
-  font-family: var(--font-ui);
-  min-width: 80px;
-  transition: border-color 0.2s;
-}
-
-.form-row input:focus,
-.form-row select:focus,
-.form-row textarea:focus {
-  outline: none;
-  border-bottom-color: var(--primary);
-}
-
 .form-row input[type="number"] {
   width: 70px;
 }

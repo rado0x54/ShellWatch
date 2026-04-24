@@ -275,33 +275,9 @@
     color: var(--text-muted);
   }
 
-  .field select,
-  .field textarea {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    font-family: inherit;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .field input {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
   .field textarea {
     resize: vertical;
     min-height: 4rem;
-  }
-
-  .field select:focus,
-  .field textarea:focus {
-    outline: none;
-    border-color: var(--accent);
   }
 
   .char-count {
