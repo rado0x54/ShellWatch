@@ -31,7 +31,6 @@
           await goto(resolve("/login"));
           return;
         }
-        accountName = "ShellWatch Account";
       }
     } catch {
       isAdminSetup = true;
@@ -154,7 +153,7 @@
       {/if}
       <button
         class="btn-primary"
-        disabled={!isAdminSetup && !accountName.trim()}
+        disabled={!isAdminSetup && accountName.trim().length < 3}
         onclick={() => (currentStep = 1)}
       >
         Get Started
