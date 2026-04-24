@@ -39,6 +39,7 @@ import {
   type PasskeyEntry,
   type SignRequest,
 } from "../webauthn/index.js";
+import { isSkipIdentitySignature } from "../webauthn/ssh-agent.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
 import type { AgentProxyContext } from "../pending-action/types.js";
@@ -137,8 +138,8 @@ export function createAgentHandler(deps: AgentHandlerDeps): {
     );
 
     agent.sign(pubKeyBuf, data, flags, (err, signature) => {
-      if (err || !signature) {
-        debug(`[Agent Proxy] sign failed: ${err?.message ?? "no signature"}`);
+      if (err || !signature || isSkipIdentitySignature(signature)) {
+        debug(`[Agent Proxy] sign failed: ${err?.message ?? "denied/skipped"}`);
         protocol.failureReply(req);
         return;
       }
