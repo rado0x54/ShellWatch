@@ -305,7 +305,7 @@ pre,
 }
 
 /* ------------------------------------------------------------------
- * Modal — frosted obsidian
+ * Modal — opaque elevated surface over dimmed backdrop
  * ------------------------------------------------------------------ */
 .modal-overlay {
   position: fixed;
@@ -318,9 +318,7 @@ pre,
 }
 
 .modal {
-  background: rgba(44, 44, 44, 0.6);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--surface-bright);
   border: 1px solid var(--outline-variant);
   padding: 1.5rem;
   min-width: 340px;
