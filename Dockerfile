@@ -30,34 +30,29 @@ FROM node:24-bookworm-slim AS runtime
 LABEL org.opencontainers.image.source="https://github.com/rado0x54/ShellWatch"
 LABEL org.opencontainers.image.description="SSH session broker with browser UI and MCP interface"
 
-RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system shellwatch && \
-    useradd --system --gid shellwatch --no-create-home shellwatch
+# Replace the baked-in `node` user with a named `shellwatch` user pinned to
+# UID/GID 1000 so bind-mounted volumes owned by the typical host user (1000)
+# work out of the box. Override at runtime with `--user UID:GID` / compose
+# `user:` if your host uses a different UID.
+RUN userdel node 2>/dev/null || true; \
+    groupdel node 2>/dev/null || true; \
+    groupadd --gid 1000 shellwatch && \
+    useradd --uid 1000 --gid shellwatch --no-create-home shellwatch
 
 WORKDIR /app
 
-COPY --from=build /app/dist/ dist/
-COPY --from=build /app/node_modules/ node_modules/
-COPY --from=build /app/drizzle/ drizzle/
-COPY --from=build /app/package.json package.json
-RUN mkdir -p /app/data /app/keys
-
-# Inline entrypoint — supports PUID/PGID for volume permission mapping
-RUN printf '#!/bin/sh\n\
-set -e\n\
-PUID=${PUID:-1000}\n\
-PGID=${PGID:-1000}\n\
-if [ "$(id -g shellwatch)" != "$PGID" ]; then groupmod -o -g "$PGID" shellwatch; fi\n\
-if [ "$(id -u shellwatch)" != "$PUID" ]; then usermod -o -u "$PUID" shellwatch; fi\n\
-chown shellwatch:shellwatch /app/data\n\
-chown shellwatch:shellwatch /app/keys 2>/dev/null || true\n\
-exec gosu shellwatch node dist/index.js\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+COPY --from=build --chown=shellwatch:shellwatch /app/dist/ dist/
+COPY --from=build --chown=shellwatch:shellwatch /app/node_modules/ node_modules/
+COPY --from=build --chown=shellwatch:shellwatch /app/drizzle/ drizzle/
+COPY --from=build --chown=shellwatch:shellwatch /app/package.json package.json
+RUN install -d -o shellwatch -g shellwatch /app/data /app/keys
 
 VOLUME ["/app/data", "/app/keys"]
 EXPOSE 3000
 
+USER shellwatch
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["node", "dist/index.js"]

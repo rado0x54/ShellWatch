@@ -9,6 +9,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
     environment:
       - HOST=0.0.0.0
-      # - PUID=1000
-      # - PGID=1000
+    # Image defaults to UID:GID 1000:1000. Override if your host user differs
+    # (and make sure ./data and ./keys are chown'd to that UID:GID on the host).
+    # user: "1000:1000"
     restart: unless-stopped

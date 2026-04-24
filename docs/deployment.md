@@ -61,13 +61,29 @@ docker run -d \
 
 ### Environment variables
 
-| Variable            | Default                       | Description                                 |
-| ------------------- | ----------------------------- | ------------------------------------------- |
-| `HOST`              | `0.0.0.0`                     | Bind address                                |
-| `PUID`              | `1000`                        | UID the app runs as (match your host user)  |
-| `PGID`              | `1000`                        | GID the app runs as (match your host group) |
-| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string                  |
-| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path                            |
+| Variable            | Default                       | Description                |
+| ------------------- | ----------------------------- | -------------------------- |
+| `HOST`              | `0.0.0.0`                     | Bind address               |
+| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string |
+| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path           |
+
+### Running as non-root
+
+The image ships with a `shellwatch` user pinned to UID/GID `1000:1000` and runs
+as that user by default. If your host user uses a different UID/GID, override
+with Docker's `--user` flag (or `user:` in compose) and make sure the bind-
+mounted directories are owned by that UID/GID:
+
+```bash
+sudo chown -R 1001:1001 ./data ./keys
+docker run --user 1001:1001 ...
+```
+
+```yaml
+services:
+  shellwatch:
+    user: "1001:1001"
+```
 
 ## Standalone tarball
 
