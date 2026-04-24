@@ -31,7 +31,6 @@
           await goto(resolve("/login"));
           return;
         }
-        accountName = "ShellWatch Account";
       }
     } catch {
       isAdminSetup = true;
@@ -47,7 +46,7 @@
     error = "";
     status = "Waiting for passkey...";
     try {
-      await registerAccount(accountName);
+      await registerAccount(accountName.trim());
       status = "";
       currentStep = 2;
       await fetchEndpoints();
@@ -146,15 +145,15 @@
       </p>
       {#if !isAdminSetup}
         <p class="hint">
-          Choose a name for your account. This does not need to contain personal information — it is
-          written into your passkey to help identify the account. You can change it later in
-          Settings (existing passkeys are not updated).
+          Choose a name for your account (3+ characters). This does not need to contain personal
+          information — it is written into your passkey to help identify the account. You can change
+          it later in Settings (existing passkeys are not updated).
         </p>
         <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
       {/if}
       <button
         class="btn-primary"
-        disabled={!isAdminSetup && !accountName.trim()}
+        disabled={!isAdminSetup && accountName.trim().length < 3}
         onclick={() => (currentStep = 1)}
       >
         Get Started
@@ -342,21 +341,7 @@
   }
 
   .input {
-    width: 100%;
-    padding: 0.5rem 0;
     margin-bottom: 1rem;
-    border: none;
-    border-bottom: 1px solid var(--outline-variant);
-    background: transparent;
-    color: var(--on-surface);
-    font-family: var(--font-ui);
-    font-size: var(--body-md);
-    transition: border-color 0.2s;
-  }
-
-  .input:focus {
-    outline: none;
-    border-bottom-color: var(--primary);
   }
 
   .form-row {
@@ -366,6 +351,8 @@
   }
 
   .form-row .input {
+    flex: 1;
+    min-width: 0;
     margin-bottom: 0;
   }
 
