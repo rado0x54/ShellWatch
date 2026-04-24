@@ -342,21 +342,7 @@
   }
 
   .input {
-    width: 100%;
-    padding: 0.5rem 0;
     margin-bottom: 1rem;
-    border: none;
-    border-bottom: 1px solid var(--outline-variant);
-    background: transparent;
-    color: var(--on-surface);
-    font-family: var(--font-ui);
-    font-size: var(--body-md);
-    transition: border-color 0.2s;
-  }
-
-  .input:focus {
-    outline: none;
-    border-bottom-color: var(--primary);
   }
 
   .form-row {

@@ -334,19 +334,23 @@ pre,
 }
 
 /* ------------------------------------------------------------------
- * Ghost inputs — no background, underline-only, glow on focus
+ * Form fields — filled, recessed against page/modal surfaces.
+ * Applies globally to text-like inputs, selects, and textareas so
+ * fields are consistently identifiable everywhere.
  * ------------------------------------------------------------------ */
-.modal input[type="text"],
-.modal input[type="password"],
-.modal input[type="number"],
-.modal input[type="email"],
-.modal select,
-.modal textarea {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--outline-variant);
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+input[type="url"],
+select,
+textarea {
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
   color: var(--on-surface);
-  padding: 0.5rem 0;
+  padding: 0.5rem 0.625rem;
   font-size: var(--body-md);
   font-family: var(--font-ui);
   width: 100%;
@@ -355,12 +359,17 @@ pre,
     box-shadow 0.2s;
 }
 
-.modal input:focus,
-.modal select:focus,
-.modal textarea:focus {
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="search"]:focus,
+input[type="url"]:focus,
+select:focus,
+textarea:focus {
   outline: none;
-  border-bottom-color: var(--primary);
-  box-shadow: 0 2px 0 -1px var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
 }
 
 /* ------------------------------------------------------------------
