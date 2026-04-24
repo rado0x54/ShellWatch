@@ -346,7 +346,10 @@ input[type="search"],
 input[type="url"],
 select,
 textarea {
-  background: var(--surface-container);
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--surface-container);
+  background-image: none;
   border: 1px solid var(--outline-variant);
   border-radius: 4px;
   color: var(--on-surface);
@@ -354,9 +357,25 @@ textarea {
   font-size: var(--body-md);
   font-family: var(--font-ui);
   width: 100%;
+  box-sizing: border-box;
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
+}
+
+/* Re-add a custom caret for <select> since appearance:none removes the native one. */
+select {
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--on-surface-variant) 50%),
+    linear-gradient(135deg, var(--on-surface-variant) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.75rem;
 }
 
 input[type="text"]:focus,
