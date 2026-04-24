@@ -351,7 +351,6 @@ textarea {
   background-color: var(--surface-container);
   background-image: none;
   border: 1px solid var(--outline-variant);
-  border-radius: 4px;
   color: var(--on-surface);
   padding: 0.5rem 0.625rem;
   font-size: var(--body-md);

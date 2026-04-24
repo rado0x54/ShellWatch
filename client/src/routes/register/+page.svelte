@@ -46,7 +46,7 @@
     error = "";
     status = "Waiting for passkey...";
     try {
-      await registerAccount(accountName);
+      await registerAccount(accountName.trim());
       status = "";
       currentStep = 2;
       await fetchEndpoints();
@@ -145,9 +145,9 @@
       </p>
       {#if !isAdminSetup}
         <p class="hint">
-          Choose a name for your account. This does not need to contain personal information — it is
-          written into your passkey to help identify the account. You can change it later in
-          Settings (existing passkeys are not updated).
+          Choose a name for your account (3+ characters). This does not need to contain personal
+          information — it is written into your passkey to help identify the account. You can change
+          it later in Settings (existing passkeys are not updated).
         </p>
         <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
       {/if}
@@ -351,6 +351,8 @@
   }
 
   .form-row .input {
+    flex: 1;
+    min-width: 0;
     margin-bottom: 0;
   }
 
