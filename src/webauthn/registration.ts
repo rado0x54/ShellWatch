@@ -55,7 +55,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           residentKey: "preferred",
           userVerification: "required",
         },
-        supportedAlgorithmIDs: [-7, -8], // ES256 (P-256) and EdDSA (Ed25519)
+        supportedAlgorithmIDs: [-7], // ES256 (P-256) only — OpenSSH sk-* keys don't support Ed25519 webauthn
         excludeCredentials: existing.map((c) => ({
           id: c.credentialId,
         })),
