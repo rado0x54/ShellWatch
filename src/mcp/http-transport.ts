@@ -54,16 +54,22 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     }
 
     if (!managed) {
+      // api-key-auth runs first on /mcp and rejects requests without a valid
+      // key, so request.accountId is always set here. Tighten for clarity.
+      if (!request.accountId) {
+        reply.status(401).send({ error: "Authentication required" });
+        return;
+      }
+      const accountId = request.accountId;
+
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
 
       // Look up account's session limit
       let maxSessions = 5;
-      if (request.accountId) {
-        const account = await accountRepo.findById(request.accountId);
-        if (account) maxSessions = account.maxSessions;
-      }
+      const account = await accountRepo.findById(accountId);
+      if (account) maxSessions = account.maxSessions;
 
       const agentSession = new AgentSession(
         endpointRepo,
@@ -72,12 +78,7 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         maxSessions,
         request.ip,
       );
-      const mcpServer = await createMcpServer(
-        agentSession,
-        endpointRepo,
-        keyRepo,
-        request.accountId,
-      );
+      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, accountId);
 
       await mcpServer.connect(transport);
 

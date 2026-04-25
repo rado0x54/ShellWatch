@@ -10,7 +10,7 @@ export async function createMcpServer(
   agentSession: AgentSession,
   endpointRepo: EndpointRepository,
   keyRepo: SshKeyRepository,
-  accountId?: string | null,
+  accountId: string,
 ): Promise<McpServer> {
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints

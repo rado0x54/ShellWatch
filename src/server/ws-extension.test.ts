@@ -22,14 +22,6 @@ describe("WebSocketChannel as WsExtension", () => {
     expect(channel.hasClientsForAccount("acc-1")).toBe(false);
   });
 
-  it("ignores connections without accountId", () => {
-    const channel = new WebSocketChannel();
-    const socket = { readyState: 1, OPEN: 1, send: vi.fn() } as never;
-
-    channel.onConnect(socket, undefined);
-    expect(channel.hasClientsForAccount("any")).toBe(false);
-  });
-
   it("does not handle any incoming messages", () => {
     const channel = new WebSocketChannel();
     const socket = {} as never;

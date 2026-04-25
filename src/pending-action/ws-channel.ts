@@ -66,8 +66,7 @@ export class WebSocketChannel implements NotificationChannel, WsExtension {
 
   // --- WsExtension ---
 
-  onConnect(socket: WebSocket, accountId: string | undefined): void {
-    if (!accountId) return;
+  onConnect(socket: WebSocket, accountId: string): void {
     this.clients.push({ socket, accountId });
   }
 
