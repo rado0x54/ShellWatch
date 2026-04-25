@@ -27,11 +27,7 @@ export interface EndpointRoutesParams {
 export function registerEndpointRoutes(params: EndpointRoutesParams) {
   const { app, endpointRepo, terminalManager } = params;
 
-  app.get("/api/endpoints", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
+  app.get("/api/endpoints", async (request) => {
     const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
       endpoints: all.map(({ id, label, host, port, username, userVerification, description }) => ({
@@ -56,10 +52,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       description?: string | null;
     };
   }>("/api/endpoints", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     try {
       const uv = request.body.userVerification;
       if (uv !== undefined && !isUserVerification(uv)) {
@@ -105,10 +97,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       description?: string | null;
     };
   }>("/api/endpoints/:id", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     try {
       const body = request.body;
       if (body.userVerification !== undefined && !isUserVerification(body.userVerification)) {
@@ -142,10 +130,6 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
   });
 
   app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     try {
       const activeSessions = terminalManager
         .listSessions()

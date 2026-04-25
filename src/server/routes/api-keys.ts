@@ -12,7 +12,6 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
   const { app, apiKeyRepo } = params;
 
   app.get("/api/keys/api", async (request) => {
-    if (!request.accountId) return { keys: [] };
     const keys = await apiKeyRepo.findAll();
     return {
       keys: keys
@@ -34,10 +33,6 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
   app.post<{ Body: { label: string; scopes?: string[] } }>(
     "/api/keys/api",
     async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
       const { label, scopes: requestedScopes } = request.body;
       if (!label) {
         reply.status(400);
@@ -72,10 +67,6 @@ export function registerApiKeyRoutes(params: ApiKeyRoutesParams) {
   );
 
   app.delete<{ Params: { id: string } }>("/api/keys/api/:id", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     // Verify ownership before revoking
     const keys = await apiKeyRepo.findAll();
     const key = keys.find((k) => k.id === request.params.id && k.accountId === request.accountId);

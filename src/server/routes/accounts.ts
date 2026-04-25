@@ -22,12 +22,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
 
   // --- Auth: current account ---
   app.get("/api/auth/me", async (request, reply) => {
-    const accountId = request.accountId;
-    if (!accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-    const account = await accountRepo.findById(accountId);
+    const account = await accountRepo.findById(request.accountId);
     if (!account) {
       reply.status(401);
       return { error: "Account not found" };
@@ -44,10 +39,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     "/api/auth/me",
     async (request, reply) => {
       const accountId = request.accountId;
-      if (!accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
       const { name, agentForward } = request.body;
       const updates: Partial<{ name: string; agentForward: boolean }> = {};
       if (name !== undefined) {
@@ -71,7 +62,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
   // --- Account Management (admin only) ---
 
   app.get("/api/accounts", async (request, reply) => {
-    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+    if (!accountRepo.isAdmin(request.accountId)) {
       reply.status(403);
       return { error: "Admin access required" };
     }
@@ -91,7 +82,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
   });
 
   app.delete<{ Params: { id: string } }>("/api/accounts/:id", async (request, reply) => {
-    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+    if (!accountRepo.isAdmin(request.accountId)) {
       reply.status(403);
       return { error: "Admin access required" };
     }
@@ -124,7 +115,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
   // --- Export seed config (admin only) ---
 
   app.get("/api/accounts/export-seed", async (request, reply) => {
-    if (!request.accountId || !accountRepo.isAdmin(request.accountId)) {
+    if (!accountRepo.isAdmin(request.accountId)) {
       reply.status(403);
       return { error: "Admin access required" };
     }

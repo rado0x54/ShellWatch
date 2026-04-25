@@ -13,10 +13,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
   const { app, endpointRepo, accountRepo, terminalManager } = params;
 
   app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     try {
       // Enforce per-account session limit
       const account = await accountRepo.findById(request.accountId);
@@ -52,7 +48,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
   });
 
   app.get("/api/sessions", async (request) => {
-    if (!request.accountId) return { sessions: [] };
     const sessions = terminalManager
       .listSessions()
       .filter((s) => s.accountId === request.accountId);
@@ -63,10 +58,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
     Params: { sessionId: string };
     Querystring: { limit?: string };
   }>("/api/sessions/:sessionId/tail", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     const session = terminalManager.getSession(request.params.sessionId);
     if (!session || session.accountId !== request.accountId) {
       // Don't disclose existence of sessions on other accounts.
@@ -84,10 +75,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
   app.delete<{ Params: { sessionId: string } }>(
     "/api/sessions/:sessionId",
     async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
       const session = terminalManager.getSession(request.params.sessionId);
       if (!session || session.accountId !== request.accountId) {
         // Don't disclose existence of sessions on other accounts.
