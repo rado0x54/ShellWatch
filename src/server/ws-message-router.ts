@@ -1,15 +1,23 @@
-import type { TerminalManager } from "../terminal/index.js";
+import type { TerminalManager, TerminalSession } from "../terminal/index.js";
 import type { ClientMessage, ServerMessage, SessionMode } from "./ws-protocol.js";
 
 export interface WsClientContext {
   attachedSessions: Set<string>;
   controlledSessions: Set<string>;
+  accountId: string;
   send(msg: ServerMessage): void;
   sendError(message: string): void;
 }
 
 export interface WsRouterDeps {
   terminalManager: TerminalManager;
+  /**
+   * Sessions created via the UI default to "control" mode for any client whose
+   * account owns the session. This set is global on purpose: cross-account
+   * safety relies on `attachedSessions` being attach-gated, since `attach`
+   * verifies `session.accountId === ctx.accountId`. Don't reuse `hasControl`
+   * outside an attach-gated path without re-checking ownership.
+   */
   uiCreatedSessions: Set<string>;
 }
 
@@ -27,25 +35,33 @@ export function buildSessionList(
   terminalManager: TerminalManager,
   controlledSessions: Set<string>,
   uiCreatedSessions: Set<string>,
+  filter: { accountId: string },
 ): ServerMessage {
   return {
     type: "sessions:changed",
-    sessions: terminalManager.listSessions().map((s) => ({
-      sessionId: s.sessionId,
-      endpointId: s.endpointId,
-      status: s.status,
-      createdAt: s.createdAt.toISOString(),
-      source: s.source,
-      mode: controlledSessions.has(s.sessionId)
-        ? "control"
-        : getModeForSession(s.sessionId, terminalManager, uiCreatedSessions),
-    })),
+    sessions: terminalManager
+      .listSessions()
+      .filter((s) => s.accountId === filter.accountId)
+      .map((s) => ({
+        sessionId: s.sessionId,
+        endpointId: s.endpointId,
+        status: s.status,
+        createdAt: s.createdAt.toISOString(),
+        source: s.source,
+        mode: controlledSessions.has(s.sessionId)
+          ? "control"
+          : getModeForSession(s.sessionId, terminalManager, uiCreatedSessions),
+      })),
   };
 }
 
 export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsRouterDeps): void {
   const { terminalManager, uiCreatedSessions } = deps;
-  const { attachedSessions, controlledSessions, send, sendError } = ctx;
+  const { attachedSessions, controlledSessions, accountId, send, sendError } = ctx;
+
+  function ownsSession(session: TerminalSession): boolean {
+    return session.accountId === accountId;
+  }
 
   function hasControl(sessionId: string): boolean {
     return controlledSessions.has(sessionId) || uiCreatedSessions.has(sessionId);
@@ -54,7 +70,8 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
   switch (msg.type) {
     case "terminal:attach": {
       const session = terminalManager.getSession(msg.sessionId);
-      if (!session) {
+      if (!session || !ownsSession(session)) {
+        // Don't disclose existence of sessions on other accounts.
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }
@@ -86,6 +103,13 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     }
 
     case "terminal:input": {
+      // Attach was gated by ownership; require it before accepting input so a
+      // client cannot send input to a session it doesn't own by guessing the
+      // sessionId (uiCreatedSessions is a global set and not account-scoped).
+      if (!attachedSessions.has(msg.sessionId)) {
+        sendError(`Session not attached: ${msg.sessionId}`);
+        return;
+      }
       if (!hasControl(msg.sessionId)) {
         sendError("Observer mode: take control first to send input");
         return;
@@ -95,14 +119,22 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     }
 
     case "terminal:resize": {
-      if (!hasControl(msg.sessionId)) {
-        return; // Silently ignore resize in observer mode
-      }
+      // Silent in observer mode and when unattached — resize fires on every
+      // browser layout change; surfacing errors here would spam the client.
+      // Asymmetric with terminal:input on purpose (input is a deliberate user
+      // action and benefits from feedback).
+      if (!attachedSessions.has(msg.sessionId)) return;
+      if (!hasControl(msg.sessionId)) return;
       terminalManager.resize(msg.sessionId, msg.cols, msg.rows);
       break;
     }
 
     case "terminal:close": {
+      const session = terminalManager.getSession(msg.sessionId);
+      if (!session || !ownsSession(session)) {
+        sendError(`Session not found: ${msg.sessionId}`);
+        return;
+      }
       terminalManager.close(msg.sessionId);
       uiCreatedSessions.delete(msg.sessionId);
       break;
@@ -110,7 +142,7 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
 
     case "terminal:take-control": {
       const session = terminalManager.getSession(msg.sessionId);
-      if (!session) {
+      if (!session || !ownsSession(session)) {
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }

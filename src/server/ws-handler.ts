@@ -10,44 +10,61 @@ export interface WsHandler {
   addExtension(extension: WsExtension): void;
 }
 
-export function registerWebSocket(
-  app: FastifyInstance,
-  terminalManager: TerminalManager,
-  uiCreatedSessions: Set<string>,
-): WsHandler {
+export interface RegisterWebSocketParams {
+  app: FastifyInstance;
+  terminalManager: TerminalManager;
+  uiCreatedSessions: Set<string>;
+}
+
+export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
+  const { app, terminalManager, uiCreatedSessions } = params;
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
 
   // Per-client metadata
   const clientMeta = new Map<
     WebSocket,
-    { attachedSessions: Set<string>; controlledSessions: Set<string> }
+    {
+      attachedSessions: Set<string>;
+      controlledSessions: Set<string>;
+      accountId: string;
+    }
   >();
 
-  // Broadcast session list changes to ALL connected clients
+  // Broadcast session list changes to each client, scoped to their account.
+  // No per-broadcast DB query needed: session.accountId is set at create time
+  // and immutable, so filtering is a synchronous in-memory comparison.
   terminalManager.on("status-change", () => {
-    // Each client gets their own mode view — broadcast individually
     for (const client of clients) {
-      if (client.readyState === client.OPEN) {
-        const meta = clientMeta.get(client);
-        if (meta) {
-          client.send(
-            JSON.stringify(
-              buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions),
-            ),
-          );
-        }
-      }
+      if (client.readyState !== client.OPEN) continue;
+      const meta = clientMeta.get(client);
+      if (!meta) continue;
+      client.send(
+        JSON.stringify(
+          buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions, {
+            accountId: meta.accountId,
+          }),
+        ),
+      );
     }
   });
 
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
-    const accountId = request.accountId ?? undefined;
+    // /ws requires authentication. Bootstrap mode (no passkeys yet) leaves
+    // accountId null on the request; the auth gate already rejects /ws once
+    // any passkey exists, so the only way here without an accountId is
+    // pre-bootstrap — and there's nothing useful to do on /ws then.
+    if (!request.accountId) {
+      socket.close(4401, "Authentication required");
+      return;
+    }
+    const accountId = request.accountId;
+
     clients.add(socket);
     for (const ext of extensions) ext.onConnect(socket, accountId);
     const attachedSessions = new Set<string>();
     const controlledSessions = new Set<string>();
-    clientMeta.set(socket, { attachedSessions, controlledSessions });
+    clientMeta.set(socket, { attachedSessions, controlledSessions, accountId });
 
     function send(msg: ServerMessage) {
       if (socket.readyState === socket.OPEN) {
@@ -59,11 +76,11 @@ export function registerWebSocket(
       send({ type: "error", message });
     }
 
-    const ctx = { attachedSessions, controlledSessions, send, sendError };
+    const ctx = { attachedSessions, controlledSessions, accountId, send, sendError };
     const deps = { terminalManager, uiCreatedSessions };
 
-    // Send current session list on connect
-    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions));
+    // Send current session list on connect (scoped to this account)
+    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions, { accountId }));
 
     // Listeners for terminal events — scoped per attached session
     function onOutput({
