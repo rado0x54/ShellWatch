@@ -20,7 +20,6 @@ const ACCT_B = "acct-b";
 
 describe("ws-message-router account scoping", () => {
   let manager: TerminalManager;
-  let uiCreatedSessions: Set<string>;
   let sessionA: string;
   let sessionB: string;
 
@@ -34,13 +33,10 @@ describe("ws-message-router account scoping", () => {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
-    uiCreatedSessions = new Set<string>();
     const a = await manager.create("endpoint-a", { kind: "ui", sourceIp: "1.1.1.1" });
     const b = await manager.create("endpoint-b", { kind: "ui", sourceIp: "2.2.2.2" });
     sessionA = a.sessionId;
     sessionB = b.sessionId;
-    uiCreatedSessions.add(sessionA);
-    uiCreatedSessions.add(sessionB);
   });
 
   function makeCtx(accountId: string): { ctx: WsClientContext; sent: ServerMessage[] } {
@@ -61,22 +57,32 @@ describe("ws-message-router account scoping", () => {
 
   describe("buildSessionList", () => {
     it("filters sessions to those owned by the account", () => {
-      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, { accountId: ACCT_A });
+      const msg = buildSessionList(manager, new Set(), { accountId: ACCT_A });
       if (msg.type !== "sessions:changed") throw new Error("wrong type");
       expect(msg.sessions.map((s) => s.sessionId)).toEqual([sessionA]);
     });
 
     it("returns empty list when no sessions are owned by this account", () => {
-      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, {
-        accountId: "ghost",
-      });
+      const msg = buildSessionList(manager, new Set(), { accountId: "ghost" });
       if (msg.type !== "sessions:changed") throw new Error("wrong type");
       expect(msg.sessions).toEqual([]);
+    });
+
+    it("reports observer mode for sessions absent from controlledSessions", () => {
+      const msg = buildSessionList(manager, new Set(), { accountId: ACCT_A });
+      if (msg.type !== "sessions:changed") throw new Error("wrong type");
+      expect(msg.sessions[0].mode).toBe("observer");
+    });
+
+    it("reports control mode when session is in controlledSessions", () => {
+      const msg = buildSessionList(manager, new Set([sessionA]), { accountId: ACCT_A });
+      if (msg.type !== "sessions:changed") throw new Error("wrong type");
+      expect(msg.sessions[0].mode).toBe("control");
     });
   });
 
   describe("routeMessage cross-account isolation", () => {
-    const deps = () => ({ terminalManager: manager, uiCreatedSessions });
+    const deps = () => ({ terminalManager: manager });
 
     it("rejects terminal:attach on a session owned by another account", () => {
       const { ctx, sent } = makeCtx(ACCT_A);
@@ -106,11 +112,68 @@ describe("ws-message-router account scoping", () => {
       expect(sent).toEqual([{ type: "error", message: `Session not found: ${sessionB}` }]);
     });
 
-    it("rejects terminal:input when not attached, even if uiCreatedSessions has the id", () => {
-      // sessionB is in uiCreatedSessions globally — but this client (acct-a) never attached.
+    it("rejects terminal:input when not attached, even on a UI-sourced session", () => {
+      // sessionB is UI-sourced — but this client (acct-a) never attached.
       const { ctx, sent } = makeCtx(ACCT_A);
       routeMessage({ type: "terminal:input", sessionId: sessionB, data: "rm -rf /" }, ctx, deps());
       expect(sent).toEqual([{ type: "error", message: `Session not attached: ${sessionB}` }]);
+    });
+  });
+
+  describe("control state on attach", () => {
+    const deps = () => ({ terminalManager: manager });
+
+    it("attach to a UI-sourced session puts the client in control mode", () => {
+      const { ctx, sent } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:attach", sessionId: sessionA }, ctx, deps());
+      expect(ctx.controlledSessions.has(sessionA)).toBe(true);
+      const modeMsg = sent.find((m) => m.type === "terminal:mode");
+      expect(modeMsg).toEqual({ type: "terminal:mode", sessionId: sessionA, mode: "control" });
+    });
+
+    it("attach to an MCP-sourced session puts the client in observer mode", async () => {
+      const c = await manager.create("endpoint-a", {
+        kind: "mcp",
+        reason: "test",
+        sourceIp: "3.3.3.3",
+      });
+      const { ctx, sent } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:attach", sessionId: c.sessionId }, ctx, deps());
+      expect(ctx.controlledSessions.has(c.sessionId)).toBe(false);
+      const modeMsg = sent.find((m) => m.type === "terminal:mode");
+      expect(modeMsg).toEqual({
+        type: "terminal:mode",
+        sessionId: c.sessionId,
+        mode: "observer",
+      });
+    });
+
+    it("release-control on a UI-sourced session truly releases (regression for #123)", () => {
+      const { ctx, sent } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:attach", sessionId: sessionA }, ctx, deps());
+      expect(ctx.controlledSessions.has(sessionA)).toBe(true);
+
+      routeMessage({ type: "terminal:release-control", sessionId: sessionA }, ctx, deps());
+      expect(ctx.controlledSessions.has(sessionA)).toBe(false);
+
+      // Subsequent input must be gated as observer (was a no-op pre-fix).
+      sent.length = 0;
+      routeMessage({ type: "terminal:input", sessionId: sessionA, data: "x" }, ctx, deps());
+      expect(sent).toEqual([
+        { type: "error", message: "Observer mode: take control first to send input" },
+      ]);
+    });
+
+    it("a second client attaching to a UI session also enters control mode", () => {
+      // UI-sourced sessions default to control for any client owned by the
+      // account — the take-control handshake is opt-in only for non-UI sources.
+      const { ctx: first } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:attach", sessionId: sessionA }, first, deps());
+      expect(first.controlledSessions.has(sessionA)).toBe(true);
+
+      const { ctx: second } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:attach", sessionId: sessionA }, second, deps());
+      expect(second.controlledSessions.has(sessionA)).toBe(true);
     });
   });
 });

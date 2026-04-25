@@ -13,11 +13,10 @@ export interface WsHandler {
 export interface RegisterWebSocketParams {
   app: FastifyInstance;
   terminalManager: TerminalManager;
-  uiCreatedSessions: Set<string>;
 }
 
 export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
-  const { app, terminalManager, uiCreatedSessions } = params;
+  const { app, terminalManager } = params;
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
 
@@ -41,7 +40,7 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
       if (!meta) continue;
       client.send(
         JSON.stringify(
-          buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions, {
+          buildSessionList(terminalManager, meta.controlledSessions, {
             accountId: meta.accountId,
           }),
         ),
@@ -77,10 +76,10 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
     }
 
     const ctx = { attachedSessions, controlledSessions, accountId, send, sendError };
-    const deps = { terminalManager, uiCreatedSessions };
+    const deps = { terminalManager };
 
     // Send current session list on connect (scoped to this account)
-    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions, { accountId }));
+    send(buildSessionList(terminalManager, controlledSessions, { accountId }));
 
     // Listeners for terminal events — scoped per attached session
     function onOutput({

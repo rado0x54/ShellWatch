@@ -7,11 +7,10 @@ export interface SessionRoutesParams {
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
   terminalManager: TerminalManager;
-  uiCreatedSessions: Set<string>;
 }
 
 export function registerSessionRoutes(params: SessionRoutesParams) {
-  const { app, endpointRepo, accountRepo, terminalManager, uiCreatedSessions } = params;
+  const { app, endpointRepo, accountRepo, terminalManager } = params;
 
   app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
     if (!request.accountId) {
@@ -43,7 +42,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         kind: "ui",
         sourceIp: request.ip,
       });
-      uiCreatedSessions.add(session.sessionId);
 
       return session;
     } catch (err) {
