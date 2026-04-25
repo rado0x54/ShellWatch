@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
+import type { EndpointRepository } from "../db/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { buildSessionList, routeMessage } from "./ws-message-router.js";
 import type { WsExtension } from "./ws-extension.js";
@@ -10,34 +11,58 @@ export interface WsHandler {
   addExtension(extension: WsExtension): void;
 }
 
-export function registerWebSocket(
-  app: FastifyInstance,
-  terminalManager: TerminalManager,
-  uiCreatedSessions: Set<string>,
-): WsHandler {
+export interface RegisterWebSocketParams {
+  app: FastifyInstance;
+  terminalManager: TerminalManager;
+  uiCreatedSessions: Set<string>;
+  endpointRepo: EndpointRepository;
+}
+
+export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
+  const { app, terminalManager, uiCreatedSessions, endpointRepo } = params;
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
 
   // Per-client metadata
   const clientMeta = new Map<
     WebSocket,
-    { attachedSessions: Set<string>; controlledSessions: Set<string> }
+    {
+      attachedSessions: Set<string>;
+      controlledSessions: Set<string>;
+      accountId: string | undefined;
+    }
   >();
 
-  // Broadcast session list changes to ALL connected clients
+  async function getAllowedEndpointIds(accountId: string | undefined): Promise<Set<string>> {
+    if (!accountId) return new Set();
+    const endpoints = await endpointRepo.findAllForAccount(accountId);
+    return new Set(endpoints.map((e) => e.id));
+  }
+
+  // Broadcast session list changes to each client, scoped to their account
   terminalManager.on("status-change", () => {
-    // Each client gets their own mode view — broadcast individually
     for (const client of clients) {
-      if (client.readyState === client.OPEN) {
-        const meta = clientMeta.get(client);
-        if (meta) {
+      if (client.readyState !== client.OPEN) continue;
+      const meta = clientMeta.get(client);
+      if (!meta) continue;
+      void (async () => {
+        try {
+          const allowed = await getAllowedEndpointIds(meta.accountId);
+          if (client.readyState !== client.OPEN) return;
           client.send(
             JSON.stringify(
-              buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions),
+              buildSessionList(
+                terminalManager,
+                meta.controlledSessions,
+                uiCreatedSessions,
+                allowed,
+              ),
             ),
           );
+        } catch (err) {
+          app.log.error(err, "ws status-change broadcast failed");
         }
-      }
+      })();
     }
   });
 
@@ -47,7 +72,7 @@ export function registerWebSocket(
     for (const ext of extensions) ext.onConnect(socket, accountId);
     const attachedSessions = new Set<string>();
     const controlledSessions = new Set<string>();
-    clientMeta.set(socket, { attachedSessions, controlledSessions });
+    clientMeta.set(socket, { attachedSessions, controlledSessions, accountId });
 
     function send(msg: ServerMessage) {
       if (socket.readyState === socket.OPEN) {
@@ -59,11 +84,18 @@ export function registerWebSocket(
       send({ type: "error", message });
     }
 
-    const ctx = { attachedSessions, controlledSessions, send, sendError };
-    const deps = { terminalManager, uiCreatedSessions };
+    const ctx = { attachedSessions, controlledSessions, accountId, send, sendError };
+    const deps = { terminalManager, uiCreatedSessions, endpointRepo };
 
-    // Send current session list on connect
-    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions));
+    // Send current session list on connect (scoped to this account)
+    void (async () => {
+      try {
+        const allowed = await getAllowedEndpointIds(accountId);
+        send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions, allowed));
+      } catch (err) {
+        app.log.error(err, "ws initial session list failed");
+      }
+    })();
 
     // Listeners for terminal events — scoped per attached session
     function onOutput({
@@ -104,11 +136,9 @@ export function registerWebSocket(
       );
       if (handled) return;
 
-      try {
-        routeMessage(msg, ctx, deps);
-      } catch (err) {
+      void routeMessage(msg, ctx, deps).catch((err) => {
         sendError((err as Error).message);
-      }
+      });
     });
 
     socket.on("close", () => {

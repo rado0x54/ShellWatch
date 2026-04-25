@@ -130,7 +130,7 @@ export async function buildApp(params: BuildAppParams) {
   // Shared set tracking UI-created sessions (used by both WS handler and session routes)
   const uiCreatedSessions = new Set<string>();
 
-  const wsHandler = registerWebSocket(app, terminalManager, uiCreatedSessions);
+  const wsHandler = registerWebSocket({ app, terminalManager, uiCreatedSessions, endpointRepo });
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
 
   registerSessionRoutes({
