@@ -8,7 +8,7 @@ import {
 export function registerEndpointTools(
   mcpServer: McpServer,
   endpointRepo: EndpointRepository,
-  accountId?: string | null,
+  accountId: string,
 ) {
   mcpServer.tool(
     "shellwatch_manage_endpoints",
@@ -38,12 +38,6 @@ export function registerEndpointTools(
       try {
         switch (action) {
           case "list": {
-            if (!accountId) {
-              return {
-                isError: true,
-                content: [{ type: "text", text: "No account context" }],
-              };
-            }
             const all = await endpointRepo.findAllForAccount(accountId);
             const result = all.map(({ id, label, host, port, username, description }) => ({
               id,
@@ -59,12 +53,6 @@ export function registerEndpointTools(
           }
           case "read": {
             if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
-            if (!accountId) {
-              return {
-                isError: true,
-                content: [{ type: "text", text: "No account context" }],
-              };
-            }
             const ep = await endpointRepo.findByIdForAccount(id, accountId);
             if (!ep)
               return {
@@ -80,12 +68,6 @@ export function registerEndpointTools(
                 content: [
                   { type: "text", text: "id, data.label, data.host, data.username are required" },
                 ],
-              };
-            }
-            if (!accountId) {
-              return {
-                isError: true,
-                content: [{ type: "text", text: "No account context for endpoint creation" }],
               };
             }
             await endpointRepo.create({
@@ -105,26 +87,12 @@ export function registerEndpointTools(
                 isError: true,
                 content: [{ type: "text", text: "id and data are required" }],
               };
-            if (accountId) {
-              await endpointRepo.update(id, accountId, data);
-            } else {
-              return {
-                isError: true,
-                content: [{ type: "text", text: "No account context for endpoint update" }],
-              };
-            }
+            await endpointRepo.update(id, accountId, data);
             return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id }) }] };
           }
           case "delete": {
             if (!id) return { isError: true, content: [{ type: "text", text: "id is required" }] };
-            if (accountId) {
-              await endpointRepo.delete(id, accountId);
-            } else {
-              return {
-                isError: true,
-                content: [{ type: "text", text: "No account context for endpoint deletion" }],
-              };
-            }
+            await endpointRepo.delete(id, accountId);
             return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id }) }] };
           }
         }

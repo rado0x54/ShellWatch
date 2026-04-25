@@ -64,9 +64,10 @@ export function registerApiKeyAuth({
       return;
     }
 
-    if (key.accountId) {
-      request.accountId = key.accountId;
-      accountRepo.touchLastUsed(key.accountId);
-    }
+    // ApiKeyInfo.accountId is non-null (DB schema enforces it). Assign
+    // unconditionally so downstream MCP code can treat request.accountId as
+    // string instead of carrying the looseness through every layer.
+    request.accountId = key.accountId;
+    accountRepo.touchLastUsed(key.accountId);
   });
 }
