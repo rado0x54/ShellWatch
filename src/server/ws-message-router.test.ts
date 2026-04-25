@@ -164,6 +164,13 @@ describe("ws-message-router account scoping", () => {
       ]);
     });
 
+    it("release-control is a silent no-op for sessions this client never attached", () => {
+      const { ctx, sent } = makeCtx(ACCT_A);
+      routeMessage({ type: "terminal:release-control", sessionId: sessionA }, ctx, deps());
+      expect(sent).toEqual([]);
+      expect(ctx.controlledSessions.has(sessionA)).toBe(false);
+    });
+
     it("a second client attaching to a UI session also enters control mode", () => {
       // UI-sourced sessions default to control for any client owned by the
       // account — the take-control handshake is opt-in only for non-UI sources.

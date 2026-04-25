@@ -136,6 +136,10 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     }
 
     case "terminal:release-control": {
+      // Silent if not attached — mirrors terminal:detach/resize. Attach was
+      // ownership-gated, so requiring it here also gives us ownership for free
+      // and avoids emitting terminal:mode for ids this client never touched.
+      if (!attachedSessions.has(msg.sessionId)) return;
       controlledSessions.delete(msg.sessionId);
       send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "observer" });
       break;
