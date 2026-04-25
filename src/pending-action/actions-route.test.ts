@@ -60,13 +60,18 @@ describe("action routes", () => {
     wsChannel = new WebSocketChannel();
 
     app = Fastify({ logger: false });
-    // Simulate auth by decorating accountId
-    app.decorateRequest("accountId", null);
-    app.addHook("onRequest", async (request) => {
+    // Simulate the production auth gate: the gate sets request.accountId for
+    // authenticated requests and 401s anything that reaches a handler without
+    // one. The route handlers themselves rely on that invariant and do not
+    // re-check, so the test gate must enforce it too.
+    app.decorateRequest("accountId", null as unknown as string);
+    app.addHook("onRequest", async (request, reply) => {
       const accountHeader = request.headers["x-test-account"] as string | undefined;
-      if (accountHeader) {
-        request.accountId = accountHeader;
+      if (!accountHeader) {
+        reply.status(401).send({ error: "Authentication required" });
+        return;
       }
+      request.accountId = accountHeader;
     });
 
     registerActionRoutes({ app, actionStore, wsChannel });

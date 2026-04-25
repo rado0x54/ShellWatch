@@ -13,10 +13,6 @@ export function registerPushRoutes(params: PushRoutesParams) {
   app.post<{
     Body: { endpoint: string; keys: { p256dh: string; auth: string } };
   }>("/api/push/subscribe", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     const { endpoint, keys } = request.body;
     if (!endpoint || !keys?.p256dh || !keys?.auth) {
       reply.status(400);
@@ -33,10 +29,6 @@ export function registerPushRoutes(params: PushRoutesParams) {
 
   // Remove push subscription
   app.delete<{ Body: { endpoint: string } }>("/api/push/subscribe", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
     const { endpoint } = request.body;
     if (!endpoint) {
       reply.status(400);

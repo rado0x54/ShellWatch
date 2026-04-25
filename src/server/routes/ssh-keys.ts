@@ -14,7 +14,7 @@ export function registerSshKeyRoutes(params: SshKeyRoutesParams) {
 
   app.get("/api/keys", async (request) => {
     const allKeys = await keyRepo.findAll();
-    const isAdmin = request.accountId ? accountRepo.isAdmin(request.accountId) : false;
+    const isAdmin = accountRepo.isAdmin(request.accountId);
 
     // File-based keys only (passkeys are listed via /api/webauthn/credentials)
     const fileKeys = isAdmin ? allKeys.filter((k) => k.type === "file") : [];

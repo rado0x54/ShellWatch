@@ -15,11 +15,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   const { app, db } = params;
 
   // --- List Registered Credentials (scoped to account) ---
-  app.get("/api/webauthn/credentials", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
+  app.get("/api/webauthn/credentials", async (request) => {
     const creds = db
       .select({
         id: webauthnCredentials.id,
@@ -59,10 +55,6 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   app.patch<{ Params: { id: string }; Body: { label: string } }>(
     "/api/webauthn/credentials/:id/label",
     async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
       const { id } = request.params;
       const { label } = request.body;
       if (!label?.trim()) {
@@ -116,10 +108,6 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/revoke",
     async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
       const { id } = request.params;
 
       // Verify ownership

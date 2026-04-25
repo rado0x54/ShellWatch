@@ -14,11 +14,6 @@ export function registerActionRoutes(params: ActionRoutesParams) {
   const { app, actionStore, wsChannel } = params;
 
   app.get<{ Params: { actionId: string } }>("/api/actions/:actionId", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-
     const action = actionStore.get(request.params.actionId);
     if (!action) {
       reply.status(404);
@@ -36,11 +31,6 @@ export function registerActionRoutes(params: ActionRoutesParams) {
     Params: { actionId: string };
     Body: { authenticatorData: string; signature: string; clientDataJSON: string };
   }>("/api/actions/:actionId/resolve", async (request, reply) => {
-    if (!request.accountId) {
-      reply.status(401);
-      return { error: "Not authenticated" };
-    }
-
     const action = actionStore.get(request.params.actionId);
     if (!action) {
       reply.status(404);
@@ -101,11 +91,6 @@ export function registerActionRoutes(params: ActionRoutesParams) {
   app.post<{ Params: { actionId: string } }>(
     "/api/actions/:actionId/deny",
     async (request, reply) => {
-      if (!request.accountId) {
-        reply.status(401);
-        return { error: "Not authenticated" };
-      }
-
       const action = actionStore.get(request.params.actionId);
       if (!action) {
         reply.status(404);

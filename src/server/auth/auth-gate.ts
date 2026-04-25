@@ -85,14 +85,14 @@ export function registerAuthGate({
     // Discovery metadata is always public
     if (url.startsWith("/.well-known/")) return;
 
-    // Onboarding-only paths (registration, /onboarding) — exempt only when no passkeys exist
-    if (!hasPasskeys()) {
-      if (onboardingOnly.has(url)) return;
-      // No passkeys — allow all other routes too (bootstrap mode)
-      return;
-    }
+    // Onboarding-only paths (registration verify) — exempt while no passkeys
+    // exist. Other routes still require a session even pre-bootstrap; the
+    // browser onboarding flow only needs the explicitly-listed exempt paths
+    // (login/register HTML + the /api/webauthn/register/* endpoints) to
+    // complete first-passkey enrollment.
+    if (!hasPasskeys() && onboardingOnly.has(url)) return;
 
-    // System is ready — require session cookie
+    // Require a valid session cookie
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);

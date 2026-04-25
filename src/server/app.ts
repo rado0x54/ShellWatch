@@ -98,8 +98,10 @@ export async function buildApp(params: BuildAppParams) {
   await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyWebsocket);
 
-  // Decorate request with accountId (set by auth gate / API key auth)
-  app.decorateRequest("accountId", null);
+  // Decorate request with accountId. Default is a null sentinel, cast to the
+  // declared type — the auth gate sets a real string before any protected
+  // handler runs, and exempt routes never read it.
+  app.decorateRequest("accountId", null as unknown as string);
 
   // Auth gate: onboarding + login enforcement
   registerAuthGate({

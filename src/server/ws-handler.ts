@@ -49,14 +49,7 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
   });
 
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
-    // /ws requires authentication. Bootstrap mode (no passkeys yet) leaves
-    // accountId null on the request; the auth gate already rejects /ws once
-    // any passkey exists, so the only way here without an accountId is
-    // pre-bootstrap — and there's nothing useful to do on /ws then.
-    if (!request.accountId) {
-      socket.close(4401, "Authentication required");
-      return;
-    }
+    // /ws is auth-gated upstream — request.accountId is a real string here.
     const accountId = request.accountId;
 
     clients.add(socket);
