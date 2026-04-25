@@ -119,10 +119,12 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     }
 
     case "terminal:resize": {
+      // Silent in observer mode and when unattached — resize fires on every
+      // browser layout change; surfacing errors here would spam the client.
+      // Asymmetric with terminal:input on purpose (input is a deliberate user
+      // action and benefits from feedback).
       if (!attachedSessions.has(msg.sessionId)) return;
-      if (!hasControl(msg.sessionId)) {
-        return;
-      }
+      if (!hasControl(msg.sessionId)) return;
       terminalManager.resize(msg.sessionId, msg.cols, msg.rows);
       break;
     }

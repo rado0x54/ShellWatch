@@ -92,6 +92,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       }
       const session = terminalManager.getSession(request.params.sessionId);
       if (!session || session.accountId !== request.accountId) {
+        // Don't disclose existence of sessions on other accounts.
         reply.status(404);
         return { error: "Session not found" };
       }
