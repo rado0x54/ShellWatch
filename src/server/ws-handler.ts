@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import type { EndpointRepository } from "../db/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { buildSessionList, routeMessage } from "./ws-message-router.js";
 import type { WsExtension } from "./ws-extension.js";
@@ -15,11 +14,10 @@ export interface RegisterWebSocketParams {
   app: FastifyInstance;
   terminalManager: TerminalManager;
   uiCreatedSessions: Set<string>;
-  endpointRepo: EndpointRepository;
 }
 
 export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
-  const { app, terminalManager, uiCreatedSessions, endpointRepo } = params;
+  const { app, terminalManager, uiCreatedSessions } = params;
   const clients = new Set<WebSocket>();
   const extensions: WsExtension[] = [];
 
@@ -29,45 +27,39 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
     {
       attachedSessions: Set<string>;
       controlledSessions: Set<string>;
-      accountId: string | undefined;
+      accountId: string;
     }
   >();
 
-  async function getAllowedEndpointIds(accountId: string | undefined): Promise<Set<string>> {
-    if (!accountId) return new Set();
-    const endpoints = await endpointRepo.findAllForAccount(accountId);
-    return new Set(endpoints.map((e) => e.id));
-  }
-
-  // Broadcast session list changes to each client, scoped to their account
+  // Broadcast session list changes to each client, scoped to their account.
+  // No per-broadcast DB query needed: session.accountId is set at create time
+  // and immutable, so filtering is a synchronous in-memory comparison.
   terminalManager.on("status-change", () => {
     for (const client of clients) {
       if (client.readyState !== client.OPEN) continue;
       const meta = clientMeta.get(client);
       if (!meta) continue;
-      void (async () => {
-        try {
-          const allowed = await getAllowedEndpointIds(meta.accountId);
-          if (client.readyState !== client.OPEN) return;
-          client.send(
-            JSON.stringify(
-              buildSessionList(
-                terminalManager,
-                meta.controlledSessions,
-                uiCreatedSessions,
-                allowed,
-              ),
-            ),
-          );
-        } catch (err) {
-          app.log.error(err, "ws status-change broadcast failed");
-        }
-      })();
+      client.send(
+        JSON.stringify(
+          buildSessionList(terminalManager, meta.controlledSessions, uiCreatedSessions, {
+            accountId: meta.accountId,
+          }),
+        ),
+      );
     }
   });
 
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
-    const accountId = request.accountId ?? undefined;
+    // /ws requires authentication. Bootstrap mode (no passkeys yet) leaves
+    // accountId null on the request; the auth gate already rejects /ws once
+    // any passkey exists, so the only way here without an accountId is
+    // pre-bootstrap — and there's nothing useful to do on /ws then.
+    if (!request.accountId) {
+      socket.close(4401, "Authentication required");
+      return;
+    }
+    const accountId = request.accountId;
+
     clients.add(socket);
     for (const ext of extensions) ext.onConnect(socket, accountId);
     const attachedSessions = new Set<string>();
@@ -85,17 +77,10 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
     }
 
     const ctx = { attachedSessions, controlledSessions, accountId, send, sendError };
-    const deps = { terminalManager, uiCreatedSessions, endpointRepo };
+    const deps = { terminalManager, uiCreatedSessions };
 
     // Send current session list on connect (scoped to this account)
-    void (async () => {
-      try {
-        const allowed = await getAllowedEndpointIds(accountId);
-        send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions, allowed));
-      } catch (err) {
-        app.log.error(err, "ws initial session list failed");
-      }
-    })();
+    send(buildSessionList(terminalManager, controlledSessions, uiCreatedSessions, { accountId }));
 
     // Listeners for terminal events — scoped per attached session
     function onOutput({
@@ -136,9 +121,11 @@ export function registerWebSocket(params: RegisterWebSocketParams): WsHandler {
       );
       if (handled) return;
 
-      void routeMessage(msg, ctx, deps).catch((err) => {
+      try {
+        routeMessage(msg, ctx, deps);
+      } catch (err) {
         sendError((err as Error).message);
-      });
+      }
     });
 
     socket.on("close", () => {

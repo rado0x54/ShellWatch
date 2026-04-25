@@ -59,6 +59,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     const session: TerminalSession = {
       sessionId,
       endpointId,
+      accountId: endpoint.accountId,
       status: "opening",
       createdAt: now,
       lastActivityAt: now,

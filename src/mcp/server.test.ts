@@ -50,6 +50,7 @@ function createMockTerminalManager() {
 const mockSession: TerminalSession = {
   sessionId: "sess_abc123",
   endpointId: "dev-box",
+  accountId: "test-account",
   status: "open",
   createdAt: new Date(),
   lastActivityAt: new Date(),

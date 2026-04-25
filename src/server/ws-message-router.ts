@@ -1,19 +1,24 @@
-import type { EndpointRepository } from "../db/index.js";
 import type { TerminalManager, TerminalSession } from "../terminal/index.js";
 import type { ClientMessage, ServerMessage, SessionMode } from "./ws-protocol.js";
 
 export interface WsClientContext {
   attachedSessions: Set<string>;
   controlledSessions: Set<string>;
-  accountId: string | undefined;
+  accountId: string;
   send(msg: ServerMessage): void;
   sendError(message: string): void;
 }
 
 export interface WsRouterDeps {
   terminalManager: TerminalManager;
+  /**
+   * Sessions created via the UI default to "control" mode for any client whose
+   * account owns the session. This set is global on purpose: cross-account
+   * safety relies on `attachedSessions` being attach-gated, since `attach`
+   * verifies `session.accountId === ctx.accountId`. Don't reuse `hasControl`
+   * outside an attach-gated path without re-checking ownership.
+   */
   uiCreatedSessions: Set<string>;
-  endpointRepo: EndpointRepository;
 }
 
 function getModeForSession(
@@ -30,13 +35,13 @@ export function buildSessionList(
   terminalManager: TerminalManager,
   controlledSessions: Set<string>,
   uiCreatedSessions: Set<string>,
-  allowedEndpointIds: Set<string>,
+  filter: { accountId: string },
 ): ServerMessage {
   return {
     type: "sessions:changed",
     sessions: terminalManager
       .listSessions()
-      .filter((s) => allowedEndpointIds.has(s.endpointId))
+      .filter((s) => s.accountId === filter.accountId)
       .map((s) => ({
         sessionId: s.sessionId,
         endpointId: s.endpointId,
@@ -50,18 +55,12 @@ export function buildSessionList(
   };
 }
 
-export async function routeMessage(
-  msg: ClientMessage,
-  ctx: WsClientContext,
-  deps: WsRouterDeps,
-): Promise<void> {
-  const { terminalManager, uiCreatedSessions, endpointRepo } = deps;
+export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsRouterDeps): void {
+  const { terminalManager, uiCreatedSessions } = deps;
   const { attachedSessions, controlledSessions, accountId, send, sendError } = ctx;
 
-  async function ownsSession(session: TerminalSession): Promise<boolean> {
-    if (!accountId) return false;
-    const endpoint = await endpointRepo.findByIdForAccount(session.endpointId, accountId);
-    return endpoint !== null;
+  function ownsSession(session: TerminalSession): boolean {
+    return session.accountId === accountId;
   }
 
   function hasControl(sessionId: string): boolean {
@@ -71,8 +70,8 @@ export async function routeMessage(
   switch (msg.type) {
     case "terminal:attach": {
       const session = terminalManager.getSession(msg.sessionId);
-      if (!session || !(await ownsSession(session))) {
-        // Don't disclose existence of sessions on other accounts' endpoints.
+      if (!session || !ownsSession(session)) {
+        // Don't disclose existence of sessions on other accounts.
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }
@@ -130,7 +129,7 @@ export async function routeMessage(
 
     case "terminal:close": {
       const session = terminalManager.getSession(msg.sessionId);
-      if (!session || !(await ownsSession(session))) {
+      if (!session || !ownsSession(session)) {
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }
@@ -141,7 +140,7 @@ export async function routeMessage(
 
     case "terminal:take-control": {
       const session = terminalManager.getSession(msg.sessionId);
-      if (!session || !(await ownsSession(session))) {
+      if (!session || !ownsSession(session)) {
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }

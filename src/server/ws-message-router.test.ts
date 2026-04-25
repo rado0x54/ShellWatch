@@ -20,13 +20,12 @@ const ACCT_B = "acct-b";
 
 describe("ws-message-router account scoping", () => {
   let manager: TerminalManager;
-  let endpointRepo: InMemoryEndpointRepository;
   let uiCreatedSessions: Set<string>;
   let sessionA: string;
   let sessionB: string;
 
   beforeEach(async () => {
-    endpointRepo = new InMemoryEndpointRepository([
+    const endpointRepo = new InMemoryEndpointRepository([
       { id: "endpoint-a", accountId: ACCT_A, label: "A", host: "h", port: 22, username: "u" },
       { id: "endpoint-b", accountId: ACCT_B, label: "B", host: "h", port: 22, username: "u" },
     ]);
@@ -44,10 +43,7 @@ describe("ws-message-router account scoping", () => {
     uiCreatedSessions.add(sessionB);
   });
 
-  function makeCtx(accountId: string | undefined): {
-    ctx: WsClientContext;
-    sent: ServerMessage[];
-  } {
+  function makeCtx(accountId: string): { ctx: WsClientContext; sent: ServerMessage[] } {
     const sent: ServerMessage[] = [];
     const ctx: WsClientContext = {
       attachedSessions: new Set(),
@@ -64,69 +60,57 @@ describe("ws-message-router account scoping", () => {
   }
 
   describe("buildSessionList", () => {
-    it("filters sessions to those on allowed endpoints", () => {
-      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, new Set(["endpoint-a"]));
+    it("filters sessions to those owned by the account", () => {
+      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, { accountId: ACCT_A });
       if (msg.type !== "sessions:changed") throw new Error("wrong type");
       expect(msg.sessions.map((s) => s.sessionId)).toEqual([sessionA]);
     });
 
-    it("returns empty list when no endpoints allowed", () => {
-      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, new Set());
+    it("returns empty list when no sessions are owned by this account", () => {
+      const msg = buildSessionList(manager, new Set(), uiCreatedSessions, {
+        accountId: "ghost",
+      });
       if (msg.type !== "sessions:changed") throw new Error("wrong type");
       expect(msg.sessions).toEqual([]);
     });
   });
 
   describe("routeMessage cross-account isolation", () => {
-    const deps = () => ({ terminalManager: manager, uiCreatedSessions, endpointRepo });
+    const deps = () => ({ terminalManager: manager, uiCreatedSessions });
 
-    it("rejects terminal:attach on a session whose endpoint belongs to another account", async () => {
+    it("rejects terminal:attach on a session owned by another account", () => {
       const { ctx, sent } = makeCtx(ACCT_A);
-      await routeMessage({ type: "terminal:attach", sessionId: sessionB }, ctx, deps());
+      routeMessage({ type: "terminal:attach", sessionId: sessionB }, ctx, deps());
       expect(ctx.attachedSessions.has(sessionB)).toBe(false);
       expect(sent).toEqual([{ type: "error", message: `Session not found: ${sessionB}` }]);
     });
 
-    it("allows terminal:attach on a session owned by this account", async () => {
+    it("allows terminal:attach on a session owned by this account", () => {
       const { ctx, sent } = makeCtx(ACCT_A);
-      await routeMessage({ type: "terminal:attach", sessionId: sessionA }, ctx, deps());
+      routeMessage({ type: "terminal:attach", sessionId: sessionA }, ctx, deps());
       expect(ctx.attachedSessions.has(sessionA)).toBe(true);
       expect(sent.some((m) => m.type === "terminal:status")).toBe(true);
     });
 
-    it("rejects terminal:close on a foreign session", async () => {
+    it("rejects terminal:close on a foreign session", () => {
       const { ctx, sent } = makeCtx(ACCT_A);
-      await routeMessage({ type: "terminal:close", sessionId: sessionB }, ctx, deps());
+      routeMessage({ type: "terminal:close", sessionId: sessionB }, ctx, deps());
       expect(sent).toEqual([{ type: "error", message: `Session not found: ${sessionB}` }]);
-      // session B still alive
       expect(manager.getSession(sessionB)?.status).not.toBe("closed");
     });
 
-    it("rejects terminal:take-control on a foreign session", async () => {
+    it("rejects terminal:take-control on a foreign session", () => {
       const { ctx, sent } = makeCtx(ACCT_A);
-      await routeMessage({ type: "terminal:take-control", sessionId: sessionB }, ctx, deps());
+      routeMessage({ type: "terminal:take-control", sessionId: sessionB }, ctx, deps());
       expect(ctx.controlledSessions.has(sessionB)).toBe(false);
       expect(sent).toEqual([{ type: "error", message: `Session not found: ${sessionB}` }]);
     });
 
-    it("rejects terminal:input when not attached, even if uiCreatedSessions has the id", async () => {
+    it("rejects terminal:input when not attached, even if uiCreatedSessions has the id", () => {
       // sessionB is in uiCreatedSessions globally — but this client (acct-a) never attached.
       const { ctx, sent } = makeCtx(ACCT_A);
-      await routeMessage(
-        { type: "terminal:input", sessionId: sessionB, data: "rm -rf /" },
-        ctx,
-        deps(),
-      );
+      routeMessage({ type: "terminal:input", sessionId: sessionB, data: "rm -rf /" }, ctx, deps());
       expect(sent).toEqual([{ type: "error", message: `Session not attached: ${sessionB}` }]);
-    });
-
-    it("rejects all session-bound ops for an unauthenticated socket", async () => {
-      const { ctx, sent } = makeCtx(undefined);
-      await routeMessage({ type: "terminal:attach", sessionId: sessionA }, ctx, deps());
-      await routeMessage({ type: "terminal:close", sessionId: sessionA }, ctx, deps());
-      await routeMessage({ type: "terminal:take-control", sessionId: sessionA }, ctx, deps());
-      expect(sent.every((m) => m.type === "error")).toBe(true);
-      expect(sent).toHaveLength(3);
     });
   });
 });

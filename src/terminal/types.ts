@@ -6,6 +6,8 @@ export type TerminalSource = "ui" | "mcp" | "ssh";
 export interface TerminalSession {
   sessionId: string;
   endpointId: string;
+  /** Owning account (copied from endpoint.accountId at create time; immutable for the session's lifetime). */
+  accountId: string;
   status: TerminalStatus;
   createdAt: Date;
   lastActivityAt: Date;

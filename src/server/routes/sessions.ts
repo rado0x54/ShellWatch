@@ -19,15 +19,12 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       return { error: "Not authenticated" };
     }
     try {
-      // Enforce per-account session limit (scoped to this account's endpoints)
+      // Enforce per-account session limit
       const account = await accountRepo.findById(request.accountId);
       if (account) {
-        const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
-        const accountEndpointIds = new Set(accountEndpoints.map((e) => e.id));
-        const activeSessions = terminalManager.listSessions();
-        const accountSessions = activeSessions.filter(
-          (s) => accountEndpointIds.has(s.endpointId) && s.status === "open",
-        );
+        const accountSessions = terminalManager
+          .listSessions()
+          .filter((s) => s.accountId === request.accountId && s.status === "open");
         if (accountSessions.length >= account.maxSessions) {
           reply.status(429);
           return {
@@ -58,10 +55,9 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
 
   app.get("/api/sessions", async (request) => {
     if (!request.accountId) return { sessions: [] };
-    // Only show sessions on endpoints owned by this account
-    const accountEndpoints = await endpointRepo.findAllForAccount(request.accountId);
-    const endpointIds = new Set(accountEndpoints.map((e) => e.id));
-    const sessions = terminalManager.listSessions().filter((s) => endpointIds.has(s.endpointId));
+    const sessions = terminalManager
+      .listSessions()
+      .filter((s) => s.accountId === request.accountId);
     return { sessions };
   });
 
@@ -74,14 +70,10 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       return { error: "Not authenticated" };
     }
     const session = terminalManager.getSession(request.params.sessionId);
-    if (!session) {
+    if (!session || session.accountId !== request.accountId) {
+      // Don't disclose existence of sessions on other accounts.
       reply.status(404);
       return { error: "Session not found" };
-    }
-    const endpoint = await endpointRepo.findByIdForAccount(session.endpointId, request.accountId);
-    if (!endpoint) {
-      reply.status(403);
-      return { error: "Access denied" };
     }
     // Clamp to a sane range so a malformed query string can't bloat the response.
     const requested = Number(request.query.limit);
@@ -99,15 +91,9 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         return { error: "Not authenticated" };
       }
       const session = terminalManager.getSession(request.params.sessionId);
-      if (!session) {
+      if (!session || session.accountId !== request.accountId) {
         reply.status(404);
         return { error: "Session not found" };
-      }
-      // Verify the session's endpoint belongs to this account
-      const endpoint = await endpointRepo.findByIdForAccount(session.endpointId, request.accountId);
-      if (!endpoint) {
-        reply.status(403);
-        return { error: "Access denied" };
       }
       terminalManager.close(request.params.sessionId);
       return { status: "closed" };
