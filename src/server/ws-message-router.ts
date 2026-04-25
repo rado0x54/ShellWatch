@@ -11,30 +11,11 @@ export interface WsClientContext {
 
 export interface WsRouterDeps {
   terminalManager: TerminalManager;
-  /**
-   * Sessions created via the UI default to "control" mode for any client whose
-   * account owns the session. This set is global on purpose: cross-account
-   * safety relies on `attachedSessions` being attach-gated, since `attach`
-   * verifies `session.accountId === ctx.accountId`. Don't reuse `hasControl`
-   * outside an attach-gated path without re-checking ownership.
-   */
-  uiCreatedSessions: Set<string>;
-}
-
-function getModeForSession(
-  sessionId: string,
-  terminalManager: TerminalManager,
-  uiCreatedSessions: Set<string>,
-): SessionMode {
-  const session = terminalManager.getSession(sessionId);
-  if (!session) return "observer";
-  return uiCreatedSessions.has(sessionId) ? "control" : "observer";
 }
 
 export function buildSessionList(
   terminalManager: TerminalManager,
   controlledSessions: Set<string>,
-  uiCreatedSessions: Set<string>,
   filter: { accountId: string },
 ): ServerMessage {
   return {
@@ -48,15 +29,13 @@ export function buildSessionList(
         status: s.status,
         createdAt: s.createdAt.toISOString(),
         source: s.source,
-        mode: controlledSessions.has(s.sessionId)
-          ? "control"
-          : getModeForSession(s.sessionId, terminalManager, uiCreatedSessions),
+        mode: controlledSessions.has(s.sessionId) ? "control" : "observer",
       })),
   };
 }
 
 export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsRouterDeps): void {
-  const { terminalManager, uiCreatedSessions } = deps;
+  const { terminalManager } = deps;
   const { attachedSessions, controlledSessions, accountId, send, sendError } = ctx;
 
   function ownsSession(session: TerminalSession): boolean {
@@ -64,7 +43,7 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
   }
 
   function hasControl(sessionId: string): boolean {
-    return controlledSessions.has(sessionId) || uiCreatedSessions.has(sessionId);
+    return controlledSessions.has(sessionId);
   }
 
   switch (msg.type) {
@@ -76,6 +55,12 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
         return;
       }
       attachedSessions.add(msg.sessionId);
+      // UI-created sessions default to control mode for clients owned by the
+      // creating account. Other sources (mcp, ssh) attach as observer; the
+      // client must take-control to send input.
+      if (session.source === "ui") {
+        controlledSessions.add(msg.sessionId);
+      }
       const mode: SessionMode = hasControl(msg.sessionId) ? "control" : "observer";
       send({ type: "terminal:status", sessionId: msg.sessionId, status: session.status });
       send({ type: "terminal:mode", sessionId: msg.sessionId, mode });
@@ -105,7 +90,7 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     case "terminal:input": {
       // Attach was gated by ownership; require it before accepting input so a
       // client cannot send input to a session it doesn't own by guessing the
-      // sessionId (uiCreatedSessions is a global set and not account-scoped).
+      // sessionId.
       if (!attachedSessions.has(msg.sessionId)) {
         sendError(`Session not attached: ${msg.sessionId}`);
         return;
@@ -136,7 +121,6 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
         return;
       }
       terminalManager.close(msg.sessionId);
-      uiCreatedSessions.delete(msg.sessionId);
       break;
     }
 
@@ -152,6 +136,10 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
     }
 
     case "terminal:release-control": {
+      // Silent if not attached — mirrors terminal:detach/resize. Attach was
+      // ownership-gated, so requiring it here also gives us ownership for free
+      // and avoids emitting terminal:mode for ids this client never touched.
+      if (!attachedSessions.has(msg.sessionId)) return;
       controlledSessions.delete(msg.sessionId);
       send({ type: "terminal:mode", sessionId: msg.sessionId, mode: "observer" });
       break;
