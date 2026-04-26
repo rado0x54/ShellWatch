@@ -9,7 +9,7 @@ import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type {
   AccountRepository,
-  ApiKeyRepository,
+  ApiKeyAuthRepository,
   EndpointRepository,
   PushSubscriptionRepository,
   SshKeyRepository,
@@ -50,7 +50,7 @@ export interface BuildAppParams {
   db?: ShellWatchDB | null;
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
-  apiKeyRepo: ApiKeyRepository;
+  apiKeyRepo: ApiKeyAuthRepository;
   options?: AppOptions;
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;

@@ -46,6 +46,8 @@ export interface TestAppServer {
    * endpoint ids.
    */
   foreignEndpointId: string;
+  /** Account id the session cookie + apiKey are bound to. */
+  accountId: string;
   /** Live reference to the in-memory API-key repo (for repo-level assertions). */
   apiKeyRepo: ApiKeyRepository;
   /** Fetch with session cookie pre-attached */
@@ -192,6 +194,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     apiKey: testApiKey,
     nonMcpApiKey: testNonMcpApiKey,
     foreignEndpointId,
+    accountId: testAccountId,
     apiKeyRepo,
     fetch(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);

@@ -50,7 +50,12 @@ try {
     }
 
     case "list": {
-      const keys = await repo.findAll();
+      const adminId = accountRepo.getAdminAccountId();
+      if (!adminId) {
+        console.error("No admin account found. Start the server first to create one.");
+        process.exit(1);
+      }
+      const keys = await repo.findAllForAccount(adminId);
       if (keys.length === 0) {
         console.log("No API keys configured.");
         break;
@@ -69,7 +74,16 @@ try {
         console.error("Usage: manage-keys revoke <id>");
         process.exit(1);
       }
-      await repo.revoke(id);
+      const adminId = accountRepo.getAdminAccountId();
+      if (!adminId) {
+        console.error("No admin account found. Start the server first to create one.");
+        process.exit(1);
+      }
+      const revoked = await repo.revokeForAccount(id, adminId);
+      if (!revoked) {
+        console.error(`Key ${id} not found under the admin account.`);
+        process.exit(1);
+      }
       console.log(`Key ${id} revoked.`);
       break;
     }

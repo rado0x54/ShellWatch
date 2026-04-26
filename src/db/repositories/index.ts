@@ -5,6 +5,7 @@ export {
   StubAccountRepository,
 } from "./account-repo.js";
 export {
+  type ApiKeyAuthRepository,
   type ApiKeyInfo,
   type ApiKeyRepository,
   DrizzleApiKeyRepository,

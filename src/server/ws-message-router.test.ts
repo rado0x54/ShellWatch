@@ -30,8 +30,8 @@ describe("ws-message-router account scoping", () => {
       { id: "endpoint-a", accountId: ACCT_A, label: "A", host: "h", port: 22, username: "u" },
       { id: "endpoint-b", accountId: ACCT_B, label: "B", host: "h", port: 22, username: "u" },
     ]);
-    endpointA = (await endpointRepo.findById("endpoint-a"))!;
-    endpointB = (await endpointRepo.findById("endpoint-b"))!;
+    endpointA = (await endpointRepo.findByIdForAccount("endpoint-a", ACCT_A))!;
+    endpointB = (await endpointRepo.findByIdForAccount("endpoint-b", ACCT_B))!;
     const transportFactory: TransportFactory = vi.fn().mockResolvedValue(createMockTransport());
     manager = new TerminalManager(transportFactory, {
       idleTimeoutMs: 60_000,

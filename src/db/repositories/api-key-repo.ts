@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { apiKeys } from "../schema.js";
 
@@ -13,9 +13,14 @@ export interface ApiKeyInfo {
   createdAt: string;
 }
 
+// Public surface — every method is account-scoped. Route handlers, MCP tools,
+// and any other request-context consumer take this narrower type so that an
+// accidental cross-account read is a compile error rather than something a
+// reviewer has to spot. See #136.
 export interface ApiKeyRepository {
-  findByHash(hash: string): Promise<ApiKeyInfo | null>;
-  findAll(): Promise<ApiKeyInfo[]>;
+  findAllForAccount(accountId: string): Promise<ApiKeyInfo[]>;
+  /** Returns true if a row was revoked, false if no key with that id+account exists. */
+  revokeForAccount(id: string, accountId: string): Promise<boolean>;
   create(data: {
     id: string;
     accountId: string;
@@ -25,7 +30,14 @@ export interface ApiKeyRepository {
     scopes: string[];
     endpoints?: string[];
   }): Promise<void>;
-  revoke(id: string): Promise<void>;
+}
+
+// Auth-only surface — exposed to the bearer gate and the OAuth callback, where
+// the whole point of the lookup is to translate an opaque credential into an
+// account identity. There is no caller-supplied accountId at the moment of the
+// lookup because we are deriving it. Hand this handle out from DI root only.
+export interface ApiKeyAuthRepository extends ApiKeyRepository {
+  findByHash(hash: string): Promise<ApiKeyInfo | null>;
 }
 
 function parseRow(row: {
@@ -45,21 +57,23 @@ function parseRow(row: {
   };
 }
 
-export class DrizzleApiKeyRepository implements ApiKeyRepository {
+const API_KEY_COLUMNS = {
+  id: apiKeys.id,
+  accountId: apiKeys.accountId,
+  label: apiKeys.label,
+  keyPrefix: apiKeys.keyPrefix,
+  scopes: apiKeys.scopes,
+  endpoints: apiKeys.endpoints,
+  enabled: apiKeys.enabled,
+  createdAt: apiKeys.createdAt,
+} as const;
+
+export class DrizzleApiKeyRepository implements ApiKeyAuthRepository {
   constructor(private db: ShellWatchDB) {}
 
   async findByHash(hash: string): Promise<ApiKeyInfo | null> {
     const row = this.db
-      .select({
-        id: apiKeys.id,
-        accountId: apiKeys.accountId,
-        label: apiKeys.label,
-        keyPrefix: apiKeys.keyPrefix,
-        scopes: apiKeys.scopes,
-        endpoints: apiKeys.endpoints,
-        enabled: apiKeys.enabled,
-        createdAt: apiKeys.createdAt,
-      })
+      .select(API_KEY_COLUMNS)
       .from(apiKeys)
       .where(eq(apiKeys.keyHash, hash))
       .get();
@@ -67,19 +81,11 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
     return parseRow(row);
   }
 
-  async findAll(): Promise<ApiKeyInfo[]> {
+  async findAllForAccount(accountId: string): Promise<ApiKeyInfo[]> {
     const rows = this.db
-      .select({
-        id: apiKeys.id,
-        accountId: apiKeys.accountId,
-        label: apiKeys.label,
-        keyPrefix: apiKeys.keyPrefix,
-        scopes: apiKeys.scopes,
-        endpoints: apiKeys.endpoints,
-        enabled: apiKeys.enabled,
-        createdAt: apiKeys.createdAt,
-      })
+      .select(API_KEY_COLUMNS)
       .from(apiKeys)
+      .where(eq(apiKeys.accountId, accountId))
       .all();
     return rows.map(parseRow);
   }
@@ -109,21 +115,30 @@ export class DrizzleApiKeyRepository implements ApiKeyRepository {
       .run();
   }
 
-  async revoke(id: string): Promise<void> {
-    this.db.update(apiKeys).set({ enabled: false }).where(eq(apiKeys.id, id)).run();
+  async revokeForAccount(id: string, accountId: string): Promise<boolean> {
+    const result = this.db
+      .update(apiKeys)
+      .set({ enabled: false })
+      .where(and(eq(apiKeys.id, id), eq(apiKeys.accountId, accountId)))
+      .run();
+    return result.changes > 0;
   }
 }
 
-export class InMemoryApiKeyRepository implements ApiKeyRepository {
+export class InMemoryApiKeyRepository implements ApiKeyAuthRepository {
   private store: (ApiKeyInfo & { keyHash: string })[] = [];
 
   async findByHash(hash: string): Promise<ApiKeyInfo | null> {
     const key = this.store.find((k) => k.keyHash === hash && k.enabled);
-    return key ?? null;
+    if (!key) return null;
+    const { keyHash: _keyHash, ...rest } = key;
+    return rest;
   }
 
-  async findAll(): Promise<ApiKeyInfo[]> {
-    return this.store.map(({ keyHash: _, ...rest }) => rest);
+  async findAllForAccount(accountId: string): Promise<ApiKeyInfo[]> {
+    return this.store
+      .filter((k) => k.accountId === accountId)
+      .map(({ keyHash: _keyHash, ...rest }) => rest);
   }
 
   async create(data: {
@@ -148,8 +163,10 @@ export class InMemoryApiKeyRepository implements ApiKeyRepository {
     });
   }
 
-  async revoke(id: string): Promise<void> {
-    const key = this.store.find((k) => k.id === id);
-    if (key) key.enabled = false;
+  async revokeForAccount(id: string, accountId: string): Promise<boolean> {
+    const key = this.store.find((k) => k.id === id && k.accountId === accountId);
+    if (!key) return false;
+    key.enabled = false;
+    return true;
   }
 }

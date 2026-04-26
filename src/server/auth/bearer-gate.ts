@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "../../config/index.js";
-import type { AccountRepository, ApiKeyRepository } from "../../db/index.js";
+import type { AccountRepository, ApiKeyAuthRepository } from "../../db/index.js";
 import type { ApiKeyInfo } from "../../db/repositories/api-key-repo.js";
 import { hashApiKey } from "./api-key-auth.js";
 
@@ -21,7 +21,7 @@ export interface BearerPathConfig {
 
 export interface RegisterBearerGateParams {
   app: FastifyInstance;
-  apiKeyRepo: ApiKeyRepository;
+  apiKeyRepo: ApiKeyAuthRepository;
   accountRepo: AccountRepository;
   config: Config;
   /** Map of URL prefixes → required scope and failure format. */
