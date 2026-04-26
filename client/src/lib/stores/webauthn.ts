@@ -44,7 +44,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const verifyRes = await fetch("/api/webauthn/register/verify", {
+  const verifyRes = await fetch("/api/webauthn/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, credential }),
@@ -123,7 +123,7 @@ export class NoPasskeysError extends Error {
 }
 
 export async function login(): Promise<void> {
-  const optionsRes = await fetch("/api/webauthn/login/options", { method: "POST" });
+  const optionsRes = await fetch("/api/auth/login/options", { method: "POST" });
   if (!optionsRes.ok) {
     const err = await optionsRes.json();
     throw new Error(err.error || "Failed to get login options");
@@ -136,7 +136,7 @@ export async function login(): Promise<void> {
 
   const credential = await startAuthentication({ optionsJSON: options });
 
-  const verifyRes = await fetch("/api/webauthn/login/verify", {
+  const verifyRes = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, credential }),

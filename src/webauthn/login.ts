@@ -26,7 +26,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
   // --- Login (Assertion): Generate Options ---
   app.post(
-    "/api/webauthn/login/options",
+    "/api/auth/login/options",
     {
       config: {
         rateLimit: {
@@ -59,7 +59,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
   // --- Login (Assertion): Verify ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
-    "/api/webauthn/login/verify",
+    "/api/auth/login",
     {
       config: {
         rateLimit: {

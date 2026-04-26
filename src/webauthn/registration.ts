@@ -69,7 +69,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
 
   // --- Registration: Verify Response ---
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
-    "/api/webauthn/register/verify",
+    "/api/webauthn/register",
     {
       config: {
         rateLimit: {
