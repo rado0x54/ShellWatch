@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ShellWatchDB } from "../db/connection.js";
-import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
+import type { AccountRepository, SshKeyRepository } from "../db/index.js";
 import { findCredentialsForAccount } from "../db/repositories/credential-queries.js";
 import type { AgentForwardingContext, EndpointAuthContext } from "../pending-action/index.js";
 import {
@@ -17,7 +17,6 @@ import { SshTransportFactory } from "./ssh-transport-factory.js";
 
 export interface CreateFactoryParams {
   db: ShellWatchDB;
-  endpointRepo: EndpointRepository;
   keyRepo: SshKeyRepository;
   accountRepo: AccountRepository;
   keyWatcher: KeyDirectoryWatcher;
@@ -35,19 +34,10 @@ export interface CreateFactoryParams {
 export function createSshTransportFactoryFromConfig(
   params: CreateFactoryParams,
 ): SshTransportFactory {
-  const {
-    db,
-    endpointRepo,
-    keyRepo,
-    accountRepo,
-    keyWatcher,
-    signingBridge,
-    rpId,
-    agentLog,
-    onConnectionEnded,
-  } = params;
+  const { db, keyRepo, accountRepo, keyWatcher, signingBridge, rpId, agentLog, onConnectionEnded } =
+    params;
 
-  return new SshTransportFactory(endpointRepo, keyRepo, keyWatcher, {
+  return new SshTransportFactory(keyRepo, keyWatcher, {
     rpId,
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),

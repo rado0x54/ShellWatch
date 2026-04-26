@@ -14,10 +14,11 @@ export interface TerminalTransport extends EventEmitter {
   close(): void;
 }
 
+import type { EndpointInfo } from "../db/repositories/endpoint-repo.js";
 import type { EndpointAuthTrigger } from "../pending-action/types.js";
 
 export interface TransportFactoryParams {
-  endpointId: string;
+  endpoint: EndpointInfo;
   sessionId: string;
   trigger: EndpointAuthTrigger;
 }

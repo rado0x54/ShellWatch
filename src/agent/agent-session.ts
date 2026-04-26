@@ -87,6 +87,16 @@ export class AgentSession {
   }
 
   async createSession(endpointId: string, reason: string): Promise<TerminalSession> {
+    // Ownership check first — a foreign endpoint UUID always returns "Unknown
+    // endpoint" regardless of the caller's quota state, so probing can't leak
+    // anything about another account's endpoints. Without this scope a caller
+    // could pass any endpoint UUID and trigger a WebAuthn approval prompt on
+    // the owning account with attacker-chosen reason text — and, if approved,
+    // drive the resulting session via send_keys / read_output.
+    const endpoint = await this.endpointRepo.findByIdForAccount(endpointId, this.accountId);
+    if (!endpoint) {
+      throw new Error(`Unknown endpoint: ${endpointId}`);
+    }
     if (this.ownedSessions.size >= this.maxSessions) {
       throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
     }
@@ -100,7 +110,7 @@ export class AgentSession {
       mcpClientName: this.mcpClientName,
       mcpClientVersion: this.mcpClientVersion,
     };
-    const session = await this.terminalManager.create(endpointId, trigger);
+    const session = await this.terminalManager.create(endpoint, this.accountId, trigger);
     this.ownedSessions.add(session.sessionId);
     return session;
   }

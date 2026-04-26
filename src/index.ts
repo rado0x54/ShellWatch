@@ -69,7 +69,6 @@ try {
 
   const sshTransportFactory = createSshTransportFactoryFromConfig({
     db,
-    endpointRepo,
     keyRepo,
     accountRepo,
     keyWatcher,
@@ -92,9 +91,7 @@ try {
     },
   });
 
-  const terminalManager = new TerminalManager(endpointRepo, (params) =>
-    sshTransportFactory.create(params),
-  );
+  const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params));
 
   const app = await buildApp({
     config,
