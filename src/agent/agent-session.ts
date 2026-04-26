@@ -6,6 +6,20 @@ import { sanitizeClientReportedValue } from "../util/sanitize-client-info.js";
 
 export type AgentSource = "mcp" | "ssh";
 
+export interface AgentSessionOptions {
+  endpointRepo: EndpointRepository;
+  terminalManager: TerminalManager;
+  source: AgentSource;
+  /**
+   * Owning account id. Scopes endpoint listings/lookups so this session can
+   * only see endpoints belonging to the calling account.
+   */
+  accountId: string;
+  maxSessions?: number;
+  /** Source IP of the calling agent (used when building the signing trigger). */
+  sourceIp?: string;
+}
+
 /**
  * An AgentSession manages the terminal sessions owned by a single agent connection.
  * Both MCP clients and SSH server clients use this to ensure session isolation —
@@ -19,14 +33,21 @@ export class AgentSession {
   private mcpClientName?: string;
   private mcpClientVersion?: string;
 
-  constructor(
-    private endpointRepo: EndpointRepository,
-    private terminalManager: TerminalManager,
-    private source: AgentSource,
-    private maxSessions = 5,
-    /** Source IP of the calling agent (used when building the signing trigger). */
-    private sourceIp?: string,
-  ) {}
+  private readonly endpointRepo: EndpointRepository;
+  private readonly terminalManager: TerminalManager;
+  private readonly source: AgentSource;
+  private readonly accountId: string;
+  private readonly maxSessions: number;
+  private readonly sourceIp?: string;
+
+  constructor(opts: AgentSessionOptions) {
+    this.endpointRepo = opts.endpointRepo;
+    this.terminalManager = opts.terminalManager;
+    this.source = opts.source;
+    this.accountId = opts.accountId;
+    this.maxSessions = opts.maxSessions ?? 5;
+    this.sourceIp = opts.sourceIp;
+  }
 
   /**
    * Record the calling MCP client's advertised clientInfo (from the initialize
@@ -54,7 +75,7 @@ export class AgentSession {
       description: string | null;
     }[]
   > {
-    const endpoints = await this.endpointRepo.findAll();
+    const endpoints = await this.endpointRepo.findAllForAccount(this.accountId);
     return endpoints.map(({ id, label, host, port, username, description }) => ({
       id,
       label,
