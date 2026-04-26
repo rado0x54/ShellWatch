@@ -1,4 +1,4 @@
-import { count, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { accounts, adminAccount } from "../schema.js";
 
@@ -17,7 +17,6 @@ export interface AccountInfo {
 export interface AccountRepository {
   findById(id: string): Promise<AccountInfo | null>;
   findAll(): Promise<AccountInfo[]>;
-  create(data: { id: string; name: string }): Promise<AccountInfo>;
   update(
     id: string,
     data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "agentForward">>,
@@ -26,7 +25,6 @@ export interface AccountRepository {
   touchLastUsed(id: string): void;
   /** Flush pending lastUsedAt updates to DB. Called periodically, not per-request. */
   flushLastUsed(): void;
-  count(): number;
   getAdminAccountId(): string | null;
   setAdmin(accountId: string): void;
   isAdmin(accountId: string): boolean;
@@ -41,26 +39,10 @@ export class StubAccountRepository implements AccountRepository {
   async findAll(): Promise<AccountInfo[]> {
     return [];
   }
-  async create(data: { id: string; name: string }): Promise<AccountInfo> {
-    const now = new Date().toISOString();
-    return {
-      ...data,
-      isAdmin: false,
-      enabled: true,
-      maxSessions: 5,
-      agentForward: false,
-      lastUsedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
   async update(): Promise<void> {}
   touchLastUsed(): void {}
   flushLastUsed(): void {}
   destroy(): void {}
-  count(): number {
-    return 0;
-  }
   getAdminAccountId(): string | null {
     return null;
   }
@@ -97,22 +79,6 @@ export class DrizzleAccountRepository implements AccountRepository {
     })) as AccountInfo[];
   }
 
-  async create(data: { id: string; name: string }): Promise<AccountInfo> {
-    const now = new Date().toISOString();
-    this.db
-      .insert(accounts)
-      .values({
-        ...data,
-        enabled: true,
-        maxSessions: 5,
-        lastUsedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-    return (await this.findById(data.id))!;
-  }
-
   async update(
     id: string,
     data: Partial<Pick<AccountInfo, "name" | "enabled" | "maxSessions" | "agentForward">>,
@@ -135,11 +101,6 @@ export class DrizzleAccountRepository implements AccountRepository {
     for (const [id, timestamp] of entries) {
       this.db.update(accounts).set({ lastUsedAt: timestamp }).where(eq(accounts.id, id)).run();
     }
-  }
-
-  count(): number {
-    const result = this.db.select({ total: count() }).from(accounts).get();
-    return result?.total ?? 0;
   }
 
   getAdminAccountId(): string | null {

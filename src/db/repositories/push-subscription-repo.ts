@@ -13,6 +13,12 @@ export interface PushSubscriptionInfo {
   updatedAt: string;
 }
 
+// Every method here takes an accountId and operates only on that account's
+// rows. There is no scoped/admin split because there are no cross-tenant
+// reads or writes — the dispatcher loops over `findByAccountId(action.accountId)`,
+// route handlers use the caller's `request.accountId`, and `upsert` rejects
+// any endpoint that already belongs to a different account (see #131). Do
+// not add an unscoped variant without revisiting that constraint.
 export interface PushSubscriptionRepository {
   findByAccountId(accountId: string): PushSubscriptionInfo[];
   upsert(data: {

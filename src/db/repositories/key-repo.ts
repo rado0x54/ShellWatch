@@ -14,6 +14,12 @@ export interface SshKeyInfo {
   updatedAt: string;
 }
 
+// SSH keys are intentionally global: the schema has no `accountId` column
+// because keys are scanned from a shared `keyDirectory` on the host filesystem
+// and represent process-level credentials, not per-account secrets. Every
+// method here is unscoped *by design* — do not add `findAllForAccount` /
+// `findByIdForAccount` siblings without first changing the schema (and the
+// product intent of who owns SSH keys). See #136 for the scoping audit.
 export interface SshKeyRepository {
   findAll(): Promise<SshKeyInfo[]>;
   findById(id: string): Promise<SshKeyInfo | null>;
