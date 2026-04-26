@@ -160,42 +160,45 @@ describe("agent-proxy WebSocket endpoint", () => {
     });
   }
 
-  it("rejects connections without API key", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`);
-    const code = await new Promise<number>((resolve) => {
-      ws.on("close", (code) => resolve(code));
+  // Bearer-gate rejects WS upgrades pre-handshake with HTTP 401/403; the `ws`
+  // client surfaces that via the `unexpected-response` event, not `close`.
+  function expectUpgradeStatus(ws: WebSocket): Promise<number> {
+    return new Promise((resolve, reject) => {
+      ws.on("unexpected-response", (_req, res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      ws.on("open", () => reject(new Error("expected upgrade to be rejected")));
+      ws.on("error", () => {
+        // Suppress — `unexpected-response` carries the status, this fires after.
+      });
     });
-    expect(code).toBe(4001);
+  }
+
+  it("rejects connections without API key (401)", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`);
+    expect(await expectUpgradeStatus(ws)).toBe(401);
   });
 
-  it("rejects connections with invalid API key", async () => {
+  it("rejects connections with invalid API key (401)", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`, {
       headers: { Authorization: "Bearer sw_invalid_key_000000000000000" },
     });
-    const code = await new Promise<number>((resolve) => {
-      ws.on("close", (code) => resolve(code));
-    });
-    expect(code).toBe(4001);
+    expect(await expectUpgradeStatus(ws)).toBe(401);
   });
 
-  it("rejects connections with insufficient scope", async () => {
+  it("rejects connections with insufficient scope (403)", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`, {
       headers: { Authorization: "Bearer sw_no_scope_key_0000000000000000" },
     });
-    const code = await new Promise<number>((resolve) => {
-      ws.on("close", (code) => resolve(code));
-    });
-    expect(code).toBe(4003);
+    expect(await expectUpgradeStatus(ws)).toBe(403);
   });
 
-  it("rejects mcp-only keys (agent scope required)", async () => {
+  it("rejects mcp-only keys at /agent-proxy (agent scope required, 403)", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/agent-proxy`, {
       headers: { Authorization: "Bearer sw_mcp_only_key_00000000000000000" },
     });
-    const code = await new Promise<number>((resolve) => {
-      ws.on("close", (code) => resolve(code));
-    });
-    expect(code).toBe(4003);
+    expect(await expectUpgradeStatus(ws)).toBe(403);
   });
 
   it("returns identities via agent protocol over WebSocket", async () => {

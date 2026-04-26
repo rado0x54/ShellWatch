@@ -30,6 +30,26 @@ describe("MCP Client Flow", () => {
     log.clear();
   });
 
+  it("rejects API key lacking 'mcp' scope at /mcp (403)", async () => {
+    // Bearer-gate enforces scope on /mcp — agent-only keys cannot call MCP tools.
+    const res = await fetch(`${appServer.url}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${appServer.nonMcpApiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", capabilities: {} },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain("insufficient_scope");
+  });
+
   it("lists endpoints", async () => {
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
