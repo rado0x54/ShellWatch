@@ -73,13 +73,13 @@ security:
   #   selfRegister:                                     # POST /api/auth/register (unauthenticated self-registration)
   #     max: 5                                          # requests per window (default: 5)
   #     windowMinutes: 15                               # window size in minutes (default: 15)
-  #   passkeyRegister:                                  # POST /api/webauthn/register/* (authenticated passkey enrollment)
+  #   passkeyRegister:                                  # POST /api/webauthn/register/* (authenticated add-passkey)
   #     max: 10
   #     windowMinutes: 15
-  #   loginOptions:                                     # POST /api/webauthn/login/options
+  #   loginOptions:                                     # POST /api/auth/login/options
   #     max: 20
   #     windowMinutes: 15
-  #   loginVerify:                                      # POST /api/webauthn/login/verify
+  #   loginVerify:                                      # POST /api/auth/login
   #     max: 10
   #     windowMinutes: 15
 
