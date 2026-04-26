@@ -87,7 +87,6 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           credential,
           rpId,
           trustedOrigins,
-          requireUserVerification: true,
         });
         if (!result.ok) {
           reply.status(400);

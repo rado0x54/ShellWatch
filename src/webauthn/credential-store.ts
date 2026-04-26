@@ -12,8 +12,6 @@ export interface VerifyAndDecodeParams {
   credential: unknown;
   rpId: string;
   trustedOrigins: string[];
-  /** Default false — register/verify endpoints opt in. */
-  requireUserVerification?: boolean;
 }
 
 export interface DecodedRegistration {
@@ -43,12 +41,18 @@ export async function verifyAndDecodeRegistration(
     return { ok: false, error: "Challenge expired or not found" };
   }
 
+  // UV is always required at registration. Both call sites also pass
+  // authenticatorSelection.userVerification: "required" at the options step,
+  // so this is the matching server-side enforcement (defense-in-depth against
+  // an authenticator that ignores the request or a browser that lies).
+  // Without it, self-register could enroll a non-UV credential that login.ts
+  // would then reject — bricking the freshly-created account.
   const verification = await verifyRegistrationResponse({
     response: params.credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
     expectedChallenge: challenge,
     expectedOrigin: params.trustedOrigins,
     expectedRPID: params.rpId,
-    requireUserVerification: params.requireUserVerification ?? false,
+    requireUserVerification: true,
   });
 
   if (!verification.verified || !verification.registrationInfo) {
