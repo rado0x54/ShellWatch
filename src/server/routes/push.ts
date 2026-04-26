@@ -29,6 +29,10 @@ export function registerPushRoutes(params: PushRoutesParams) {
       p256dh: keys.p256dh,
       auth: keys.auth,
     });
+    if (!sub) {
+      reply.status(409);
+      return { error: "endpoint already registered to a different account" };
+    }
     return { id: sub.id };
   });
 
