@@ -21,7 +21,6 @@ import type { WebSocketChannel } from "../pending-action/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
-import { hasPasskeys as hasPasskeysQuery } from "../db/repositories/credential-queries.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerOAuth } from "../oauth/index.js";
 import { registerApiKeyAuth } from "./auth/api-key-auth.js";
@@ -51,7 +50,7 @@ export interface BuildAppParams {
   db?: ShellWatchDB | null;
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
-  apiKeyRepo?: ApiKeyRepository | null;
+  apiKeyRepo: ApiKeyRepository;
   options?: AppOptions;
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;
@@ -79,7 +78,7 @@ export async function buildApp(params: BuildAppParams) {
     db = null,
     wsExtensions = [],
     keyAvailability = null,
-    apiKeyRepo = null,
+    apiKeyRepo,
     options = {},
   } = params;
 
@@ -98,29 +97,24 @@ export async function buildApp(params: BuildAppParams) {
   await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyWebsocket);
 
-  // Decorate request with accountId. Default is a null sentinel, cast to the
-  // declared type — the auth gate sets a real string before any protected
-  // handler runs, and exempt routes never read it.
-  app.decorateRequest("accountId", null as unknown as string);
+  // Decorate request with accountId. Default is the empty string; the auth
+  // gate (cookie session) and api-key-auth both overwrite it with a real
+  // account id before any protected handler runs. Exempt routes never read it.
+  app.decorateRequest("accountId", "");
 
-  // Auth gate: onboarding + login enforcement
+  // Auth gate: session-cookie enforcement
   registerAuthGate({
     app,
     secret: cookieSecret,
     accountRepo,
-    checkHasPasskeys: db ? () => hasPasskeysQuery(db) : () => true,
   });
 
   // IP allowlist + API key auth + OAuth shim for MCP.
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
-  if (apiKeyRepo) {
-    const mcpPath = "/mcp";
-    registerApiKeyAuth({ app, apiKeyRepo, accountRepo, mcpPath, config });
-    const oauth = registerOAuth({ app, apiKeyRepo, config, mcpPath });
-    app.addHook("onClose", async () => oauth.destroy());
-  } else {
-    app.log.warn("apiKeyRepo not provided — /mcp auth and OAuth shim are disabled");
-  }
+  const mcpPath = "/mcp";
+  registerApiKeyAuth({ app, apiKeyRepo, accountRepo, mcpPath, config });
+  const oauth = registerOAuth({ app, apiKeyRepo, config, mcpPath });
+  app.addHook("onClose", async () => oauth.destroy());
 
   app.get("/health", async () => ({ status: "ok" }));
 
@@ -147,9 +141,7 @@ export async function buildApp(params: BuildAppParams) {
     });
   }
 
-  if (apiKeyRepo) {
-    registerApiKeyRoutes({ app, apiKeyRepo });
-  }
+  registerApiKeyRoutes({ app, apiKeyRepo });
 
   if (params.pushSubRepo) {
     registerPushRoutes({
@@ -183,7 +175,7 @@ export async function buildApp(params: BuildAppParams) {
   }
 
   // Agent proxy WebSocket route (for remote SSH agent clients)
-  if (config.agentSocket.proxyEnabled && params.agentProxy && apiKeyRepo) {
+  if (config.agentSocket.proxyEnabled && params.agentProxy) {
     registerAgentProxyRoute({
       app,
       keyProvider: params.agentProxy.keyProvider,

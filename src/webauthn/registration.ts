@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
+import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
-import type { AccountRepository } from "../db/repositories/account-repo.js";
+import { deduplicateLabel } from "../db/repositories/credential-queries.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
@@ -13,7 +13,6 @@ import type { RateLimitConfig } from "./routes.js";
 export interface RegistrationRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
-  accountRepo: AccountRepository;
   rpId: string;
   trustedOrigins: string[];
 
@@ -21,7 +20,7 @@ export interface RegistrationRoutesParams {
 }
 
 export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, rateLimitConfig } = params;
+  const { app, db, rpId, trustedOrigins, rateLimitConfig } = params;
 
   // --- Registration: Generate Options ---
   app.post<{ Body: { label: string; name?: string } }>(
@@ -36,10 +35,14 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
     },
     async (request) => {
       const { label, name } = request.body;
-      // Get existing credentials to exclude (prevent re-registration)
+      // Auth-gated route: scope excludeCredentials to the calling account so
+      // we don't leak the global credential-id list to authenticated callers.
+      // The anonymous self-register flow uses /api/auth/register/options
+      // (returns no excludeCredentials).
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
+        .where(eq(webauthnCredentials.accountId, request.accountId))
         .all();
 
       // userName: max 64 bytes per WebAuthn recommendation
@@ -107,30 +110,11 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         const now = new Date().toISOString();
         const pubKeyBuf = Buffer.from(cred.publicKey);
 
-        // Resolve account: use authenticated session, or bootstrap admin
-        let accountId: string | undefined;
-        if (request.accountId) {
-          accountId = request.accountId;
-        } else if (!hasPasskeys(db)) {
-          // No passkeys yet — this is onboarding. Either create admin or use existing.
-          const existingAdminId = accountRepo.getAdminAccountId();
-          if (existingAdminId) {
-            accountId = existingAdminId;
-          } else {
-            const admin = await accountRepo.create({
-              id: randomUUID(),
-              name: "admin",
-            });
-            accountRepo.setAdmin(admin.id);
-            accountId = admin.id;
-          }
-        }
-
-        if (!accountId) {
-          reply.status(400);
-          return { error: "No account associated with this registration" };
-        }
-
+        // Auth-gated route: request.accountId is set by the auth gate.
+        // First-passkey/bootstrap and self-registration go through
+        // /api/auth/register (self-register.ts), which creates the account
+        // and credential atomically — there is no unauth path here.
+        const accountId = request.accountId;
         const label = deduplicateLabel(db, accountId, baseLabel);
 
         // Convert to OpenSSH authorized_keys format

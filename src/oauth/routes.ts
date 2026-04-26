@@ -229,15 +229,12 @@ export function registerOAuth({
       if (!newKeyLabel) {
         return rerender("Please provide a name for the new API key.");
       }
-      const accountId = req.accountId;
-      if (!accountId) {
-        return rerender("Session expired. Please log in again.");
-      }
+      // /oauth/authorize is auth-gated upstream; req.accountId is set.
       // Deferred: we do NOT mint or persist the key here. If the client never
       // completes /oauth/token (user closes the tab, PKCE fails, code TTL
       // expires), no credential is created. See code-store.ts for the
       // discriminated entry type.
-      pending = { kind: "create", accountId, label: newKeyLabel };
+      pending = { kind: "create", accountId: req.accountId, label: newKeyLabel };
     } else {
       const pasted = b.api_key?.trim();
       if (!pasted) {

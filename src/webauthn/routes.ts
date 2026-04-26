@@ -42,7 +42,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
   registerRegistrationRoutes({
     app,
     db,
-    accountRepo,
     rpId,
     trustedOrigins,
     rateLimitConfig,

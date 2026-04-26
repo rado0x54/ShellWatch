@@ -54,14 +54,7 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     }
 
     if (!managed) {
-      // Defense-in-depth: api-key-auth normally rejects unauthenticated /mcp
-      // before we get here, but it's only registered when apiKeyRepo is wired
-      // (see app.ts — the dev path without apiKeyRepo skips it). Catch that
-      // case fast instead of letting tool calls fail downstream.
-      if (!request.accountId) {
-        reply.status(401).send({ error: "Authentication required" });
-        return;
-      }
+      // /mcp is auth-gated upstream by api-key-auth; request.accountId is set.
       const accountId = request.accountId;
 
       const transport = new StreamableHTTPServerTransport({
