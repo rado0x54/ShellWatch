@@ -1,13 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
+import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { deduplicateLabel } from "../db/repositories/credential-queries.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { storeChallenge, consumeChallenge } from "./challenge-store.js";
-import { coseToAuthorizedKeys, getSshdConfigLine } from "./ssh-key-format.js";
-import { lookupAAGUID } from "./aaguid-lookup.js";
+import { storeChallenge } from "./challenge-store.js";
+import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
+import { getSshdConfigLine } from "./ssh-key-format.js";
 import type { RateLimitConfig } from "./routes.js";
 
 export interface RegistrationRoutesParams {
@@ -83,71 +81,32 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
     async (request, reply) => {
       const { challengeId, credential } = request.body;
 
-      const challenge = consumeChallenge(challengeId);
-      if (!challenge) {
-        reply.status(400);
-        return { error: "Challenge expired or not found" };
-      }
-
       try {
-        const verification = await verifyRegistrationResponse({
-          response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
-          expectedChallenge: challenge,
-          expectedOrigin: trustedOrigins,
-          expectedRPID: rpId,
+        const result = await verifyAndDecodeRegistration({
+          challengeId,
+          credential,
+          rpId,
+          trustedOrigins,
           requireUserVerification: true,
         });
-
-        if (!verification.verified || !verification.registrationInfo) {
+        if (!result.ok) {
           reply.status(400);
-          return { error: "Verification failed" };
+          return { error: result.error };
         }
-
-        const { credential: cred, aaguid } = verification.registrationInfo;
-        const baseLabel = lookupAAGUID(aaguid) || "Passkey";
-
-        const id = randomUUID();
-        const now = new Date().toISOString();
-        const pubKeyBuf = Buffer.from(cred.publicKey);
 
         // Auth-gated route: request.accountId is set by the auth gate.
         // First-passkey/bootstrap and self-registration go through
         // /api/auth/register (self-register.ts), which creates the account
         // and credential atomically — there is no unauth path here.
-        const accountId = request.accountId;
-        const label = deduplicateLabel(db, accountId, baseLabel);
-
-        // Convert to OpenSSH authorized_keys format
-        let authorizedKeysEntry: string | null = null;
-        try {
-          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId);
-        } catch (convErr) {
-          app.log.error(
-            `Failed to convert COSE key to OpenSSH format: ${(convErr as Error).message}`,
-          );
-        }
-
-        db.insert(webauthnCredentials)
-          .values({
-            id,
-            accountId,
-            credentialId: cred.id,
-            publicKey: pubKeyBuf,
-            counter: cred.counter,
-            transports: JSON.stringify(cred.transports ?? []),
-            label,
-            publicKeyOpenSsh: authorizedKeysEntry,
-            createdAt: now,
-          })
-          .run();
+        const { id, label } = insertCredentialRow(db, request.accountId, result.decoded);
 
         return {
           verified: true,
-          credentialId: cred.id,
+          credentialId: result.decoded.credentialId,
           id,
           label,
-          authorizedKeysEntry,
-          sshdConfig: authorizedKeysEntry ? getSshdConfigLine() : null,
+          authorizedKeysEntry: result.decoded.authorizedKeysEntry,
+          sshdConfig: result.decoded.authorizedKeysEntry ? getSshdConfigLine() : null,
         };
       } catch (err) {
         reply.status(400);

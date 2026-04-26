@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
+import { generateRegistrationOptions } from "@simplewebauthn/server";
 import type { FastifyInstance } from "fastify";
-import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
+import { hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
-import { accounts, webauthnCredentials } from "../db/schema.js";
-import { consumeChallenge, storeChallenge } from "./challenge-store.js";
-import { coseToAuthorizedKeys } from "./ssh-key-format.js";
-import { lookupAAGUID } from "./aaguid-lookup.js";
+import { accounts } from "../db/schema.js";
+import { storeChallenge } from "./challenge-store.js";
+import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import type { RateLimitConfig, SessionConfig } from "./routes.js";
 
 export interface SelfRegisterRoutesParams {
@@ -108,37 +107,16 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         return { error: "name, challengeId, and credential are required" };
       }
 
-      const challenge = consumeChallenge(challengeId);
-      if (!challenge) {
-        reply.status(400);
-        return { error: "Challenge expired or not found" };
-      }
-
       try {
-        const verification = await verifyRegistrationResponse({
-          response: credential as Parameters<typeof verifyRegistrationResponse>[0]["response"],
-          expectedChallenge: challenge,
-          expectedOrigin: trustedOrigins,
-          expectedRPID: rpId,
+        const result = await verifyAndDecodeRegistration({
+          challengeId,
+          credential,
+          rpId,
+          trustedOrigins,
         });
-
-        if (!verification.verified || !verification.registrationInfo) {
+        if (!result.ok) {
           reply.status(400);
-          return { error: "Verification failed" };
-        }
-
-        const { credential: cred, aaguid } = verification.registrationInfo;
-        const baseLabel = lookupAAGUID(aaguid) || "Passkey";
-
-        const credId = randomUUID();
-        const now = new Date().toISOString();
-        const pubKeyBuf = Buffer.from(cred.publicKey);
-
-        let authorizedKeysEntry: string | null = null;
-        try {
-          authorizedKeysEntry = coseToAuthorizedKeys(pubKeyBuf, rpId);
-        } catch {
-          // Non-fatal
+          return { error: result.error };
         }
 
         // Wrap account resolution + credential insert in a transaction so two
@@ -181,23 +159,8 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
             }
           }
 
-          const label = deduplicateLabel(tx, accountId, baseLabel);
-
-          tx.insert(webauthnCredentials)
-            .values({
-              id: credId,
-              accountId,
-              credentialId: cred.id,
-              publicKey: pubKeyBuf,
-              counter: cred.counter,
-              transports: JSON.stringify(cred.transports ?? []),
-              label,
-              publicKeyOpenSsh: authorizedKeysEntry,
-              createdAt: now,
-            })
-            .run();
-
-          return { id: accountId, label };
+          const inserted = insertCredentialRow(tx, accountId, result.decoded);
+          return { id: accountId, credentialRowId: inserted.id, label: inserted.label };
         });
 
         if (!account) {
@@ -223,7 +186,8 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         return {
           verified: true,
           accountId: account.id,
-          credentialId: credId,
+          id: account.credentialRowId,
+          credentialId: result.decoded.credentialId,
           label: account.label,
         };
       } catch (err) {
