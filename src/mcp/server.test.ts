@@ -60,7 +60,12 @@ const mockSession: TerminalSession = {
 async function setupClient(terminalManager: TerminalManager) {
   const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
   const keyRepo = new InMemorySshKeyRepository(testKeys);
-  const agentSession = new AgentSession(endpointRepo, terminalManager, "mcp");
+  const agentSession = new AgentSession({
+    endpointRepo,
+    terminalManager,
+    source: "mcp",
+    accountId: testAccountId,
+  });
   const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
@@ -144,7 +149,12 @@ describe("MCP Server Tools", () => {
       (mockManager.create as ReturnType<typeof vi.fn>).mockResolvedValue(mockSession);
       const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
       const keyRepo = new InMemorySshKeyRepository(testKeys);
-      const agentSession = new AgentSession(endpointRepo, mockManager, "mcp");
+      const agentSession = new AgentSession({
+        endpointRepo,
+        terminalManager: mockManager,
+        source: "mcp",
+        accountId: testAccountId,
+      });
       const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       await mcpServer.connect(serverTransport);
