@@ -29,15 +29,13 @@ export interface EndpointInfo {
   description: string | null;
 }
 
+// All read methods are account-scoped by design — there are no callers that
+// legitimately need to enumerate or look up endpoints across tenants. If a new
+// caller needs cross-account access, surface it via a separate admin handle
+// rather than reintroducing unscoped reads on this interface (see #136).
 export interface EndpointRepository {
-  /** Scoped — returns only endpoints owned by this account. Use for API/UI. */
   findAllForAccount(accountId: string): Promise<EndpointInfo[]>;
-  /** Scoped lookup — verifies ownership. Use for API handlers. */
   findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null>;
-  /** Unscoped — all enabled endpoints. For internal use (MCP, transport). */
-  findAll(): Promise<EndpointInfo[]>;
-  /** Unscoped lookup — for internal use (transport, terminal manager). */
-  findById(id: string): Promise<EndpointInfo | null>;
   create(data: {
     id: string;
     accountId: string;
@@ -85,25 +83,12 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .all() as EndpointInfo[];
   }
 
-  async findAll(): Promise<EndpointInfo[]> {
-    return this.db
-      .select(ENDPOINT_COLUMNS)
-      .from(endpoints)
-      .where(eq(endpoints.enabled, true))
-      .all() as EndpointInfo[];
-  }
-
   async findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null> {
     const row = this.db
       .select(ENDPOINT_COLUMNS)
       .from(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.accountId, accountId)))
       .get();
-    return (row as EndpointInfo | undefined) ?? null;
-  }
-
-  async findById(id: string): Promise<EndpointInfo | null> {
-    const row = this.db.select(ENDPOINT_COLUMNS).from(endpoints).where(eq(endpoints.id, id)).get();
     return (row as EndpointInfo | undefined) ?? null;
   }
 
@@ -180,20 +165,12 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     }));
   }
 
-  async findAll(): Promise<EndpointInfo[]> {
-    return [...this.store];
-  }
-
   async findAllForAccount(accountId: string): Promise<EndpointInfo[]> {
     return this.store.filter((e) => e.accountId === accountId);
   }
 
   async findByIdForAccount(id: string, accountId: string): Promise<EndpointInfo | null> {
     return this.store.find((e) => e.id === id && e.accountId === accountId) ?? null;
-  }
-
-  async findById(id: string): Promise<EndpointInfo | null> {
-    return this.store.find((e) => e.id === id) ?? null;
   }
 
   async create(data: {

@@ -19,7 +19,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Config } from "../config/index.js";
-import type { ApiKeyRepository } from "../db/index.js";
+// Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
+// reached for here because the OAuth callback needs the cross-tenant findByHash. See #136.
+import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 import { verifyPkceS256 } from "./pkce.js";
@@ -28,7 +30,7 @@ import { renderAuthorizePage, type AuthorizeMode } from "./render.js";
 export interface RegisterOAuthParams {
   app: FastifyInstance;
   /** Required — pasted keys are verified against this repo (must also carry `mcp` scope). */
-  apiKeyRepo: ApiKeyRepository;
+  apiKeyRepo: ApiKeyAuthRepository;
   /**
    * Application config. `config.server.externalUrl` is used verbatim as the
    * base for all discovery metadata — never derived from request headers

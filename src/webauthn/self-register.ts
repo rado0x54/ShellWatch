@@ -141,6 +141,10 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           } else {
             accountId = randomUUID();
             const accountNow = new Date().toISOString();
+            // Direct tx.insert (rather than accountRepo.create) because this
+            // INSERT must run inside the same transaction as insertCredentialRow
+            // below — passing the tx handle through the repo abstraction is more
+            // ceremony than payoff for one call site. See #136 follow-up.
             tx.insert(accounts)
               .values({
                 id: accountId,

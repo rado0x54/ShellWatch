@@ -139,9 +139,6 @@ try {
     app.log.info("Web Push notifications enabled (VAPID configured)");
   }
 
-  const endpoints = await endpointRepo.findAll();
-  app.log.info(`${endpoints.length} endpoint(s) in database`);
-
   // Inactivity cleanup: delete accounts unused for 90+ days (admin exempt)
   const stopCleanup = startCleanupJob(db, 90, (deletedIds) => {
     app.log.info(`Cleaned up ${deletedIds.length} inactive account(s)`);

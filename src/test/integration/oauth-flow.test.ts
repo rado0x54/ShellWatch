@@ -434,7 +434,7 @@ describe("OAuth DCR flow", () => {
     const { challenge } = mkPkce();
     const label = `abandoned-${randomBytes(4).toString("hex")}`;
 
-    const before = await appServer.apiKeyRepo.findAll();
+    const before = await appServer.apiKeyRepo.findAllForAccount(appServer.accountId);
     const beforeCount = before.filter((k) => k.label === label).length;
 
     const submitRes = await submitAuthorize({
@@ -446,7 +446,7 @@ describe("OAuth DCR flow", () => {
     expect(submitRes.status).toBe(302);
     // Intentionally do NOT call /oauth/token.
 
-    const after = await appServer.apiKeyRepo.findAll();
+    const after = await appServer.apiKeyRepo.findAllForAccount(appServer.accountId);
     const afterCount = after.filter((k) => k.label === label).length;
     expect(afterCount).toBe(beforeCount);
   });
@@ -456,7 +456,7 @@ describe("OAuth DCR flow", () => {
     const redirectUri = "http://127.0.0.1:54321/cb";
     const label = `pkce-fail-${randomBytes(4).toString("hex")}`;
 
-    const before = await appServer.apiKeyRepo.findAll();
+    const before = await appServer.apiKeyRepo.findAllForAccount(appServer.accountId);
     const beforeCount = before.filter((k) => k.label === label).length;
 
     const submitRes = await submitAuthorize({
@@ -479,7 +479,7 @@ describe("OAuth DCR flow", () => {
     });
     expect(tokenRes.status).toBe(400);
 
-    const after = await appServer.apiKeyRepo.findAll();
+    const after = await appServer.apiKeyRepo.findAllForAccount(appServer.accountId);
     const afterCount = after.filter((k) => k.label === label).length;
     expect(afterCount).toBe(beforeCount);
   });
@@ -510,7 +510,9 @@ describe("OAuth DCR flow", () => {
     expect(tokenRes.status).toBe(200);
     const token = await tokenRes.json();
 
-    const persisted = (await appServer.apiKeyRepo.findAll()).find((k) => k.label === label);
+    const persisted = (await appServer.apiKeyRepo.findAllForAccount(appServer.accountId)).find(
+      (k) => k.label === label,
+    );
     expect(persisted).toBeDefined();
     expect(persisted!.scopes).toContain("mcp");
     expect(persisted!.keyPrefix).toBe((token.access_token as string).slice(0, 10));

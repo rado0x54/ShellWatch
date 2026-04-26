@@ -9,11 +9,13 @@ import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type {
   AccountRepository,
-  ApiKeyRepository,
   EndpointRepository,
   PushSubscriptionRepository,
   SshKeyRepository,
 } from "../db/index.js";
+// Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
+// the wider handle the bearer gate + OAuth callback need (findByHash). See #136.
+import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { PendingActionStore } from "../pending-action/index.js";
@@ -50,7 +52,7 @@ export interface BuildAppParams {
   db?: ShellWatchDB | null;
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
-  apiKeyRepo: ApiKeyRepository;
+  apiKeyRepo: ApiKeyAuthRepository;
   options?: AppOptions;
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;

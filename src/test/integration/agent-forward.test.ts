@@ -97,7 +97,7 @@ describe("SSH Agent Forwarding", () => {
       cleanupIntervalMs: 60_000,
     });
 
-    const testEndpoint = (await endpointRepo.findById("test-server"))!;
+    const testEndpoint = (await endpointRepo.findByIdForAccount("test-server", "test-account"))!;
     return { terminalManager, testEndpoint };
   }
 
