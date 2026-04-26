@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { pushSubscriptions } from "../schema.js";
 
@@ -20,8 +20,8 @@ export interface PushSubscriptionRepository {
     endpoint: string;
     p256dh: string;
     auth: string;
-  }): PushSubscriptionInfo;
-  deleteByEndpoint(endpoint: string): boolean;
+  }): PushSubscriptionInfo | null;
+  deleteByEndpointForAccount(accountId: string, endpoint: string): boolean;
 }
 
 export class DrizzlePushSubscriptionRepository implements PushSubscriptionRepository {
@@ -40,19 +40,30 @@ export class DrizzlePushSubscriptionRepository implements PushSubscriptionReposi
     endpoint: string;
     p256dh: string;
     auth: string;
-  }): PushSubscriptionInfo {
+  }): PushSubscriptionInfo | null {
+    // Endpoints are UNIQUE across the table. Treat them as an account-bound
+    // resource: a different account claiming the same endpoint must be rejected,
+    // otherwise the conflict-do-update would silently transfer ownership.
+    const existing = this.db
+      .select()
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.endpoint, data.endpoint))
+      .get();
+    if (existing && existing.accountId !== data.accountId) {
+      return null;
+    }
+
     const now = new Date().toISOString();
-    const id = randomUUID();
+    const id = existing?.id ?? randomUUID();
     this.db
       .insert(pushSubscriptions)
       .values({ id, ...data, createdAt: now, updatedAt: now })
       .onConflictDoUpdate({
         target: pushSubscriptions.endpoint,
-        set: { accountId: data.accountId, p256dh: data.p256dh, auth: data.auth, updatedAt: now },
+        set: { p256dh: data.p256dh, auth: data.auth, updatedAt: now },
       })
       .run();
 
-    // Return the row (may be newly inserted or updated)
     const row = this.db
       .select()
       .from(pushSubscriptions)
@@ -61,10 +72,12 @@ export class DrizzlePushSubscriptionRepository implements PushSubscriptionReposi
     return row!;
   }
 
-  deleteByEndpoint(endpoint: string): boolean {
+  deleteByEndpointForAccount(accountId: string, endpoint: string): boolean {
     const result = this.db
       .delete(pushSubscriptions)
-      .where(eq(pushSubscriptions.endpoint, endpoint))
+      .where(
+        and(eq(pushSubscriptions.accountId, accountId), eq(pushSubscriptions.endpoint, endpoint)),
+      )
       .run();
     return result.changes > 0;
   }

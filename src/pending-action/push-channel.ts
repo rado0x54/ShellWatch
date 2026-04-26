@@ -45,7 +45,7 @@ export class PushChannel implements NotificationChannel {
           .catch((err: webpush.WebPushError) => {
             // 410 Gone or 404 means subscription expired — clean up
             if (err.statusCode === 410 || err.statusCode === 404) {
-              this.repo.deleteByEndpoint(sub.endpoint);
+              this.repo.deleteByEndpointForAccount(action.accountId, sub.endpoint);
               this.log?.info(`Removed expired push subscription: ${sub.endpoint.slice(0, 60)}...`);
             }
             throw err;

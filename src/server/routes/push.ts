@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { PushSubscriptionRepository } from "../../db/repositories/push-subscription-repo.js";
+import { isAllowedPushEndpoint } from "./push-endpoint-validator.js";
 
 export interface PushRoutesParams {
   app: FastifyInstance;
@@ -18,23 +19,31 @@ export function registerPushRoutes(params: PushRoutesParams) {
       reply.status(400);
       return { error: "Invalid subscription: endpoint, keys.p256dh, and keys.auth are required" };
     }
+    if (!isAllowedPushEndpoint(endpoint)) {
+      reply.status(400);
+      return { error: "endpoint is not a recognized push service" };
+    }
     const sub = pushSubRepo.upsert({
       accountId: request.accountId,
       endpoint,
       p256dh: keys.p256dh,
       auth: keys.auth,
     });
+    if (!sub) {
+      reply.status(409);
+      return { error: "endpoint already registered to a different account" };
+    }
     return { id: sub.id };
   });
 
-  // Remove push subscription
+  // Remove push subscription (scoped to caller's account)
   app.delete<{ Body: { endpoint: string } }>("/api/push/subscribe", async (request, reply) => {
     const { endpoint } = request.body;
     if (!endpoint) {
       reply.status(400);
       return { error: "endpoint is required" };
     }
-    pushSubRepo.deleteByEndpoint(endpoint);
+    pushSubRepo.deleteByEndpointForAccount(request.accountId, endpoint);
     return { ok: true };
   });
 }
