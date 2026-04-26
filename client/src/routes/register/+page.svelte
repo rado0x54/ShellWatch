@@ -7,17 +7,54 @@
   import { createEndpoint, endpoints, fetchEndpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { generateApiKey } from "$lib/stores/keys.js";
-  import { registerAccount } from "$lib/stores/webauthn.js";
+  import {
+    pushEnabled,
+    pushLoading,
+    pushSupported,
+    subscribePush,
+    unsubscribePush,
+    vapidAvailable,
+    checkPushStatus,
+  } from "$lib/stores/push.js";
+  import { credentials, fetchCredentials, registerAccount } from "$lib/stores/webauthn.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
+
+  type StepId =
+    | "welcome"
+    | "passkey"
+    | "server-setup"
+    | "endpoints"
+    | "mcp"
+    | "notifications"
+    | "advanced";
+
+  const stepOrder: { id: StepId; label: string }[] = [
+    { id: "welcome", label: "Welcome" },
+    { id: "passkey", label: "Passkey" },
+    { id: "server-setup", label: "Server" },
+    { id: "endpoints", label: "Endpoints" },
+    { id: "mcp", label: "MCP" },
+    { id: "notifications", label: "Notify" },
+    { id: "advanced", label: "Done" },
+  ];
 
   let isAdminSetup = $state(false);
   let loading = $state(false);
   let error = $state("");
   let status = $state("");
-  let currentStep = $state(0);
+  let stepIdx = $state(0);
   let accountName = $state("");
+  let registeredCredentialId = $state<string | null>(null);
+  let vapidConfigured = $state(false);
 
-  // Detect mode on mount: try login/options — if no_passkeys, this is admin setup
+  const currentStep = $derived(stepOrder[stepIdx].id);
+  const currentLabel = $derived(stepOrder[stepIdx].label);
+
+  function next() {
+    if (stepIdx < stepOrder.length - 1) stepIdx += 1;
+  }
+
+  // Detect mode on mount
   onMount(async () => {
     try {
       const res = await fetch("/api/auth/login/options", { method: "POST" });
@@ -26,7 +63,6 @@
         isAdminSetup = true;
         accountName = "admin";
       } else {
-        // System is bootstrapped — check if self-registration is allowed
         if (!get(selfRegistrationEnabled)) {
           await goto(resolve("/login"));
           return;
@@ -36,9 +72,8 @@
       isAdminSetup = true;
       accountName = "admin";
     }
+    vapidConfigured = vapidAvailable();
   });
-
-  const steps = ["Welcome", "Passkey", "Endpoints", "MCP"] as const;
 
   // --- Passkey step ---
   async function handleRegisterPasskey() {
@@ -46,10 +81,14 @@
     error = "";
     status = "Waiting for passkey...";
     try {
-      await registerAccount(accountName.trim());
+      const result = await registerAccount(accountName.trim());
+      registeredCredentialId = result.credentialId;
       status = "";
-      currentStep = 2;
-      await fetchEndpoints();
+      // Pull the freshly-stored credential row so we can show its
+      // authorized_keys entry on the server-setup step. Also pre-fetch
+      // endpoints so admin's seeded entries appear when they reach that step.
+      await Promise.all([fetchCredentials(), fetchEndpoints()]);
+      next();
     } catch (err) {
       error = (err as Error).message;
       status = "";
@@ -57,7 +96,42 @@
     loading = false;
   }
 
-  // --- Endpoints step (admin only) ---
+  // --- Server setup step ---
+  const registeredCred = $derived(
+    $credentials.find((c) => c.id === registeredCredentialId) ?? null,
+  );
+
+  function sshComment(label: string): string {
+    const sanitize = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_|_$/g, "");
+    const host = sanitize(window.location.hostname);
+    const name = sanitize(accountName.trim() || "user");
+    const key = sanitize(label);
+    return `${host}-${name}-${key}`;
+  }
+
+  const sshLine = $derived(
+    registeredCred?.authorizedKeysEntry
+      ? `${registeredCred.authorizedKeysEntry} ${sshComment(registeredCred.label)}`
+      : null,
+  );
+
+  const sshOneLiner = $derived(sshLine ? `echo '${sshLine}' >> ~/.ssh/authorized_keys` : null);
+
+  function copyToClipboard(text: string, btn: HTMLButtonElement) {
+    navigator.clipboard.writeText(text);
+    const original = btn.innerHTML;
+    btn.innerHTML = "&#10003; Copied";
+    setTimeout(() => {
+      btn.innerHTML = original;
+    }, 1500);
+  }
+
+  // --- Endpoints step ---
   let epLabel = $state("");
   let epAddress = $state("");
 
@@ -90,11 +164,25 @@
     loading = false;
   }
 
-  // --- MCP step (admin only) ---
+  // --- MCP step ---
   let apiKeyLabel = $state("");
   let generatedKey = $state("");
+  let showApiKeyForm = $state(false);
 
   const mcpUrl = $derived(`${window.location.origin}/mcp`);
+
+  // Sample config for non-OAuth MCP clients (HTTP-streaming with bearer auth).
+  const mcpSampleConfig = $derived(
+    `{
+  "mcpServers": {
+    "shellwatch": {
+      "type": "http",
+      "url": "${mcpUrl}",
+      "headers": { "Authorization": "Bearer <YOUR_API_KEY>" }
+    }
+  }
+}`,
+  );
 
   async function handleGenerateApiKey() {
     if (!apiKeyLabel) {
@@ -112,6 +200,26 @@
     loading = false;
   }
 
+  // --- Notifications step ---
+  $effect(() => {
+    if (currentStep === "notifications" && pushSupported) {
+      void checkPushStatus();
+    }
+  });
+
+  async function handleNotificationToggle() {
+    error = "";
+    try {
+      if ($pushEnabled) {
+        await unsubscribePush();
+      } else {
+        await subscribePush();
+      }
+    } catch (err) {
+      error = (err as Error).message;
+    }
+  }
+
   function finish() {
     window.location.href = "/";
   }
@@ -119,18 +227,20 @@
 
 <div class="register-page">
   <div class="register-card">
-    <!-- Step indicator -->
-    <div class="steps">
-      {#each steps as step, i (step)}
-        <div class="step" class:active={i === currentStep} class:done={i < currentStep}>
+    <!-- Step indicator: numbered dots, labels hidden on mobile -->
+    <div class="steps" aria-label={`Step ${stepIdx + 1} of ${stepOrder.length}: ${currentLabel}`}>
+      {#each stepOrder as step, i (step.id)}
+        <div class="step" class:active={i === stepIdx} class:done={i < stepIdx}>
           <span class="step-num">{i + 1}</span>
-          <span class="step-label">{step}</span>
+          <span class="step-label">{step.label}</span>
         </div>
       {/each}
     </div>
+    <p class="step-headline">
+      Step {stepIdx + 1} of {stepOrder.length} · {currentLabel}
+    </p>
 
-    <!-- Step 1: Welcome -->
-    {#if currentStep === 0}
+    {#if currentStep === "welcome"}
       <h1>Welcome to <Wordmark /></h1>
       {#if isAdminSetup}
         <div class="admin-badge">Admin Setup</div>
@@ -154,13 +264,11 @@
       <button
         class="btn-primary"
         disabled={!isAdminSetup && accountName.trim().length < 3}
-        onclick={() => (currentStep = 1)}
+        onclick={next}
       >
         Get Started
       </button>
-
-      <!-- Step 2: Passkey -->
-    {:else if currentStep === 1}
+    {:else if currentStep === "passkey"}
       <h1>Register a Passkey</h1>
       <p class="description">
         This will be your primary authentication method. You can add more passkeys later in
@@ -169,9 +277,52 @@
       <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
         Register Passkey
       </button>
+    {:else if currentStep === "server-setup"}
+      <h1>Use this passkey for SSH</h1>
+      <p class="description">
+        Run this on each server you want to manage with <Wordmark />. Requires
+        <strong>OpenSSH 8.4+</strong>.
+      </p>
 
-      <!-- Step 3: Endpoints (admin only) -->
-    {:else if currentStep === 2}
+      {#if sshOneLiner && sshLine}
+        <div class="code-block">
+          <span class="code-label">Add to <code>~/.ssh/authorized_keys</code></span>
+          <code class="code-content">{sshOneLiner}</code>
+          <button
+            class="btn-copy"
+            onclick={(e) => copyToClipboard(sshOneLiner!, e.currentTarget as HTMLButtonElement)}
+            >Copy</button
+          >
+        </div>
+
+        <details class="extra">
+          <summary>Server config (one-time, on each host)</summary>
+          <p class="hint">
+            Add this to <code>/etc/ssh/sshd_config</code> and reload sshd:
+          </p>
+          <div class="code-block">
+            <code class="code-content"
+              >PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</code
+            >
+            <button
+              class="btn-copy"
+              onclick={(e) =>
+                copyToClipboard(
+                  "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
+                  e.currentTarget as HTMLButtonElement,
+                )}>Copy</button
+            >
+          </div>
+        </details>
+      {:else}
+        <p class="hint">
+          This authenticator does not expose an SSH-compatible public key. You can still use it for <Wordmark
+          /> login. To enable SSH, register a different passkey from Settings.
+        </p>
+      {/if}
+
+      <button class="btn-primary" onclick={next}>Continue</button>
+    {:else if currentStep === "endpoints"}
       <h1>Add SSH Endpoints</h1>
       <p class="description">
         Configure the remote servers you want to manage. You can always add more later.
@@ -196,41 +347,154 @@
         <button class="btn-secondary" disabled={loading} onclick={handleAddEndpoint}>
           Add Endpoint
         </button>
-        <button class="btn-primary" onclick={() => (currentStep = 3)}>
+        <button class="btn-primary" onclick={next}>
           {$endpoints.length > 0 ? "Continue" : "Skip"}
         </button>
       </div>
-
-      <!-- Step 4: MCP (admin only) -->
-    {:else if currentStep === 3}
-      <h1>MCP for Agents</h1>
+    {:else if currentStep === "mcp"}
+      <h1>Connect AI agents</h1>
       <p class="description">
-        AI agents connect to <Wordmark /> via the Model Context Protocol. Give each agent its own API
-        key.
+        Agents talk to <Wordmark /> via the Model Context Protocol. There are two ways to wire one up.
       </p>
 
-      <div class="mcp-url">
-        <span class="mcp-label">MCP Endpoint</span>
-        <code>{mcpUrl}</code>
+      <div class="mcp-card">
+        <div class="mcp-card-head">
+          <span class="badge-recommended">Recommended</span>
+          <strong>OAuth-capable agents</strong>
+        </div>
+        <p class="hint">
+          Point your agent at this URL — Claude Desktop, Cursor, and most modern MCP clients will
+          redirect through <Wordmark />'s OAuth flow and you'll authorize via passkey.
+        </p>
+        <div class="code-block">
+          <code class="code-content">{mcpUrl}</code>
+          <button
+            class="btn-copy"
+            onclick={(e) => copyToClipboard(mcpUrl, e.currentTarget as HTMLButtonElement)}
+            >Copy</button
+          >
+        </div>
       </div>
 
-      {#if generatedKey}
-        <div class="generated-key">
-          <span class="mcp-label">API Key (copy now — shown only once)</span>
-          <code>{generatedKey}</code>
+      <details class="extra" bind:open={showApiKeyForm}>
+        <summary>Use a static API key instead</summary>
+        <p class="hint">
+          For non-OAuth agents, generate a key with <code>mcp</code> scope and configure your client with
+          a bearer header.
+        </p>
+
+        {#if generatedKey}
+          <div class="code-block code-block-success">
+            <span class="code-label">API Key — copy now, shown only once</span>
+            <code class="code-content">{generatedKey}</code>
+            <button
+              class="btn-copy"
+              onclick={(e) => copyToClipboard(generatedKey, e.currentTarget as HTMLButtonElement)}
+              >Copy</button
+            >
+          </div>
+          <div class="code-block">
+            <span class="code-label">Sample agent config</span>
+            <pre class="code-content code-pre">{mcpSampleConfig}</pre>
+            <button
+              class="btn-copy"
+              onclick={(e) =>
+                copyToClipboard(mcpSampleConfig, e.currentTarget as HTMLButtonElement)}>Copy</button
+            >
+          </div>
+        {:else}
+          <div class="form-row">
+            <input
+              type="text"
+              class="input"
+              bind:value={apiKeyLabel}
+              placeholder="Agent name (e.g. claude-laptop)"
+            />
+            <button class="btn-secondary" disabled={loading} onclick={handleGenerateApiKey}>
+              Generate
+            </button>
+          </div>
+        {/if}
+      </details>
+
+      <button class="btn-primary" onclick={next}>Continue</button>
+    {:else if currentStep === "notifications"}
+      <h1>Stay in the loop</h1>
+      <p class="description">
+        <Wordmark />'s value is the human-in-the-loop guard rail: when an agent (or another account)
+        requests to open an SSH session to your endpoint, you get a push notification on this device
+        and approve or deny — no terminal needed.
+      </p>
+
+      {#if !pushSupported}
+        <div class="info-box">Push notifications are not supported in this browser.</div>
+      {:else if !vapidConfigured}
+        <div class="info-box">
+          Push notifications are not configured on this server. Ask the admin to add a
+          <code>vapid</code> section to <code>config.yaml</code>.
         </div>
+      {:else}
+        <div class="toggle-row">
+          <button
+            class="toggle"
+            class:active={$pushEnabled}
+            disabled={$pushLoading}
+            onclick={handleNotificationToggle}
+            aria-label="Push Notifications"
+            role="switch"
+            aria-checked={$pushEnabled}
+          >
+            <span class="toggle-knob"></span>
+          </button>
+          <span class="toggle-label">
+            {#if $pushLoading}
+              Updating…
+            {:else if $pushEnabled}
+              Enabled on this device
+            {:else}
+              Disabled
+            {/if}
+          </span>
+        </div>
+        <p class="hint">
+          Toggle anytime from <strong>Settings → Notifications</strong>, on each device
+          independently.
+        </p>
       {/if}
 
-      <div class="form-row">
-        <input type="text" class="input" bind:value={apiKeyLabel} placeholder="Agent name" />
-        <button class="btn-secondary" disabled={loading} onclick={handleGenerateApiKey}>
-          Generate Key
-        </button>
+      <button class="btn-primary" onclick={next}>Continue</button>
+    {:else if currentStep === "advanced"}
+      <h1>What's next</h1>
+      <p class="description">A few <Wordmark /> features worth knowing about.</p>
+
+      <div class="advanced-list">
+        <div class="advanced-item">
+          <strong><code>shellwatch-agent</code></strong>
+          <p>
+            A local SSH agent that brokers signing through <Wordmark />. Run
+            <code>ssh user@host</code> from your terminal — your passkey unlocks the connection, no private
+            key on disk.
+          </p>
+        </div>
+        <div class="advanced-item">
+          <strong><code>pam_ssh_webauthn</code></strong>
+          <p>
+            PAM module that gates remote actions (e.g. <code>sudo</code>) on a passkey signature
+            brokered through <Wordmark />.
+          </p>
+        </div>
+        <div class="advanced-item">
+          <strong>Docs &amp; guides</strong>
+          <p>
+            Setup walkthroughs and reference live at
+            <a href="https://docs.shellwatch.ai" target="_blank" rel="noopener noreferrer"
+              >docs.shellwatch.ai</a
+            >.
+          </p>
+        </div>
       </div>
 
-      <button class="btn-primary" onclick={finish}>
-        {generatedKey ? "Done" : "Skip"}
-      </button>
+      <button class="btn-primary" onclick={finish}>Open ShellWatch</button>
     {/if}
 
     {#if error}
@@ -244,28 +508,31 @@
 
 <style>
   .register-page {
-    height: 100vh;
+    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-primary);
+    padding: 1rem;
+    box-sizing: border-box;
   }
 
   .register-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 2.5rem;
+    padding: 2rem;
     text-align: center;
     max-width: 480px;
-    width: 90%;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .steps {
     display: flex;
     justify-content: center;
-    gap: 1.5rem;
-    margin-bottom: 2rem;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
   }
 
   .step {
@@ -274,6 +541,7 @@
     align-items: center;
     gap: 0.25rem;
     opacity: 0.35;
+    flex: 0 0 auto;
   }
 
   .step.active {
@@ -285,14 +553,14 @@
   }
 
   .step-num {
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 1.5rem;
+    height: 1.5rem;
     border-radius: 50%;
     background: var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 600;
   }
 
@@ -307,10 +575,18 @@
   }
 
   .step-label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
+  }
+
+  .step-headline {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
   }
 
   .admin-badge {
@@ -323,31 +599,35 @@
     border: 1px solid var(--accent);
     border-radius: 4px;
     padding: 0.2rem 0.5rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
 
   h1 {
-    font-size: 1.35rem;
+    font-size: 1.25rem;
     font-weight: 600;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
   }
 
   .description,
   .hint {
     color: var(--text-muted);
     font-size: 0.85rem;
-    margin-bottom: 1rem;
-    line-height: 1.6;
+    margin-bottom: 0.75rem;
+    line-height: 1.55;
+  }
+
+  .hint {
+    font-size: 0.78rem;
   }
 
   .input {
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
 
   .form-row {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
 
   .form-row .input {
@@ -389,12 +669,12 @@
   }
 
   .btn-secondary {
-    padding: 0.625rem 1.5rem;
+    padding: 0.625rem 1.25rem;
     background: var(--bg-primary);
     color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: 6px;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     cursor: pointer;
   }
 
@@ -408,7 +688,7 @@
   }
 
   .endpoint-list {
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
     text-align: left;
   }
 
@@ -433,43 +713,266 @@
     color: var(--text-muted);
   }
 
-  .mcp-url,
-  .generated-key {
+  /* Reusable code-block surface used across server-setup, MCP, etc. */
+  .code-block {
+    position: relative;
     background: var(--bg-primary);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 1rem;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.75rem;
     text-align: left;
   }
 
-  .mcp-label {
+  .code-block-success {
+    border-color: var(--green, #4ade80);
+  }
+
+  .code-label {
     display: block;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
-    margin-bottom: 0.375rem;
+    margin-bottom: 0.35rem;
   }
 
-  code {
-    font-size: 0.8rem;
+  .code-content {
+    display: block;
+    font-size: 0.75rem;
     word-break: break-all;
+    padding-right: 3.5rem; /* leave room for the absolute Copy button */
   }
 
-  .generated-key code {
+  .code-pre {
+    white-space: pre-wrap;
+    margin: 0;
+  }
+
+  .code-block-success .code-content {
     color: var(--green, #4ade80);
+  }
+
+  .btn-copy {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+
+  .btn-copy:hover {
+    background: var(--border);
+  }
+
+  details.extra {
+    text-align: left;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-primary);
+  }
+
+  details.extra summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  details.extra[open] summary {
+    margin-bottom: 0.5rem;
+  }
+
+  /* MCP step */
+  .mcp-card {
+    text-align: left;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .mcp-card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.9rem;
+  }
+
+  .badge-recommended {
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+  }
+
+  /* Notifications step */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.2s;
+  }
+
+  .toggle.active {
+    background: var(--green, #4ade80);
+    border-color: var(--green, #4ade80);
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition:
+      transform 0.2s,
+      background-color 0.2s;
+  }
+
+  .toggle.active .toggle-knob {
+    transform: translateX(18px);
+    background: white;
+  }
+
+  .toggle-label {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+  }
+
+  .info-box {
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-align: left;
+    margin-bottom: 0.75rem;
+  }
+
+  /* Advanced step */
+  .advanced-list {
+    text-align: left;
+    margin-bottom: 0.75rem;
+  }
+
+  .advanced-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-primary);
+    margin-bottom: 0.5rem;
+  }
+
+  .advanced-item p {
+    margin: 0.25rem 0 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .advanced-item a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .advanced-item a:hover {
+    text-decoration: underline;
   }
 
   .error {
     color: var(--red);
     font-size: 0.85rem;
-    margin-top: 1rem;
+    margin-top: 0.75rem;
   }
 
   .status {
     color: var(--text-muted);
     font-size: 0.85rem;
-    margin-top: 1rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Mobile: tighten card, hide step labels (keep numbers + headline). */
+  @media (max-width: 640px) {
+    .register-page {
+      padding: 0.5rem;
+      align-items: flex-start;
+    }
+
+    .register-card {
+      padding: 1.25rem 1rem;
+    }
+
+    .steps {
+      gap: 0.5rem;
+    }
+
+    .step-label {
+      display: none;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+    }
+
+    .description {
+      font-size: 0.82rem;
+    }
+
+    .hint {
+      font-size: 0.76rem;
+    }
+
+    .form-row {
+      flex-direction: column;
+    }
+
+    .btn-row {
+      flex-direction: column;
+    }
+
+    .btn-row .btn-primary,
+    .btn-row .btn-secondary {
+      width: 100%;
+    }
+
+    .endpoint-item {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.15rem;
+    }
+
+    .code-content {
+      font-size: 0.7rem;
+    }
   }
 </style>
