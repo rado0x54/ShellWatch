@@ -130,10 +130,23 @@
 
   const sshOneLiner = $derived(sshLine ? `echo '${sshLine}' >> ~/.ssh/authorized_keys` : null);
 
-  function copyToClipboard(text: string, btn: HTMLButtonElement) {
-    navigator.clipboard.writeText(text);
+  // Single source for the sshd line — referenced from both the visible code
+  // block and the clipboard handler so they can't drift. Mirrors the value
+  // computed server-side in src/webauthn/ssh-key-format.ts; if that changes
+  // (additional algorithms, multi-line config), surface it through the
+  // register response and consume it here instead.
+  const SSHD_CONFIG_LINE = "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+
+  async function copyToClipboard(text: string, btn: HTMLButtonElement) {
     const original = btn.innerHTML;
-    btn.innerHTML = "&#10003; Copied";
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.innerHTML = "&#10003; Copied";
+    } catch {
+      // Insecure context (HTTP non-localhost) or denied permission — surface
+      // the failure instead of flashing a false-positive "Copied" state.
+      btn.innerHTML = "Copy failed";
+    }
     setTimeout(() => {
       btn.innerHTML = original;
     }, 1500);
@@ -211,8 +224,13 @@
   }
 
   // --- Notifications step ---
+  // Only probe the SW + push manager once. Re-firing on each back/forward
+  // visit is harmless but wasteful — the user can't toggle from elsewhere
+  // mid-wizard, so the first read is authoritative for the flow.
+  let pushChecked = $state(false);
   $effect(() => {
-    if (currentStep === "notifications" && pushSupported) {
+    if (currentStep === "notifications" && pushSupported && !pushChecked) {
+      pushChecked = true;
       void checkPushStatus();
     }
   });
@@ -240,7 +258,12 @@
     <!-- Step indicator: numbered dots, labels hidden on mobile -->
     <div class="steps" aria-label={`Step ${stepIdx + 1} of ${stepOrder.length}: ${currentLabel}`}>
       {#each stepOrder as step, i (step.id)}
-        <div class="step" class:active={i === stepIdx} class:done={i < stepIdx}>
+        <div
+          class="step"
+          class:active={i === stepIdx}
+          class:done={i < stepIdx}
+          aria-current={i === stepIdx ? "step" : undefined}
+        >
           <span class="step-num">{i + 1}</span>
           <span class="step-label">{step.label}</span>
         </div>
@@ -269,11 +292,23 @@
           information — it is written into your passkey to help identify the account. You can change
           it later in Settings (existing passkeys are not updated).
         </p>
-        <input type="text" class="input" bind:value={accountName} placeholder="Account name" />
+        <input
+          type="text"
+          class="input"
+          bind:value={accountName}
+          placeholder="Account name"
+          disabled={!!registeredCredentialId}
+        />
+        {#if registeredCredentialId}
+          <p class="hint">
+            <span class="check">✓</span> Account already created — name is locked. Change it later in
+            Settings.
+          </p>
+        {/if}
       {/if}
       <button
         class="btn-primary"
-        disabled={!isAdminSetup && accountName.trim().length < 3}
+        disabled={!isAdminSetup && !registeredCredentialId && accountName.trim().length < 3}
         onclick={next}
       >
         Get Started
@@ -314,16 +349,11 @@
           <span class="code-label"
             >1. Enable WebAuthn keys in <code>/etc/ssh/sshd_config</code> (reload sshd after)</span
           >
-          <code class="code-content"
-            >PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</code
-          >
+          <code class="code-content">{SSHD_CONFIG_LINE}</code>
           <button
             class="btn-copy"
-            onclick={(e) =>
-              copyToClipboard(
-                "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
-                e.currentTarget as HTMLButtonElement,
-              )}>Copy</button
+            onclick={(e) => copyToClipboard(SSHD_CONFIG_LINE, e.currentTarget as HTMLButtonElement)}
+            >Copy</button
           >
         </div>
 
