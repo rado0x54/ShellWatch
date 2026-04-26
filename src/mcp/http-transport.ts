@@ -40,13 +40,23 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
 
   // When an account is deleted, drop every cached transport bound to it so
   // the notification subscription stops firing and the AgentSession releases.
-  // Stale entries are already access-isolated by the cross-account check
-  // above (#128); this is a memory + listener cleanup, not a security fix.
+  // Stale entries are already access-isolated by the cross-account check on
+  // the request hook below (#128); this is a memory + listener cleanup, not
+  // a security fix. Wrapped in try/catch so a throwing destroy on one entry
+  // doesn't abort cleanup of the rest or 500 the admin's DELETE.
   accountLifecycle.on("deleted", ({ accountId }) => {
     const stale = [...sessions.values()].filter((m) => m.accountId === accountId);
-    for (const managed of stale) destroyManaged(managed);
-    if (stale.length > 0) {
-      app.log.info(`Tore down ${stale.length} MCP transport(s) for deleted account ${accountId}`);
+    let destroyed = 0;
+    for (const managed of stale) {
+      try {
+        destroyManaged(managed);
+        destroyed++;
+      } catch (err) {
+        app.log.error(err, `Failed to destroy MCP transport for deleted account ${accountId}`);
+      }
+    }
+    if (destroyed > 0) {
+      app.log.info(`Tore down ${destroyed} MCP transport(s) for deleted account ${accountId}`);
     }
   });
 

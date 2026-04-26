@@ -16,6 +16,7 @@ import {
   type ApiKeyRepository,
 } from "../../db/index.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
+import { AccountLifecycle } from "../../server/account-lifecycle.js";
 import { buildApp } from "../../server/app.js";
 import { createSessionCookie } from "../../server/auth/session-cookie.js";
 import { TerminalManager } from "../../terminal/index.js";
@@ -165,6 +166,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     endpointRepo,
     keyRepo,
     accountRepo: new StubAccountRepository(),
+    accountLifecycle: new AccountLifecycle(),
     apiKeyRepo,
     options: { logger: false, skipStaticFiles: true },
   });

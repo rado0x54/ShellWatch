@@ -17,6 +17,7 @@ import {
   PushChannel,
   WebSocketChannel,
 } from "./pending-action/index.js";
+import { AccountLifecycle } from "./server/account-lifecycle.js";
 import { buildApp } from "./server/app.js";
 import { TerminalManager } from "./terminal/index.js";
 import { KeyDirectoryWatcher } from "./transport/index.js";
@@ -38,6 +39,7 @@ try {
   const keyRepo = new DrizzleSshKeyRepository(db);
   const apiKeyRepo = new DrizzleApiKeyRepository(db);
   const accountRepo = new DrizzleAccountRepository(db);
+  const accountLifecycle = new AccountLifecycle();
 
   // Scan key directory, auto-register keys in DB, and watch for changes
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
@@ -99,6 +101,7 @@ try {
     endpointRepo,
     keyRepo,
     accountRepo,
+    accountLifecycle,
     db,
     wsExtensions: [wsChannel],
     keyAvailability: keyWatcher,
@@ -139,9 +142,13 @@ try {
     app.log.info("Web Push notifications enabled (VAPID configured)");
   }
 
-  // Inactivity cleanup: delete accounts unused for 90+ days (admin exempt)
+  // Inactivity cleanup: delete accounts unused for 90+ days (admin exempt).
+  // Each id flows through the same lifecycle bus the route uses, so terminals
+  // and MCP transports are torn down for periodically-cleaned accounts too —
+  // otherwise the leak this PR fixes recurs on a 90-day schedule (#122/#134).
   const stopCleanup = startCleanupJob(db, 90, (deletedIds) => {
     app.log.info(`Cleaned up ${deletedIds.length} inactive account(s)`);
+    for (const id of deletedIds) accountLifecycle.emitDeleted(id);
   });
 
   const shutdown = async () => {

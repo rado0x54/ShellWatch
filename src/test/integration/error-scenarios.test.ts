@@ -99,6 +99,7 @@ describe("Error Scenarios", () => {
       const { SshTransportFactory } = await import("../../transport/ssh-transport-factory.js");
       const { TerminalManager } = await import("../../terminal/index.js");
       const { buildApp } = await import("../../server/app.js");
+      const { AccountLifecycle } = await import("../../server/account-lifecycle.js");
       const { hashApiKey } = await import("../../server/auth/api-key-auth.js");
       const { createSessionCookie } = await import("../../server/auth/session-cookie.js");
 
@@ -147,6 +148,7 @@ describe("Error Scenarios", () => {
         endpointRepo,
         keyRepo,
         accountRepo: new StubAccountRepository(),
+        accountLifecycle: new AccountLifecycle(),
         apiKeyRepo: errorApiKeyRepo,
         options: { logger: false, skipStaticFiles: true },
       });

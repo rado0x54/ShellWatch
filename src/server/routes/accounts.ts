@@ -113,6 +113,8 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
 
     // Subscribers (TerminalManager teardown — #122, MCP transport map — #134,
     // future per-account caches) react synchronously via the lifecycle bus.
+    // Emitted unconditionally — even if `db` is null (test path), in-memory
+    // cleanup still needs to run; the event represents intent, not the DB write.
     accountLifecycle.emitDeleted(targetId);
 
     return { status: "deleted" };

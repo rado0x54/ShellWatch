@@ -218,7 +218,6 @@ describe("TerminalManager", () => {
       expect(closed).toBe(2);
 
       // A's sessions are gone
-      expect(() => manager.getSession(a1.sessionId)).not.toThrow();
       expect(manager.getSession(a1.sessionId)).toBeNull();
       expect(manager.getSession(a2.sessionId)).toBeNull();
       // B's session survives
