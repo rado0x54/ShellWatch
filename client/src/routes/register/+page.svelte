@@ -180,13 +180,15 @@
   const mcpUrl = $derived(`${window.location.origin}/mcp`);
 
   // Sample config for non-OAuth MCP clients (HTTP-streaming with bearer auth).
+  // Inline the generated key directly so the user can copy the whole snippet
+  // and paste it into their MCP client without further substitution.
   const mcpSampleConfig = $derived(
     `{
   "mcpServers": {
     "shellwatch": {
       "type": "http",
       "url": "${mcpUrl}",
-      "headers": { "Authorization": "Bearer <YOUR_API_KEY>" }
+      "headers": { "Authorization": "Bearer ${generatedKey || "<YOUR_API_KEY>"}" }
     }
   }
 }`,
@@ -389,8 +391,9 @@
           <strong>OAuth-capable agents</strong>
         </div>
         <p class="hint">
-          Point your agent at this URL — Claude Desktop, Cursor, and most modern MCP clients will
-          redirect through <Wordmark />'s OAuth flow and you'll authorize via passkey.
+          Point your agent at this URL. The MCP client (Claude Desktop, Cursor, etc.) redirects
+          through <Wordmark />'s OAuth flow — you approve with a passkey, and <Wordmark /> mints a scoped
+          API key on the fly and injects it into the agent's session. No manual key handling.
         </p>
         <div class="code-block">
           <code class="code-content">{mcpUrl}</code>
