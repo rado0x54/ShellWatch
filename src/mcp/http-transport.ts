@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
@@ -23,6 +23,7 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     transport: StreamableHTTPServerTransport;
     agentSession: AgentSession;
     notifications: { destroy(): void };
+    accountId: string;
   }
 
   const sessions = new Map<string, ManagedTransport>();
@@ -34,6 +35,14 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     managed.notifications.destroy();
   }
 
+  function sendSessionNotFound(reply: FastifyReply) {
+    reply.code(404).send({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+  }
+
   const mcpPath = "/mcp";
 
   app.addHook("onRequest", async (request, reply) => {
@@ -42,14 +51,17 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
     let managed = sessionId ? sessions.get(sessionId) : undefined;
 
+    // If the session belongs to a different account, respond identically to a
+    // missing session — never disclose that the id exists for another account.
+    if (managed && managed.accountId !== request.accountId) {
+      sendSessionNotFound(reply);
+      return;
+    }
+
     if (sessionId && !managed) {
       // Stale session ID (e.g. client holding a session from a prior server
       // instance). Return 404 so the client drops it and reinitializes.
-      reply.code(404).send({
-        jsonrpc: "2.0",
-        error: { code: -32001, message: "Session not found" },
-        id: null,
-      });
+      sendSessionNotFound(reply);
       return;
     }
 
@@ -81,7 +93,7 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         debounceMs: config.notifications.mcp.debounceMs,
       });
 
-      managed = { transport, agentSession, notifications };
+      managed = { transport, agentSession, notifications, accountId };
 
       transport.onclose = () => destroyManaged(managed!);
 
