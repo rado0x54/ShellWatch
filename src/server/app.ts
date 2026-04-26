@@ -25,6 +25,7 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerOAuth } from "../oauth/index.js";
+import type { AccountLifecycle } from "./account-lifecycle.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -49,6 +50,7 @@ export interface BuildAppParams {
   endpointRepo: EndpointRepository;
   keyRepo: SshKeyRepository;
   accountRepo: AccountRepository;
+  accountLifecycle: AccountLifecycle;
   db?: ShellWatchDB | null;
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
@@ -77,6 +79,7 @@ export async function buildApp(params: BuildAppParams) {
     endpointRepo,
     keyRepo,
     accountRepo,
+    accountLifecycle,
     db = null,
     wsExtensions = [],
     keyAvailability = null,
@@ -132,8 +135,23 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // App-level event bus — accountLifecycle is constructed in DI root (index.ts)
+  // so the periodic cleanup job in cleanup.ts can also publish to it. Listener
+  // order is not load-bearing: AgentSession.destroy is robust to its sessions
+  // having already been closed by TerminalManager.closeAllForAccount.
+  accountLifecycle.on("deleted", ({ accountId }) => {
+    try {
+      const closed = terminalManager.closeAllForAccount(accountId);
+      if (closed > 0) {
+        app.log.info(`Closed ${closed} session(s) for deleted account ${accountId}`);
+      }
+    } catch (err) {
+      app.log.error(err, `Failed to close terminals for deleted account ${accountId}`);
+    }
+  });
+
   // --- REST API routes ---
-  registerAccountRoutes({ app, accountRepo, db });
+  registerAccountRoutes({ app, accountRepo, db, accountLifecycle });
   registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
   registerEndpointRoutes({ app, endpointRepo, accountRepo, terminalManager });
 
@@ -172,6 +190,7 @@ export async function buildApp(params: BuildAppParams) {
     endpointRepo,
     keyRepo,
     accountRepo,
+    accountLifecycle,
   });
 
   // WebAuthn routes

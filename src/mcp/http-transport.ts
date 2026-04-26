@@ -5,6 +5,7 @@ import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
 import type { TerminalManager } from "../terminal/index.js";
+import type { AccountLifecycle } from "../server/account-lifecycle.js";
 import { attachMcpNotifications } from "./notifications.js";
 import { createMcpServer } from "./server.js";
 
@@ -15,10 +16,12 @@ export interface McpHttpTransportOptions {
   endpointRepo: EndpointRepository;
   keyRepo: SshKeyRepository;
   accountRepo: AccountRepository;
+  accountLifecycle: AccountLifecycle;
 }
 
 export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
-  const { app, config, terminalManager, endpointRepo, keyRepo, accountRepo } = opts;
+  const { app, config, terminalManager, endpointRepo, keyRepo, accountRepo, accountLifecycle } =
+    opts;
   interface ManagedTransport {
     transport: StreamableHTTPServerTransport;
     agentSession: AgentSession;
@@ -34,6 +37,28 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
     managed.agentSession.destroy();
     managed.notifications.destroy();
   }
+
+  // When an account is deleted, drop every cached transport bound to it so
+  // the notification subscription stops firing and the AgentSession releases.
+  // Stale entries are already access-isolated by the cross-account check on
+  // the request hook below (#128); this is a memory + listener cleanup, not
+  // a security fix. Wrapped in try/catch so a throwing destroy on one entry
+  // doesn't abort cleanup of the rest or 500 the admin's DELETE.
+  accountLifecycle.on("deleted", ({ accountId }) => {
+    const stale = [...sessions.values()].filter((m) => m.accountId === accountId);
+    let destroyed = 0;
+    for (const managed of stale) {
+      try {
+        destroyManaged(managed);
+        destroyed++;
+      } catch (err) {
+        app.log.error(err, `Failed to destroy MCP transport for deleted account ${accountId}`);
+      }
+    }
+    if (destroyed > 0) {
+      app.log.info(`Tore down ${destroyed} MCP transport(s) for deleted account ${accountId}`);
+    }
+  });
 
   function sendSessionNotFound(reply: FastifyReply) {
     reply.code(404).send({

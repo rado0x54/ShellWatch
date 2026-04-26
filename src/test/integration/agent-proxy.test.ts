@@ -18,6 +18,7 @@ import {
   InMemorySshKeyRepository,
 } from "../../db/index.js";
 import { hashApiKey } from "../../server/auth/api-key-auth.js";
+import { AccountLifecycle } from "../../server/account-lifecycle.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
@@ -131,6 +132,7 @@ describe("agent-proxy WebSocket endpoint", () => {
       endpointRepo,
       keyRepo,
       accountRepo: new StubAccountRepository(),
+      accountLifecycle: new AccountLifecycle(),
       apiKeyRepo,
       options: { logger: false, skipStaticFiles: true },
       agentProxy: {

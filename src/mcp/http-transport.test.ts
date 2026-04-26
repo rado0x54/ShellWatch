@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../db/repositories/key-repo.js";
 import { StubAccountRepository } from "../db/repositories/account-repo.js";
+import { AccountLifecycle } from "../server/account-lifecycle.js";
 import { makeTestConfig } from "../test/helpers/test-config.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { registerMcpHttpTransport } from "./http-transport.js";
@@ -19,6 +20,7 @@ function createMockTerminalManager() {
     listSessions: vi.fn().mockReturnValue([]),
     getSession: vi.fn(),
     close: vi.fn(),
+    closeAllForAccount: vi.fn().mockReturnValue(0),
     destroy: vi.fn(),
   }) as unknown as TerminalManager;
 }
@@ -41,6 +43,7 @@ async function buildTestApp(opts: { stubAuth?: boolean } = {}) {
       request.accountId = acct;
     });
   }
+  const accountLifecycle = new AccountLifecycle();
   await registerMcpHttpTransport({
     app,
     config: makeTestConfig(),
@@ -48,8 +51,9 @@ async function buildTestApp(opts: { stubAuth?: boolean } = {}) {
     endpointRepo: new InMemoryEndpointRepository([]),
     keyRepo: new InMemorySshKeyRepository([]),
     accountRepo: new StubAccountRepository(),
+    accountLifecycle,
   });
-  return app;
+  return { app, accountLifecycle };
 }
 
 const initPayload = {
@@ -65,7 +69,7 @@ const initPayload = {
 
 describe("registerMcpHttpTransport", () => {
   it("returns 404 when a client presents an unknown mcp-session-id", async () => {
-    const app = await buildTestApp();
+    const { app } = await buildTestApp();
     try {
       const res = await app.inject({
         method: "POST",
@@ -101,7 +105,7 @@ describe("registerMcpHttpTransport", () => {
     "cross-account session-id presented via %s",
     (method) => {
       it("returns the same 404 as a stale session id", async () => {
-        const app = await buildTestApp({ stubAuth: true });
+        const { app } = await buildTestApp({ stubAuth: true });
         try {
           // Establish a real session as alice.
           const init = await app.inject({
@@ -149,7 +153,7 @@ describe("registerMcpHttpTransport", () => {
   );
 
   it("legit owner can still reuse the session after a cross-account 404", async () => {
-    const app = await buildTestApp({ stubAuth: true });
+    const { app } = await buildTestApp({ stubAuth: true });
     try {
       const init = await app.inject({
         method: "POST",
