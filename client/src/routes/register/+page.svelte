@@ -51,7 +51,13 @@
   const currentLabel = $derived(stepOrder[stepIdx].label);
 
   function next() {
+    error = "";
     if (stepIdx < stepOrder.length - 1) stepIdx += 1;
+  }
+
+  function back() {
+    error = "";
+    if (stepIdx > 0) stepIdx -= 1;
   }
 
   // Detect mode on mount
@@ -97,8 +103,10 @@
   }
 
   // --- Server setup step ---
+  // registerAccount returns the WebAuthn credentialId (base64url), not the
+  // row UUID — so match on credentialId, not the row's `id` field.
   const registeredCred = $derived(
-    $credentials.find((c) => c.id === registeredCredentialId) ?? null,
+    $credentials.find((c) => c.credentialId === registeredCredentialId) ?? null,
   );
 
   function sshComment(label: string): string {
@@ -270,23 +278,55 @@
       </button>
     {:else if currentStep === "passkey"}
       <h1>Register a Passkey</h1>
-      <p class="description">
-        This will be your primary authentication method. You can add more passkeys later in
-        settings.
-      </p>
-      <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
-        Register Passkey
-      </button>
+      {#if registeredCredentialId}
+        <p class="description">
+          <span class="check">✓</span> Passkey registered{registeredCred?.label
+            ? ` as ${registeredCred.label}`
+            : ""}. You can manage passkeys later in Settings.
+        </p>
+        <div class="nav-row">
+          <button class="btn-secondary" onclick={back}>Back</button>
+          <button class="btn-primary" onclick={next}>Continue</button>
+        </div>
+      {:else}
+        <p class="description">
+          This will be your primary authentication method. You can add more passkeys later in
+          settings.
+        </p>
+        <div class="nav-row">
+          <button class="btn-secondary" onclick={back}>Back</button>
+          <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
+            Register Passkey
+          </button>
+        </div>
+      {/if}
     {:else if currentStep === "server-setup"}
       <h1>Use this passkey for SSH</h1>
       <p class="description">
-        Run this on each server you want to manage with <Wordmark />. Requires
+        Two one-time steps on each server you want to reach. Requires
         <strong>OpenSSH 8.4+</strong>.
       </p>
 
       {#if sshOneLiner && sshLine}
         <div class="code-block">
-          <span class="code-label">Add to <code>~/.ssh/authorized_keys</code></span>
+          <span class="code-label"
+            >1. Enable WebAuthn keys in <code>/etc/ssh/sshd_config</code> (reload sshd after)</span
+          >
+          <code class="code-content"
+            >PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</code
+          >
+          <button
+            class="btn-copy"
+            onclick={(e) =>
+              copyToClipboard(
+                "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
+                e.currentTarget as HTMLButtonElement,
+              )}>Copy</button
+          >
+        </div>
+
+        <div class="code-block">
+          <span class="code-label">2. Add this passkey to <code>~/.ssh/authorized_keys</code></span>
           <code class="code-content">{sshOneLiner}</code>
           <button
             class="btn-copy"
@@ -294,26 +334,6 @@
             >Copy</button
           >
         </div>
-
-        <details class="extra">
-          <summary>Server config (one-time, on each host)</summary>
-          <p class="hint">
-            Add this to <code>/etc/ssh/sshd_config</code> and reload sshd:
-          </p>
-          <div class="code-block">
-            <code class="code-content"
-              >PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</code
-            >
-            <button
-              class="btn-copy"
-              onclick={(e) =>
-                copyToClipboard(
-                  "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
-                  e.currentTarget as HTMLButtonElement,
-                )}>Copy</button
-            >
-          </div>
-        </details>
       {:else}
         <p class="hint">
           This authenticator does not expose an SSH-compatible public key. You can still use it for <Wordmark
@@ -321,7 +341,10 @@
         </p>
       {/if}
 
-      <button class="btn-primary" onclick={next}>Continue</button>
+      <div class="nav-row">
+        <button class="btn-secondary" onclick={back}>Back</button>
+        <button class="btn-primary" onclick={next}>Continue</button>
+      </div>
     {:else if currentStep === "endpoints"}
       <h1>Add SSH Endpoints</h1>
       <p class="description">
@@ -347,6 +370,9 @@
         <button class="btn-secondary" disabled={loading} onclick={handleAddEndpoint}>
           Add Endpoint
         </button>
+      </div>
+      <div class="nav-row">
+        <button class="btn-secondary" onclick={back}>Back</button>
         <button class="btn-primary" onclick={next}>
           {$endpoints.length > 0 ? "Continue" : "Skip"}
         </button>
@@ -376,33 +402,34 @@
         </div>
       </div>
 
-      <details class="extra" bind:open={showApiKeyForm}>
-        <summary>Use a static API key instead</summary>
-        <p class="hint">
-          For non-OAuth agents, generate a key with <code>mcp</code> scope and configure your client with
-          a bearer header.
-        </p>
-
-        {#if generatedKey}
-          <div class="code-block code-block-success">
-            <span class="code-label">API Key — copy now, shown only once</span>
-            <code class="code-content">{generatedKey}</code>
-            <button
-              class="btn-copy"
-              onclick={(e) => copyToClipboard(generatedKey, e.currentTarget as HTMLButtonElement)}
-              >Copy</button
-            >
-          </div>
-          <div class="code-block">
-            <span class="code-label">Sample agent config</span>
-            <pre class="code-content code-pre">{mcpSampleConfig}</pre>
-            <button
-              class="btn-copy"
-              onclick={(e) =>
-                copyToClipboard(mcpSampleConfig, e.currentTarget as HTMLButtonElement)}>Copy</button
-            >
-          </div>
-        {:else}
+      {#if generatedKey}
+        <!-- Success block lives outside <details> so collapsing can't hide a key
+             that's shown only once. -->
+        <div class="code-block code-block-success">
+          <span class="code-label">API Key — copy now, shown only once</span>
+          <code class="code-content">{generatedKey}</code>
+          <button
+            class="btn-copy"
+            onclick={(e) => copyToClipboard(generatedKey, e.currentTarget as HTMLButtonElement)}
+            >Copy</button
+          >
+        </div>
+        <div class="code-block">
+          <span class="code-label">Sample agent config</span>
+          <pre class="code-content code-pre">{mcpSampleConfig}</pre>
+          <button
+            class="btn-copy"
+            onclick={(e) => copyToClipboard(mcpSampleConfig, e.currentTarget as HTMLButtonElement)}
+            >Copy</button
+          >
+        </div>
+      {:else}
+        <details class="extra" bind:open={showApiKeyForm}>
+          <summary>Use a static API key instead</summary>
+          <p class="hint">
+            For non-OAuth agents, generate a key with <code>mcp</code> scope and configure your client
+            with a bearer header.
+          </p>
           <div class="form-row">
             <input
               type="text"
@@ -414,10 +441,13 @@
               Generate
             </button>
           </div>
-        {/if}
-      </details>
+        </details>
+      {/if}
 
-      <button class="btn-primary" onclick={next}>Continue</button>
+      <div class="nav-row">
+        <button class="btn-secondary" onclick={back}>Back</button>
+        <button class="btn-primary" onclick={next}>Continue</button>
+      </div>
     {:else if currentStep === "notifications"}
       <h1>Stay in the loop</h1>
       <p class="description">
@@ -462,7 +492,10 @@
         </p>
       {/if}
 
-      <button class="btn-primary" onclick={next}>Continue</button>
+      <div class="nav-row">
+        <button class="btn-secondary" onclick={back}>Back</button>
+        <button class="btn-primary" onclick={next}>Continue</button>
+      </div>
     {:else if currentStep === "advanced"}
       <h1>What's next</h1>
       <p class="description">A few <Wordmark /> features worth knowing about.</p>
@@ -494,7 +527,10 @@
         </div>
       </div>
 
-      <button class="btn-primary" onclick={finish}>Open ShellWatch</button>
+      <div class="nav-row">
+        <button class="btn-secondary" onclick={back}>Back</button>
+        <button class="btn-primary" onclick={finish}>Open ShellWatch</button>
+      </div>
     {/if}
 
     {#if error}
@@ -640,6 +676,21 @@
     display: flex;
     gap: 0.5rem;
     justify-content: center;
+  }
+
+  /* Footer nav row: Back on the left, Continue / primary on the right. */
+  .nav-row {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.25rem;
+  }
+
+  .check {
+    color: var(--green, #4ade80);
+    font-weight: 600;
+    margin-right: 0.25rem;
   }
 
   .btn-primary {
@@ -960,7 +1011,6 @@
       flex-direction: column;
     }
 
-    .btn-row .btn-primary,
     .btn-row .btn-secondary {
       width: 100%;
     }
