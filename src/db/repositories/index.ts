@@ -4,8 +4,12 @@ export {
   DrizzleAccountRepository,
   StubAccountRepository,
 } from "./account-repo.js";
+// ApiKeyAuthRepository is intentionally NOT re-exported here — it adds the
+// cross-tenant findByHash primitive and is meant for the bearer gate + OAuth
+// callback only. Importers needing it must reach into ./api-key-repo.js
+// directly so the deep-import path makes "trusted internal" visible at the
+// call site (#136).
 export {
-  type ApiKeyAuthRepository,
   type ApiKeyInfo,
   type ApiKeyRepository,
   DrizzleApiKeyRepository,

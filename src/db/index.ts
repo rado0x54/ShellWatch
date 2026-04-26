@@ -5,7 +5,6 @@ export {
   type AccountRepository,
   DrizzleAccountRepository,
   StubAccountRepository,
-  type ApiKeyAuthRepository,
   type ApiKeyInfo,
   type ApiKeyRepository,
   DrizzleApiKeyRepository,

@@ -17,9 +17,12 @@ export interface ApiKeyInfo {
 // and any other request-context consumer take this narrower type so that an
 // accidental cross-account read is a compile error rather than something a
 // reviewer has to spot. See #136.
+// Enabled-filter convention (load-bearing — do not unify these):
+//   - findByHash      excludes rows where enabled=false (auth must reject revoked keys).
+//   - findAllForAccount includes revoked rows (the UI shows a "revoked" badge).
 export interface ApiKeyRepository {
   findAllForAccount(accountId: string): Promise<ApiKeyInfo[]>;
-  /** Returns true if a row was revoked, false if no key with that id+account exists. */
+  /** True if a key with that id exists under that account (idempotent — already-revoked still returns true). */
   revokeForAccount(id: string, accountId: string): Promise<boolean>;
   create(data: {
     id: string;

@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "../../config/index.js";
-import type { AccountRepository, ApiKeyAuthRepository } from "../../db/index.js";
+import type { AccountRepository } from "../../db/index.js";
+// Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
+// reached for here because bearer auth needs the cross-tenant findByHash. See #136.
+import type { ApiKeyAuthRepository } from "../../db/repositories/api-key-repo.js";
 import type { ApiKeyInfo } from "../../db/repositories/api-key-repo.js";
 import { hashApiKey } from "./api-key-auth.js";
 
