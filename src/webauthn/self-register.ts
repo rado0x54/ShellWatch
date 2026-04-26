@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { verifyRegistrationResponse } from "@simplewebauthn/server";
+import { generateRegistrationOptions, verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { FastifyInstance } from "fastify";
 import { deduplicateLabel, hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { accounts, webauthnCredentials } from "../db/schema.js";
-import { consumeChallenge } from "./challenge-store.js";
+import { consumeChallenge, storeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
 import type { RateLimitConfig, SessionConfig } from "./routes.js";
@@ -33,6 +33,51 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
     selfRegistrationEnabled,
     rateLimitConfig,
   } = params;
+
+  // --- Self-Registration: Generate WebAuthn options (anonymous) ---
+  // Companion to POST /api/auth/register. Returns no excludeCredentials so
+  // we don't leak the global credential-id list to anonymous callers; the
+  // tradeoff is that re-registering an authenticator that already exists for
+  // another account fails late (at /api/auth/register verify) instead of
+  // being prevented by the browser. The authenticated add-passkey flow uses
+  // /api/webauthn/register/options, which scopes excludeCredentials to the
+  // calling account.
+  app.post<{ Body: { name?: string } }>(
+    "/api/auth/register/options",
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.selfRegister.max,
+          timeWindow: `${rateLimitConfig.selfRegister.windowMinutes} minutes`,
+        },
+      },
+    },
+    async (request, reply) => {
+      // Same gate as the verify endpoint: don't generate options for a flow
+      // that will be refused. Authoritative re-check happens in the verify
+      // transaction to close the TOCTOU gap.
+      if (!selfRegistrationEnabled && hasPasskeys(db)) {
+        reply.status(403);
+        return { error: "Self-registration is disabled" };
+      }
+      const { name } = request.body ?? {};
+      const userName = (name || "user").slice(0, 64);
+      const options = await generateRegistrationOptions({
+        rpName: "ShellWatch",
+        rpID: rpId,
+        userName,
+        userDisplayName: name || "ShellWatch User",
+        attestationType: "none",
+        authenticatorSelection: {
+          residentKey: "preferred",
+          userVerification: "required",
+        },
+        supportedAlgorithmIDs: [-7], // ES256 (P-256) only — OpenSSH sk-* keys don't support Ed25519 webauthn
+      });
+      const challengeId = storeChallenge(options.challenge);
+      return { ...options, challengeId };
+    },
+  );
 
   // --- Self-Registration: Create account + passkey atomically ---
   app.post<{

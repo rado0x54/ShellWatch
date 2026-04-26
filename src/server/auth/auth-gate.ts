@@ -14,15 +14,9 @@ export interface AuthGateParams {
   app: FastifyInstance;
   secret: string;
   accountRepo: AccountRepository;
-  checkHasPasskeys: () => boolean;
 }
 
-export function registerAuthGate({
-  app,
-  secret,
-  accountRepo,
-  checkHasPasskeys,
-}: AuthGateParams): void {
+export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): void {
   // Logout: clear session cookie
   app.post("/api/auth/logout", async (request, reply) => {
     const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
@@ -39,9 +33,9 @@ export function registerAuthGate({
     "/health",
     "/api/auth/logout",
     "/api/auth/register",
+    "/api/auth/register/options",
     "/api/webauthn/login/options",
     "/api/webauthn/login/verify",
-    "/api/webauthn/register/options",
     "/login",
     "/register",
     "/mcp",
@@ -56,22 +50,6 @@ export function registerAuthGate({
   // Public static asset extensions — icons, logos, fonts. Not used by any API route.
   const publicAssetExtensions = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
 
-  // Only exempt during onboarding (no passkeys registered yet — admin bootstrap)
-  const onboardingOnly = new Set(["/api/webauthn/register/verify"]);
-
-  // Cache passkey count to avoid DB queries on every request
-  let cachedHasPasskeys: boolean | null = null;
-  let cacheTime = 0;
-  const CACHE_TTL_MS = 5000;
-
-  function hasPasskeys(): boolean {
-    const now = Date.now();
-    if (cachedHasPasskeys !== null && now - cacheTime < CACHE_TTL_MS) return cachedHasPasskeys;
-    cachedHasPasskeys = checkHasPasskeys();
-    cacheTime = now;
-    return cachedHasPasskeys;
-  }
-
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     const url = request.url.split("?")[0];
 
@@ -85,14 +63,8 @@ export function registerAuthGate({
     // Discovery metadata is always public
     if (url.startsWith("/.well-known/")) return;
 
-    // Onboarding-only paths (registration verify) — exempt while no passkeys
-    // exist. Other routes still require a session even pre-bootstrap; the
-    // browser onboarding flow only needs the explicitly-listed exempt paths
-    // (login/register HTML + the /api/webauthn/register/* endpoints) to
-    // complete first-passkey enrollment.
-    if (!hasPasskeys() && onboardingOnly.has(url)) return;
-
-    // Require a valid session cookie
+    // Require a valid session cookie. First-passkey/bootstrap onboarding
+    // happens via /api/auth/register (in alwaysExempt) — no special-case here.
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);

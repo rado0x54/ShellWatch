@@ -85,10 +85,10 @@ export async function registerAccount(accountName: string): Promise<{
   credentialId: string;
   label: string;
 }> {
-  const optionsRes = await fetch("/api/webauthn/register/options", {
+  const optionsRes = await fetch("/api/auth/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: "pending", name: accountName }),
+    body: JSON.stringify({ name: accountName }),
   });
   if (!optionsRes.ok) {
     const err = await optionsRes.json();
