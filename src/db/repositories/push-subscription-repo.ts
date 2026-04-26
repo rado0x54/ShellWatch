@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
 import { pushSubscriptions } from "../schema.js";
 
@@ -21,7 +21,7 @@ export interface PushSubscriptionRepository {
     p256dh: string;
     auth: string;
   }): PushSubscriptionInfo;
-  deleteByEndpoint(endpoint: string): boolean;
+  deleteByEndpointForAccount(accountId: string, endpoint: string): boolean;
 }
 
 export class DrizzlePushSubscriptionRepository implements PushSubscriptionRepository {
@@ -61,10 +61,12 @@ export class DrizzlePushSubscriptionRepository implements PushSubscriptionReposi
     return row!;
   }
 
-  deleteByEndpoint(endpoint: string): boolean {
+  deleteByEndpointForAccount(accountId: string, endpoint: string): boolean {
     const result = this.db
       .delete(pushSubscriptions)
-      .where(eq(pushSubscriptions.endpoint, endpoint))
+      .where(
+        and(eq(pushSubscriptions.accountId, accountId), eq(pushSubscriptions.endpoint, endpoint)),
+      )
       .run();
     return result.changes > 0;
   }
