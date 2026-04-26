@@ -20,7 +20,7 @@
   // Detect mode on mount: try login/options — if no_passkeys, this is admin setup
   onMount(async () => {
     try {
-      const res = await fetch("/api/webauthn/login/options", { method: "POST" });
+      const res = await fetch("/api/auth/login/options", { method: "POST" });
       const data = await res.json();
       if (data.error === "no_passkeys") {
         isAdminSetup = true;
