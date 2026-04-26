@@ -34,7 +34,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         reply.status(404);
         return { error: "Endpoint not found" };
       }
-      const session = await terminalManager.create(endpoint, {
+      const session = await terminalManager.create(endpoint, request.accountId, {
         kind: "ui",
         sourceIp: request.ip,
       });

@@ -46,11 +46,20 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     this.cleanupTimer.unref();
   }
 
-  // Callers (HTTP routes, AgentSession) are responsible for scoping the
-  // endpoint lookup to the requesting account before invoking this method —
-  // the manager itself trusts the EndpointInfo it receives and does no
-  // ownership check.
-  async create(endpoint: EndpointInfo, trigger: EndpointAuthTrigger): Promise<TerminalSession> {
+  // Callers (HTTP routes, AgentSession) must pass the caller's accountId and
+  // an EndpointInfo they've already scoped via findByIdForAccount. The
+  // assertion below is a defensive backstop: it makes the caller-supplied
+  // ownership invariant load-bearing at runtime, so a future call site that
+  // forgets to scope will fail loudly here instead of silently triggering a
+  // WebAuthn prompt on the wrong tenant. See #130.
+  async create(
+    endpoint: EndpointInfo,
+    expectedAccountId: string,
+    trigger: EndpointAuthTrigger,
+  ): Promise<TerminalSession> {
+    if (endpoint.accountId !== expectedAccountId) {
+      throw new Error(`Unknown endpoint: ${endpoint.id}`);
+    }
     const sessionId = generateSessionId();
     const now = new Date();
 

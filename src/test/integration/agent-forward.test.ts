@@ -114,7 +114,7 @@ describe("SSH Agent Forwarding", () => {
     sshServer.resetAgentForwardRequested();
     const { terminalManager, testEndpoint } = await buildTestInfra(true);
     try {
-      const session = await terminalManager.create(testEndpoint, {
+      const session = await terminalManager.create(testEndpoint, testEndpoint.accountId, {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
@@ -133,7 +133,7 @@ describe("SSH Agent Forwarding", () => {
     sshServer.resetAgentForwardRequested();
     const { terminalManager, testEndpoint } = await buildTestInfra(false);
     try {
-      const session = await terminalManager.create(testEndpoint, {
+      const session = await terminalManager.create(testEndpoint, testEndpoint.accountId, {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });

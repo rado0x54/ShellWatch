@@ -136,7 +136,7 @@ describe("MCP Server Tools", () => {
       // The createMcpServer oninitialized hook should have cached that on the
       // AgentSession, which then surfaces it on the trigger.
       const create = mockManager.create as ReturnType<typeof vi.fn>;
-      const trigger = create.mock.calls[0][1];
+      const trigger = create.mock.calls[0][2];
       expect(trigger).toMatchObject({
         kind: "mcp",
         reason: "audit run",
@@ -166,7 +166,7 @@ describe("MCP Server Tools", () => {
         arguments: { endpointId: "dev-box", reason: "x" },
       });
       const create = mockManager.create as ReturnType<typeof vi.fn>;
-      expect(create.mock.calls[0][1].mcpClientName).toBe("evilclient");
+      expect(create.mock.calls[0][2].mcpClientName).toBe("evilclient");
     });
   });
 

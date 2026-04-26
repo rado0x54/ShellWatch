@@ -165,6 +165,30 @@ describe("Cross-Actor: HTTP ↔ MCP", () => {
     }
   });
 
+  it("MCP create_session rejects an endpoint owned by a different account (#130)", async () => {
+    const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
+    try {
+      const result = await mcp.callTool("shellwatch_create_session", {
+        endpointId: appServer.foreignEndpointId,
+        reason: "phishy reason",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatch(/Unknown endpoint/);
+
+      // No session for this caller should have materialized.
+      const list = await mcp.callTool("shellwatch_list_sessions");
+      const parsed = JSON.parse(list.content);
+      expect(parsed.sessions).toEqual([]);
+
+      // Defensive: also confirm no session was registered server-side under
+      // any account for the foreign endpoint id (covers the hijack path).
+      const allSessions = appServer.terminalManager.listSessions();
+      expect(allSessions.some((s) => s.endpointId === appServer.foreignEndpointId)).toBe(false);
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it("MCP cannot see HTTP-created sessions", async () => {
     const createRes = await appServer.fetch(`/api/sessions`, {
       method: "POST",

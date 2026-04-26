@@ -37,8 +37,8 @@ describe("ws-message-router account scoping", () => {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
-    const a = await manager.create(endpointA, { kind: "ui", sourceIp: "1.1.1.1" });
-    const b = await manager.create(endpointB, { kind: "ui", sourceIp: "2.2.2.2" });
+    const a = await manager.create(endpointA, ACCT_A, { kind: "ui", sourceIp: "1.1.1.1" });
+    const b = await manager.create(endpointB, ACCT_B, { kind: "ui", sourceIp: "2.2.2.2" });
     sessionA = a.sessionId;
     sessionB = b.sessionId;
   });
@@ -136,7 +136,7 @@ describe("ws-message-router account scoping", () => {
     });
 
     it("attach to an MCP-sourced session puts the client in observer mode", async () => {
-      const c = await manager.create(endpointA, {
+      const c = await manager.create(endpointA, ACCT_A, {
         kind: "mcp",
         reason: "test",
         sourceIp: "3.3.3.3",

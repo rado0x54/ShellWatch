@@ -40,6 +40,12 @@ export interface TestAppServer {
   apiKey: string;
   /** Raw API key that exists but lacks the `mcp` scope (agent-only) */
   nonMcpApiKey: string;
+  /**
+   * Endpoint UUID owned by a *different* account than `apiKey`. Used by
+   * cross-account isolation tests to verify the scoped lookup rejects foreign
+   * endpoint ids.
+   */
+  foreignEndpointId: string;
   /** Live reference to the in-memory API-key repo (for repo-level assertions). */
   apiKeyRepo: ApiKeyRepository;
   /** Fetch with session cookie pre-attached */
@@ -70,6 +76,8 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
 
   const testCookieSecret = "test-secret-for-session-signing";
   const testAccountId = "test-account-00000000-0000-0000-0000-000000000000";
+  const foreignAccountId = "foreign-account-0000-0000-0000-000000000000";
+  const foreignEndpointId = "foreign-endpoint";
 
   const config: Config = makeTestConfig({
     keyDirectory: tmpDir,
@@ -90,6 +98,16 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
       host: sshServer.host,
       port: sshServer.port,
       username: "testuser",
+    },
+    // Endpoint owned by a different account — used to verify cross-account
+    // isolation on the create-session paths.
+    {
+      id: foreignEndpointId,
+      accountId: foreignAccountId,
+      label: "Foreign Server",
+      host: sshServer.host,
+      port: sshServer.port,
+      username: "foreign",
     },
   ]);
   const keyRepo = new InMemorySshKeyRepository([
@@ -173,6 +191,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     sessionCookie,
     apiKey: testApiKey,
     nonMcpApiKey: testNonMcpApiKey,
+    foreignEndpointId,
     apiKeyRepo,
     fetch(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);

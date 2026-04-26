@@ -87,16 +87,18 @@ export class AgentSession {
   }
 
   async createSession(endpointId: string, reason: string): Promise<TerminalSession> {
-    if (this.ownedSessions.size >= this.maxSessions) {
-      throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
-    }
-    // Scope the endpoint lookup to the caller's account. Without this check a
-    // caller could pass any endpoint UUID and trigger a WebAuthn approval
-    // prompt on the owning account with attacker-chosen reason text — and, if
-    // approved, drive the resulting session via send_keys / read_output.
+    // Ownership check first — a foreign endpoint UUID always returns "Unknown
+    // endpoint" regardless of the caller's quota state, so probing can't leak
+    // anything about another account's endpoints. Without this scope a caller
+    // could pass any endpoint UUID and trigger a WebAuthn approval prompt on
+    // the owning account with attacker-chosen reason text — and, if approved,
+    // drive the resulting session via send_keys / read_output.
     const endpoint = await this.endpointRepo.findByIdForAccount(endpointId, this.accountId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
+    }
+    if (this.ownedSessions.size >= this.maxSessions) {
+      throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
     }
     // AgentSource is "mcp" | "ssh"; today only MCP is implemented. The SSH
     // server interface (issue #12) isn't wired in yet — when it lands, extend
@@ -108,7 +110,7 @@ export class AgentSession {
       mcpClientName: this.mcpClientName,
       mcpClientVersion: this.mcpClientVersion,
     };
-    const session = await this.terminalManager.create(endpoint, trigger);
+    const session = await this.terminalManager.create(endpoint, this.accountId, trigger);
     this.ownedSessions.add(session.sessionId);
     return session;
   }

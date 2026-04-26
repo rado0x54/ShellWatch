@@ -118,6 +118,7 @@ describe("AgentSession.createSession", () => {
     expect(created.sessionId).toBe("sess_1");
     expect(terminalManager.create).toHaveBeenCalledWith(
       expect.objectContaining({ id: "alice-box", accountId: "account-alice" }),
+      "account-alice",
       expect.objectContaining({ kind: "mcp", reason: "legit work" }),
     );
   });

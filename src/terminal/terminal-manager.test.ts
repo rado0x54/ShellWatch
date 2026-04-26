@@ -40,7 +40,10 @@ describe("TerminalManager", () => {
 
   describe("create", () => {
     it("creates a session for a valid endpoint", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       expect(session.sessionId).toMatch(/^sess_/);
       expect(session.endpointId).toBe("test-server");
       expect(session.accountId).toBe("test-account");
@@ -54,21 +57,34 @@ describe("TerminalManager", () => {
     it("handles transport connection failure", async () => {
       (transportFactory as Mock).mockRejectedValue(new Error("Connection refused"));
       await expect(
-        manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" }),
+        manager.create(testEndpoint, "test-account", { kind: "ui", sourceIp: "127.0.0.1" }),
       ).rejects.toThrow("Failed to connect");
+    });
+
+    it("rejects an endpoint whose accountId does not match the caller (defensive backstop, #130)", async () => {
+      await expect(
+        manager.create(testEndpoint, "different-account", {
+          kind: "ui",
+          sourceIp: "127.0.0.1",
+        }),
+      ).rejects.toThrow(/Unknown endpoint/);
+      expect(transportFactory).not.toHaveBeenCalled();
     });
 
     it("emits status-change events", async () => {
       const events: string[] = [];
       manager.on("status-change", ({ status }) => events.push(status));
-      await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      await manager.create(testEndpoint, "test-account", { kind: "ui", sourceIp: "127.0.0.1" });
       expect(events).toContain("open");
     });
   });
 
   describe("sendInput", () => {
     it("sends input to the transport", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.sendInput(session.sessionId, "ls -la\n");
       expect(mockTransport.write).toHaveBeenCalledWith("ls -la\n");
     });
@@ -80,7 +96,10 @@ describe("TerminalManager", () => {
 
   describe("readOutput", () => {
     it("reads buffered output", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       mockTransport.emit("data", "hello ");
       mockTransport.emit("data", "world");
       const result = manager.readOutput(session.sessionId);
@@ -88,7 +107,10 @@ describe("TerminalManager", () => {
     });
 
     it("supports incremental reads", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       mockTransport.emit("data", "aabbcc");
       const r1 = manager.readOutput(session.sessionId, 0, 2);
       expect(r1.data).toBe("aa");
@@ -99,7 +121,10 @@ describe("TerminalManager", () => {
 
   describe("resize", () => {
     it("resizes the transport", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.resize(session.sessionId, 120, 40);
       expect(mockTransport.resize).toHaveBeenCalledWith(120, 40);
     });
@@ -107,8 +132,12 @@ describe("TerminalManager", () => {
 
   describe("listSessions", () => {
     it("lists active sessions", async () => {
-      await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
-      await manager.create(testEndpoint, { kind: "mcp", sourceIp: "127.0.0.1", reason: "test" });
+      await manager.create(testEndpoint, "test-account", { kind: "ui", sourceIp: "127.0.0.1" });
+      await manager.create(testEndpoint, "test-account", {
+        kind: "mcp",
+        sourceIp: "127.0.0.1",
+        reason: "test",
+      });
       const sessions = manager.listSessions();
       expect(sessions).toHaveLength(2);
       expect(sessions[0].source).toBe("ui");
@@ -116,7 +145,10 @@ describe("TerminalManager", () => {
     });
 
     it("excludes closed sessions", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.close(session.sessionId);
       expect(manager.listSessions()).toHaveLength(0);
     });
@@ -124,7 +156,10 @@ describe("TerminalManager", () => {
 
   describe("getSession", () => {
     it("returns session by id", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       const found = manager.getSession(session.sessionId);
       expect(found).not.toBeNull();
       expect(found?.sessionId).toBe(session.sessionId);
@@ -137,7 +172,10 @@ describe("TerminalManager", () => {
 
   describe("close", () => {
     it("closes the transport and cleans up", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.close(session.sessionId);
       expect(mockTransport.close).toHaveBeenCalled();
       expect(manager.getSession(session.sessionId)).toBeNull();
@@ -146,13 +184,19 @@ describe("TerminalManager", () => {
     it("emits close event", async () => {
       const closed: string[] = [];
       manager.on("close", ({ sessionId }) => closed.push(sessionId));
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.close(session.sessionId);
       expect(closed).toContain(session.sessionId);
     });
 
     it("is idempotent", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       manager.close(session.sessionId);
       // Second close should not throw
       expect(() => manager.close(session.sessionId)).toThrow("not found");
@@ -163,20 +207,26 @@ describe("TerminalManager", () => {
     it("emits output events on transport data", async () => {
       const outputs: string[] = [];
       manager.on("output", ({ data }) => outputs.push(data));
-      await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      await manager.create(testEndpoint, "test-account", { kind: "ui", sourceIp: "127.0.0.1" });
       mockTransport.emit("data", "output line");
       expect(outputs).toContain("output line");
     });
 
     it("sets status to closed on transport close", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       mockTransport.emit("close");
       const updated = manager.getSession(session.sessionId);
       expect(updated?.status).toBe("closed");
     });
 
     it("sets status to error on transport error", async () => {
-      const session = await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await manager.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
       mockTransport.emit("error", new Error("broken"));
       const updated = manager.getSession(session.sessionId);
       expect(updated?.status).toBe("error");
@@ -189,7 +239,10 @@ describe("TerminalManager", () => {
         idleTimeoutMs: 50,
         cleanupIntervalMs: 25,
       });
-      const session = await mgr.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
+      const session = await mgr.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
 
       await new Promise((r) => setTimeout(r, 100));
 
@@ -200,8 +253,12 @@ describe("TerminalManager", () => {
 
   describe("destroy", () => {
     it("closes all sessions", async () => {
-      await manager.create(testEndpoint, { kind: "ui", sourceIp: "127.0.0.1" });
-      await manager.create(testEndpoint, { kind: "mcp", sourceIp: "127.0.0.1", reason: "test" });
+      await manager.create(testEndpoint, "test-account", { kind: "ui", sourceIp: "127.0.0.1" });
+      await manager.create(testEndpoint, "test-account", {
+        kind: "mcp",
+        sourceIp: "127.0.0.1",
+        reason: "test",
+      });
       manager.destroy();
       expect(manager.listSessions()).toHaveLength(0);
     });
