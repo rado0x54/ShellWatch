@@ -115,11 +115,11 @@ describe("Error Scenarios", () => {
       const keyRepo = new InMemorySshKeyRepository([]);
       // Empty key provider — no files available
       const keyProvider = new InMemoryKeyProvider([]);
-      const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+      const factory = new SshTransportFactory(keyRepo, keyProvider, {
         rpId: "localhost",
         createAgent: () => null,
       });
-      const tm = new TerminalManager(endpointRepo, (params) => factory.create(params));
+      const tm = new TerminalManager((params) => factory.create(params));
 
       const testSecret = "test-secret";
       const config = makeTestConfig({

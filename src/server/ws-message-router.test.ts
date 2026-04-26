@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
+import { type EndpointInfo, InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { TerminalManager } from "../terminal/index.js";
 import type { TerminalTransport, TransportFactory } from "../terminal/transport.js";
 import { buildSessionList, routeMessage, type WsClientContext } from "./ws-message-router.js";
@@ -22,19 +22,23 @@ describe("ws-message-router account scoping", () => {
   let manager: TerminalManager;
   let sessionA: string;
   let sessionB: string;
+  let endpointA: EndpointInfo;
+  let endpointB: EndpointInfo;
 
   beforeEach(async () => {
     const endpointRepo = new InMemoryEndpointRepository([
       { id: "endpoint-a", accountId: ACCT_A, label: "A", host: "h", port: 22, username: "u" },
       { id: "endpoint-b", accountId: ACCT_B, label: "B", host: "h", port: 22, username: "u" },
     ]);
+    endpointA = (await endpointRepo.findById("endpoint-a"))!;
+    endpointB = (await endpointRepo.findById("endpoint-b"))!;
     const transportFactory: TransportFactory = vi.fn().mockResolvedValue(createMockTransport());
-    manager = new TerminalManager(endpointRepo, transportFactory, {
+    manager = new TerminalManager(transportFactory, {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
-    const a = await manager.create("endpoint-a", { kind: "ui", sourceIp: "1.1.1.1" });
-    const b = await manager.create("endpoint-b", { kind: "ui", sourceIp: "2.2.2.2" });
+    const a = await manager.create(endpointA, { kind: "ui", sourceIp: "1.1.1.1" });
+    const b = await manager.create(endpointB, { kind: "ui", sourceIp: "2.2.2.2" });
     sessionA = a.sessionId;
     sessionB = b.sessionId;
   });
@@ -132,7 +136,7 @@ describe("ws-message-router account scoping", () => {
     });
 
     it("attach to an MCP-sourced session puts the client in observer mode", async () => {
-      const c = await manager.create("endpoint-a", {
+      const c = await manager.create(endpointA, {
         kind: "mcp",
         reason: "test",
         sourceIp: "3.3.3.3",

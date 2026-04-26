@@ -55,3 +55,70 @@ describe("AgentSession.listEndpoints", () => {
     expect(visible.some((e) => e.host === "bob.internal")).toBe(false);
   });
 });
+
+describe("AgentSession.createSession", () => {
+  it("rejects endpoints owned by a different account", async () => {
+    // Pre-fix: createSession passed endpointId straight to terminalManager.create
+    // with no ownership check, so caller B could trigger a WebAuthn prompt on
+    // owner A's endpoint and (if approved) drive the resulting session.
+    const endpointRepo = new InMemoryEndpointRepository([
+      {
+        id: "alice-box",
+        accountId: "account-alice",
+        label: "Alice prod",
+        host: "alice.internal",
+        port: 22,
+        username: "alice",
+      },
+    ]);
+    const terminalManager = createMockTerminalManager();
+    const session = new AgentSession({
+      endpointRepo,
+      terminalManager,
+      source: "mcp",
+      accountId: "account-bob",
+    });
+
+    await expect(session.createSession("alice-box", "phishy reason")).rejects.toThrow(
+      /Unknown endpoint/,
+    );
+    expect(terminalManager.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a session when caller owns the endpoint", async () => {
+    const endpointRepo = new InMemoryEndpointRepository([
+      {
+        id: "alice-box",
+        accountId: "account-alice",
+        label: "Alice prod",
+        host: "alice.internal",
+        port: 22,
+        username: "alice",
+      },
+    ]);
+    const terminalManager = createMockTerminalManager();
+    vi.mocked(terminalManager.create).mockResolvedValue({
+      sessionId: "sess_1",
+      endpointId: "alice-box",
+      accountId: "account-alice",
+      status: "open",
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      source: "mcp",
+    });
+    const session = new AgentSession({
+      endpointRepo,
+      terminalManager,
+      source: "mcp",
+      accountId: "account-alice",
+    });
+
+    const created = await session.createSession("alice-box", "legit work");
+
+    expect(created.sessionId).toBe("sess_1");
+    expect(terminalManager.create).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "alice-box", accountId: "account-alice" }),
+      expect.objectContaining({ kind: "mcp", reason: "legit work" }),
+    );
+  });
+});

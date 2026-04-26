@@ -36,7 +36,7 @@ describe("SSH Agent Forwarding", () => {
     log.clear();
   });
 
-  function buildTestInfra(agentForward: boolean) {
+  async function buildTestInfra(agentForward: boolean) {
     const parsed = utils.parseKey(sshServer.clientPrivateKey);
     if (!parsed || parsed instanceof Error) throw new Error("Failed to parse test SSH key");
     const pubKeyBuf = parsed.getPublicSSH();
@@ -66,7 +66,7 @@ describe("SSH Agent Forwarding", () => {
     ]);
     const keyProvider = new InMemoryKeyProvider([scannedKey]);
 
-    const factory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+    const factory = new SshTransportFactory(keyRepo, keyProvider, {
       rpId: "localhost",
       getAgentForward: async () => agentForward,
       isAdmin: () => true,
@@ -92,12 +92,13 @@ describe("SSH Agent Forwarding", () => {
       },
     });
 
-    const terminalManager = new TerminalManager(endpointRepo, (p) => factory.create(p), {
+    const terminalManager = new TerminalManager((p) => factory.create(p), {
       idleTimeoutMs: 60_000,
       cleanupIntervalMs: 60_000,
     });
 
-    return { terminalManager };
+    const testEndpoint = (await endpointRepo.findById("test-server"))!;
+    return { terminalManager, testEndpoint };
   }
 
   /** Poll until condition is true or timeout (avoids flaky setTimeout in CI) */
@@ -111,9 +112,9 @@ describe("SSH Agent Forwarding", () => {
 
   it("requests agent forwarding when enabled", async () => {
     sshServer.resetAgentForwardRequested();
-    const { terminalManager } = buildTestInfra(true);
+    const { terminalManager, testEndpoint } = await buildTestInfra(true);
     try {
-      const session = await terminalManager.create("test-server", {
+      const session = await terminalManager.create(testEndpoint, {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
@@ -130,9 +131,9 @@ describe("SSH Agent Forwarding", () => {
 
   it("does not request agent forwarding when disabled", async () => {
     sshServer.resetAgentForwardRequested();
-    const { terminalManager } = buildTestInfra(false);
+    const { terminalManager, testEndpoint } = await buildTestInfra(false);
     try {
-      const session = await terminalManager.create("test-server", {
+      const session = await terminalManager.create(testEndpoint, {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });

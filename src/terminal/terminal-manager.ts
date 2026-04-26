@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { EndpointInfo } from "../db/repositories/endpoint-repo.js";
 import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
@@ -34,7 +34,6 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
   private maxOutputBufferSize: number | undefined;
 
   constructor(
-    private endpointRepo: EndpointRepository,
     private transportFactory: TransportFactory,
     options: TerminalManagerOptions = {},
   ) {
@@ -47,18 +46,17 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     this.cleanupTimer.unref();
   }
 
-  async create(endpointId: string, trigger: EndpointAuthTrigger): Promise<TerminalSession> {
-    const endpoint = await this.endpointRepo.findById(endpointId);
-    if (!endpoint) {
-      throw new Error(`Unknown endpoint: ${endpointId}`);
-    }
-
+  // Callers (HTTP routes, AgentSession) are responsible for scoping the
+  // endpoint lookup to the requesting account before invoking this method —
+  // the manager itself trusts the EndpointInfo it receives and does no
+  // ownership check.
+  async create(endpoint: EndpointInfo, trigger: EndpointAuthTrigger): Promise<TerminalSession> {
     const sessionId = generateSessionId();
     const now = new Date();
 
     const session: TerminalSession = {
       sessionId,
-      endpointId,
+      endpointId: endpoint.id,
       accountId: endpoint.accountId,
       status: "opening",
       createdAt: now,
@@ -73,10 +71,10 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
 
     let transport: TerminalTransport;
     try {
-      transport = await this.transportFactory({ endpointId, sessionId, trigger });
+      transport = await this.transportFactory({ endpoint, sessionId, trigger });
     } catch (err) {
       session.status = "error";
-      throw new Error(`Failed to connect to ${endpointId}: ${(err as Error).message}`, {
+      throw new Error(`Failed to connect to ${endpoint.id}: ${(err as Error).message}`, {
         cause: err,
       });
     }

@@ -97,7 +97,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
   ]);
   const keyProvider = new InMemoryKeyProvider([scannedKey]);
 
-  const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+  const sshTransportFactory = new SshTransportFactory(keyRepo, keyProvider, {
     rpId: "localhost",
     createAgent: ({ fileKeys }) => {
       const fileKeyEntries = fileKeys
@@ -114,14 +114,10 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
     },
     isAdmin: () => true,
   });
-  const terminalManager = new TerminalManager(
-    endpointRepo,
-    (params) => sshTransportFactory.create(params),
-    {
-      idleTimeoutMs: 60_000,
-      cleanupIntervalMs: 60_000,
-    },
-  );
+  const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params), {
+    idleTimeoutMs: 60_000,
+    cleanupIntervalMs: 60_000,
+  });
 
   const testApiKey = "sw_test_000000000000000000000000";
   const testNonMcpApiKey = "sw_test_agent_00000000000000000";

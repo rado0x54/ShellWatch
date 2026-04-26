@@ -90,6 +90,14 @@ export class AgentSession {
     if (this.ownedSessions.size >= this.maxSessions) {
       throw new Error(`Maximum concurrent sessions (${this.maxSessions}) reached`);
     }
+    // Scope the endpoint lookup to the caller's account. Without this check a
+    // caller could pass any endpoint UUID and trigger a WebAuthn approval
+    // prompt on the owning account with attacker-chosen reason text — and, if
+    // approved, drive the resulting session via send_keys / read_output.
+    const endpoint = await this.endpointRepo.findByIdForAccount(endpointId, this.accountId);
+    if (!endpoint) {
+      throw new Error(`Unknown endpoint: ${endpointId}`);
+    }
     // AgentSource is "mcp" | "ssh"; today only MCP is implemented. The SSH
     // server interface (issue #12) isn't wired in yet — when it lands, extend
     // EndpointAuthTrigger with an "ssh" kind and branch here.
@@ -100,7 +108,7 @@ export class AgentSession {
       mcpClientName: this.mcpClientName,
       mcpClientVersion: this.mcpClientVersion,
     };
-    const session = await this.terminalManager.create(endpointId, trigger);
+    const session = await this.terminalManager.create(endpoint, trigger);
     this.ownedSessions.add(session.sessionId);
     return session;
   }

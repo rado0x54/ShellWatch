@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
-import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { EndpointInfo } from "../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../db/repositories/key-repo.js";
 import { InMemoryKeyProvider } from "./key-directory-watcher.js";
 import { SshTransportFactory } from "./ssh-transport-factory.js";
@@ -15,13 +15,15 @@ import { connectSshWithAgent } from "./ssh-transport.js";
 
 const mockConnectSshWithAgent = vi.mocked(connectSshWithAgent);
 
-const testEndpoint = {
+const testEndpoint: EndpointInfo = {
   id: "ep-1",
   label: "Test Server",
   host: "example.com",
   port: 22,
   username: "user",
   accountId: "account-1",
+  userVerification: "required",
+  description: null,
 };
 
 const testFileKey = {
@@ -57,26 +59,8 @@ function createMockTransport() {
 }
 
 describe("SshTransportFactory", () => {
-  it("throws for unknown endpoint", async () => {
-    const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([]),
-      new InMemorySshKeyRepository([]),
-      new InMemoryKeyProvider([]),
-      { rpId: testRpId, createAgent: () => null },
-    );
-
-    await expect(
-      factory.create({
-        endpointId: "nonexistent",
-        sessionId: "sess_test",
-        trigger: { kind: "ui", sourceIp: "127.0.0.1" },
-      }),
-    ).rejects.toThrow("Unknown endpoint: nonexistent");
-  });
-
   it("throws if no keys available", async () => {
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([]),
       new InMemoryKeyProvider([]),
       {
@@ -89,7 +73,7 @@ describe("SshTransportFactory", () => {
 
     await expect(
       factory.create({
-        endpointId: "ep-1",
+        endpoint: testEndpoint,
         sessionId: "sess_test",
         trigger: { kind: "ui", sourceIp: "127.0.0.1" },
       }),
@@ -98,7 +82,6 @@ describe("SshTransportFactory", () => {
 
   it("throws if agent factory returns null (no keys)", async () => {
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([]),
       new InMemoryKeyProvider([]),
       {
@@ -111,7 +94,7 @@ describe("SshTransportFactory", () => {
 
     await expect(
       factory.create({
-        endpointId: "ep-1",
+        endpoint: testEndpoint,
         sessionId: "sess_test",
         trigger: { kind: "ui", sourceIp: "127.0.0.1" },
       }),
@@ -127,7 +110,6 @@ describe("SshTransportFactory", () => {
     const createAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup });
 
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([testFileKey]),
       new InMemoryKeyProvider([testScannedKey]),
       {
@@ -139,7 +121,7 @@ describe("SshTransportFactory", () => {
     );
 
     const transport = await factory.create({
-      endpointId: "ep-1",
+      endpoint: testEndpoint,
       sessionId: "sess_test",
       trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });
@@ -176,7 +158,6 @@ describe("SshTransportFactory", () => {
     const createAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup: vi.fn() });
 
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([testFileKey]),
       new InMemoryKeyProvider([testScannedKey]),
       {
@@ -188,7 +169,7 @@ describe("SshTransportFactory", () => {
     );
 
     await factory.create({
-      endpointId: "ep-1",
+      endpoint: testEndpoint,
       sessionId: "sess_test",
       trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });
@@ -208,7 +189,6 @@ describe("SshTransportFactory", () => {
     mockConnectSshWithAgent.mockResolvedValue(mockTransport);
 
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([]),
       new InMemoryKeyProvider([]),
       {
@@ -220,7 +200,7 @@ describe("SshTransportFactory", () => {
     );
 
     await factory.create({
-      endpointId: "ep-1",
+      endpoint: testEndpoint,
       sessionId: "sess_test",
       trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });
@@ -238,7 +218,6 @@ describe("SshTransportFactory", () => {
     const createAgent = vi.fn().mockReturnValue({ agent: mockAgent, cleanup: vi.fn() });
 
     const factory = new SshTransportFactory(
-      new InMemoryEndpointRepository([testEndpoint]),
       new InMemorySshKeyRepository([]),
       new InMemoryKeyProvider([]),
       {
@@ -251,7 +230,7 @@ describe("SshTransportFactory", () => {
     );
 
     await factory.create({
-      endpointId: "ep-1",
+      endpoint: testEndpoint,
       sessionId: "sess_test",
       trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });

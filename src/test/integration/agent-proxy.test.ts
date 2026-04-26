@@ -89,13 +89,11 @@ describe("agent-proxy WebSocket endpoint", () => {
       getAvailableKeys: () => [scannedKey],
     });
 
-    const sshTransportFactory = new SshTransportFactory(endpointRepo, keyRepo, keyProvider, {
+    const sshTransportFactory = new SshTransportFactory(keyRepo, keyProvider, {
       rpId: "localhost",
       createAgent: () => null,
     });
-    const terminalManager = new TerminalManager(endpointRepo, (id) =>
-      sshTransportFactory.create(id),
-    );
+    const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params));
 
     const apiKeyRepo = new InMemoryApiKeyRepository();
     await apiKeyRepo.create({
