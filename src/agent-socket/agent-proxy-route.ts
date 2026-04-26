@@ -9,12 +9,10 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
-import type { AccountRepository, ApiKeyRepository } from "../db/index.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import type { SigningBridge } from "../webauthn/signing-bridge.js";
-import { hashApiKey } from "../server/auth/api-key-auth.js";
 import { sanitizeClientReportedValue } from "../util/sanitize-client-info.js";
 import { createAgentHandler } from "./socket-agent-handler.js";
 
@@ -37,8 +35,6 @@ export function readClientHeader(
 export interface AgentProxyRouteParams {
   app: FastifyInstance;
   keyProvider: PrivateKeyProvider & { getAvailableKeys(): ScannedKey[] };
-  apiKeyRepo: ApiKeyRepository;
-  accountRepo: AccountRepository;
   /** Signing bridge for routing WebAuthn sign requests through PendingAction */
   signingBridge?: SigningBridge;
   /** Look up passkeys for an account */
@@ -48,40 +44,17 @@ export interface AgentProxyRouteParams {
 }
 
 export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
-  const {
-    app,
-    keyProvider,
-    apiKeyRepo,
-    accountRepo,
-    signingBridge,
-    findCredentialsForAccount,
-    rpId,
-  } = params;
+  const { app, keyProvider, signingBridge, findCredentialsForAccount, rpId } = params;
 
   app.get("/agent-proxy", { websocket: true }, async (socket: WebSocket, request) => {
-    // Authenticate via API key
-    const auth = request.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      socket.close(4001, "API key required");
-      return;
-    }
-
-    const token = auth.slice(7);
-    const hash = hashApiKey(token);
-    const key = await apiKeyRepo.findByHash(hash);
-
+    // Bearer-gate authenticated this request pre-upgrade and populated
+    // request.accountId + request.apiKey (with `agent` scope verified).
+    const key = request.apiKey;
     if (!key) {
-      socket.close(4001, "Invalid API key");
+      // Defensive — should never happen since the gate sets it before the upgrade.
+      socket.close(1011, "Internal authentication state missing");
       return;
     }
-
-    if (!key.scopes.includes("agent")) {
-      socket.close(4003, "API key lacks 'agent' scope");
-      return;
-    }
-
-    // Touch last-used timestamp
-    accountRepo.touchLastUsed(key.accountId);
 
     const logger = {
       error: (msg: string) => app.log.error(msg),

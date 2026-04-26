@@ -28,8 +28,11 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
       .send({ status: "logged_out" });
   });
 
-  // Paths that never require a session
-  const alwaysExempt = new Set([
+  // Paths exempt from the session-cookie check. Some are genuinely public
+  // (health, login/register HTML, static config), others (/mcp, /agent-proxy)
+  // are auth-gated by the bearer-gate downstream. Naming this "exempt" only
+  // makes sense relative to *cookie* auth — see registerBearerGate.
+  const cookieAuthExempt = new Set([
     "/health",
     "/api/auth/logout",
     "/api/auth/register",
@@ -57,14 +60,14 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
     if (url.startsWith("/_app/")) return;
     if (publicAssetExtensions.some((ext) => url.endsWith(ext))) return;
 
-    // Always-exempt paths
-    if (alwaysExempt.has(url)) return;
+    // Cookie-auth-exempt paths
+    if (cookieAuthExempt.has(url)) return;
 
     // Discovery metadata is always public
     if (url.startsWith("/.well-known/")) return;
 
     // Require a valid session cookie. First-passkey/bootstrap onboarding
-    // happens via /api/auth/register (in alwaysExempt) — no special-case here.
+    // happens via /api/auth/register (in cookieAuthExempt) — no special-case here.
     const cookie = parseCookie(request.headers.cookie, COOKIE_NAME);
     if (cookie) {
       const session = verifySessionCookie(cookie, secret);

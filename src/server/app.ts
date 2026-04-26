@@ -23,8 +23,8 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerOAuth } from "../oauth/index.js";
-import { registerApiKeyAuth } from "./auth/api-key-auth.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
+import { registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
@@ -97,10 +97,13 @@ export async function buildApp(params: BuildAppParams) {
   await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyWebsocket);
 
-  // Decorate request with accountId. Default is the empty string; the auth
-  // gate (cookie session) and api-key-auth both overwrite it with a real
-  // account id before any protected handler runs. Exempt routes never read it.
+  // Decorate request with accountId + apiKey. accountId defaults to "" — the
+  // cookie auth-gate and the bearer gate both overwrite it with a real account
+  // id before any protected handler runs; exempt routes never read it. apiKey
+  // is null on cookie-authed and exempt routes; the bearer gate populates it
+  // for /mcp and /agent-proxy.
   app.decorateRequest("accountId", "");
+  app.decorateRequest("apiKey", null);
 
   // Auth gate: session-cookie enforcement
   registerAuthGate({
@@ -109,10 +112,19 @@ export async function buildApp(params: BuildAppParams) {
     accountRepo,
   });
 
-  // IP allowlist + API key auth + OAuth shim for MCP.
+  // IP allowlist + bearer-gate (covers /mcp and /agent-proxy) + OAuth shim.
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
   const mcpPath = "/mcp";
-  registerApiKeyAuth({ app, apiKeyRepo, accountRepo, mcpPath, config });
+  registerBearerGate({
+    app,
+    apiKeyRepo,
+    accountRepo,
+    config,
+    paths: {
+      [mcpPath]: { requiredScope: "mcp", failureFormat: "rfc6750" },
+      "/agent-proxy": { requiredScope: "agent", failureFormat: "plain" },
+    },
+  });
   const oauth = registerOAuth({ app, apiKeyRepo, config, mcpPath });
   app.addHook("onClose", async () => oauth.destroy());
 
@@ -179,8 +191,6 @@ export async function buildApp(params: BuildAppParams) {
     registerAgentProxyRoute({
       app,
       keyProvider: params.agentProxy.keyProvider,
-      apiKeyRepo,
-      accountRepo,
       signingBridge: params.agentProxy.signingBridge,
       findCredentialsForAccount: params.agentProxy.findCredentialsForAccount,
       rpId: params.agentProxy.rpId,
