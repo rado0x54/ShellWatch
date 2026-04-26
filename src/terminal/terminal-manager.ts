@@ -179,6 +179,18 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     this.terminals.delete(sessionId);
   }
 
+  /** Close every live session owned by `accountId`. Returns the number closed. */
+  closeAllForAccount(accountId: string): number {
+    let count = 0;
+    for (const sessionId of this.listSessions()
+      .filter((s) => s.accountId === accountId)
+      .map((s) => s.sessionId)) {
+      this.close(sessionId);
+      count++;
+    }
+    return count;
+  }
+
   destroy(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);

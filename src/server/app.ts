@@ -25,6 +25,7 @@ import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-direc
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerOAuth } from "../oauth/index.js";
+import { AccountLifecycle } from "./account-lifecycle.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -132,8 +133,19 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // App-level event bus — wired here so route registration order doesn't
+  // matter (the account DELETE route emits, TerminalManager + MCP transport
+  // subscribe). Subscribers run synchronously after the DB cascade.
+  const accountLifecycle = new AccountLifecycle();
+  accountLifecycle.on("deleted", ({ accountId }) => {
+    const closed = terminalManager.closeAllForAccount(accountId);
+    if (closed > 0) {
+      app.log.info(`Closed ${closed} session(s) for deleted account ${accountId}`);
+    }
+  });
+
   // --- REST API routes ---
-  registerAccountRoutes({ app, accountRepo, db });
+  registerAccountRoutes({ app, accountRepo, db, accountLifecycle });
   registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
   registerEndpointRoutes({ app, endpointRepo, accountRepo, terminalManager });
 
@@ -172,6 +184,7 @@ export async function buildApp(params: BuildAppParams) {
     endpointRepo,
     keyRepo,
     accountRepo,
+    accountLifecycle,
   });
 
   // WebAuthn routes

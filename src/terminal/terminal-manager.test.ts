@@ -203,6 +203,33 @@ describe("TerminalManager", () => {
     });
   });
 
+  describe("closeAllForAccount", () => {
+    it("closes only sessions owned by the target account and returns the count", async () => {
+      const acctA = "acct-a";
+      const acctB = "acct-b";
+      const epA: EndpointInfo = { ...testEndpoint, id: "ep-a", accountId: acctA };
+      const epB: EndpointInfo = { ...testEndpoint, id: "ep-b", accountId: acctB };
+
+      const a1 = await manager.create(epA, acctA, { kind: "ui", sourceIp: "1.1.1.1" });
+      const a2 = await manager.create(epA, acctA, { kind: "ui", sourceIp: "1.1.1.1" });
+      const b1 = await manager.create(epB, acctB, { kind: "ui", sourceIp: "2.2.2.2" });
+
+      const closed = manager.closeAllForAccount(acctA);
+      expect(closed).toBe(2);
+
+      // A's sessions are gone
+      expect(() => manager.getSession(a1.sessionId)).not.toThrow();
+      expect(manager.getSession(a1.sessionId)).toBeNull();
+      expect(manager.getSession(a2.sessionId)).toBeNull();
+      // B's session survives
+      expect(manager.getSession(b1.sessionId)?.status).toBe("open");
+    });
+
+    it("returns 0 when the account has no live sessions", async () => {
+      expect(manager.closeAllForAccount("ghost")).toBe(0);
+    });
+  });
+
   describe("transport events", () => {
     it("emits output events on transport data", async () => {
       const outputs: string[] = [];

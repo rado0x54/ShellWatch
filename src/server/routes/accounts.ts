@@ -10,15 +10,17 @@ import {
   webauthnCredentials,
 } from "../../db/schema.js";
 import { formatEndpointAddress } from "../../utils/endpoint-address.js";
+import type { AccountLifecycle } from "../account-lifecycle.js";
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
   accountRepo: AccountRepository;
   db?: ShellWatchDB | null;
+  accountLifecycle: AccountLifecycle;
 }
 
 export function registerAccountRoutes(params: AccountRoutesParams) {
-  const { app, accountRepo, db = null } = params;
+  const { app, accountRepo, db = null, accountLifecycle } = params;
 
   // --- Auth: current account ---
   app.get("/api/auth/me", async (request, reply) => {
@@ -108,6 +110,10 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();
       db.delete(accountsTable).where(eq(accountsTable.id, targetId)).run();
     }
+
+    // Subscribers (TerminalManager teardown — #122, MCP transport map — #134,
+    // future per-account caches) react synchronously via the lifecycle bus.
+    accountLifecycle.emitDeleted(targetId);
 
     return { status: "deleted" };
   });
