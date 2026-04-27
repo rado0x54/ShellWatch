@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+  actions: write
 
 jobs:
   release:
@@ -101,33 +103,45 @@ jobs:
             --notes-file /tmp/release-notes.md \
             artifacts/shellwatch-agent-*
 
-      - name: Update agent CHANGELOG
+      # main/develop are protected by rulesets (PR + status checks required, no
+      # bypass for GITHUB_TOKEN). The bot opens a PR against develop instead of
+      # pushing directly; admin squash-merges and fast-forwards main.
+      - name: Open agent changelog PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#agent/}
+          BRANCH="chore/agent-changelog-${VERSION}"
           NOTES=$(cat /tmp/release-notes.md)
-
           ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
-          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
 
-          CHANGELOG="agent-client/CHANGELOG.md"
-          if [ -f "$CHANGELOG" ]; then
-            echo -e "${NEW_CONTENT}\n\n$(cat $CHANGELOG)" > "$CHANGELOG"
-          else
-            echo -e "# Changelog\n\n${NEW_CONTENT}" > "$CHANGELOG"
-          fi
-
-      - name: Commit changelog
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main develop
-          git checkout main
-          git add agent-client/CHANGELOG.md
-          git diff --cached --quiet && exit 0
+          git fetch origin develop
+          git checkout -b "$BRANCH" origin/develop
+
+          CHANGELOG="agent-client/CHANGELOG.md"
+          {
+            printf '%s\n\n' "$ENTRY"
+            printf '%s\n\n' "$NOTES"
+            [ -f "$CHANGELOG" ] && cat "$CHANGELOG"
+          } > "${CHANGELOG}.new"
+          mv "${CHANGELOG}.new" "$CHANGELOG"
+
+          git add "$CHANGELOG"
+          if git diff --cached --quiet; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
           git commit -m "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}"
-          COMMIT=$(git rev-parse HEAD)
-          git push origin main
-          # Sync changelog to develop
-          git checkout develop
-          git cherry-pick "$COMMIT" || git cherry-pick --abort
-          git push origin develop || true
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base develop \
+            --head "$BRANCH" \
+            --title "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}" \
+            --body "Auto-generated agent changelog for ${GITHUB_REF_NAME}. Squash-merge once CI passes, then fast-forward main."
+
+          # GITHUB_TOKEN-created PRs don't auto-trigger workflows (anti-loop guard).
+          # Dispatch CI manually so required status checks run on the PR head SHA.
+          gh workflow run ci.yml --ref "$BRANCH"
