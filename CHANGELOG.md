@@ -53,8 +53,6 @@
 
 **Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v0.0.1...v0.0.2
 
-# Changelog
-
 ## v0.0.1 (2026-04-07)
 
 ## What's Changed

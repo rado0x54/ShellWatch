@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
@@ -83,10 +84,11 @@ jobs:
           fi
 
           # Convert PR references to clickable markdown links
+          REPO="${{ github.repository }}"
           # First: bare (#N) from commit messages → clickable
-          NOTES=$(echo "$NOTES" | sed -E 's|\(#([0-9]+)\)|([#\1](https://github.com/rado0x54/ShellWatch/pull/\1))|g')
+          NOTES=$(echo "$NOTES" | sed -E "s|\\(#([0-9]+)\\)|([#\\1](https://github.com/${REPO}/pull/\\1))|g")
           # Then: any remaining full URLs → clickable (safety net)
-          NOTES=$(echo "$NOTES" | sed -E 's|([^(])https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|\1[#\2](https://github.com/rado0x54/ShellWatch/pull/\2)|g')
+          NOTES=$(echo "$NOTES" | sed -E "s|([^(])https://github\\.com/${REPO}/pull/([0-9]+)|\\1[#\\2](https://github.com/${REPO}/pull/\\2)|g")
 
           # Write to file for multi-line output
           echo "$NOTES" > /tmp/release-notes.md
@@ -101,33 +103,61 @@ jobs:
             --notes-file /tmp/release-notes.md \
             artifacts/shellwatch-agent-*
 
-      - name: Update agent CHANGELOG
+      # main/develop are protected by rulesets (PR + status checks required, no
+      # bypass for GITHUB_TOKEN). The bot opens a PR against develop; admin
+      # reviews, pushes any commit to trigger CI (GITHUB_TOKEN-authored PRs
+      # don't auto-trigger workflows), squash-merges, and fast-forwards main.
+      - name: Open agent changelog PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#agent/}
+          BRANCH="chore/agent-changelog-${VERSION}"
           NOTES=$(cat /tmp/release-notes.md)
-
+          # Normalize *  / +  bullets to "- " (matches existing CHANGELOG style)
+          NOTES=$(echo "$NOTES" | sed -E 's|^[*+] +|- |')
           ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
-          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
-
           CHANGELOG="agent-client/CHANGELOG.md"
-          if [ -f "$CHANGELOG" ]; then
-            echo -e "${NEW_CONTENT}\n\n$(cat $CHANGELOG)" > "$CHANGELOG"
-          else
-            echo -e "# Changelog\n\n${NEW_CONTENT}" > "$CHANGELOG"
-          fi
 
-      - name: Commit changelog
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main develop
-          git checkout main
-          git add agent-client/CHANGELOG.md
-          git diff --cached --quiet && exit 0
+          git fetch origin develop
+          # Fetch the chore branch too so --force-with-lease has a real lease
+          # ref instead of falling back to allowing the push unconditionally
+          git fetch origin "$BRANCH" 2>/dev/null || true
+          git checkout -B "$BRANCH" origin/develop
+
+          # Re-run guard: if the entry is already in the file (e.g. develop
+          # already merged the bot's PR for this tag), don't append a duplicate
+          if [ -f "$CHANGELOG" ] && grep -qF "$ENTRY" "$CHANGELOG"; then
+            echo "$CHANGELOG already contains entry for ${GITHUB_REF_NAME}; skipping"
+            exit 0
+          fi
+
+          {
+            printf '%s\n\n' "$ENTRY"
+            printf '%s\n\n' "$NOTES"
+            [ -f "$CHANGELOG" ] && cat "$CHANGELOG"
+          } > "${CHANGELOG}.new"
+          mv "${CHANGELOG}.new" "$CHANGELOG"
+
+          git add "$CHANGELOG"
+          if git diff --cached --quiet; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
           git commit -m "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}"
-          COMMIT=$(git rev-parse HEAD)
-          git push origin main
-          # Sync changelog to develop
-          git checkout develop
-          git cherry-pick "$COMMIT" || git cherry-pick --abort
-          git push origin develop || true
+          git push --force-with-lease origin "$BRANCH"
+
+          # Skip PR creation if one is already open for this branch (re-run safe)
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already open for $BRANCH; skipping create"
+            exit 0
+          fi
+
+          gh pr create \
+            --base develop \
+            --head "$BRANCH" \
+            --title "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}" \
+            --body "Auto-generated agent changelog for ${GITHUB_REF_NAME}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."
