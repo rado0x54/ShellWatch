@@ -144,7 +144,7 @@ jobs:
           # by src/server/buildInfo.ts.
           DST="${{ env.IMAGE }}:${VERSION}"
           echo "Releasing v${VERSION}: stamping GIT_TAG onto $SRC → $DST, :${MINOR}, :latest"
-          crane mutate "$SRC" --set-env "GIT_TAG=v${VERSION}" -t "$DST"
+          crane mutate "$SRC" --env "GIT_TAG=v${VERSION}" -t "$DST"
           crane tag "$DST" "${MINOR}"
           crane tag "$DST" "latest"
 
