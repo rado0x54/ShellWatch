@@ -42,8 +42,10 @@ export function loadBuildInfo(cwd: string = process.cwd()): BuildInfo {
   let builtAt: string | null = FALLBACK.builtAt;
   try {
     const parsed = JSON.parse(readFileSync(candidate, "utf8")) as Partial<PersistedBuildInfo>;
-    sha = parsed.sha ?? FALLBACK.sha;
-    ref = parsed.ref ?? FALLBACK.ref;
+    // `||` not `??` — treat empty strings as missing too, in case CI ever
+    // writes `ref: ""` (otherwise display becomes "@abcdef1").
+    sha = parsed.sha || FALLBACK.sha;
+    ref = parsed.ref || FALLBACK.ref;
     builtAt = parsed.builtAt ?? null;
   } catch {
     /* keep fallbacks */

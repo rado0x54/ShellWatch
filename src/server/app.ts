@@ -136,7 +136,11 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get("/health", async () => ({ status: "ok" }));
 
-  // Build identity — unauthenticated so operators can sanity-check a deployment.
+  // Build identity — operator affordance, curl-able without auth so deployments
+  // can be sanity-checked. The SPA reads window.__BUILD_INFO__ injected via
+  // /config.js instead; this route is not the source of truth for the UI. The
+  // same payload is already in /config.js (also unauth, bootstraps the login
+  // page), so /api/version reveals nothing additional.
   app.get("/api/version", async () => buildInfo);
 
   // App-level event bus — accountLifecycle is constructed in DI root (index.ts)

@@ -22,7 +22,6 @@ FROM deps AS build
 # at retag time via `crane mutate --set-env GIT_TAG=...` (see release.yml).
 ARG GIT_SHA=dev
 ARG GIT_REF=local
-ARG BUILD_TIME=
 
 COPY tsconfig.json ./
 COPY src/ src/
@@ -30,7 +29,11 @@ COPY client/ client/
 COPY drizzle/ drizzle/
 
 # Bake build identity into the runtime — read by src/server/buildInfo.ts.
-RUN node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:process.env.BUILD_TIME||new Date().toISOString()}));"
+# ARGs are passed through explicitly via shell substitution so this works
+# under both BuildKit and the classic builder (BuildKit auto-exposes ARGs to
+# RUN env, classic does not — silent fallback to "dev" otherwise).
+RUN GIT_SHA="$GIT_SHA" GIT_REF="$GIT_REF" \
+    node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:new Date().toISOString()}));"
 
 RUN pnpm build
 RUN pnpm prune --prod --ignore-scripts
