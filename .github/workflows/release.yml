@@ -230,16 +230,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin develop
+          # Fetch the chore branch too so --force-with-lease has a real lease
+          # ref instead of falling back to allowing the push unconditionally
+          git fetch origin "$BRANCH" 2>/dev/null || true
           git checkout -B "$BRANCH" origin/develop
 
+          # Re-run guard: if the entry is already in the file (e.g. develop
+          # already merged the bot's PR for this tag), don't append a duplicate
+          if [ -f CHANGELOG.md ] && grep -qF "$ENTRY" CHANGELOG.md; then
+            echo "CHANGELOG.md already contains entry for ${GITHUB_REF_NAME}; skipping"
+            exit 0
+          fi
+
           {
-            if [ -f CHANGELOG.md ]; then
-              printf '%s\n\n' "$ENTRY"
-              printf '%s\n\n' "$NOTES"
-              cat CHANGELOG.md
-            else
-              printf '# Changelog\n\n%s\n\n%s\n' "$ENTRY" "$NOTES"
-            fi
+            printf '%s\n\n' "$ENTRY"
+            printf '%s\n\n' "$NOTES"
+            [ -f CHANGELOG.md ] && cat CHANGELOG.md
           } > CHANGELOG.md.new
           mv CHANGELOG.md.new CHANGELOG.md
 
@@ -249,7 +255,6 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}"
-          # --force-with-lease so a re-run can overwrite a stale chore branch
           git push --force-with-lease origin "$BRANCH"
 
           # Skip PR creation if one is already open for this branch (re-run safe)
