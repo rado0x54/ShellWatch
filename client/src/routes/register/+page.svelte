@@ -543,7 +543,7 @@
           </p>
         </div>
         <div class="advanced-item">
-          <strong><code>pam_ssh_webauthn</code></strong>
+          <strong><code>pam-ssh-agent-webauthn</code></strong>
           <p>
             PAM module that gates remote actions (e.g. <code>sudo</code>) on a passkey signature
             brokered through <Wordmark />. Source at
