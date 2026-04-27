@@ -18,9 +18,10 @@ FROM deps AS build
 
 # Build identity — supplied by CI via --build-arg. Defaults are dev fallbacks
 # so a manual `docker build` without args still produces a working image.
+# Note: tag is intentionally NOT baked here — it's stamped onto release images
+# at retag time via `crane mutate --set-env GIT_TAG=...` (see release.yml).
 ARG GIT_SHA=dev
 ARG GIT_REF=local
-ARG GIT_TAG=
 ARG BUILD_TIME=
 
 COPY tsconfig.json ./
@@ -29,7 +30,7 @@ COPY client/ client/
 COPY drizzle/ drizzle/
 
 # Bake build identity into the runtime — read by src/server/buildInfo.ts.
-RUN node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',tag:process.env.GIT_TAG||null,builtAt:process.env.BUILD_TIME||new Date().toISOString()}));"
+RUN node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:process.env.BUILD_TIME||new Date().toISOString()}));"
 
 RUN pnpm build
 RUN pnpm prune --prod --ignore-scripts

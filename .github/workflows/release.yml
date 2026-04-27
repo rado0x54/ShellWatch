@@ -124,7 +124,7 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
-      - name: Retag image with version overlay
+      - name: Retag image with version env
         run: |
           SHA_SHORT=$(git rev-parse --short HEAD)
           VERSION=${GITHUB_REF_NAME#v}
@@ -138,20 +138,13 @@ jobs:
             exit 1
           fi
 
-          # Tag releases: append a thin overlay layer that stamps the version
-          # tag into /app/buildInfo.generated.json so the UI displays "v$VERSION"
-          # instead of "main@<sha>". Layer DAG is otherwise bit-identical to $SRC.
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          cat > buildInfo.generated.json <<EOF
-          {"sha":"${{ github.sha }}","ref":"main","tag":"v${VERSION}","builtAt":"${NOW}"}
-          EOF
-
-          tar -cf overlay.tar --owner=1000 --group=1000 \
-            --transform 's,^,app/,' buildInfo.generated.json
-
+          # Tag releases: stamp GIT_TAG into the image config so the UI displays
+          # "v$VERSION" instead of "main@<sha>". Only the image config blob
+          # changes; layer DAG is bit-identical to $SRC. Read at server boot
+          # by src/server/buildInfo.ts.
           DST="${{ env.IMAGE }}:${VERSION}"
-          echo "Releasing v${VERSION}: appending overlay onto $SRC → $DST, :${MINOR}, :latest"
-          crane append --base "$SRC" --new_layer overlay.tar -t "$DST"
+          echo "Releasing v${VERSION}: stamping GIT_TAG onto $SRC → $DST, :${MINOR}, :latest"
+          crane mutate "$SRC" --set-env "GIT_TAG=v${VERSION}" -t "$DST"
           crane tag "$DST" "${MINOR}"
           crane tag "$DST" "latest"
 

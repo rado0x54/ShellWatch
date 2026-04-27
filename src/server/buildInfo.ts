@@ -6,7 +6,10 @@ export interface BuildInfo {
   sha: string;
   /** Branch or ref name (e.g. "develop", "main"), or "local" for ungenerated builds. */
   ref: string;
-  /** Release tag (e.g. "v0.4.2") if the build was produced from a tagged ref. */
+  /**
+   * Release tag (e.g. "v0.4.2"), set via GIT_TAG env at retag time
+   * (`crane mutate --set-env GIT_TAG=...`). Never written into the JSON file.
+   */
   tag: string | null;
   /** ISO-8601 build timestamp, or null for ungenerated builds. */
   builtAt: string | null;
@@ -14,10 +17,15 @@ export interface BuildInfo {
   display: string;
 }
 
-const FALLBACK: Omit<BuildInfo, "display"> = {
+interface PersistedBuildInfo {
+  sha: string;
+  ref: string;
+  builtAt: string | null;
+}
+
+const FALLBACK: PersistedBuildInfo = {
   sha: "dev",
   ref: "local",
-  tag: null,
   builtAt: null,
 };
 
@@ -29,20 +37,19 @@ export function deriveDisplay(sha: string, ref: string, tag: string | null): str
 
 export function loadBuildInfo(cwd: string = process.cwd()): BuildInfo {
   const candidate = resolve(cwd, "buildInfo.generated.json");
+  let sha = FALLBACK.sha;
+  let ref = FALLBACK.ref;
+  let builtAt: string | null = FALLBACK.builtAt;
   try {
-    const raw = readFileSync(candidate, "utf8");
-    const parsed = JSON.parse(raw) as Partial<typeof FALLBACK>;
-    const sha = parsed.sha ?? FALLBACK.sha;
-    const ref = parsed.ref ?? FALLBACK.ref;
-    const tag = parsed.tag ?? null;
-    const builtAt = parsed.builtAt ?? null;
-    return { sha, ref, tag, builtAt, display: deriveDisplay(sha, ref, tag) };
+    const parsed = JSON.parse(readFileSync(candidate, "utf8")) as Partial<PersistedBuildInfo>;
+    sha = parsed.sha ?? FALLBACK.sha;
+    ref = parsed.ref ?? FALLBACK.ref;
+    builtAt = parsed.builtAt ?? null;
   } catch {
-    return {
-      ...FALLBACK,
-      display: deriveDisplay(FALLBACK.sha, FALLBACK.ref, FALLBACK.tag),
-    };
+    /* keep fallbacks */
   }
+  const tag = process.env.GIT_TAG || null;
+  return { sha, ref, tag, builtAt, display: deriveDisplay(sha, ref, tag) };
 }
 
 export const buildInfo: BuildInfo = loadBuildInfo();

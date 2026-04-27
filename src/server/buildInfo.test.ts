@@ -16,13 +16,21 @@ describe("buildInfo.deriveDisplay", () => {
 
 describe("buildInfo.loadBuildInfo", () => {
   let dir: string;
+  let originalGitTag: string | undefined;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "buildinfo-"));
+    originalGitTag = process.env.GIT_TAG;
+    delete process.env.GIT_TAG;
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+    if (originalGitTag !== undefined) {
+      process.env.GIT_TAG = originalGitTag;
+    } else {
+      delete process.env.GIT_TAG;
+    }
   });
 
   it("returns fallback when generated file is missing", () => {
@@ -36,13 +44,12 @@ describe("buildInfo.loadBuildInfo", () => {
     });
   });
 
-  it("reads sha/ref/tag/builtAt from generated file", () => {
+  it("reads sha/ref/builtAt from generated file", () => {
     writeFileSync(
       join(dir, "buildInfo.generated.json"),
       JSON.stringify({
         sha: "abcdef1234567890",
         ref: "develop",
-        tag: null,
         builtAt: "2026-04-27T10:00:00Z",
       }),
     );
@@ -56,17 +63,24 @@ describe("buildInfo.loadBuildInfo", () => {
     });
   });
 
-  it("uses tag for display when present", () => {
+  it("reads tag from GIT_TAG env (stamped at retag time)", () => {
     writeFileSync(
       join(dir, "buildInfo.generated.json"),
       JSON.stringify({
         sha: "abcdef1234567890",
         ref: "main",
-        tag: "v0.4.2",
         builtAt: "2026-04-27T10:00:00Z",
       }),
     );
-    expect(loadBuildInfo(dir).display).toBe("v0.4.2");
+    process.env.GIT_TAG = "v0.4.2";
+    const info = loadBuildInfo(dir);
+    expect(info.tag).toBe("v0.4.2");
+    expect(info.display).toBe("v0.4.2");
+  });
+
+  it("ignores empty GIT_TAG env", () => {
+    process.env.GIT_TAG = "";
+    expect(loadBuildInfo(dir).tag).toBeNull();
   });
 
   it("returns fallback on malformed JSON", () => {
