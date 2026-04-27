@@ -1,4 +1,5 @@
 import "fastify";
+import type { ApiKeyInfo } from "../../db/repositories/api-key-repo.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -10,5 +11,10 @@ declare module "fastify" {
      * /login, /api/auth/*) never read it; the decoration default is "".
      */
     accountId: string;
+    /**
+     * Set by the bearer gate for /mcp and /agent-proxy. Null on routes
+     * authenticated via session cookie (and on exempt routes).
+     */
+    apiKey: ApiKeyInfo | null;
   }
 }

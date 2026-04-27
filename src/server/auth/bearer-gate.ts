@@ -4,7 +4,6 @@ import type { AccountRepository } from "../../db/index.js";
 // Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
 // reached for here because bearer auth needs the cross-tenant findByHash. See #136.
 import type { ApiKeyAuthRepository } from "../../db/repositories/api-key-repo.js";
-import type { ApiKeyInfo } from "../../db/repositories/api-key-repo.js";
 import { hashApiKey } from "./api-key-auth.js";
 
 export type BearerScope = "mcp" | "agent";
@@ -101,14 +100,4 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
     request.apiKey = key;
     accountRepo.touchLastUsed(key.accountId);
   });
-}
-
-declare module "fastify" {
-  interface FastifyRequest {
-    /**
-     * Set by the bearer gate for /mcp and /agent-proxy. Null on routes
-     * authenticated via session cookie (and on exempt routes).
-     */
-    apiKey: ApiKeyInfo | null;
-  }
 }
