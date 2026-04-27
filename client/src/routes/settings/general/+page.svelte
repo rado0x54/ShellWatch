@@ -7,6 +7,13 @@
     updateAccountName,
     updateAgentForward,
   } from "$lib/stores/account.js";
+  import { buildInfo } from "$lib/stores/build-info.js";
+
+  function formatBuiltAt(value: string | null): string {
+    if (!value) return "—";
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+  }
 
   let nameInput = $state("");
   let saving = $state(false);
@@ -105,6 +112,14 @@
           >
         {/if}
       </div>
+
+      <div class="field">
+        <span class="field-label">Version</span>
+        <div class="version-row">
+          <span class="version-display" title={$buildInfo.sha}>{$buildInfo.display}</span>
+          <span class="version-built">Built {formatBuiltAt($buildInfo.builtAt)}</span>
+        </div>
+      </div>
     </div>
   {/if}
 </section>
@@ -155,11 +170,31 @@
     margin-bottom: 1rem;
   }
 
-  .field label {
+  .field label,
+  .field-label {
     display: block;
     font-size: 0.8rem;
     font-weight: 500;
     margin-bottom: 0.375rem;
+    color: var(--text-muted);
+  }
+
+  .version-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  .version-display {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--on-surface);
+    user-select: text;
+  }
+
+  .version-built {
+    font-size: 0.8rem;
     color: var(--text-muted);
   }
 

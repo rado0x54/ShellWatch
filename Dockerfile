@@ -16,10 +16,24 @@ RUN pnpm install --frozen-lockfile
 # Stage 2 — Build (tsc + SvelteKit static adapter)
 FROM deps AS build
 
+# Build identity — supplied by CI via --build-arg. Defaults are dev fallbacks
+# so a manual `docker build` without args still produces a working image.
+# Note: tag is intentionally NOT baked here — it's stamped onto release images
+# at retag time via `crane mutate --set-env GIT_TAG=...` (see release.yml).
+ARG GIT_SHA=dev
+ARG GIT_REF=local
+
 COPY tsconfig.json ./
 COPY src/ src/
 COPY client/ client/
 COPY drizzle/ drizzle/
+
+# Bake build identity into the runtime — read by src/server/buildInfo.ts.
+# ARGs are passed through explicitly via shell substitution so this works
+# under both BuildKit and the classic builder (BuildKit auto-exposes ARGs to
+# RUN env, classic does not — silent fallback to "dev" otherwise).
+RUN GIT_SHA="$GIT_SHA" GIT_REF="$GIT_REF" \
+    node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:new Date().toISOString()}));"
 
 RUN pnpm build
 RUN pnpm prune --prod --ignore-scripts
@@ -45,6 +59,7 @@ COPY --from=build --chown=shellwatch:shellwatch /app/dist/ dist/
 COPY --from=build --chown=shellwatch:shellwatch /app/node_modules/ node_modules/
 COPY --from=build --chown=shellwatch:shellwatch /app/drizzle/ drizzle/
 COPY --from=build --chown=shellwatch:shellwatch /app/package.json package.json
+COPY --from=build --chown=shellwatch:shellwatch /app/buildInfo.generated.json buildInfo.generated.json
 RUN install -d -o shellwatch -g shellwatch /app/data /app/keys
 
 VOLUME ["/app/data", "/app/keys"]
