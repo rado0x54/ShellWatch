@@ -546,7 +546,12 @@
           <strong><code>pam_ssh_webauthn</code></strong>
           <p>
             PAM module that gates remote actions (e.g. <code>sudo</code>) on a passkey signature
-            brokered through <Wordmark />.
+            brokered through <Wordmark />. Source at
+            <a
+              href="https://github.com/rado0x54/pam-ssh-agent-webauthn"
+              target="_blank"
+              rel="noopener noreferrer">github.com/rado0x54/pam-ssh-agent-webauthn</a
+            >.
           </p>
         </div>
         <div class="advanced-item">
