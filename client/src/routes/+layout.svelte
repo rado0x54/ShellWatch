@@ -7,6 +7,7 @@
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import Wordmark from "$lib/components/Wordmark.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
+  import { initBuildInfoFromWindow } from "$lib/stores/build-info.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
   import { checkAuth } from "$lib/stores/webauthn.js";
@@ -28,6 +29,7 @@
       __SELF_REGISTRATION_ENABLED__?: boolean;
     };
     selfRegistrationEnabled.set(win.__SELF_REGISTRATION_ENABLED__ ?? false);
+    initBuildInfoFromWindow();
 
     const currentPath = window.location.pathname;
     const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/register");

@@ -16,10 +16,20 @@ RUN pnpm install --frozen-lockfile
 # Stage 2 — Build (tsc + SvelteKit static adapter)
 FROM deps AS build
 
+# Build identity — supplied by CI via --build-arg. Defaults are dev fallbacks
+# so a manual `docker build` without args still produces a working image.
+ARG GIT_SHA=dev
+ARG GIT_REF=local
+ARG GIT_TAG=
+ARG BUILD_TIME=
+
 COPY tsconfig.json ./
 COPY src/ src/
 COPY client/ client/
 COPY drizzle/ drizzle/
+
+# Bake build identity into the runtime — read by src/server/buildInfo.ts.
+RUN node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',tag:process.env.GIT_TAG||null,builtAt:process.env.BUILD_TIME||new Date().toISOString()}));"
 
 RUN pnpm build
 RUN pnpm prune --prod --ignore-scripts
@@ -45,6 +55,7 @@ COPY --from=build --chown=shellwatch:shellwatch /app/dist/ dist/
 COPY --from=build --chown=shellwatch:shellwatch /app/node_modules/ node_modules/
 COPY --from=build --chown=shellwatch:shellwatch /app/drizzle/ drizzle/
 COPY --from=build --chown=shellwatch:shellwatch /app/package.json package.json
+COPY --from=build --chown=shellwatch:shellwatch /app/buildInfo.generated.json buildInfo.generated.json
 RUN install -d -o shellwatch -g shellwatch /app/data /app/keys
 
 VOLUME ["/app/data", "/app/keys"]

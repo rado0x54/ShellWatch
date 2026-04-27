@@ -26,6 +26,7 @@ import type { ScannedKey } from "../transport/key-scanner.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
 import { registerOAuth } from "../oauth/index.js";
 import type { AccountLifecycle } from "./account-lifecycle.js";
+import { buildInfo } from "./buildInfo.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
 import { registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
@@ -135,6 +136,9 @@ export async function buildApp(params: BuildAppParams) {
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // Build identity — unauthenticated so operators can sanity-check a deployment.
+  app.get("/api/version", async () => buildInfo);
+
   // App-level event bus — accountLifecycle is constructed in DI root (index.ts)
   // so the periodic cleanup job in cleanup.ts can also publish to it. Listener
   // order is not load-bearing: AgentSession.destroy is robust to its sessions
@@ -223,7 +227,11 @@ export async function buildApp(params: BuildAppParams) {
   app.get("/config.js", async (_request, reply) => {
     reply.type("application/javascript");
     const vapidPublicKey = config.vapid?.publicKey ?? null;
-    return `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};window.__VAPID_PUBLIC_KEY__=${JSON.stringify(vapidPublicKey)};`;
+    return [
+      `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`,
+      `window.__VAPID_PUBLIC_KEY__=${JSON.stringify(vapidPublicKey)};`,
+      `window.__BUILD_INFO__=${JSON.stringify(buildInfo)};`,
+    ].join("");
   });
 
   // Static client files (built by SvelteKit adapter-static -> dist/client/)

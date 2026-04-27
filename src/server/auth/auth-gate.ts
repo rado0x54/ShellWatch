@@ -34,6 +34,7 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
   // makes sense relative to *cookie* auth — see registerBearerGate.
   const cookieAuthExempt = new Set([
     "/health",
+    "/api/version",
     "/api/auth/logout",
     "/api/auth/register",
     "/api/auth/register/options",

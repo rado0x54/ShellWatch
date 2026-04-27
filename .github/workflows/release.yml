@@ -56,6 +56,10 @@ jobs:
           platforms: linux/amd64
           provenance: false
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref_name }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

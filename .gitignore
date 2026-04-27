@@ -14,3 +14,4 @@ client/.svelte-kit/
 agent-client/shellwatch-agent
 .DS_Store
 .claude/scheduled_tasks.lock
+buildInfo.generated.json
