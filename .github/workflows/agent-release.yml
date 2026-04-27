@@ -114,6 +114,8 @@ jobs:
           VERSION=${GITHUB_REF_NAME#agent/}
           BRANCH="chore/agent-changelog-${VERSION}"
           NOTES=$(cat /tmp/release-notes.md)
+          # Normalize *  / +  bullets to "- " (matches existing CHANGELOG style)
+          NOTES=$(echo "$NOTES" | sed -E 's|^[*+] +|- |')
           ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
           CHANGELOG="agent-client/CHANGELOG.md"
 
