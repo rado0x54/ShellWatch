@@ -13,7 +13,6 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
-  actions: write
 
 env:
   IMAGE: ghcr.io/rado0x54/shellwatch
@@ -211,8 +210,9 @@ jobs:
             shellwatch-${VERSION}.tar.gz.sha256
 
       # main/develop are protected by rulesets (PR + status checks required, no
-      # bypass for GITHUB_TOKEN). The bot opens a PR against develop instead of
-      # pushing directly; admin squash-merges and fast-forwards main.
+      # bypass for GITHUB_TOKEN). The bot opens a PR against develop; admin
+      # reviews, pushes any commit to trigger CI (GITHUB_TOKEN-authored PRs
+      # don't auto-trigger workflows), squash-merges, and fast-forwards main.
       - name: Open changelog PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -223,19 +223,23 @@ jobs:
 
           NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
           NOTES=$(echo "$NOTES" | sed -E "s|https://github\\.com/${REPO}/pull/([0-9]+)|[#\\1](https://github.com/${REPO}/pull/\\1)|g")
-          # Normalize asterisk bullets to dashes (matches existing CHANGELOG style)
-          NOTES=$(echo "$NOTES" | sed -E 's|^\* |- |')
+          # Normalize *  / +  bullets to "- " (matches existing CHANGELOG style)
+          NOTES=$(echo "$NOTES" | sed -E 's|^[*+] +|- |')
           ENTRY="## v${VERSION} ($(date -u +%Y-%m-%d))"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin develop
-          git checkout -b "$BRANCH" origin/develop
+          git checkout -B "$BRANCH" origin/develop
 
           {
-            printf '%s\n\n' "$ENTRY"
-            printf '%s\n\n' "$NOTES"
-            [ -f CHANGELOG.md ] && cat CHANGELOG.md
+            if [ -f CHANGELOG.md ]; then
+              printf '%s\n\n' "$ENTRY"
+              printf '%s\n\n' "$NOTES"
+              cat CHANGELOG.md
+            else
+              printf '# Changelog\n\n%s\n\n%s\n' "$ENTRY" "$NOTES"
+            fi
           } > CHANGELOG.md.new
           mv CHANGELOG.md.new CHANGELOG.md
 
@@ -245,14 +249,18 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}"
-          git push origin "$BRANCH"
+          # --force-with-lease so a re-run can overwrite a stale chore branch
+          git push --force-with-lease origin "$BRANCH"
+
+          # Skip PR creation if one is already open for this branch (re-run safe)
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already open for $BRANCH; skipping create"
+            exit 0
+          fi
 
           gh pr create \
             --base develop \
             --head "$BRANCH" \
             --title "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}" \
-            --body "Auto-generated changelog for ${GITHUB_REF_NAME}. Squash-merge once CI passes, then fast-forward main."
-
-          # GITHUB_TOKEN-created PRs don't auto-trigger workflows (anti-loop guard).
-          # Dispatch CI manually so required status checks run on the PR head SHA.
-          gh workflow run ci.yml --ref "$BRANCH"
+            --body "Auto-generated changelog for ${GITHUB_REF_NAME}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."
