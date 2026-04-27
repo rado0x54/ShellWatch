@@ -59,7 +59,6 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
             GIT_REF=${{ github.ref_name }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -125,7 +124,7 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
-      - name: Retag image
+      - name: Retag image with version overlay
         run: |
           SHA_SHORT=$(git rev-parse --short HEAD)
           VERSION=${GITHUB_REF_NAME#v}
@@ -139,10 +138,22 @@ jobs:
             exit 1
           fi
 
-          echo "Retagging $SRC → :${VERSION}, :${MINOR}, :latest"
-          crane tag "$SRC" "${VERSION}"
-          crane tag "$SRC" "${MINOR}"
-          crane tag "$SRC" "latest"
+          # Tag releases: append a thin overlay layer that stamps the version
+          # tag into /app/buildInfo.generated.json so the UI displays "v$VERSION"
+          # instead of "main@<sha>". Layer DAG is otherwise bit-identical to $SRC.
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > buildInfo.generated.json <<EOF
+          {"sha":"${{ github.sha }}","ref":"main","tag":"v${VERSION}","builtAt":"${NOW}"}
+          EOF
+
+          tar -cf overlay.tar --owner=1000 --group=1000 \
+            --transform 's,^,app/,' buildInfo.generated.json
+
+          DST="${{ env.IMAGE }}:${VERSION}"
+          echo "Releasing v${VERSION}: appending overlay onto $SRC → $DST, :${MINOR}, :latest"
+          crane append --base "$SRC" --new_layer overlay.tar -t "$DST"
+          crane tag "$DST" "${MINOR}"
+          crane tag "$DST" "latest"
 
   deploy-prod:
     name: Deploy to app (prod)

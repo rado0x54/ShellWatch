@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface BuildInfo {
   /** Full git SHA, or "dev" when running locally without a generated build file. */
@@ -27,8 +28,13 @@ export function deriveDisplay(sha: string, ref: string, tag: string | null): str
   return `${ref}@${shortSha}`;
 }
 
-export function loadBuildInfo(cwd: string = process.cwd()): BuildInfo {
-  const candidate = resolve(cwd, "buildInfo.generated.json");
+export function loadBuildInfo(searchDir?: string): BuildInfo {
+  // Default: resolve relative to this module so the lookup is stable regardless
+  // of cwd. With rootDir=src / outDir=dist the layout mirrors source: in dev
+  // src/server/buildInfo.ts, in prod dist/server/buildInfo.js — both two
+  // levels above the repo/app root where buildInfo.generated.json lives.
+  const dir = searchDir ?? fileURLToPath(new URL("../..", import.meta.url));
+  const candidate = resolve(dir, "buildInfo.generated.json");
   try {
     const raw = readFileSync(candidate, "utf8");
     const parsed = JSON.parse(raw) as Partial<typeof FALLBACK>;
