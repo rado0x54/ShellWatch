@@ -42,9 +42,11 @@ permissions:
   pull-requests: write
 
 concurrency:
-  # Push paths serialize per-branch (so two develop pushes queue, but a
-  # develop push and a main push run in parallel). Dispatch is a singleton.
-  group: release-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || github.ref }}
+  # Single global queue across push and dispatch. A release dispatch reads
+  # :stable while crane-mutating it; concurrent push-to-main docker jobs
+  # would race that. Costs ~5min of develop-push serialization during a
+  # release — worth it for the safety.
+  group: release-singleton
   cancel-in-progress: false
 
 env:
@@ -328,12 +330,28 @@ jobs:
             exit 0
           fi
 
+          # Insert above the first `## ` heading so a leading `# Changelog`
+          # title (if added later) stays at the top of the file.
+          ENTRY_FILE=/tmp/new-entry.md
           {
             printf '%s\n\n' "$ENTRY"
             printf '%s\n\n' "$NOTES"
-            [ -f CHANGELOG.md ] && cat CHANGELOG.md
-          } > CHANGELOG.md.new
-          mv CHANGELOG.md.new CHANGELOG.md
+          } > "$ENTRY_FILE"
+
+          if [ ! -f CHANGELOG.md ]; then
+            cp "$ENTRY_FILE" CHANGELOG.md
+          else
+            INSERT_LINE=$(grep -nE '^## ' CHANGELOG.md | head -1 | cut -d: -f1 || true)
+            if [ -z "$INSERT_LINE" ]; then
+              cat CHANGELOG.md "$ENTRY_FILE" > CHANGELOG.md.new
+            else
+              head -n $((INSERT_LINE - 1)) CHANGELOG.md > CHANGELOG.md.new
+              cat "$ENTRY_FILE" >> CHANGELOG.md.new
+              tail -n +"$INSERT_LINE" CHANGELOG.md >> CHANGELOG.md.new
+            fi
+            mv CHANGELOG.md.new CHANGELOG.md
+          fi
+          rm -f "$ENTRY_FILE"
 
           git add CHANGELOG.md
           if git diff --cached --quiet; then

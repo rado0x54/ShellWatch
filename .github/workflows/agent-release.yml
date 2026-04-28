@@ -224,12 +224,28 @@ jobs:
             exit 0
           fi
 
+          # Insert above the first `## ` heading so a leading `# Changelog`
+          # title (if added later) stays at the top of the file.
+          ENTRY_FILE=/tmp/new-entry.md
           {
             printf '%s\n\n' "$ENTRY"
             printf '%s\n\n' "$NOTES"
-            [ -f "$CHANGELOG" ] && cat "$CHANGELOG"
-          } > "${CHANGELOG}.new"
-          mv "${CHANGELOG}.new" "$CHANGELOG"
+          } > "$ENTRY_FILE"
+
+          if [ ! -f "$CHANGELOG" ]; then
+            cp "$ENTRY_FILE" "$CHANGELOG"
+          else
+            INSERT_LINE=$(grep -nE '^## ' "$CHANGELOG" | head -1 | cut -d: -f1 || true)
+            if [ -z "$INSERT_LINE" ]; then
+              cat "$CHANGELOG" "$ENTRY_FILE" > "${CHANGELOG}.new"
+            else
+              head -n $((INSERT_LINE - 1)) "$CHANGELOG" > "${CHANGELOG}.new"
+              cat "$ENTRY_FILE" >> "${CHANGELOG}.new"
+              tail -n +"$INSERT_LINE" "$CHANGELOG" >> "${CHANGELOG}.new"
+            fi
+            mv "${CHANGELOG}.new" "$CHANGELOG"
+          fi
+          rm -f "$ENTRY_FILE"
 
           git add "$CHANGELOG"
           if git diff --cached --quiet; then
