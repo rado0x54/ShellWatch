@@ -25,10 +25,10 @@ on:
   push:
     branches: [develop, main]
     paths-ignore:
-      - 'agent-client/**'
-      - 'docs/**'
-      - 'design/**'
-      - '**/*.md'
+      - "agent-client/**"
+      - "docs/**"
+      - "design/**"
+      - "**/*.md"
   workflow_dispatch:
     inputs:
       version:
