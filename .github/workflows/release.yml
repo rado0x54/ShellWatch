@@ -198,6 +198,26 @@ jobs:
           echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
           echo "PREV_TAG=${PREV_TAG}" >> "$GITHUB_ENV"
 
+      # Build the standalone tarball first — if pnpm build fails, abort
+      # before touching prod or the registry.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Build standalone tarball
+        run: |
+          set -euo pipefail
+          STAGING="shellwatch-${VERSION}"
+          mkdir "$STAGING"
+          cp -r dist drizzle package.json pnpm-lock.yaml pnpm-workspace.yaml config.sample.yaml "$STAGING/"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          sha256sum "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -280,7 +300,9 @@ jobs:
 
           gh release create "${TAG}" \
             --title "ShellWatch ${TAG}" \
-            --notes-file /tmp/release-body.md
+            --notes-file /tmp/release-body.md \
+            "shellwatch-${VERSION}.tar.gz" \
+            "shellwatch-${VERSION}.tar.gz.sha256"
 
       # Open a PR with the new CHANGELOG entry against develop. Admin pushes
       # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire
