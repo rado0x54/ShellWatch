@@ -1,31 +1,67 @@
 name: Release
 
+# Two trigger paths:
+#
+# 1. push to develop or main (server-relevant paths) → CI, build Docker,
+#    deploy to app-dev (develop) or app-preprod (main). Path-filtered: pure
+#    docs/design/agent-only changes don't rebuild or redeploy the server.
+#
+# 2. workflow_dispatch with a version input → cut a release. Promotes the
+#    preprod-soaked :stable image to versioned tags, deploys prod, publishes
+#    the GitHub release, and opens a CHANGELOG.md PR back to develop.
+#
+# No source files are bumped during release. The git tag and GitHub release
+# are the source of truth for the version; the image carries it via GIT_TAG
+# env stamped by `crane mutate`. CHANGELOG.md updates flow through normal PR
+# review, so main and develop never receive bot-authored direct pushes —
+# branch protection rulesets stay active.
+#
+# Prerequisite for dispatch: main must already be at or ahead of develop.
+# The manual fast-forward of main from develop is your "ready to ship" gate;
+# it triggers preprod deploy via path #1, giving you a chance to verify
+# before clicking Run workflow.
+
 on:
   push:
     branches: [develop, main]
-    tags: ["v*"]
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+    paths-ignore:
+      - 'agent-client/**'
+      - 'docs/**'
+      - 'design/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.0.3 — no v prefix)"
+        required: true
+        type: string
 
 permissions:
   contents: write
   packages: write
   pull-requests: write
 
+concurrency:
+  # Push paths serialize per-branch (so two develop pushes queue, but a
+  # develop push and a main push run in parallel). Dispatch is a singleton.
+  group: release-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || github.ref }}
+  cancel-in-progress: false
+
 env:
   IMAGE: ghcr.io/rado0x54/shellwatch
 
 jobs:
+  # ------------------------------------------------------------ push path
+
   ci:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
 
   docker:
     name: Docker
+    if: github.event_name == 'push'
     needs: ci
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +77,6 @@ jobs:
         id: tags
         run: |
           SHA_SHORT=$(git rev-parse --short HEAD)
-          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
-
           BRANCH=${GITHUB_REF_NAME}
           if [ "$BRANCH" = "develop" ]; then
             echo "tags=${{ env.IMAGE }}:develop,${{ env.IMAGE }}:sha-${SHA_SHORT}" >> "$GITHUB_OUTPUT"
@@ -65,9 +99,9 @@ jobs:
 
   deploy-dev:
     name: Deploy to app-dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     needs: docker
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop'
     steps:
       - uses: appleboy/ssh-action@v1
         with:
@@ -87,9 +121,9 @@ jobs:
 
   deploy-preprod:
     name: Deploy to app-preprod
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: docker
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
       - uses: appleboy/ssh-action@v1
         with:
@@ -107,15 +141,62 @@ jobs:
       - name: Smoke test
         run: curl -fsS --retry 5 --retry-delay 3 https://app-preprod.shellwatch.ai/health
 
-  retag:
-    name: Retag Docker image
-    needs: ci
+  # -------------------------------------------------- workflow_dispatch path
+
+  release:
+    name: Release
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+
+      - name: Validate version & FF prerequisite
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version: ${VERSION} (must be MAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | head -1 || true)
+          if [ -n "$PREV_TAG" ]; then
+            CURRENT="${PREV_TAG#v}"
+            if ! dpkg --compare-versions "$VERSION" gt "$CURRENT"; then
+              echo "::error::Version ${VERSION} must be greater than latest tag ${PREV_TAG}"
+              exit 1
+            fi
+          fi
+
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} already exists"
+            exit 1
+          fi
+
+          if gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release v${VERSION} already exists"
+            exit 1
+          fi
+
+          # Confirm main is at or ahead of develop. If develop has commits not
+          # yet on main, the user forgot to FF main from develop before dispatch.
+          git fetch origin develop
+          if ! git merge-base --is-ancestor origin/develop HEAD; then
+            echo "::error::develop has commits not in main. Fast-forward main from develop, verify preprod, then re-run."
+            exit 1
+          fi
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
+          echo "PREV_TAG=${PREV_TAG}" >> "$GITHUB_ENV"
 
       - uses: docker/login-action@v3
         with:
@@ -125,38 +206,31 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
-      - name: Retag image with version env
+      - name: Promote :stable to :version / :minor / :latest / :stable
         run: |
-          SHA_SHORT=$(git rev-parse --short HEAD)
-          VERSION=${GITHUB_REF_NAME#v}
+          set -euo pipefail
           MINOR=${VERSION%.*}
+          SRC="${{ env.IMAGE }}:stable"
+          DST="${{ env.IMAGE }}:${VERSION}"
 
-          SRC="${{ env.IMAGE }}:sha-${SHA_SHORT}"
-
-          echo "Checking for source image: $SRC"
-          if ! crane manifest "$SRC" > /dev/null 2>&1; then
-            echo "::error::Image $SRC not found. Push the tagged commit to main or develop first to trigger a Docker build."
+          if ! crane manifest "$SRC" >/dev/null 2>&1; then
+            echo "::error::$SRC not found. Did you fast-forward main from develop and let the docker job complete before dispatching?"
             exit 1
           fi
 
-          # Tag releases: stamp GIT_TAG into the image config so the UI displays
-          # "v$VERSION" instead of "main@<sha>". Only the image config blob
-          # changes; layer DAG is bit-identical to $SRC. Read at server boot
-          # by src/server/buildInfo.ts.
-          DST="${{ env.IMAGE }}:${VERSION}"
-          echo "Releasing v${VERSION}: stamping GIT_TAG onto $SRC → $DST, :${MINOR}, :latest"
+          # Stamp GIT_TAG into the image config so the UI displays "vX.Y.Z".
+          # Image bits are bit-identical to $SRC (the preprod-running image).
+          # Read at server boot by src/server/buildInfo.ts.
+          #
+          # Re-tagging :stable here keeps it pointing at the released bits
+          # (otherwise it would drift behind :latest after every release).
           crane mutate "$SRC" --env "GIT_TAG=v${VERSION}" -t "$DST"
           crane tag "$DST" "${MINOR}"
           crane tag "$DST" "latest"
+          crane tag "$DST" "stable"
 
-  deploy-prod:
-    name: Deploy to app (prod)
-    needs: retag
-    runs-on: ubuntu-latest
-    environment: production
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: appleboy/ssh-action@v1
+      - name: Deploy prod
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_SSH_USER }}
@@ -169,76 +243,66 @@ jobs:
             docker compose up -d --wait --wait-timeout 60
             docker image prune -f
 
-      - name: Smoke test
+      - name: Smoke test prod
         run: curl -fsS --retry 5 --retry-delay 3 https://app.shellwatch.ai/health
 
-  release:
-    name: GitHub Release
-    needs: [ci, retag]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-      - name: Build standalone tarball
+      - name: Tag commit & push tag
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          STAGING="shellwatch-${VERSION}"
-          mkdir "$STAGING"
-          cp -r dist drizzle package.json pnpm-lock.yaml pnpm-workspace.yaml config.sample.yaml "$STAGING/"
-          tar czf "${STAGING}.tar.gz" "$STAGING"
-          sha256sum "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
+          set -euo pipefail
+          # Tag main HEAD (the FF'd commit, same one that's now serving prod).
+          # Only happens after prod deploy + smoke test pass — no orphan tags.
+          git tag "${TAG}" HEAD
+          git push origin "refs/tags/${TAG}"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          gh release create "$GITHUB_REF_NAME" \
-            --title "ShellWatch v${VERSION}" \
-            --generate-notes \
-            shellwatch-${VERSION}.tar.gz \
-            shellwatch-${VERSION}.tar.gz.sha256
+          set -euo pipefail
+          PAYLOAD=$(jq -n \
+            --arg tag "${TAG}" \
+            --arg target "main" \
+            --arg prev "${PREV_TAG}" \
+            'if $prev == "" then {tag_name:$tag, target_commitish:$target}
+             else {tag_name:$tag, target_commitish:$target, previous_tag_name:$prev} end')
 
-      # main/develop are protected by rulesets (PR + status checks required, no
-      # bypass for GITHUB_TOKEN). The bot opens a PR against develop; admin
-      # reviews, pushes any commit to trigger CI (GITHUB_TOKEN-authored PRs
-      # don't auto-trigger workflows), squash-merges, and fast-forwards main.
-      - name: Open changelog PR
+          BODY=$(echo "$PAYLOAD" | gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            --input - --jq .body)
+
+          # Drop the bot's prior CHANGELOG-PR bullet (otherwise every release
+          # would echo the previous release's changelog-update PR).
+          BODY=$(echo "$BODY" | sed -E '/^[*\-] +chore: update CHANGELOG/d')
+
+          # Normalize bullets to "- " (matches existing CHANGELOG style)
+          BODY=$(echo "$BODY" | sed -E 's|^[*+] +|- |')
+
+          printf '%s\n' "$BODY" > /tmp/release-body.md
+
+          gh release create "${TAG}" \
+            --title "ShellWatch ${TAG}" \
+            --notes-file /tmp/release-body.md
+
+      # Open a PR with the new CHANGELOG entry against develop. Admin pushes
+      # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire
+      # workflows), squash-merges, then fast-forwards main.
+      - name: Open CHANGELOG PR to develop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          set -euo pipefail
           BRANCH="chore/changelog-${VERSION}"
-
-          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
-          NOTES=$(echo "$NOTES" | sed -E "s|https://github\\.com/${REPO}/pull/([0-9]+)|[#\\1](https://github.com/${REPO}/pull/\\1)|g")
-          # Normalize *  / +  bullets to "- " (matches existing CHANGELOG style)
-          NOTES=$(echo "$NOTES" | sed -E 's|^[*+] +|- |')
-          ENTRY="## v${VERSION} ($(date -u +%Y-%m-%d))"
+          NOTES=$(cat /tmp/release-body.md)
+          ENTRY="## ${TAG} ($(date -u +%Y-%m-%d))"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin develop
-          # Fetch the chore branch too so --force-with-lease has a real lease
-          # ref instead of falling back to allowing the push unconditionally
           git fetch origin "$BRANCH" 2>/dev/null || true
           git checkout -B "$BRANCH" origin/develop
 
-          # Re-run guard: if the entry is already in the file (e.g. develop
-          # already merged the bot's PR for this tag), don't append a duplicate
+          # Re-run guard: skip if develop already merged this entry
           if [ -f CHANGELOG.md ] && grep -qF "$ENTRY" CHANGELOG.md; then
-            echo "CHANGELOG.md already contains entry for ${GITHUB_REF_NAME}; skipping"
+            echo "CHANGELOG.md already contains entry for ${TAG}; skipping"
             exit 0
           fi
 
@@ -254,10 +318,9 @@ jobs:
             echo "No changelog changes to commit"
             exit 0
           fi
-          git commit -m "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}"
+          git commit -m "chore: update CHANGELOG.md for ${TAG}"
           git push --force-with-lease origin "$BRANCH"
 
-          # Skip PR creation if one is already open for this branch (re-run safe)
           EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             echo "PR #$EXISTING already open for $BRANCH; skipping create"
@@ -267,5 +330,5 @@ jobs:
           gh pr create \
             --base develop \
             --head "$BRANCH" \
-            --title "chore: update CHANGELOG.md for ${GITHUB_REF_NAME}" \
-            --body "Auto-generated changelog for ${GITHUB_REF_NAME}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."
+            --title "chore: update CHANGELOG.md for ${TAG}" \
+            --body "Auto-generated changelog for ${TAG}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."
