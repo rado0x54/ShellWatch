@@ -210,7 +210,7 @@ jobs:
           set -euo pipefail
           BRANCH="chore/agent-changelog-${VERSION}"
           NOTES=$(cat /tmp/release-body.md)
-          ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
+          ENTRY="## ${TAG#agent/} ($(date -u +%Y-%m-%d))"
           CHANGELOG="agent-client/CHANGELOG.md"
 
           git config user.name "github-actions[bot]"
