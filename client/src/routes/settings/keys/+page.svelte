@@ -349,25 +349,25 @@
   {#if showAddModal}
     <Modal title={modalCreatedInvite ? "Invite link" : "Add a passkey"} onClose={closeAddModal}>
       {#if modalCreatedInvite}
+        <div class="invite-status">
+          <span class="invite-status-dot" aria-hidden="true"></span>
+          <span class="invite-status-label">Active</span>
+          <span class="invite-status-timer">{inviteRemainingDisplay}</span>
+        </div>
         <p class="modal-desc">
-          Single-use · expires in <strong>{inviteRemainingDisplay}</strong>. Open this link on the
-          device you want to enroll. It can only complete registration once. After the device
-          registers, come back here and click <strong>Confirm</strong> on the new passkey.
+          Open on the other device. Single-use; come back here to <strong>Confirm</strong>.
         </p>
-        <div class="invite-link-row">
-          <code class="invite-link">{inviteUrl(modalCreatedInvite.token)}</code>
+        <div class="invite-link">
+          <code>{inviteUrl(modalCreatedInvite.token)}</code>
           <button
-            class="btn btn-secondary"
+            class="invite-link-copy"
             type="button"
+            aria-label="Copy invite link"
             onclick={(e) =>
               copyKey(inviteUrl(modalCreatedInvite!.token), e.currentTarget as HTMLButtonElement)}
             >Copy</button
           >
         </div>
-        <p class="modal-hint">
-          Lost the link? Re-open this dialog while the invite is still valid and it'll be here.
-          After it expires (or someone uses it), the slot is empty and you can issue a new one.
-        </p>
       {:else}
         <p class="modal-desc">
           Pick where the new passkey lives. Both options enroll a passkey on this account.
@@ -655,31 +655,85 @@
     color: var(--primary);
   }
 
-  .invite-link-row {
-    display: flex;
-    gap: var(--space-2);
+  /* Status row: green dot + "Active" label + monospace timer. Sits at the
+     top of the link-display modal view as the green accent. */
+  .invite-status {
+    display: inline-flex;
     align-items: center;
-    margin-bottom: var(--space-2);
+    gap: var(--space-2);
+    padding: 0.3rem 0.7rem;
+    margin-bottom: var(--space-3);
+    background: color-mix(in srgb, var(--green, #4ade80) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--green, #4ade80) 50%, transparent);
+    border-radius: 999px;
   }
 
-  .invite-link {
-    flex: 1;
-    min-width: 0;
+  .invite-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green, #4ade80);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--green, #4ade80) 70%, transparent);
+    animation: invite-pulse 1.6s ease-out infinite;
+  }
+
+  .invite-status-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--green, #4ade80);
+  }
+
+  .invite-status-timer {
     font-family: var(--font-mono);
-    font-size: var(--label-sm);
-    overflow-wrap: anywhere;
-    word-break: break-all;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+    color: var(--green, #4ade80);
+    font-weight: 600;
+  }
+
+  /* Link box with the Copy button laid over the right edge — no separate
+     button cell, the box is the unit. */
+  .invite-link {
+    position: relative;
     background: var(--bg-primary);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: var(--space-1) var(--space-2);
+    border-radius: 6px;
+    padding: 0.6rem 4.5rem 0.6rem 0.75rem;
+    margin: 0 0 var(--space-2);
+    text-align: left;
   }
 
-  .modal-hint {
+  .invite-link code {
+    font-family: var(--font-mono);
     font-size: 0.78rem;
-    color: var(--text-muted);
-    margin: 0;
-    line-height: 1.5;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    color: var(--on-surface);
+  }
+
+  .invite-link-copy {
+    position: absolute;
+    top: 50%;
+    right: 0.4rem;
+    transform: translateY(-50%);
+    padding: 0.3rem 0.65rem;
+    background: var(--bg-secondary);
+    color: var(--on-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      border-color 0.15s,
+      color 0.15s;
+  }
+
+  .invite-link-copy:hover {
+    border-color: var(--green, #4ade80);
+    color: var(--green, #4ade80);
   }
 
   .label-btn {
