@@ -8,7 +8,7 @@ import {
   type PasskeyInviteInfo,
   type PasskeyInviteRepository,
 } from "../db/repositories/index.js";
-import { webauthnCredentials } from "../db/schema.js";
+import { passkeyInvites, webauthnCredentials } from "../db/schema.js";
 import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { sha256Fingerprint } from "./fingerprint.js";
@@ -44,12 +44,18 @@ export interface PasskeyInviteRoutesParams {
  * settings list at any time) and stripped once the invite reaches a terminal
  * state — at that point the token is useless and there's no reason to keep
  * surfacing it.
+ *
+ * `credentialLabel` is the label of the credential row produced by this invite
+ * (if any). Once a device-B registration completes, the credential's label is
+ * the one the user actually picked, while the invite row still carries the
+ * inviter's placeholder — surface the credential label so the UI doesn't
+ * disagree with the Passkeys list.
  */
-function publicInviteShape(invite: PasskeyInviteInfo) {
+function publicInviteShape(invite: PasskeyInviteInfo, credentialLabel?: string | null) {
   const status = inviteStatus(invite);
   return {
     id: invite.id,
-    label: invite.label,
+    label: credentialLabel ?? invite.label,
     expiresAt: invite.expiresAt,
     createdAt: invite.createdAt,
     consumedAt: invite.consumedAt,
@@ -91,9 +97,28 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
 
   // --- Authenticated: list invites for account ---
   app.get("/api/webauthn/invites", async (request) => {
-    const invites = inviteRepo.listForAccount(request.accountId);
+    // Left-join the credential row produced by the invite (if any). Drives
+    // two UI consistency rules:
+    //   1. Once the credential is `active`, the invite has served its purpose
+    //      and is hidden from the list — the user expects the row to vanish
+    //      the moment the new passkey shows up under Passkeys.
+    //   2. While the credential exists in `pending_confirmation`, the user
+    //      sees the credential's actual label (chosen on device B) rather
+    //      than the inviter's placeholder.
+    const rows = db
+      .select({
+        invite: passkeyInvites,
+        credentialState: webauthnCredentials.state,
+        credentialLabel: webauthnCredentials.label,
+      })
+      .from(passkeyInvites)
+      .leftJoin(webauthnCredentials, eq(passkeyInvites.credentialId, webauthnCredentials.id))
+      .where(eq(passkeyInvites.accountId, request.accountId))
+      .all();
     return {
-      invites: invites.map((i) => publicInviteShape(i)),
+      invites: rows
+        .filter((r) => r.credentialState !== CREDENTIAL_STATE.active)
+        .map((r) => publicInviteShape(r.invite, r.credentialLabel)),
     };
   });
 
