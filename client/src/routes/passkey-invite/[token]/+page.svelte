@@ -13,7 +13,10 @@
 
   let local = $state<LocalState>("loading");
   let status = $state<PasskeyInviteStatus | null>(null);
-  let label = $state("");
+  let suggestedLabel = $state("");
+  let labelInput = $state("");
+  let assignedLabel = $state("");
+  let assignedFingerprint = $state<string | null>(null);
   let expiresAt = $state("");
   let error = $state("");
 
@@ -28,7 +31,8 @@
     try {
       const info = await fetchInviteByToken(token);
       status = info.status;
-      label = info.label;
+      suggestedLabel = info.label;
+      labelInput = info.label;
       expiresAt = info.expiresAt;
       if (info.status === "pending") {
         local = "ready";
@@ -46,7 +50,12 @@
     local = "registering";
     error = "";
     try {
-      await registerWithInviteToken(token);
+      const result = await registerWithInviteToken({
+        token,
+        label: labelInput.trim() || undefined,
+      });
+      assignedLabel = result.label;
+      assignedFingerprint = result.fingerprint;
       local = "done";
     } catch (err) {
       error = errorMessage(err);
@@ -75,9 +84,17 @@
         You've been invited to enroll a new passkey on this device. Once you register here, the
         device that issued this invite will need to confirm it before the passkey becomes usable.
       </p>
-      <p class="meta">
-        Invite for <strong>{label}</strong> · expires in {formatTimeLeft(expiresAt)}
-      </p>
+      <p class="meta">Expires in {formatTimeLeft(expiresAt)}</p>
+      <label class="field">
+        <span class="field-label">Name this passkey</span>
+        <input
+          class="input"
+          type="text"
+          bind:value={labelInput}
+          placeholder={suggestedLabel}
+          maxlength="64"
+        />
+      </label>
       <button class="btn-primary" onclick={handleRegister}>Register passkey</button>
       {#if error}
         <p class="error">{error}</p>
@@ -86,10 +103,20 @@
       <p class="status">Waiting for your authenticator…</p>
     {:else if local === "done"}
       <p class="description">
-        <span class="check">✓</span> Passkey registered. Go back to your other device and click
-        <strong>Confirm</strong> on the new passkey to activate it. Until then, the passkey cannot be
-        used to log in or sign anything.
+        <span class="check">✓</span> Passkey <strong>{assignedLabel}</strong> registered. Go back to
+        your other device and click <strong>Confirm</strong> to activate it. Until then, the passkey cannot
+        be used to log in or sign anything.
       </p>
+      {#if assignedFingerprint}
+        <div class="fingerprint-card">
+          <span class="fingerprint-label">Fingerprint</span>
+          <code class="fingerprint-value">{assignedFingerprint}</code>
+          <p class="fingerprint-help">
+            Verify this string matches the fingerprint shown on the original device before you
+            confirm there. They will be identical if the passkey was registered on the right invite.
+          </p>
+        </div>
+      {/if}
     {:else if local === "unavailable"}
       <p class="description">
         This invite is <strong>{status}</strong>. Ask the inviter to issue a new one.
@@ -175,5 +202,72 @@
     color: var(--red);
     font-size: 0.85rem;
     margin-top: 0.75rem;
+  }
+
+  .field {
+    display: block;
+    text-align: left;
+    margin-bottom: 1rem;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+  }
+
+  .input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.85rem;
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+
+  .fingerprint-card {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    text-align: left;
+  }
+
+  .fingerprint-label {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+  }
+
+  .fingerprint-value {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    word-break: break-all;
+    color: var(--on-surface);
+  }
+
+  .fingerprint-help {
+    margin: 0.5rem 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
   }
 </style>

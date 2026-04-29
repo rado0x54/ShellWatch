@@ -77,6 +77,15 @@
   }
 
   async function handleConfirm(id: string) {
+    const cred = $credentials.find((c) => c.id === id);
+    // Show the fingerprint in the confirm prompt so the user can compare it
+    // against the one shown on the device that registered the passkey.
+    // If for some reason no fingerprint was derivable (non-ES256 / unusual
+    // authenticator), fall back to a plain prompt so the user isn't blocked.
+    const promptText = cred?.fingerprint
+      ? `Activate "${cred.label}"?\n\nFingerprint:\n${cred.fingerprint}\n\nVerify this matches what was shown on the device that registered this passkey before continuing. Once active, this passkey can log in and sign SSH for this account.`
+      : `Activate "${cred?.label ?? "this passkey"}"? Once active, it can log in and sign SSH for this account.`;
+    if (!confirm(promptText)) return;
     confirmingId = id;
     try {
       await confirmPasskey(id);

@@ -36,21 +36,22 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
     return {
       credentials: creds.map((c) => {
         const isActive = c.state === CREDENTIAL_STATE.active;
-        // Until a credential is confirmed, the SSH-side bits are withheld
-        // entirely — the user can't copy the authorized_keys line, and the
-        // fingerprint isn't surfaced. This matches the gating on the SSH
-        // signing path (see findCredentialsForAccount).
+        // The fingerprint is surfaced for pending creds too — it's a public
+        // hash the user reads aloud / eyeballs across two devices to confirm
+        // the right passkey is being activated (see /passkey-invite confirm
+        // flow). The SSH `authorizedKeysEntry` stays withheld until confirmed:
+        // copying it into authorized_keys would let the new passkey reach
+        // servers before the user has approved it.
         return {
           id: c.id,
           credentialId: c.credentialId,
           label: c.label,
           algorithm: detectAlgorithm(c.publicKey),
-          fingerprint:
-            isActive && c.publicKeyOpenSsh
-              ? sha256Fingerprint(
-                  toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: c.publicKeyOpenSsh })),
-                )
-              : null,
+          fingerprint: c.publicKeyOpenSsh
+            ? sha256Fingerprint(
+                toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: c.publicKeyOpenSsh })),
+              )
+            : null,
           authorizedKeysEntry: isActive ? (c.publicKeyOpenSsh ?? null) : null,
           revoked: c.revoked,
           state: c.state,

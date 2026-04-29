@@ -11,7 +11,23 @@ import {
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
+import { sha256Fingerprint } from "./fingerprint.js";
 import type { RateLimitConfig } from "./routes.js";
+import { buildPublicKeyBlob, toSkPublicKeyBlob } from "./ssh-key-format.js";
+
+/**
+ * Returns the SHA256 fingerprint string the credentials list also displays,
+ * computed the same way (see credentials.ts). Returned to device B after
+ * registration so the user can eyeball-compare it against the fingerprint that
+ * shows up on device A's confirm screen — defends against an intercepted
+ * invite link silently enrolling an attacker's authenticator.
+ */
+function fingerprintFromOpenSsh(authorizedKeysEntry: string | null): string | null {
+  if (!authorizedKeysEntry) return null;
+  return sha256Fingerprint(
+    toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: authorizedKeysEntry })),
+  );
+}
 
 export interface PasskeyInviteRoutesParams {
   app: FastifyInstance;
@@ -251,7 +267,9 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   );
 
   // --- Public: complete invite registration ---
-  app.post<{ Body: { token: string; challengeId: string; credential: unknown } }>(
+  app.post<{
+    Body: { token: string; challengeId: string; credential: unknown; label?: string };
+  }>(
     "/api/passkey-invite/register",
     {
       config: {
@@ -262,10 +280,15 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       },
     },
     async (request, reply) => {
-      const { token, challengeId, credential } = request.body ?? ({} as never);
+      const { token, challengeId, credential, label } = request.body ?? ({} as never);
       if (!token || typeof token !== "string") {
         reply.status(400);
         return { error: "Token is required" };
+      }
+      const trimmedLabel = typeof label === "string" ? label.trim() : "";
+      if (trimmedLabel.length > 64) {
+        reply.status(400);
+        return { error: "Label must be 64 characters or less" };
       }
       const invite = inviteRepo.findByToken(token);
       if (!invite) {
@@ -292,17 +315,19 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       // The credential is created in `pending_confirmation` state — it is not
       // usable for login or SSH signing until the inviting (already-authenticated)
       // device flips it to `active` via /api/webauthn/credentials/:id/confirm.
+      // The label sent by device B wins over the invite-time suggestion; if
+      // device B sends nothing, fall back to the invite label.
       const decoded = {
         ...result.decoded,
-        baseLabel: invite.label,
+        baseLabel: trimmedLabel || invite.label,
       };
       const inserted = db.transaction((tx) => {
-        const { id, label } = insertCredentialRow(tx, invite.accountId, decoded);
+        const { id, label: insertedLabel } = insertCredentialRow(tx, invite.accountId, decoded);
         tx.update(webauthnCredentials)
           .set({ state: CREDENTIAL_STATE.pendingConfirmation })
           .where(eq(webauthnCredentials.id, id))
           .run();
-        return { id, label };
+        return { id, label: insertedLabel };
       });
 
       const consumed = inviteRepo.markConsumed(invite.id, inserted.id);
@@ -328,6 +353,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       return {
         status: "registered",
         label: inserted.label,
+        fingerprint: fingerprintFromOpenSsh(result.decoded.authorizedKeysEntry),
       };
     },
   );

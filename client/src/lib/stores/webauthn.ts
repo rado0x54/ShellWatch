@@ -141,12 +141,21 @@ export async function fetchInviteByToken(token: string): Promise<{
   return res.json();
 }
 
-/** Run the WebAuthn ceremony on device B against an invite token. */
-export async function registerWithInviteToken(token: string): Promise<{ label: string }> {
+/**
+ * Run the WebAuthn ceremony on device B against an invite token. Returns the
+ * server-assigned label (deduplicated against existing passkeys on the
+ * account) and the SHA256 fingerprint of the new credential's public key —
+ * device B displays the fingerprint so the user can compare it against the
+ * one shown on device A's confirm screen.
+ */
+export async function registerWithInviteToken(params: {
+  token: string;
+  label?: string;
+}): Promise<{ label: string; fingerprint: string | null }> {
   const optionsRes = await fetch("/api/passkey-invite/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ token: params.token }),
   });
   if (!optionsRes.ok) {
     const err = await optionsRes.json().catch(() => ({}));
@@ -160,7 +169,12 @@ export async function registerWithInviteToken(token: string): Promise<{ label: s
   const verifyRes = await fetch("/api/passkey-invite/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, challengeId, credential }),
+    body: JSON.stringify({
+      token: params.token,
+      challengeId,
+      credential,
+      label: params.label,
+    }),
   });
   if (!verifyRes.ok) {
     const err = await verifyRes.json().catch(() => ({}));
