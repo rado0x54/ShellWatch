@@ -23,8 +23,8 @@ GOOS=linux GOARCH=arm64 go build -o shellwatch-agent-linux-arm64 ./cmd/shellwatc
 ## Usage
 
 ```bash
-# Start the agent proxy
-./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+# Start the agent proxy (uses https://app.shellwatch.ai by default)
+./shellwatch-agent --api-key sw_...
 
 # In another terminal (or add to your shell profile)
 export SSH_AUTH_SOCK=/tmp/shellwatch-agent-501.sock  # path printed on startup
@@ -42,6 +42,12 @@ ssh user@host
 eval $(./shellwatch-agent --print-env)
 ```
 
+### Self-hosted server
+
+```bash
+./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+```
+
 ### Local development (HTTP)
 
 ```bash
@@ -52,15 +58,142 @@ eval $(./shellwatch-agent --print-env)
 
 Precedence: CLI flags > environment variables > defaults.
 
-| Flag          | Env var                 | Description                               |
-| ------------- | ----------------------- | ----------------------------------------- |
-| `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (required)          |
-| `--api-key`   | `SHELLWATCH_API_KEY`    | API key with `agent` scope (required)     |
-| `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)          |
-| `--insecure`  | —                       | Allow `ws://` connections                 |
-| `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit |
+| Flag          | Env var                 | Description                                                  |
+| ------------- | ----------------------- | ------------------------------------------------------------ |
+| `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (default: `https://app.shellwatch.ai`) |
+| `--api-key`   | `SHELLWATCH_API_KEY`    | API key with `agent` scope (required)                        |
+| `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)                             |
+| `--insecure`  | —                       | Allow `ws://` connections                                    |
+| `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
 
-The default socket path is `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, otherwise `/tmp/shellwatch-agent-<uid>.sock`.
+The default socket path uses `os.TempDir()`:
+
+- **Linux:** `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, otherwise `${TMPDIR:-/tmp}/shellwatch-agent-<uid>.sock`.
+- **macOS:** `${TMPDIR}/shellwatch-agent-<uid>.sock` — and `$TMPDIR` is set per-user to a `/var/folders/.../T/` path by launchd, _not_ `/tmp`.
+
+The path is stable across restarts, so it's safe to compute once in your shell profile.
+
+## Running permanently as a background daemon
+
+The agent is designed to run as a long-lived background process — start it once at login and forget about it. It survives laptop sleep, network changes (WiFi ↔ cellular), and brief server outages: WebSocket-level keepalive detects dead connections within ~1 minute, and the dialer reconnects with exponential backoff on the next SSH operation.
+
+Whichever launcher you use, your shell needs to know where to find the socket. The simplest way is to ask the binary directly — it prints the path it would use:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+eval "$(/usr/local/bin/shellwatch-agent --print-env)"
+```
+
+Or compute it inline (note macOS `$TMPDIR` ends with a trailing slash):
+
+```bash
+# Linux
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/shellwatch-agent.sock"
+# macOS — launchd-set TMPDIR always ends in /, and so does the /tmp/ fallback
+export SSH_AUTH_SOCK="${TMPDIR:-/tmp/}shellwatch-agent-$(id -u).sock"
+```
+
+An agent-scoped API key only authorises the proxy to _forward_ sign requests to ShellWatch — actual signing still requires a passkey touch (or a server-side file key). It is not a long-term credential, so embedding it in the unit file is fine.
+
+### macOS (`launchd` user agent)
+
+Create `~/Library/LaunchAgents/ai.shellwatch.agent.plist` (launchd does **not** expand `$HOME` or `~` in `ProgramArguments` — use a fully absolute path or the agent will fail to spawn with `EX_CONFIG (78)`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.shellwatch.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/shellwatch-agent</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SHELLWATCH_API_KEY</key>
+        <string>sw_...</string>
+        <!-- Override only if you need a self-hosted server: -->
+        <!-- <key>SHELLWATCH_SERVER</key><string>https://shellwatch.example.com</string> -->
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/shellwatch-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/shellwatch-agent.err.log</string>
+</dict>
+</plist>
+```
+
+`chmod 600 ~/Library/LaunchAgents/ai.shellwatch.agent.plist` so other users can't read the key.
+
+Load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/ai.shellwatch.agent.plist
+launchctl kickstart -k "gui/$(id -u)/ai.shellwatch.agent"   # restart after edits
+launchctl unload ~/Library/LaunchAgents/ai.shellwatch.agent.plist
+```
+
+### Linux (`systemd --user` unit)
+
+Create `~/.config/systemd/user/shellwatch-agent.service`:
+
+```ini
+[Unit]
+Description=ShellWatch SSH agent proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/shellwatch-agent
+Environment=SHELLWATCH_API_KEY=sw_...
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
+```
+
+`chmod 600 ~/.config/systemd/user/shellwatch-agent.service` so other users can't read the key.
+
+Enable and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now shellwatch-agent.service
+sudo loginctl enable-linger "$USER"   # so the agent survives logout
+```
+
+Manage it:
+
+```bash
+systemctl --user status shellwatch-agent
+systemctl --user restart shellwatch-agent
+journalctl --user -u shellwatch-agent -f
+```
+
+### Verifying it's running
+
+```bash
+# Confirm the agent answers (lists available keys)
+ssh-add -l
+
+# Watch the logs
+# macOS:
+tail -f /tmp/shellwatch-agent.err.log
+# Linux:
+journalctl --user -u shellwatch-agent -f
+```
+
+If `ssh-add -l` returns `Could not open a connection to your authentication agent`, check that `SSH_AUTH_SOCK` is exported in the shell you're using.
+
+If launchd or systemd keeps respawning the agent and eventually throttles it (`launchctl print gui/$(id -u)/ai.shellwatch.agent` shows `last exit code = 1`, or `systemctl --user status` shows repeated start failures), check the err log for `another process is listening on …`. That happens when you previously started the agent manually in a terminal and the supervisor can't bind the same socket. Kill the stray process (`lsof "$SSH_AUTH_SOCK"` to find it) and the supervisor will recover on its next restart.
 
 ## How it works
 
