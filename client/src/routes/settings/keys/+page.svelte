@@ -374,9 +374,7 @@
         <button class="add-option" type="button" disabled={registering} onclick={handleRegister}>
           <span class="add-option-title">This device</span>
           <span class="add-option-body"> Use this browser or a security key plugged in here. </span>
-          <span class="add-option-cta"
-            >{registering ? "Waiting for passkey…" : "Register here →"}</span
-          >
+          <span class="add-option-cta" aria-hidden="true">{registering ? "…" : "→"}</span>
         </button>
 
         <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
@@ -389,15 +387,7 @@
           <span class="add-option-body">
             Generate a one-time link to share with the other device.
           </span>
-          <span class="add-option-cta">
-            {#if inviting}
-              Creating invite…
-            {:else if activeInvite}
-              Show invite link →
-            {:else}
-              Create invite link →
-            {/if}
-          </span>
+          <span class="add-option-cta" aria-hidden="true">{inviting ? "…" : "→"}</span>
         </button>
       {/if}
 
@@ -581,6 +571,7 @@
   }
 
   .add-option {
+    position: relative;
     display: block;
     width: 100%;
     text-align: left;
@@ -588,18 +579,30 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: var(--space-3);
+    /* Reserve space on the right for the circular CTA so long body text
+       doesn't run into it on narrow viewports. */
+    padding-right: 4rem;
     margin-bottom: var(--space-2);
     cursor: pointer;
     color: inherit;
     font: inherit;
     transition:
       border-color 0.15s,
-      background-color 0.15s;
+      background-color 0.15s,
+      transform 0.1s;
   }
 
   .add-option:hover:not(:disabled) {
-    border-color: var(--primary);
+    border-color: var(--green, #4ade80);
     background: var(--surface-container-low, var(--bg-primary));
+  }
+
+  .add-option:hover:not(:disabled) .add-option-cta {
+    transform: translateX(2px);
+  }
+
+  .add-option:active:not(:disabled) {
+    transform: scale(0.99);
   }
 
   .add-option:disabled {
@@ -637,12 +640,35 @@
     vertical-align: middle;
   }
 
+  /* Green chevron disc anchored to the bottom-right of each card — the
+     visible affordance that the whole card is tappable. The card's own
+     button element handles the click; the disc is purely decorative. */
   .add-option-cta {
-    display: block;
-    margin-top: var(--space-2);
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--primary);
+    position: absolute;
+    right: var(--space-3);
+    bottom: var(--space-3);
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 50%;
+    background: var(--green, #4ade80);
+    color: #08110b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1;
+    pointer-events: none;
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--green, #4ade80) 45%, transparent);
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
+  }
+
+  .add-option:disabled .add-option-cta {
+    background: var(--border);
+    color: var(--text-muted);
+    box-shadow: none;
   }
 
   /* Status row: green dot + "Active" label + monospace timer. Sits at the
