@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
@@ -37,6 +39,11 @@
     } finally {
       activeActionId = null;
     }
+  }
+
+  async function handleDetails(actionId: string, toastId: string) {
+    removeToast(toastId);
+    await goto(resolve("/sign/[id]", { id: actionId }));
   }
 
   async function handleDeny(actionId: string, toastId: string) {
@@ -114,6 +121,13 @@
             {/if}
           </div>
           <div class="toast-actions">
+            <button
+              class="btn btn-secondary btn-details"
+              onclick={() => handleDetails(toast.action!.actionId, toast.id)}
+              disabled={isProcessing}
+            >
+              Details
+            </button>
             <button
               class="btn btn-secondary"
               onclick={() => handleDeny(toast.action!.actionId, toast.id)}
@@ -251,6 +265,11 @@
     display: flex;
     justify-content: flex-end;
     gap: var(--space-3);
+  }
+
+  .toast-actions :global(.btn-details:hover) {
+    color: var(--primary);
+    box-shadow: inset 0 -1px 0 var(--primary);
   }
 
   .toast-simple {
