@@ -42,8 +42,42 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   label: text("label").notNull(), // User-friendly name (e.g., "YubiKey 5 NFC")
   publicKeyOpenSsh: text("public_key_openssh"), // OpenSSH authorized_keys format (if convertible)
   revoked: integer("revoked", { mode: "boolean" }).notNull().default(false),
+  /**
+   * Lifecycle state. `active` = usable for login, SSH signing, listed as SSH key.
+   * `pending_confirmation` = registered via an invite but not yet confirmed by the
+   * inviting (already-authenticated) device. Pending creds are listed in account
+   * settings only — never returned to login flows or SSH signing.
+   */
+  state: text("state").notNull().default("active"),
   createdAt: text("created_at").notNull(),
   lastUsedAt: text("last_used_at"),
+});
+
+// --- Passkey Invites ---
+
+export const passkeyInvites = sqliteTable("passkey_invites", {
+  id: text("id").primaryKey(), // UUIDv4
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  /** URL-safe random token used in the registration link. Single-use. */
+  token: text("token").notNull().unique(),
+  /** Suggested label for the resulting passkey. */
+  label: text("label").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  /** Set when device B has completed the WebAuthn registration ceremony. */
+  consumedAt: text("consumed_at"),
+  /** Set when the inviting device revokes the invite. */
+  revokedAt: text("revoked_at"),
+  /**
+   * FK to the credential row created on consumption. NULL until the registration
+   * ceremony completes. The credential row starts in `pending_confirmation` and
+   * is flipped to `active` by an explicit confirm action on the inviting device.
+   */
+  credentialId: text("credential_id").references(() => webauthnCredentials.id, {
+    onDelete: "set null",
+  }),
+  createdAt: text("created_at").notNull(),
 });
 
 // --- SSH Keys (file-based only — passkeys live in webauthn_credentials) ---

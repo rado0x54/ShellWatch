@@ -51,6 +51,19 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
     "/oauth/token",
   ]);
 
+  // Path prefixes exempt from the cookie check.
+  //
+  // `/api/passkey-invite/`: invite registration endpoints are intentionally
+  // anonymous — the invite token (in body or path) is the bearer of authority.
+  // Single-use, short-TTL (see PASSKEY_INVITE_TTL_MS), and the resulting
+  // credential is gated in `pending_confirmation` until the inviting device
+  // confirms it.
+  //
+  // `/passkey-invite/`: the SvelteKit page that device B lands on. It needs
+  // to load without a session so the user can complete the WebAuthn ceremony
+  // on their second device.
+  const cookieAuthExemptPrefixes = ["/api/passkey-invite/", "/passkey-invite/"];
+
   // Public static asset extensions — icons, logos, fonts. Not used by any API route.
   const publicAssetExtensions = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
 
@@ -63,6 +76,7 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
 
     // Cookie-auth-exempt paths
     if (cookieAuthExempt.has(url)) return;
+    if (cookieAuthExemptPrefixes.some((prefix) => url.startsWith(prefix))) return;
 
     // Discovery metadata is always public
     if (url.startsWith("/.well-known/")) return;

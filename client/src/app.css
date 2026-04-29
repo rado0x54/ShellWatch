@@ -256,6 +256,13 @@ pre,
   background: var(--error);
 }
 
+.badge-pending {
+  color: var(--warning, var(--secondary));
+}
+.badge-pending::before {
+  background: var(--warning, var(--secondary));
+}
+
 /* ------------------------------------------------------------------
  * Status dots — small 6px squares, colored, glow when live
  * ------------------------------------------------------------------ */

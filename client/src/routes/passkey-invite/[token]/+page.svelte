@@ -1,0 +1,179 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { page } from "$app/state";
+  import {
+    fetchInviteByToken,
+    registerWithInviteToken,
+    type PasskeyInviteStatus,
+  } from "$lib/stores/webauthn.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
+  import Wordmark from "$lib/components/Wordmark.svelte";
+
+  type LocalState = "loading" | "ready" | "registering" | "done" | "unavailable" | "error";
+
+  let local = $state<LocalState>("loading");
+  let status = $state<PasskeyInviteStatus | null>(null);
+  let label = $state("");
+  let expiresAt = $state("");
+  let error = $state("");
+
+  const token = $derived(page.params.token ?? "");
+
+  onMount(async () => {
+    if (!token) {
+      local = "error";
+      error = "Missing invite token";
+      return;
+    }
+    try {
+      const info = await fetchInviteByToken(token);
+      status = info.status;
+      label = info.label;
+      expiresAt = info.expiresAt;
+      if (info.status === "pending") {
+        local = "ready";
+      } else {
+        local = "unavailable";
+      }
+    } catch (err) {
+      local = "error";
+      error = errorMessage(err);
+    }
+  });
+
+  async function handleRegister() {
+    if (!token) return;
+    local = "registering";
+    error = "";
+    try {
+      await registerWithInviteToken(token);
+      local = "done";
+    } catch (err) {
+      error = errorMessage(err);
+      local = "ready";
+    }
+  }
+
+  function formatTimeLeft(iso: string): string {
+    const ms = Date.parse(iso) - Date.now();
+    if (ms <= 0) return "expired";
+    const mins = Math.round(ms / 60_000);
+    if (mins < 60) return `${mins} minutes`;
+    const hours = Math.round(mins / 60);
+    return `${hours} hours`;
+  }
+</script>
+
+<div class="invite-page">
+  <div class="invite-card">
+    <h1>Add a passkey to <Wordmark /></h1>
+
+    {#if local === "loading"}
+      <p class="status">Loading invite…</p>
+    {:else if local === "ready"}
+      <p class="description">
+        You've been invited to enroll a new passkey on this device. Once you register here, the
+        device that issued this invite will need to confirm it before the passkey becomes usable.
+      </p>
+      <p class="meta">
+        Invite for <strong>{label}</strong> · expires in {formatTimeLeft(expiresAt)}
+      </p>
+      <button class="btn-primary" onclick={handleRegister}>Register passkey</button>
+      {#if error}
+        <p class="error">{error}</p>
+      {/if}
+    {:else if local === "registering"}
+      <p class="status">Waiting for your authenticator…</p>
+    {:else if local === "done"}
+      <p class="description">
+        <span class="check">✓</span> Passkey registered. Go back to your other device and click
+        <strong>Confirm</strong> on the new passkey to activate it. Until then, the passkey cannot be
+        used to log in or sign anything.
+      </p>
+    {:else if local === "unavailable"}
+      <p class="description">
+        This invite is <strong>{status}</strong>. Ask the inviter to issue a new one.
+      </p>
+    {:else}
+      <p class="error">{error || "Could not load this invite"}</p>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .invite-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary);
+    padding: 1rem;
+    box-sizing: border-box;
+  }
+
+  .invite-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    max-width: 480px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
+
+  .description {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.55;
+  }
+
+  .meta {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+
+  .status {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .check {
+    color: var(--green, #4ade80);
+    font-weight: 600;
+    margin-right: 0.25rem;
+  }
+
+  .btn-primary {
+    padding: 0.625rem 1.5rem;
+    background: var(--grad-primary);
+    color: var(--on-primary-container);
+    border: none;
+    font-family: var(--font-ui);
+    font-size: var(--body-md);
+    cursor: pointer;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    min-width: 120px;
+    box-shadow: var(--glow-primary);
+    transition: box-shadow 0.2s;
+  }
+
+  .btn-primary:hover {
+    box-shadow: var(--glow-primary-strong);
+  }
+
+  .error {
+    color: var(--red);
+    font-size: 0.85rem;
+    margin-top: 0.75rem;
+  }
+</style>

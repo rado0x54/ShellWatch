@@ -1,6 +1,8 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { writable } from "svelte/store";
 
+export type CredentialState = "active" | "pending_confirmation";
+
 export interface WebAuthnCredential {
   id: string;
   credentialId: string;
@@ -9,11 +11,28 @@ export interface WebAuthnCredential {
   fingerprint: string | null;
   authorizedKeysEntry: string | null;
   revoked: boolean;
+  state: CredentialState;
   createdAt: string;
   lastUsedAt: string | null;
 }
 
+export type PasskeyInviteStatus = "pending" | "registered" | "expired" | "revoked";
+
+export interface PasskeyInvite {
+  id: string;
+  label: string;
+  expiresAt: string;
+  createdAt: string;
+  consumedAt: string | null;
+  revokedAt: string | null;
+  credentialId: string | null;
+  status: PasskeyInviteStatus;
+  /** Only present in the response of POST /api/webauthn/invites; never on list. */
+  token?: string;
+}
+
 export const credentials = writable<WebAuthnCredential[]>([]);
+export const passkeyInvites = writable<PasskeyInvite[]>([]);
 
 export async function fetchCredentials(): Promise<void> {
   const res = await fetch("/api/webauthn/credentials");
@@ -59,6 +78,95 @@ export async function startPasskeyRegistration(name?: string): Promise<{
     credentialId: result.id,
     label: result.label,
   };
+}
+
+/** Confirm a pending-confirmation credential, flipping it to active. */
+export async function confirmPasskey(credentialId: string): Promise<void> {
+  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to confirm passkey");
+  }
+  await fetchCredentials();
+}
+
+// --- Passkey invites ---
+
+export async function fetchPasskeyInvites(): Promise<void> {
+  const res = await fetch("/api/webauthn/invites");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invites");
+  }
+  const data = await res.json();
+  passkeyInvites.set(data.invites);
+}
+
+/** Create a new invite. Returns the full invite including the one-time token. */
+export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
+  const res = await fetch("/api/webauthn/invites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create invite");
+  }
+  const data = await res.json();
+  await fetchPasskeyInvites();
+  return data.invite as PasskeyInvite;
+}
+
+export async function revokePasskeyInvite(id: string): Promise<void> {
+  const res = await fetch(`/api/webauthn/invites/${id}/revoke`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to revoke invite");
+  }
+  await Promise.all([fetchPasskeyInvites(), fetchCredentials()]);
+}
+
+/** Fetch invite metadata for the public registration page. */
+export async function fetchInviteByToken(token: string): Promise<{
+  status: PasskeyInviteStatus;
+  label: string;
+  expiresAt: string;
+}> {
+  const res = await fetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invite");
+  }
+  return res.json();
+}
+
+/** Run the WebAuthn ceremony on device B against an invite token. */
+export async function registerWithInviteToken(token: string): Promise<{ label: string }> {
+  const optionsRes = await fetch("/api/passkey-invite/register/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to get registration options");
+  }
+  const options = await optionsRes.json();
+  const { challengeId, ...registrationOptions } = options;
+
+  const credential = await startRegistration({ optionsJSON: registrationOptions });
+
+  const verifyRes = await fetch("/api/passkey-invite/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, challengeId, credential }),
+  });
+  if (!verifyRes.ok) {
+    const err = await verifyRes.json().catch(() => ({}));
+    throw new Error(err.error || "Registration failed");
+  }
+  return verifyRes.json();
 }
 
 /**

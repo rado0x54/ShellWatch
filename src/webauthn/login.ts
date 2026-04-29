@@ -2,10 +2,11 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
+import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge, consumeChallenge } from "./challenge-store.js";
 import type { RateLimitConfig, SessionConfig } from "./routes.js";
@@ -39,7 +40,12 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
       const creds = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.revoked, false))
+        .where(
+          and(
+            eq(webauthnCredentials.revoked, false),
+            eq(webauthnCredentials.state, CREDENTIAL_STATE.active),
+          ),
+        )
         .all();
 
       if (creds.length === 0) {
@@ -100,6 +106,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
           counter: webauthnCredentials.counter,
           transports: webauthnCredentials.transports,
           revoked: webauthnCredentials.revoked,
+          state: webauthnCredentials.state,
         })
         .from(webauthnCredentials)
         .where(eq(webauthnCredentials.credentialId, assertionResponse.id))
@@ -113,6 +120,15 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
       if (storedCred.revoked) {
         reply.status(403);
         return { error: "This passkey has been revoked" };
+      }
+
+      if (storedCred.state !== CREDENTIAL_STATE.active) {
+        // Pending-confirmation credentials can't log in until the inviting
+        // device confirms them. We still get here in theory because login
+        // options omit them, but a hand-crafted client could pass a known
+        // credential id.
+        reply.status(403);
+        return { error: "This passkey is awaiting confirmation on the original device" };
       }
 
       try {

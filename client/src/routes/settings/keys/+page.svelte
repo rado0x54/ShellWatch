@@ -5,23 +5,90 @@
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
+    confirmPasskey,
+    createPasskeyInvite,
     credentials,
     fetchCredentials,
+    fetchPasskeyInvites,
+    passkeyInvites,
     renamePasskey,
+    revokePasskeyInvite,
     startPasskeyRegistration,
+    type PasskeyInvite,
   } from "$lib/stores/webauthn.js";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   let revoking = $state(false);
   let registering = $state(false);
+  let inviting = $state(false);
+  let confirmingId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
   let editLabel = $state("");
+  // Most-recent invite (with token) is shown inline so the user can copy the
+  // link once. The token is never persisted to the list endpoint, so once the
+  // user navigates away we can't bring it back.
+  let lastCreatedInvite = $state<PasskeyInvite | null>(null);
 
   onMount(() => {
     fetchCredentials();
     fetchSshKeys();
+    fetchPasskeyInvites().catch((err) => toastError(errorMessage(err)));
   });
+
+  function inviteUrl(token: string): string {
+    return `${window.location.origin}/passkey-invite/${encodeURIComponent(token)}`;
+  }
+
+  async function handleInvite() {
+    inviting = true;
+    try {
+      const invite = await createPasskeyInvite();
+      lastCreatedInvite = invite;
+    } catch (err) {
+      toastError(`Could not create invite: ${errorMessage(err)}`);
+    }
+    inviting = false;
+  }
+
+  async function handleRevokeInvite(id: string) {
+    if (
+      !confirm(
+        "Revoke this invite? Any registered-but-unconfirmed passkey from it will also be revoked.",
+      )
+    )
+      return;
+    try {
+      await revokePasskeyInvite(id);
+      if (lastCreatedInvite?.id === id) lastCreatedInvite = null;
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  }
+
+  async function handleConfirm(id: string) {
+    confirmingId = id;
+    try {
+      await confirmPasskey(id);
+      await fetchPasskeyInvites();
+    } catch (err) {
+      toastError(`Could not confirm: ${errorMessage(err)}`);
+    }
+    confirmingId = null;
+  }
+
+  function formatExpiry(iso: string): string {
+    const ms = Date.parse(iso) - Date.now();
+    if (ms <= 0) return "expired";
+    const mins = Math.round(ms / 60_000);
+    if (mins < 60) return `${mins}m`;
+    const hours = Math.round(mins / 60);
+    return `${hours}h`;
+  }
+
+  const pendingInvites = $derived(
+    $passkeyInvites.filter((i) => i.status === "pending" || i.status === "registered"),
+  );
 
   function sanitizeSegment(s: string): string {
     return s
@@ -49,11 +116,15 @@
 
   async function handleRevoke(id: string) {
     // TODO: use basePath store instead of window.__BASE_PATH__ (applies to this fn and handleRevokeFileKey)
-    const activeCount = $credentials.filter((c) => !c.revoked).length;
-    if (activeCount <= 1) {
-      // Client-side guard for UX; also enforced server-side in the revoke endpoint
-      toastError("Cannot revoke the last active passkey.");
-      return;
+    const target = $credentials.find((c) => c.id === id);
+    // Pending credentials don't count toward "last active" — they can't log in.
+    if (target?.state !== "pending_confirmation") {
+      const activeCount = $credentials.filter((c) => !c.revoked && c.state === "active").length;
+      if (activeCount <= 1) {
+        // Client-side guard for UX; also enforced server-side in the revoke endpoint
+        toastError("Cannot revoke the last active passkey.");
+        return;
+      }
     }
     if (!confirm("Revoke this passkey? This is permanent and cannot be undone.")) return;
     revoking = true;
@@ -168,6 +239,8 @@
           {/if}
           {#if pk.revoked}
             <span class="badge badge-unavailable">revoked</span>
+          {:else if pk.state === "pending_confirmation"}
+            <span class="badge badge-pending">pending confirmation</span>
           {:else}
             <span class="badge badge-available">active</span>
           {/if}
@@ -179,7 +252,7 @@
           <span class="row-dot">·</span>last used {formatDate(pk.lastUsedAt)}
         {/snippet}
         {#snippet actions()}
-          {#if pk.authorizedKeysEntry && !pk.revoked}
+          {#if pk.authorizedKeysEntry && !pk.revoked && pk.state === "active"}
             <button
               class="btn btn-secondary"
               title="Copy SSH public key"
@@ -188,6 +261,14 @@
                   `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
                   e.currentTarget as HTMLButtonElement,
                 )}>Copy SSH PubKey</button
+            >
+          {/if}
+          {#if !pk.revoked && pk.state === "pending_confirmation"}
+            <button
+              class="btn btn-primary"
+              disabled={confirmingId === pk.id}
+              onclick={() => handleConfirm(pk.id)}
+              >{confirmingId === pk.id ? "Confirming..." : "Confirm"}</button
             >
           {/if}
           {#if !pk.revoked}
@@ -206,7 +287,64 @@
     <button class="btn btn-primary" disabled={registering} onclick={handleRegister}>
       {registering ? "Waiting for passkey..." : "Register New Passkey"}
     </button>
+    <button class="btn btn-secondary" disabled={inviting} onclick={handleInvite}>
+      {inviting ? "Creating invite..." : "Invite Passkey"}
+    </button>
   </div>
+
+  {#if lastCreatedInvite?.token}
+    <div class="invite-callout">
+      <div class="invite-callout-head">
+        <strong>Invite created</strong>
+        <span class="invite-meta"
+          >Single-use · expires in {formatExpiry(lastCreatedInvite.expiresAt)}</span
+        >
+      </div>
+      <p class="invite-help">
+        Open this link on the device you want to enroll. It can only complete registration once.
+        After the device registers, come back here and click <strong>Confirm</strong> on the new passkey.
+      </p>
+      <div class="invite-link-row">
+        <code class="invite-link">{inviteUrl(lastCreatedInvite.token)}</code>
+        <button
+          class="btn btn-secondary"
+          onclick={(e) =>
+            copyKey(inviteUrl(lastCreatedInvite!.token!), e.currentTarget as HTMLButtonElement)}
+          >Copy</button
+        >
+      </div>
+    </div>
+  {/if}
+
+  {#if pendingInvites.length > 0}
+    <h3 class="subhead">Pending invites</h3>
+    <SettingsList>
+      {#each pendingInvites as inv (inv.id)}
+        <SettingsRow>
+          {#snippet primary()}
+            <span class="row-label">{inv.label}</span>
+            {#if inv.status === "registered"}
+              <span class="badge badge-pending">awaiting confirmation</span>
+            {:else}
+              <span class="badge badge-pending">link issued</span>
+            {/if}
+          {/snippet}
+          {#snippet secondary()}
+            {#if inv.status === "pending"}
+              <span>expires in {formatExpiry(inv.expiresAt)}</span>
+            {:else if inv.status === "registered"}
+              <span>passkey registered, confirm above</span>
+            {/if}
+          {/snippet}
+          {#snippet actions()}
+            <button class="btn btn-secondary" onclick={() => handleRevokeInvite(inv.id)}
+              >Revoke</button
+            >
+          {/snippet}
+        </SettingsRow>
+      {/each}
+    </SettingsList>
+  {/if}
 
   {#if hasAuthorizedKeys}
     <div class="settings-info">
@@ -307,6 +445,65 @@
 
   .register-section {
     margin-top: var(--space-5);
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .subhead {
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin: var(--space-5) 0 var(--space-2);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .invite-callout {
+    margin-top: var(--space-4);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-container-low, var(--bg-primary));
+  }
+
+  .invite-callout-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+
+  .invite-meta {
+    font-size: var(--label-sm);
+    color: var(--text-muted);
+  }
+
+  .invite-help {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 var(--space-2);
+    line-height: 1.5;
+  }
+
+  .invite-link-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .invite-link {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: var(--space-1) var(--space-2);
   }
 
   .label-btn {

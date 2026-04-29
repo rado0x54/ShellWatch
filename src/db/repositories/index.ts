@@ -15,7 +15,15 @@ export {
   DrizzleApiKeyRepository,
   InMemoryApiKeyRepository,
 } from "./api-key-repo.js";
-export { hasPasskeys } from "./credential-queries.js";
+export { CREDENTIAL_STATE, type CredentialState, hasPasskeys } from "./credential-queries.js";
+export {
+  DrizzlePasskeyInviteRepository,
+  inviteStatus,
+  type InviteStatus,
+  PASSKEY_INVITE_TTL_MS,
+  type PasskeyInviteInfo,
+  type PasskeyInviteRepository,
+} from "./passkey-invite-repo.js";
 export {
   DrizzleEndpointRepository,
   type EndpointInfo,
