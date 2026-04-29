@@ -23,8 +23,8 @@ GOOS=linux GOARCH=arm64 go build -o shellwatch-agent-linux-arm64 ./cmd/shellwatc
 ## Usage
 
 ```bash
-# Start the agent proxy
-./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+# Start the agent proxy (uses https://app.shellwatch.ai by default)
+./shellwatch-agent --api-key sw_...
 
 # In another terminal (or add to your shell profile)
 export SSH_AUTH_SOCK=/tmp/shellwatch-agent-501.sock  # path printed on startup
@@ -42,6 +42,12 @@ ssh user@host
 eval $(./shellwatch-agent --print-env)
 ```
 
+### Self-hosted server
+
+```bash
+./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+```
+
 ### Local development (HTTP)
 
 ```bash
@@ -52,15 +58,161 @@ eval $(./shellwatch-agent --print-env)
 
 Precedence: CLI flags > environment variables > defaults.
 
-| Flag          | Env var                 | Description                               |
-| ------------- | ----------------------- | ----------------------------------------- |
-| `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (required)          |
-| `--api-key`   | `SHELLWATCH_API_KEY`    | API key with `agent` scope (required)     |
-| `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)          |
-| `--insecure`  | —                       | Allow `ws://` connections                 |
-| `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit |
+| Flag          | Env var                 | Description                                                  |
+| ------------- | ----------------------- | ------------------------------------------------------------ |
+| `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (default: `https://app.shellwatch.ai`) |
+| `--api-key`   | `SHELLWATCH_API_KEY`    | API key with `agent` scope (required)                        |
+| `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)                             |
+| `--insecure`  | —                       | Allow `ws://` connections                                    |
+| `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
 
-The default socket path is `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, otherwise `/tmp/shellwatch-agent-<uid>.sock`.
+The default socket path is `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, otherwise `/tmp/shellwatch-agent-<uid>.sock`. The path is stable across restarts, so it's safe to hardcode in your shell profile.
+
+## Running permanently as a background daemon
+
+The agent is designed to run as a long-lived background process — start it once at login and forget about it. It survives laptop sleep, network changes (WiFi ↔ cellular), and brief server outages: WebSocket-level keepalive detects dead connections within ~1 minute, and the dialer reconnects with exponential backoff on the next SSH operation.
+
+Whichever launcher you use, your shell needs to know where to find the socket:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+if [ "$(uname)" = "Linux" ]; then
+  export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/shellwatch-agent.sock"
+else
+  export SSH_AUTH_SOCK="/tmp/shellwatch-agent-$(id -u).sock"
+fi
+```
+
+### macOS (`launchd` user agent)
+
+Save your API key to a file readable only by you (do **not** embed it in the plist — plists can end up in Time Machine backups, Spotlight, etc.):
+
+```bash
+mkdir -p ~/.config/shellwatch
+umask 077
+printf 'SHELLWATCH_API_KEY=sw_...\n' > ~/.config/shellwatch/agent.env
+chmod 600 ~/.config/shellwatch/agent.env
+```
+
+Alternatively, store the key in the macOS Keychain and load it in a wrapper script:
+
+```bash
+security add-generic-password -a "$USER" -s shellwatch-agent -w 'sw_...'
+# Wrapper: read it back at launch time
+echo '#!/bin/sh
+export SHELLWATCH_API_KEY="$(security find-generic-password -a "$USER" -s shellwatch-agent -w)"
+exec /usr/local/bin/shellwatch-agent "$@"' > ~/bin/shellwatch-agent-wrapper
+chmod +x ~/bin/shellwatch-agent-wrapper
+```
+
+Create `~/Library/LaunchAgents/ai.shellwatch.agent.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.shellwatch.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/shellwatch-agent</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Override only if you need a self-hosted server -->
+        <!-- <key>SHELLWATCH_SERVER</key><string>https://shellwatch.example.com</string> -->
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/shellwatch-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/shellwatch-agent.err.log</string>
+</dict>
+</plist>
+```
+
+The plist itself does not carry the API key. Source it from the env file via a one-line wrapper script, or use the Keychain wrapper above. To inject the env file, change `ProgramArguments` to:
+
+```xml
+<array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . "$HOME/.config/shellwatch/agent.env"; set +a; exec /usr/local/bin/shellwatch-agent</string>
+</array>
+```
+
+Load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/ai.shellwatch.agent.plist
+launchctl kickstart -k "gui/$(id -u)/ai.shellwatch.agent"   # restart after edits
+launchctl unload ~/Library/LaunchAgents/ai.shellwatch.agent.plist
+```
+
+### Linux (`systemd --user` unit)
+
+Save the API key to an env file:
+
+```bash
+mkdir -p ~/.config/shellwatch
+umask 077
+printf 'SHELLWATCH_API_KEY=sw_...\n' > ~/.config/shellwatch/agent.env
+chmod 600 ~/.config/shellwatch/agent.env
+```
+
+Create `~/.config/systemd/user/shellwatch-agent.service`:
+
+```ini
+[Unit]
+Description=ShellWatch SSH agent proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/shellwatch-agent
+EnvironmentFile=%h/.config/shellwatch/agent.env
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now shellwatch-agent.service
+sudo loginctl enable-linger "$USER"   # so the agent survives logout
+```
+
+Manage it:
+
+```bash
+systemctl --user status shellwatch-agent
+systemctl --user restart shellwatch-agent
+journalctl --user -u shellwatch-agent -f
+```
+
+### Verifying it's running
+
+```bash
+# Confirm the agent answers (lists available keys)
+ssh-add -l
+
+# Watch the logs
+# macOS:
+tail -f /tmp/shellwatch-agent.err.log
+# Linux:
+journalctl --user -u shellwatch-agent -f
+```
+
+If `ssh-add -l` returns `Could not open a connection to your authentication agent`, check that `SSH_AUTH_SOCK` is exported in the shell you're using.
 
 ## How it works
 

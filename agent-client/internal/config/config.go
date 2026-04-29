@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 )
 
+// DefaultServer is the hosted ShellWatch instance, used when neither
+// --server nor SHELLWATCH_SERVER is set.
+const DefaultServer = "https://app.shellwatch.ai"
+
 type Config struct {
 	Server     string
 	ApiKey     string
@@ -24,46 +28,88 @@ func defaultSocketPath() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("shellwatch-agent-%d.sock", os.Getuid()))
 }
 
+// flagValues holds the parsed flag inputs along with which flags the user
+// actually set on the command line — needed to distinguish "user passed
+// --server=https://app.shellwatch.ai" from "flag was left at its default".
+type flagValues struct {
+	server     string
+	apiKey     string
+	socketPath string
+	insecure   bool
+	printEnv   bool
+	explicit   map[string]bool
+}
+
+// envValues holds the relevant environment variables.
+type envValues struct {
+	server     string
+	apiKey     string
+	socketPath string
+}
+
 // Load reads configuration from CLI flags and environment variables.
 func Load() (*Config, bool, error) {
-	var (
-		server     = flag.String("server", "", "ShellWatch server URL (e.g., https://shellwatch.example.com)")
-		apiKey     = flag.String("api-key", "", "API key for authentication")
-		socketPath = flag.String("socket", "", "Unix socket path")
-		insecure   = flag.Bool("insecure", false, "Allow ws:// (unencrypted) connections")
-		printEnv   = flag.Bool("print-env", false, "Print SSH_AUTH_SOCK export and exit")
-	)
+	fv := parseFlags()
+	ev := envValues{
+		server:     os.Getenv("SHELLWATCH_SERVER"),
+		apiKey:     os.Getenv("SHELLWATCH_API_KEY"),
+		socketPath: os.Getenv("SHELLWATCH_AGENT_SOCK"),
+	}
+	cfg := resolve(fv, ev)
+	return cfg, fv.printEnv, nil
+}
+
+func parseFlags() flagValues {
+	server := flag.String("server", DefaultServer, "ShellWatch server URL")
+	apiKey := flag.String("api-key", "", "API key for authentication")
+	socketPath := flag.String("socket", "", "Unix socket path")
+	insecure := flag.Bool("insecure", false, "Allow ws:// (unencrypted) connections")
+	printEnv := flag.Bool("print-env", false, "Print SSH_AUTH_SOCK export and exit")
 	flag.Parse()
 
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
+	return flagValues{
+		server:     *server,
+		apiKey:     *apiKey,
+		socketPath: *socketPath,
+		insecure:   *insecure,
+		printEnv:   *printEnv,
+		explicit:   explicit,
+	}
+}
+
+// resolve merges flags and env into a Config with precedence: explicit flag > env > default.
+func resolve(fv flagValues, ev envValues) *Config {
 	cfg := &Config{
-		Server:     os.Getenv("SHELLWATCH_SERVER"),
-		ApiKey:     os.Getenv("SHELLWATCH_API_KEY"),
-		SocketPath: os.Getenv("SHELLWATCH_AGENT_SOCK"),
-		Insecure:   *insecure,
+		Server:     ev.server,
+		ApiKey:     ev.apiKey,
+		SocketPath: ev.socketPath,
+		Insecure:   fv.insecure,
 	}
 
+	if fv.explicit["server"] {
+		cfg.Server = fv.server
+	}
+	if fv.explicit["api-key"] {
+		cfg.ApiKey = fv.apiKey
+	}
+	if fv.explicit["socket"] {
+		cfg.SocketPath = fv.socketPath
+	}
+
+	if cfg.Server == "" {
+		cfg.Server = DefaultServer
+	}
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = defaultSocketPath()
 	}
 
-	// CLI flags override env vars
-	if *server != "" {
-		cfg.Server = *server
-	}
-	if *apiKey != "" {
-		cfg.ApiKey = *apiKey
-	}
-	if *socketPath != "" {
-		cfg.SocketPath = *socketPath
-	}
-
-	return cfg, *printEnv, nil
+	return cfg
 }
 
 func (c *Config) Validate() error {
-	if c.Server == "" {
-		return fmt.Errorf("server URL is required (use --server or SHELLWATCH_SERVER)")
-	}
 	if c.ApiKey == "" {
 		return fmt.Errorf("API key is required (use --api-key or SHELLWATCH_API_KEY)")
 	}

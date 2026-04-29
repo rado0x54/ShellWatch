@@ -3,8 +3,17 @@ package proxy
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestReadFrame(t *testing.T) {
@@ -80,6 +89,117 @@ func TestAgentFailureResponse(t *testing.T) {
 	}
 	if agentFailureResponse[4] != sshAgentFailure {
 		t.Fatalf("expected type %d, got %d", sshAgentFailure, agentFailureResponse[4])
+	}
+}
+
+func TestNextBackoff(t *testing.T) {
+	cur := dialInitialBackoff
+	// Doubling should eventually saturate at dialMaxBackoff.
+	for i := 0; i < 20; i++ {
+		next := nextBackoff(cur)
+		if next < cur && cur < dialMaxBackoff {
+			t.Errorf("backoff should not decrease before cap: cur=%v next=%v", cur, next)
+		}
+		if next > dialMaxBackoff {
+			t.Errorf("backoff exceeded cap: %v > %v", next, dialMaxBackoff)
+		}
+		cur = next
+	}
+	if cur != dialMaxBackoff {
+		t.Errorf("expected backoff to saturate at %v, got %v", dialMaxBackoff, cur)
+	}
+}
+
+func TestIsTransientDialErr(t *testing.T) {
+	dnsErr := &net.DNSError{Err: "no such host", Name: "missing.invalid"}
+	netErr := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+
+	tests := []struct {
+		name string
+		err  error
+		resp *http.Response
+		want bool
+	}{
+		{"nil error", nil, nil, false},
+		{"DNS error", dnsErr, nil, true},
+		{"network op error", netErr, nil, true},
+		{"unexpected EOF", io.ErrUnexpectedEOF, nil, true},
+		{"500", websocket.ErrBadHandshake, &http.Response{StatusCode: 500}, true},
+		{"503", websocket.ErrBadHandshake, &http.Response{StatusCode: 503}, true},
+		{"408", websocket.ErrBadHandshake, &http.Response{StatusCode: 408}, true},
+		{"429", websocket.ErrBadHandshake, &http.Response{StatusCode: 429}, true},
+		{"401", websocket.ErrBadHandshake, &http.Response{StatusCode: 401}, false},
+		{"403", websocket.ErrBadHandshake, &http.Response{StatusCode: 403}, false},
+		{"404", websocket.ErrBadHandshake, &http.Response{StatusCode: 404}, false},
+		{"plain error", errors.New("nope"), nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTransientDialErr(tt.err, tt.resp); got != tt.want {
+				t.Errorf("isTransientDialErr = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDialWithRetry_RecoversAfterTransientFailures wraps a real test server
+// that rejects the first two dials and accepts the third — verifies that
+// dialWithRetry retries and ultimately succeeds.
+func TestDialWithRetry_RecoversAfterTransientFailures(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			http.Error(w, "warming up", http.StatusServiceUnavailable)
+			return
+		}
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = c.Close()
+	}))
+	t.Cleanup(srv.Close)
+
+	u, _ := url.Parse(srv.URL)
+	u.Scheme = "ws"
+
+	// Tighten the budget so this test runs fast — the production dial timing
+	// would still complete, but we want to keep the test cheap.
+	ws, err := dialWithRetry(u.String(), "test-key", "test")
+	if err != nil {
+		t.Fatalf("dialWithRetry: %v", err)
+	}
+	defer ws.Close()
+	if got := calls.Load(); got < 3 {
+		t.Errorf("expected at least 3 dial attempts, got %d", got)
+	}
+}
+
+// TestDialWithRetry_DoesNotRetryOnAuthRejection ensures we fail fast on
+// non-transient errors (auth failure) instead of waiting through the budget.
+func TestDialWithRetry_DoesNotRetryOnAuthRejection(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	u, _ := url.Parse(srv.URL)
+	u.Scheme = "ws"
+
+	start := time.Now()
+	_, err := dialWithRetry(u.String(), "test-key", "test")
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("auth rejection should fail fast, took %v", elapsed)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("auth rejection should not retry, got %d attempt(s)", got)
 	}
 }
 
