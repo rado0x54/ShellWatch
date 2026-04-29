@@ -138,8 +138,30 @@ describe("passkey invite — HTTP integration", () => {
       url: `/api/passkey-invite/${invite.token}`,
     });
     expect(looked.statusCode).toBe(200);
-    const meta = looked.json() as { accountName: string | null };
+    const meta = looked.json() as { accountName: string | null; expiresAt: string };
     expect(meta.accountName).toBe("Test Account");
+    expect(typeof meta.expiresAt).toBe("string");
+  });
+
+  it("registration options use the account name as userName/userDisplayName", async () => {
+    const created = await testApp.app.inject({
+      method: "POST",
+      url: "/api/webauthn/invite",
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      payload: {},
+    });
+    const token = (created.json() as { invite: { token: string } }).invite.token;
+
+    const opts = await testApp.app.inject({
+      method: "POST",
+      url: "/api/passkey-invite/register/options",
+      headers: { "content-type": "application/json" },
+      payload: { token },
+    });
+    expect(opts.statusCode).toBe(200);
+    const body = opts.json() as { user: { name: string; displayName: string } };
+    expect(body.user.name).toBe("Test Account");
+    expect(body.user.displayName).toBe("Test Account");
   });
 
   it("creating a second invite supersedes the first — old token 404s", async () => {

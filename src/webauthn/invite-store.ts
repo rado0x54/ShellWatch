@@ -18,21 +18,12 @@ const TTL_MS = 5 * 60 * 1000;
 export interface InviteSlot {
   accountId: string;
   token: string;
-  /**
-   * Suggested label, set by the inviter. The credential is registered with
-   * the AAGUID-derived default; rename is left to device A (which has the
-   * session). Device B reads the fingerprint and doesn't get to influence
-   * the label — keeps an intercepted token from weaponising device A's
-   * confirm UI by setting a misleading name.
-   */
-  label: string;
   expiresAt: number;
   createdAt: number;
 }
 
 export interface CreateInviteParams {
   accountId: string;
-  label: string;
   /** Override TTL (used by tests). */
   ttlMs?: number;
 }
@@ -53,7 +44,6 @@ export function createInviteSlot(params: CreateInviteParams): InviteSlot {
   const slot: InviteSlot = {
     accountId: params.accountId,
     token: randomBytes(32).toString("base64url"),
-    label: params.label,
     expiresAt: now + (params.ttlMs ?? TTL_MS),
     createdAt: now,
   };

@@ -17,7 +17,6 @@ export interface WebAuthnCredential {
 }
 
 export interface PasskeyInvite {
-  label: string;
   expiresAt: string;
   createdAt: string;
   token: string;
@@ -115,7 +114,6 @@ export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite
 
 /** Fetch invite metadata for the public registration page. */
 export async function fetchInviteByToken(token: string): Promise<{
-  label: string;
   accountName: string | null;
   expiresAt: string;
 }> {

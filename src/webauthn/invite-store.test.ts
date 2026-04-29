@@ -15,22 +15,21 @@ describe("invite-store", () => {
   afterEach(() => _resetInviteStore());
 
   it("create returns a slot with a unique 43-char base64url token and 5min default TTL", () => {
-    const slot = createInviteSlot({ accountId: ACCT_A, label: "Phone" });
+    const slot = createInviteSlot({ accountId: ACCT_A });
     expect(slot.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(slot.expiresAt - slot.createdAt).toBe(5 * 60 * 1000);
     expect(slot.accountId).toBe(ACCT_A);
-    expect(slot.label).toBe("Phone");
   });
 
   it("findInviteForAccount returns the active slot, null when none", () => {
     expect(findInviteForAccount(ACCT_A)).toBeNull();
-    const slot = createInviteSlot({ accountId: ACCT_A, label: "Phone" });
+    const slot = createInviteSlot({ accountId: ACCT_A });
     expect(findInviteForAccount(ACCT_A)?.token).toBe(slot.token);
   });
 
   it("creating a second invite for the same account supersedes the first", () => {
-    const a = createInviteSlot({ accountId: ACCT_A, label: "Phone" });
-    const b = createInviteSlot({ accountId: ACCT_A, label: "Tablet" });
+    const a = createInviteSlot({ accountId: ACCT_A });
+    const b = createInviteSlot({ accountId: ACCT_A });
     expect(a.token).not.toBe(b.token);
     expect(findInviteForAccount(ACCT_A)?.token).toBe(b.token);
     // The old token is no longer recognised — superseding is real, not just
@@ -40,16 +39,15 @@ describe("invite-store", () => {
   });
 
   it("slots are isolated per account", () => {
-    createInviteSlot({ accountId: ACCT_A, label: "A" });
-    const b = createInviteSlot({ accountId: ACCT_B, label: "B" });
-    expect(findInviteForAccount(ACCT_A)?.label).toBe("A");
-    expect(findInviteForAccount(ACCT_B)?.label).toBe("B");
+    const a = createInviteSlot({ accountId: ACCT_A });
+    const b = createInviteSlot({ accountId: ACCT_B });
+    expect(findInviteForAccount(ACCT_A)?.token).toBe(a.token);
+    expect(findInviteForAccount(ACCT_B)?.token).toBe(b.token);
     expect(findInviteByToken(b.token)?.accountId).toBe(ACCT_B);
   });
 
   it("expired slots are dropped on read", () => {
-    const slot = createInviteSlot({ accountId: ACCT_A, label: "Phone", ttlMs: 1 });
-    // Wait past the expiry — TTL is in ms so a microtask + small sleep is enough.
+    const slot = createInviteSlot({ accountId: ACCT_A, ttlMs: 1 });
     return new Promise<void>((resolve) => {
       setTimeout(() => {
         expect(findInviteForAccount(ACCT_A)).toBeNull();
@@ -60,7 +58,7 @@ describe("invite-store", () => {
   });
 
   it("consumeInviteSlot removes the slot and returns it once", () => {
-    const slot = createInviteSlot({ accountId: ACCT_A, label: "Phone" });
+    const slot = createInviteSlot({ accountId: ACCT_A });
     const consumed = consumeInviteSlot(ACCT_A);
     expect(consumed?.token).toBe(slot.token);
     expect(consumeInviteSlot(ACCT_A)).toBeNull();

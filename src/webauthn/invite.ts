@@ -27,7 +27,6 @@ export interface PasskeyInviteRoutesParams {
 /** Shape returned to UI / invite-link consumer. */
 function publicInviteShape(slot: InviteSlot) {
   return {
-    label: slot.label,
     expiresAt: new Date(slot.expiresAt).toISOString(),
     createdAt: new Date(slot.createdAt).toISOString(),
     token: slot.token,
@@ -38,7 +37,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   const { app, db, rpId, trustedOrigins, rateLimitConfig } = params;
 
   // --- Authenticated: create or supersede the invite slot for the account ---
-  app.post<{ Body: { label?: string } }>(
+  app.post(
     "/api/webauthn/invite",
     {
       config: {
@@ -48,13 +47,8 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         },
       },
     },
-    async (request, reply) => {
-      const label = request.body?.label?.trim() || "Invited passkey";
-      if (label.length > 64) {
-        reply.status(400);
-        return { error: "Label must be 64 characters or less" };
-      }
-      const slot = createInviteSlot({ accountId: request.accountId, label });
+    async (request) => {
+      const slot = createInviteSlot({ accountId: request.accountId });
       request.log.info(
         { event: "passkey_invite.created", accountId: request.accountId },
         "passkey invite created",
@@ -142,7 +136,6 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         .where(eq(accounts.id, slot.accountId))
         .get();
       return {
-        label: slot.label,
         accountName: acct?.name ?? null,
         expiresAt: new Date(slot.expiresAt).toISOString(),
       };
@@ -188,12 +181,22 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         )
         .all();
 
-      const userName = slot.label.slice(0, 64);
+      // Use the account name for both userName and userDisplayName so the
+      // entry the authenticator stores matches what the in-account flow
+      // produces — both are written into the user's authenticator (e.g.
+      // iCloud Keychain) and become the human-readable identifier there.
+      const acct = db
+        .select({ name: accounts.name })
+        .from(accounts)
+        .where(eq(accounts.id, slot.accountId))
+        .get();
+      const accountName = acct?.name ?? "ShellWatch user";
+      const userName = accountName.slice(0, 64);
       const options = await generateRegistrationOptions({
         rpName: "ShellWatch",
         rpID: rpId,
         userName,
-        userDisplayName: slot.label,
+        userDisplayName: accountName,
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",
