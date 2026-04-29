@@ -3,6 +3,8 @@
 package proxy
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -319,8 +321,8 @@ func nextBackoff(cur time.Duration) time.Duration {
 }
 
 // isTransientDialErr returns true when the dial failure looks worth
-// retrying — network blips, DNS hiccups, server restarts. Auth failures
-// and protocol errors are not retried.
+// retrying — network blips, DNS hiccups, server restarts. Auth failures,
+// TLS/cert validation failures, and protocol errors are not retried.
 func isTransientDialErr(err error, resp *http.Response) bool {
 	if err == nil {
 		return false
@@ -334,14 +336,31 @@ func isTransientDialErr(err error, resp *http.Response) bool {
 		// Other 4xx (e.g., 401/403/404) are not transient.
 		return false
 	}
+	// TLS / certificate validation failures will never succeed with the same
+	// config — don't burn the retry budget on them. Check before the generic
+	// net.Error arm because *tls.CertificateVerificationError is wrapped in
+	// *net.OpError, which implements net.Error.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return false
+	}
+	var unknownAuthErr x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return false
+	}
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return false
+	}
+	var certInvalidErr x509.CertificateInvalidError
+	if errors.As(err, &certInvalidErr) {
+		return false
+	}
 	// Network-layer errors (connection refused, no route to host, DNS, EOF)
-	// are typically *net.OpError / *net.DNSError / *url.Error wrapping these.
+	// are typically *net.OpError / *url.Error wrapping these. *net.DNSError
+	// also implements net.Error, so it's caught by this arm.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return true
-	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
 		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {

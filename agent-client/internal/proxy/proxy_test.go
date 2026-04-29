@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -114,6 +116,14 @@ func TestIsTransientDialErr(t *testing.T) {
 	dnsErr := &net.DNSError{Err: "no such host", Name: "missing.invalid"}
 	netErr := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 
+	// TLS / x509 errors as the dialer would surface them: wrapped in *net.OpError
+	// (which itself implements net.Error). Without explicit cert-error handling
+	// these would be classified transient and burn the retry budget.
+	wrappedCertVerifyErr := &net.OpError{Op: "remote error", Err: &tls.CertificateVerificationError{Err: errors.New("bad cert")}}
+	wrappedUnknownAuthErr := &net.OpError{Op: "remote error", Err: x509.UnknownAuthorityError{}}
+	wrappedHostnameErr := &net.OpError{Op: "remote error", Err: x509.HostnameError{Host: "wrong.example.com"}}
+	wrappedCertInvalidErr := &net.OpError{Op: "remote error", Err: x509.CertificateInvalidError{Reason: x509.Expired}}
+
 	tests := []struct {
 		name string
 		err  error
@@ -131,6 +141,10 @@ func TestIsTransientDialErr(t *testing.T) {
 		{"401", websocket.ErrBadHandshake, &http.Response{StatusCode: 401}, false},
 		{"403", websocket.ErrBadHandshake, &http.Response{StatusCode: 403}, false},
 		{"404", websocket.ErrBadHandshake, &http.Response{StatusCode: 404}, false},
+		{"TLS cert verify error (wrapped)", wrappedCertVerifyErr, nil, false},
+		{"x509 unknown authority (wrapped)", wrappedUnknownAuthErr, nil, false},
+		{"x509 hostname mismatch (wrapped)", wrappedHostnameErr, nil, false},
+		{"x509 certificate invalid (wrapped)", wrappedCertInvalidErr, nil, false},
 		{"plain error", errors.New("nope"), nil, false},
 	}
 
