@@ -22,39 +22,69 @@
   let registering = $state(false);
   let inviting = $state(false);
   let showAddModal = $state(false);
-  // The active invite for this account (if any). Re-fetched whenever the
-  // user opens the Add-Passkey modal so we either drop them straight on the
-  // link-display view (existing slot) or the picker (no slot).
+  // Single source of truth for the active invite slot for this account. Used
+  // both for the on-page indicator (with live countdown) and as the prefilled
+  // value when the user opens the Add-Passkey modal.
+  let activeInvite = $state<PasskeyInvite | null>(null);
   let modalCreatedInvite = $state<PasskeyInvite | null>(null);
   let confirmingId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
   let editLabel = $state("");
+  // Ticks every second while an invite is active; drives the m:ss countdown
+  // on both the on-page pill and the modal copy. Re-derived on each tick.
+  let now = $state(Date.now());
 
-  onMount(() => {
+  onMount(async () => {
     fetchCredentials();
     fetchSshKeys();
+    try {
+      activeInvite = await fetchActiveInvite();
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  });
+
+  // Run a 1Hz interval only while there's an active invite to count down.
+  $effect(() => {
+    if (!activeInvite) return;
+    const id = setInterval(() => {
+      now = Date.now();
+    }, 1000);
+    return () => clearInterval(id);
+  });
+
+  const inviteRemainingMs = $derived(activeInvite ? Date.parse(activeInvite.expiresAt) - now : 0);
+  const inviteRemainingDisplay = $derived(formatRemaining(inviteRemainingMs));
+
+  // Drop the invite from local state the instant it expires so the indicator
+  // disappears without needing a server roundtrip. Server-side the slot has
+  // already been swept by the same expiry deadline.
+  $effect(() => {
+    if (activeInvite && inviteRemainingMs <= 0) {
+      activeInvite = null;
+      if (modalCreatedInvite) modalCreatedInvite = null;
+    }
   });
 
   function inviteUrl(token: string): string {
     return `${window.location.origin}/passkey-invite/${encodeURIComponent(token)}`;
   }
 
-  async function openAddModal() {
+  function openAddModal() {
+    // Use the locally-cached invite so opening the modal is instant. The
+    // mount-time fetch already populated it; subsequent supersedes update it
+    // in handleInvite.
+    modalCreatedInvite = activeInvite;
     showAddModal = true;
-    // Surface a still-valid invite slot (within its 5-minute window) so the
-    // user can re-copy the link. A 404 just means no slot; both states drop
-    // into the modal cleanly.
-    try {
-      modalCreatedInvite = await fetchActiveInvite();
-    } catch (err) {
-      toastError(errorMessage(err));
-    }
   }
 
   async function handleInvite() {
     inviting = true;
     try {
-      modalCreatedInvite = await createPasskeyInvite();
+      const inv = await createPasskeyInvite();
+      activeInvite = inv;
+      modalCreatedInvite = inv;
+      now = Date.now();
     } catch (err) {
       toastError(`Could not create invite: ${errorMessage(err)}`);
     }
@@ -64,6 +94,14 @@
   function closeAddModal() {
     showAddModal = false;
     modalCreatedInvite = null;
+  }
+
+  function formatRemaining(ms: number): string {
+    if (ms <= 0) return "0:00";
+    const totalSec = Math.ceil(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
 
   async function handleConfirm(id: string) {
@@ -83,15 +121,6 @@
       toastError(`Could not confirm: ${errorMessage(err)}`);
     }
     confirmingId = null;
-  }
-
-  function formatExpiry(iso: string): string {
-    const ms = Date.parse(iso) - Date.now();
-    if (ms <= 0) return "expired";
-    const mins = Math.round(ms / 60_000);
-    if (mins < 60) return `${mins}m`;
-    const hours = Math.round(mins / 60);
-    return `${hours}h`;
   }
 
   function sanitizeSegment(s: string): string {
@@ -292,14 +321,21 @@
 
   <div class="register-section">
     <button class="btn btn-primary" onclick={openAddModal}>Add passkey</button>
+    {#if activeInvite}
+      <button class="invite-pill" type="button" onclick={openAddModal} title="Open invite link">
+        <span class="invite-pill-dot" aria-hidden="true"></span>
+        <span class="invite-pill-text">Invite link active</span>
+        <span class="invite-pill-timer">{inviteRemainingDisplay}</span>
+      </button>
+    {/if}
   </div>
 
   {#if showAddModal}
     <Modal title={modalCreatedInvite ? "Invite link" : "Add a passkey"} onClose={closeAddModal}>
       {#if modalCreatedInvite}
         <p class="modal-desc">
-          Single-use · expires in {formatExpiry(modalCreatedInvite.expiresAt)}. Open this link on
-          the device you want to enroll. It can only complete registration once. After the device
+          Single-use · expires in <strong>{inviteRemainingDisplay}</strong>. Open this link on the
+          device you want to enroll. It can only complete registration once. After the device
           registers, come back here and click <strong>Confirm</strong> on the new passkey.
         </p>
         <div class="invite-link-row">
@@ -455,6 +491,69 @@
 
   .register-section {
     margin-top: var(--space-5);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  /* Live indicator that an invite slot is currently held. Pill is clickable
+     and re-opens the Add-Passkey modal in the link-display state. */
+  .invite-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--on-surface);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .invite-pill:hover {
+    border-color: var(--primary);
+  }
+
+  .invite-pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 0 0 currentColor;
+    animation: invite-pulse 1.6s ease-out infinite;
+  }
+
+  .invite-pill-text {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.65rem;
+    font-weight: 600;
+  }
+
+  .invite-pill-timer {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--on-surface);
+  }
+
+  @keyframes invite-pulse {
+    0% {
+      box-shadow: 0 0 0 0 var(--primary);
+      opacity: 1;
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+      opacity: 0.6;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+      opacity: 1;
+    }
   }
 
   .modal-desc {

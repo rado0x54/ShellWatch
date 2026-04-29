@@ -14,8 +14,28 @@
   let assignedFingerprint = $state<string | null>(null);
   let expiresAt = $state("");
   let error = $state("");
+  // Ticks every second while the page is in the "ready" state — drives the
+  // live m:ss countdown and flips to "unavailable" the instant the slot
+  // expires (even if the user just sat on the page).
+  let now = $state(Date.now());
 
   const token = $derived(page.params.token ?? "");
+
+  $effect(() => {
+    if (local !== "ready") return;
+    const id = setInterval(() => {
+      now = Date.now();
+    }, 1000);
+    return () => clearInterval(id);
+  });
+
+  const remainingMs = $derived(expiresAt ? Date.parse(expiresAt) - now : 0);
+
+  $effect(() => {
+    if (local === "ready" && remainingMs <= 0) {
+      local = "unavailable";
+    }
+  });
 
   onMount(async () => {
     if (!token) {
@@ -55,13 +75,12 @@
     }
   }
 
-  function formatTimeLeft(iso: string): string {
-    const ms = Date.parse(iso) - Date.now();
-    if (ms <= 0) return "expired";
-    const mins = Math.round(ms / 60_000);
-    if (mins < 60) return `${mins} minutes`;
-    const hours = Math.round(mins / 60);
-    return `${hours} hours`;
+  function formatRemaining(ms: number): string {
+    if (ms <= 0) return "0:00";
+    const totalSec = Math.ceil(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
 </script>
 
@@ -76,7 +95,9 @@
         You've been invited to enroll a new passkey on this device. Once you register here, the
         device that issued this invite will need to confirm it before the passkey becomes usable.
       </p>
-      <p class="meta">Expires in {formatTimeLeft(expiresAt)}</p>
+      <p class="meta">
+        Expires in <span class="timer">{formatRemaining(remainingMs)}</span>
+      </p>
       <label class="field">
         <span class="field-label">Name this passkey</span>
         <input
@@ -158,6 +179,13 @@
     font-size: 0.78rem;
     color: var(--text-muted);
     margin-bottom: 1rem;
+  }
+
+  .timer {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--on-surface);
+    font-weight: 600;
   }
 
   .status {
