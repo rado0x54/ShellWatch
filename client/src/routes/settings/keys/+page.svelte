@@ -70,15 +70,31 @@
     return `${window.location.origin}/passkey-invite/${encodeURIComponent(token)}`;
   }
 
+  /**
+   * Open the modal on the picker view so "This device" stays reachable even
+   * when an invite is already active. Use `openInviteModal` to jump straight
+   * to the link-display view (the indicator pill takes that path).
+   */
   function openAddModal() {
-    // Use the locally-cached invite so opening the modal is instant. The
-    // mount-time fetch already populated it; subsequent supersedes update it
-    // in handleInvite.
+    modalCreatedInvite = null;
+    showAddModal = true;
+  }
+
+  function openInviteModal() {
     modalCreatedInvite = activeInvite;
     showAddModal = true;
   }
 
+  /**
+   * "Another device" action. If a slot is still held we show the existing
+   * link rather than supersede it — the user expressed intent to send a
+   * link, not to invalidate the one they handed out 30 seconds ago.
+   */
   async function handleInvite() {
+    if (activeInvite) {
+      modalCreatedInvite = activeInvite;
+      return;
+    }
     inviting = true;
     try {
       const inv = await createPasskeyInvite();
@@ -322,7 +338,7 @@
   <div class="register-section">
     <button class="btn btn-primary" onclick={openAddModal}>Add passkey</button>
     {#if activeInvite}
-      <button class="invite-pill" type="button" onclick={openAddModal} title="Open invite link">
+      <button class="invite-pill" type="button" onclick={openInviteModal} title="Show invite link">
         <span class="invite-pill-dot" aria-hidden="true"></span>
         <span class="invite-pill-text">Invite link active</span>
         <span class="invite-pill-timer">{inviteRemainingDisplay}</span>
@@ -370,7 +386,12 @@
         </button>
 
         <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
-          <span class="add-option-title">Another device</span>
+          <span class="add-option-title">
+            Another device
+            {#if activeInvite}
+              <span class="add-option-tag">Active · {inviteRemainingDisplay}</span>
+            {/if}
+          </span>
           <span class="add-option-body">
             Generate a single-use link (valid for 5 minutes) to open on the other device. That
             device completes the WebAuthn ceremony, then the new passkey sits in
@@ -378,9 +399,15 @@
             — it cannot log in, sign anything, or be copied as an SSH key until you come back here and
             click <strong>Confirm</strong>.
           </span>
-          <span class="add-option-cta"
-            >{inviting ? "Creating invite…" : "Create invite link →"}</span
-          >
+          <span class="add-option-cta">
+            {#if inviting}
+              Creating invite…
+            {:else if activeInvite}
+              Show invite link →
+            {:else}
+              Create invite link →
+            {/if}
+          </span>
         </button>
       {/if}
 
@@ -602,6 +629,22 @@
     font-size: 0.8rem;
     color: var(--text-muted);
     line-height: 1.5;
+  }
+
+  .add-option-tag {
+    display: inline-block;
+    margin-left: var(--space-2);
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    vertical-align: middle;
   }
 
   .add-option-cta {
