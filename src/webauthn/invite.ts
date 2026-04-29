@@ -197,11 +197,18 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
 
       // ExcludeCredentials scoped to the inviting account, same as the
       // authenticated registration flow — prevents duplicate enrollment of an
-      // authenticator that's already on the account.
+      // authenticator that's already on the account. Revoked rows are NOT
+      // excluded so the user can re-enroll an authenticator they previously
+      // revoked.
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.accountId, slot.accountId))
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, slot.accountId),
+            eq(webauthnCredentials.revoked, false),
+          ),
+        )
         .all();
 
       const userName = slot.label.slice(0, 64);
