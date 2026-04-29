@@ -1,18 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import {
-    fetchInviteByToken,
-    registerWithInviteToken,
-    type PasskeyInviteStatus,
-  } from "$lib/stores/webauthn.js";
+  import { fetchInviteByToken, registerWithInviteToken } from "$lib/stores/webauthn.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
 
   type LocalState = "loading" | "ready" | "registering" | "done" | "unavailable" | "error";
 
   let local = $state<LocalState>("loading");
-  let status = $state<PasskeyInviteStatus | null>(null);
   let suggestedLabel = $state("");
   let labelInput = $state("");
   let assignedLabel = $state("");
@@ -29,19 +24,16 @@
       return;
     }
     try {
+      // Server returns the slot only when it's still active; expired or
+      // already-consumed slots come back as 404 from the in-memory store and
+      // surface here as a thrown error.
       const info = await fetchInviteByToken(token);
-      status = info.status;
       suggestedLabel = info.label;
       labelInput = info.label;
       expiresAt = info.expiresAt;
-      if (info.status === "pending") {
-        local = "ready";
-      } else {
-        local = "unavailable";
-      }
-    } catch (err) {
-      local = "error";
-      error = errorMessage(err);
+      local = "ready";
+    } catch {
+      local = "unavailable";
     }
   });
 
@@ -119,7 +111,7 @@
       {/if}
     {:else if local === "unavailable"}
       <p class="description">
-        This invite is <strong>{status}</strong>. Ask the inviter to issue a new one.
+        This invite has expired or already been used. Ask the inviter to issue a new one.
       </p>
     {:else}
       <p class="error">{error || "Could not load this invite"}</p>

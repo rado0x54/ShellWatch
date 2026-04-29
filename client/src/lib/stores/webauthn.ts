@@ -16,23 +16,14 @@ export interface WebAuthnCredential {
   lastUsedAt: string | null;
 }
 
-export type PasskeyInviteStatus = "pending" | "registered" | "expired" | "revoked";
-
 export interface PasskeyInvite {
-  id: string;
   label: string;
   expiresAt: string;
   createdAt: string;
-  consumedAt: string | null;
-  revokedAt: string | null;
-  credentialId: string | null;
-  status: PasskeyInviteStatus;
-  /** Only present in the response of POST /api/webauthn/invites; never on list. */
-  token?: string;
+  token: string;
 }
 
 export const credentials = writable<WebAuthnCredential[]>([]);
-export const passkeyInvites = writable<PasskeyInvite[]>([]);
 
 export async function fetchCredentials(): Promise<void> {
   const res = await fetch("/api/webauthn/credentials");
@@ -90,21 +81,26 @@ export async function confirmPasskey(credentialId: string): Promise<void> {
   await fetchCredentials();
 }
 
-// --- Passkey invites ---
+// --- Passkey invite (single in-memory slot per account, 5min TTL) ---
 
-export async function fetchPasskeyInvites(): Promise<void> {
-  const res = await fetch("/api/webauthn/invites");
+/**
+ * Fetch the account's currently active invite (if any). Returns null when
+ * the slot is empty — that's a 404 from the server, not an error.
+ */
+export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
+  const res = await fetch("/api/webauthn/invite");
+  if (res.status === 404) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to fetch invites");
+    throw new Error(err.error || "Failed to fetch invite");
   }
   const data = await res.json();
-  passkeyInvites.set(data.invites);
+  return data.invite as PasskeyInvite;
 }
 
-/** Create a new invite. Returns the full invite including the one-time token. */
+/** Create or supersede the active invite for the account. */
 export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
-  const res = await fetch("/api/webauthn/invites", {
+  const res = await fetch("/api/webauthn/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -114,22 +110,11 @@ export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite
     throw new Error(err.error || "Failed to create invite");
   }
   const data = await res.json();
-  await fetchPasskeyInvites();
   return data.invite as PasskeyInvite;
-}
-
-export async function revokePasskeyInvite(id: string): Promise<void> {
-  const res = await fetch(`/api/webauthn/invites/${id}/revoke`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to revoke invite");
-  }
-  await Promise.all([fetchPasskeyInvites(), fetchCredentials()]);
 }
 
 /** Fetch invite metadata for the public registration page. */
 export async function fetchInviteByToken(token: string): Promise<{
-  status: PasskeyInviteStatus;
   label: string;
   expiresAt: string;
 }> {

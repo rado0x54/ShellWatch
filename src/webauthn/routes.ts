@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
-import { DrizzlePasskeyInviteRepository } from "../db/repositories/passkey-invite-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { Config } from "../config/index.js";
 import { registerCredentialRoutes } from "./credentials.js";
@@ -52,7 +51,6 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
   registerPasskeyInviteRoutes({
     app,
     db,
-    inviteRepo: new DrizzlePasskeyInviteRepository(db),
     rpId,
     trustedOrigins,
     rateLimitConfig,

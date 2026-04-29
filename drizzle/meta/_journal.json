@@ -36,6 +36,13 @@
       "when": 1777462892605,
       "tag": "0004_passkey_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1777479870748,
+      "tag": "0005_drop_passkey_invites",
+      "breakpoints": true
     }
   ]
 }

@@ -8,11 +8,9 @@
     confirmPasskey,
     createPasskeyInvite,
     credentials,
+    fetchActiveInvite,
     fetchCredentials,
-    fetchPasskeyInvites,
-    passkeyInvites,
     renamePasskey,
-    revokePasskeyInvite,
     startPasskeyRegistration,
     type PasskeyInvite,
   } from "$lib/stores/webauthn.js";
@@ -24,10 +22,9 @@
   let registering = $state(false);
   let inviting = $state(false);
   let showAddModal = $state(false);
-  // Set after a successful Invite creation; switches the modal from the
-  // pick-flow view to the link-display view. The list endpoint always returns
-  // the token while the invite is `pending`, so the link is recoverable from
-  // the Pending Invites section even after the modal closes.
+  // The active invite for this account (if any). Re-fetched whenever the
+  // user opens the Add-Passkey modal so we either drop them straight on the
+  // link-display view (existing slot) or the picker (no slot).
   let modalCreatedInvite = $state<PasskeyInvite | null>(null);
   let confirmingId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
@@ -36,20 +33,28 @@
   onMount(() => {
     fetchCredentials();
     fetchSshKeys();
-    fetchPasskeyInvites().catch((err) => toastError(errorMessage(err)));
   });
 
   function inviteUrl(token: string): string {
     return `${window.location.origin}/passkey-invite/${encodeURIComponent(token)}`;
   }
 
+  async function openAddModal() {
+    showAddModal = true;
+    // Surface a still-valid invite slot (within its 5-minute window) so the
+    // user can re-copy the link. A 404 just means no slot; both states drop
+    // into the modal cleanly.
+    try {
+      modalCreatedInvite = await fetchActiveInvite();
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  }
+
   async function handleInvite() {
     inviting = true;
     try {
-      const invite = await createPasskeyInvite();
-      // Stay in the modal: switch to the link-display view so the user can
-      // copy the URL right where they triggered the action.
-      modalCreatedInvite = invite;
+      modalCreatedInvite = await createPasskeyInvite();
     } catch (err) {
       toastError(`Could not create invite: ${errorMessage(err)}`);
     }
@@ -59,21 +64,6 @@
   function closeAddModal() {
     showAddModal = false;
     modalCreatedInvite = null;
-  }
-
-  async function handleRevokeInvite(id: string) {
-    if (
-      !confirm(
-        "Revoke this invite? Any registered-but-unconfirmed passkey from it will also be revoked.",
-      )
-    )
-      return;
-    try {
-      await revokePasskeyInvite(id);
-      if (modalCreatedInvite?.id === id) closeAddModal();
-    } catch (err) {
-      toastError(errorMessage(err));
-    }
   }
 
   async function handleConfirm(id: string) {
@@ -89,7 +79,6 @@
     confirmingId = id;
     try {
       await confirmPasskey(id);
-      await fetchPasskeyInvites();
     } catch (err) {
       toastError(`Could not confirm: ${errorMessage(err)}`);
     }
@@ -104,10 +93,6 @@
     const hours = Math.round(mins / 60);
     return `${hours}h`;
   }
-
-  const pendingInvites = $derived(
-    $passkeyInvites.filter((i) => i.status === "pending" || i.status === "registered"),
-  );
 
   function sanitizeSegment(s: string): string {
     return s
@@ -306,12 +291,12 @@
   </SettingsList>
 
   <div class="register-section">
-    <button class="btn btn-primary" onclick={() => (showAddModal = true)}>Add passkey</button>
+    <button class="btn btn-primary" onclick={openAddModal}>Add passkey</button>
   </div>
 
   {#if showAddModal}
-    <Modal title={modalCreatedInvite ? "Invite created" : "Add a passkey"} onClose={closeAddModal}>
-      {#if modalCreatedInvite?.token}
+    <Modal title={modalCreatedInvite ? "Invite link" : "Add a passkey"} onClose={closeAddModal}>
+      {#if modalCreatedInvite}
         <p class="modal-desc">
           Single-use · expires in {formatExpiry(modalCreatedInvite.expiresAt)}. Open this link on
           the device you want to enroll. It can only complete registration once. After the device
@@ -323,13 +308,13 @@
             class="btn btn-secondary"
             type="button"
             onclick={(e) =>
-              copyKey(inviteUrl(modalCreatedInvite!.token!), e.currentTarget as HTMLButtonElement)}
+              copyKey(inviteUrl(modalCreatedInvite!.token), e.currentTarget as HTMLButtonElement)}
             >Copy</button
           >
         </div>
         <p class="modal-hint">
-          You can re-copy this link anytime from <strong>Pending invites</strong> below until it expires,
-          is consumed, or is revoked.
+          Lost the link? Re-open this dialog while the invite is still valid and it'll be here.
+          After it expires (or someone uses it), the slot is empty and you can issue a new one.
         </p>
       {:else}
         <p class="modal-desc">
@@ -351,8 +336,8 @@
         <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
           <span class="add-option-title">Another device</span>
           <span class="add-option-body">
-            Generate a single-use link (valid for 1 hour) to open on the other device. That device
-            completes the WebAuthn ceremony, then the new passkey sits in
+            Generate a single-use link (valid for 5 minutes) to open on the other device. That
+            device completes the WebAuthn ceremony, then the new passkey sits in
             <em>pending confirmation</em>
             — it cannot log in, sign anything, or be copied as an SSH key until you come back here and
             click <strong>Confirm</strong>.
@@ -369,45 +354,6 @@
         >
       {/snippet}
     </Modal>
-  {/if}
-
-  {#if pendingInvites.length > 0}
-    <h3 class="subhead">Pending invites</h3>
-    <SettingsList>
-      {#each pendingInvites as inv (inv.id)}
-        <SettingsRow>
-          {#snippet primary()}
-            <span class="row-label">{inv.label}</span>
-            {#if inv.status === "registered"}
-              <span class="badge badge-pending">awaiting confirmation</span>
-            {:else}
-              <span class="badge badge-pending">link issued</span>
-            {/if}
-          {/snippet}
-          {#snippet secondary()}
-            {#if inv.status === "pending"}
-              <span>expires in {formatExpiry(inv.expiresAt)}</span>
-            {:else if inv.status === "registered"}
-              <span>passkey registered, confirm above</span>
-            {/if}
-          {/snippet}
-          {#snippet actions()}
-            {#if inv.token}
-              <button
-                class="btn btn-secondary"
-                title="Copy invite link"
-                onclick={(e) =>
-                  copyKey(inviteUrl(inv.token!), e.currentTarget as HTMLButtonElement)}
-                >Copy link</button
-              >
-            {/if}
-            <button class="btn btn-secondary" onclick={() => handleRevokeInvite(inv.id)}
-              >Revoke</button
-            >
-          {/snippet}
-        </SettingsRow>
-      {/each}
-    </SettingsList>
   {/if}
 
   {#if hasAuthorizedKeys}
@@ -565,15 +511,6 @@
     font-size: 0.78rem;
     font-weight: 600;
     color: var(--primary);
-  }
-
-  .subhead {
-    font-size: 0.7rem;
-    font-weight: 600;
-    margin: var(--space-5) 0 var(--space-2);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .invite-link-row {

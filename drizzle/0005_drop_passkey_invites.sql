@@ -1,0 +1,1 @@
+DROP TABLE `passkey_invites`;

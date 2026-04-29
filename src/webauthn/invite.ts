@@ -2,24 +2,34 @@ import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
-import {
-  CREDENTIAL_STATE,
-  inviteStatus,
-  type PasskeyInviteInfo,
-  type PasskeyInviteRepository,
-} from "../db/repositories/index.js";
-import { passkeyInvites, webauthnCredentials } from "../db/schema.js";
+import { CREDENTIAL_STATE } from "../db/repositories/index.js";
+import { webauthnCredentials } from "../db/schema.js";
 import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { sha256Fingerprint } from "./fingerprint.js";
+import {
+  consumeInviteSlot,
+  createInviteSlot,
+  findInviteByToken,
+  findInviteForAccount,
+  type InviteSlot,
+} from "./invite-store.js";
 import type { RateLimitConfig } from "./routes.js";
 import { buildPublicKeyBlob, toSkPublicKeyBlob } from "./ssh-key-format.js";
+
+export interface PasskeyInviteRoutesParams {
+  app: FastifyInstance;
+  db: ShellWatchDB;
+  rpId: string;
+  trustedOrigins: string[];
+  rateLimitConfig: RateLimitConfig;
+}
 
 /**
  * Returns the SHA256 fingerprint string the credentials list also displays,
  * computed the same way (see credentials.ts). Returned to device B after
- * registration so the user can eyeball-compare it against the fingerprint that
- * shows up on device A's confirm screen — defends against an intercepted
+ * registration so the user can eyeball-compare it against the fingerprint
+ * that shows up on device A's confirm screen — defends against an intercepted
  * invite link silently enrolling an attacker's authenticator.
  */
 function fingerprintFromOpenSsh(authorizedKeysEntry: string | null): string | null {
@@ -29,49 +39,22 @@ function fingerprintFromOpenSsh(authorizedKeysEntry: string | null): string | nu
   );
 }
 
-export interface PasskeyInviteRoutesParams {
-  app: FastifyInstance;
-  db: ShellWatchDB;
-  inviteRepo: PasskeyInviteRepository;
-  rpId: string;
-  trustedOrigins: string[];
-  rateLimitConfig: RateLimitConfig;
-}
-
-/**
- * Shape returned to UI / invite link consumer. The token is included while the
- * invite is still `pending` (so the inviter can re-copy the link from the
- * settings list at any time) and stripped once the invite reaches a terminal
- * state — at that point the token is useless and there's no reason to keep
- * surfacing it.
- *
- * `credentialLabel` is the label of the credential row produced by this invite
- * (if any). Once a device-B registration completes, the credential's label is
- * the one the user actually picked, while the invite row still carries the
- * inviter's placeholder — surface the credential label so the UI doesn't
- * disagree with the Passkeys list.
- */
-function publicInviteShape(invite: PasskeyInviteInfo, credentialLabel?: string | null) {
-  const status = inviteStatus(invite);
+/** Shape returned to UI / invite-link consumer. */
+function publicInviteShape(slot: InviteSlot) {
   return {
-    id: invite.id,
-    label: credentialLabel ?? invite.label,
-    expiresAt: invite.expiresAt,
-    createdAt: invite.createdAt,
-    consumedAt: invite.consumedAt,
-    revokedAt: invite.revokedAt,
-    credentialId: invite.credentialId,
-    status,
-    ...(status === "pending" ? { token: invite.token } : {}),
+    label: slot.label,
+    expiresAt: new Date(slot.expiresAt).toISOString(),
+    createdAt: new Date(slot.createdAt).toISOString(),
+    token: slot.token,
   };
 }
 
 export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
-  const { app, db, inviteRepo, rpId, trustedOrigins, rateLimitConfig } = params;
+  const { app, db, rpId, trustedOrigins, rateLimitConfig } = params;
 
-  // --- Authenticated: create invite ---
+  // --- Authenticated: create or supersede the invite slot for the account ---
   app.post<{ Body: { label?: string } }>(
-    "/api/webauthn/invites",
+    "/api/webauthn/invite",
     {
       config: {
         rateLimit: {
@@ -86,83 +69,24 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         reply.status(400);
         return { error: "Label must be 64 characters or less" };
       }
-      const invite = inviteRepo.create({ accountId: request.accountId, label });
+      const slot = createInviteSlot({ accountId: request.accountId, label });
       request.log.info(
-        { event: "passkey_invite.created", inviteId: invite.id, accountId: request.accountId },
+        { event: "passkey_invite.created", accountId: request.accountId },
         "passkey invite created",
       );
-      return { invite: publicInviteShape(invite) };
+      return { invite: publicInviteShape(slot) };
     },
   );
 
-  // --- Authenticated: list invites for account ---
-  app.get("/api/webauthn/invites", async (request) => {
-    // Left-join the credential row produced by the invite (if any). Drives
-    // two UI consistency rules:
-    //   1. Once the credential is `active`, the invite has served its purpose
-    //      and is hidden from the list — the user expects the row to vanish
-    //      the moment the new passkey shows up under Passkeys.
-    //   2. While the credential exists in `pending_confirmation`, the user
-    //      sees the credential's actual label (chosen on device B) rather
-    //      than the inviter's placeholder.
-    const rows = db
-      .select({
-        invite: passkeyInvites,
-        credentialState: webauthnCredentials.state,
-        credentialLabel: webauthnCredentials.label,
-      })
-      .from(passkeyInvites)
-      .leftJoin(webauthnCredentials, eq(passkeyInvites.credentialId, webauthnCredentials.id))
-      .where(eq(passkeyInvites.accountId, request.accountId))
-      .all();
-    return {
-      invites: rows
-        .filter((r) => r.credentialState !== CREDENTIAL_STATE.active)
-        .map((r) => publicInviteShape(r.invite, r.credentialLabel)),
-    };
+  // --- Authenticated: read the active invite slot, if any ---
+  app.get("/api/webauthn/invite", async (request, reply) => {
+    const slot = findInviteForAccount(request.accountId);
+    if (!slot) {
+      reply.status(404);
+      return { error: "No active invite" };
+    }
+    return { invite: publicInviteShape(slot) };
   });
-
-  // --- Authenticated: revoke an invite ---
-  app.post<{ Params: { id: string } }>(
-    "/api/webauthn/invites/:id/revoke",
-    async (request, reply) => {
-      const { id } = request.params;
-      const invite = inviteRepo.findByIdForAccount(id, request.accountId);
-      if (!invite) {
-        reply.status(404);
-        return { error: "Invite not found" };
-      }
-      const status = inviteStatus(invite);
-      if (status === "revoked") {
-        reply.status(400);
-        return { error: "Invite already revoked" };
-      }
-
-      inviteRepo.revoke(id, request.accountId);
-
-      // If the invite already produced a (still-pending) credential, revoke it
-      // too. This makes "revoke invite" a single, complete cleanup action even
-      // after the device-B registration step has succeeded but before the
-      // device-A confirm step.
-      if (invite.credentialId) {
-        db.update(webauthnCredentials)
-          .set({ revoked: true })
-          .where(
-            and(
-              eq(webauthnCredentials.id, invite.credentialId),
-              eq(webauthnCredentials.state, CREDENTIAL_STATE.pendingConfirmation),
-            ),
-          )
-          .run();
-      }
-
-      request.log.info(
-        { event: "passkey_invite.revoked", inviteId: id, accountId: request.accountId },
-        "passkey invite revoked",
-      );
-      return { status: "revoked" };
-    },
-  );
 
   // --- Authenticated: confirm a pending credential ---
   app.post<{ Params: { id: string } }>(
@@ -218,18 +142,14 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       },
     },
     async (request, reply) => {
-      const invite = inviteRepo.findByToken(request.params.token);
-      if (!invite) {
+      const slot = findInviteByToken(request.params.token);
+      if (!slot) {
         reply.status(404);
-        return { error: "Invite not found" };
+        return { error: "Invite not found or expired" };
       }
-      const status = inviteStatus(invite);
-      // Don't echo the (now-known-invalid) token back; just status + label so
-      // the UI can show the user why the link won't work.
       return {
-        status,
-        label: invite.label,
-        expiresAt: invite.expiresAt,
+        label: slot.label,
+        expiresAt: new Date(slot.expiresAt).toISOString(),
       };
     },
   );
@@ -251,15 +171,10 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         reply.status(400);
         return { error: "Token is required" };
       }
-      const invite = inviteRepo.findByToken(token);
-      if (!invite) {
+      const slot = findInviteByToken(token);
+      if (!slot) {
         reply.status(404);
-        return { error: "Invite not found" };
-      }
-      const status = inviteStatus(invite);
-      if (status !== "pending") {
-        reply.status(410);
-        return { error: `Invite is ${status}` };
+        return { error: "Invite not found or expired" };
       }
 
       // ExcludeCredentials scoped to the inviting account, same as the
@@ -268,15 +183,15 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.accountId, invite.accountId))
+        .where(eq(webauthnCredentials.accountId, slot.accountId))
         .all();
 
-      const userName = invite.label.slice(0, 64);
+      const userName = slot.label.slice(0, 64);
       const options = await generateRegistrationOptions({
         rpName: "ShellWatch",
         rpID: rpId,
         userName,
-        userDisplayName: invite.label,
+        userDisplayName: slot.label,
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",
@@ -315,15 +230,10 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         reply.status(400);
         return { error: "Label must be 64 characters or less" };
       }
-      const invite = inviteRepo.findByToken(token);
-      if (!invite) {
+      const slot = findInviteByToken(token);
+      if (!slot) {
         reply.status(404);
-        return { error: "Invite not found" };
-      }
-      const status = inviteStatus(invite);
-      if (status !== "pending") {
-        reply.status(410);
-        return { error: `Invite is ${status}` };
+        return { error: "Invite not found or expired" };
       }
 
       const result = await verifyAndDecodeRegistration({
@@ -337,17 +247,21 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         return { error: result.error };
       }
 
-      // The credential is created in `pending_confirmation` state — it is not
-      // usable for login or SSH signing until the inviting (already-authenticated)
-      // device flips it to `active` via /api/webauthn/credentials/:id/confirm.
-      // The label sent by device B wins over the invite-time suggestion; if
-      // device B sends nothing, fall back to the invite label.
+      // Atomically: drop the invite slot, then insert the credential row in
+      // `pending_confirmation`. If a parallel attempt already consumed the
+      // slot we abort before any DB mutation, keeping single-use semantics.
+      const consumed = consumeInviteSlot(slot.accountId);
+      if (!consumed || consumed.token !== token) {
+        reply.status(409);
+        return { error: "Invite was already used" };
+      }
+
       const decoded = {
         ...result.decoded,
-        baseLabel: trimmedLabel || invite.label,
+        baseLabel: trimmedLabel || slot.label,
       };
       const inserted = db.transaction((tx) => {
-        const { id, label: insertedLabel } = insertCredentialRow(tx, invite.accountId, decoded);
+        const { id, label: insertedLabel } = insertCredentialRow(tx, slot.accountId, decoded);
         tx.update(webauthnCredentials)
           .set({ state: CREDENTIAL_STATE.pendingConfirmation })
           .where(eq(webauthnCredentials.id, id))
@@ -355,22 +269,11 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         return { id, label: insertedLabel };
       });
 
-      const consumed = inviteRepo.markConsumed(invite.id, inserted.id);
-      if (!consumed) {
-        // Lost the race against another concurrent register attempt on the
-        // same token. Roll back our credential insert so the invite remains
-        // truly single-use.
-        db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, inserted.id)).run();
-        reply.status(409);
-        return { error: "Invite was already used" };
-      }
-
       request.log.info(
         {
           event: "passkey_invite.registered",
-          inviteId: invite.id,
           credentialId: inserted.id,
-          accountId: invite.accountId,
+          accountId: slot.accountId,
         },
         "passkey invite registered (pending confirmation)",
       );
