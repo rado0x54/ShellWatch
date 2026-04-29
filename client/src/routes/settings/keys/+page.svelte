@@ -59,10 +59,14 @@
   // Drop the invite from local state the instant it expires so the indicator
   // disappears without needing a server roundtrip. Server-side the slot has
   // already been swept by the same expiry deadline.
+  //
+  // If the user was on the link-display view of the modal at the moment of
+  // expiry, close the whole modal — flipping it back to the picker would
+  // yank the link out from under a possible mid-copy. They can re-issue.
   $effect(() => {
     if (activeInvite && inviteRemainingMs <= 0) {
       activeInvite = null;
-      if (modalCreatedInvite) modalCreatedInvite = null;
+      if (modalCreatedInvite) closeAddModal();
     }
   });
 
@@ -807,6 +811,13 @@
   .invite-link-copy:hover {
     border-color: var(--green, #4ade80);
     color: var(--green, #4ade80);
+  }
+
+  .modal-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.5;
   }
 
   /* Confirm-passkey modal: prominent fingerprint block + verified checkbox. */

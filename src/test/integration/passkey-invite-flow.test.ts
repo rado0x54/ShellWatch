@@ -273,22 +273,16 @@ describe("passkey invite — HTTP integration", () => {
   });
 
   it("/api/auth/login refuses a pending credential before crypto", async () => {
-    // Stage a real challenge so we get past the challenge-ID check, then
-    // submit the pending credential's id. The state-check rejection in
-    // login.ts fires before signature verification.
+    // Need at least one active credential to mint a challenge — login/options
+    // returns `{ error: 'no_passkeys' }` otherwise. Once we have a challenge,
+    // submit the pending credential's id and assert the state-check rejection
+    // in login.ts fires before signature verification.
+    insertCredential(testApp.conn, { label: "active-decoy" });
     const optionsRes = await testApp.app.inject({
       method: "POST",
       url: "/api/auth/login/options",
     });
-    // No active creds yet — reseed: insert one pending so options returns
-    // no_passkeys, then add one active so the challenge is generated.
-    void optionsRes;
-    insertCredential(testApp.conn, { label: "active-decoy" });
-    const real = await testApp.app.inject({
-      method: "POST",
-      url: "/api/auth/login/options",
-    });
-    const { challengeId } = real.json() as { challengeId: string };
+    const { challengeId } = optionsRes.json() as { challengeId: string };
     expect(challengeId).toBeTruthy();
 
     const pending = insertCredential(testApp.conn, {
