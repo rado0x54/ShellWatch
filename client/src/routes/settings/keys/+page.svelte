@@ -369,17 +369,11 @@
           >
         </div>
       {:else}
-        <p class="modal-desc">
-          Pick where the new passkey lives. Both options enroll a passkey on this account.
-        </p>
+        <p class="modal-desc">From what device should the passkey be added?</p>
 
         <button class="add-option" type="button" disabled={registering} onclick={handleRegister}>
           <span class="add-option-title">This device</span>
-          <span class="add-option-body">
-            Use the authenticator built into this browser or a security key plugged in here.
-            Registration runs immediately and the passkey is active right away — you can use it for
-            login and SSH on this account.
-          </span>
+          <span class="add-option-body"> Use this browser or a security key plugged in here. </span>
           <span class="add-option-cta"
             >{registering ? "Waiting for passkey…" : "Register here →"}</span
           >
@@ -387,17 +381,13 @@
 
         <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
           <span class="add-option-title">
-            Another device
+            Other device
             {#if activeInvite}
               <span class="add-option-tag">Active · {inviteRemainingDisplay}</span>
             {/if}
           </span>
           <span class="add-option-body">
-            Generate a single-use link (valid for 5 minutes) to open on the other device. That
-            device completes the WebAuthn ceremony, then the new passkey sits in
-            <em>pending confirmation</em>
-            — it cannot log in, sign anything, or be copied as an SSH key until you come back here and
-            click <strong>Confirm</strong>.
+            Generate a one-time link to share with the other device.
           </span>
           <span class="add-option-cta">
             {#if inviting}
