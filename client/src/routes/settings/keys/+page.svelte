@@ -16,12 +16,14 @@
     startPasskeyRegistration,
     type PasskeyInvite,
   } from "$lib/stores/webauthn.js";
+  import Modal from "$lib/components/Modal.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
 
   let revoking = $state(false);
   let registering = $state(false);
   let inviting = $state(false);
+  let showAddModal = $state(false);
   let confirmingId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
   let editLabel = $state("");
@@ -45,6 +47,7 @@
     try {
       const invite = await createPasskeyInvite();
       lastCreatedInvite = invite;
+      showAddModal = false;
     } catch (err) {
       toastError(`Could not create invite: ${errorMessage(err)}`);
     }
@@ -162,6 +165,9 @@
   async function handleRegister() {
     registering = true;
     try {
+      // Closing first means the WebAuthn prompt isn't fighting the modal for
+      // focus on browsers that auto-focus the dialog.
+      showAddModal = false;
       const result = await startPasskeyRegistration($account?.name);
       await fetchCredentials();
       // Start inline rename on the newly registered passkey
@@ -284,13 +290,46 @@
   </SettingsList>
 
   <div class="register-section">
-    <button class="btn btn-primary" disabled={registering} onclick={handleRegister}>
-      {registering ? "Waiting for passkey..." : "Register New Passkey"}
-    </button>
-    <button class="btn btn-secondary" disabled={inviting} onclick={handleInvite}>
-      {inviting ? "Creating invite..." : "Invite Passkey"}
-    </button>
+    <button class="btn btn-primary" onclick={() => (showAddModal = true)}>Add passkey</button>
   </div>
+
+  {#if showAddModal}
+    <Modal title="Add a passkey" onClose={() => (showAddModal = false)}>
+      <p class="modal-desc">
+        Pick where the new passkey lives. Both options enroll a passkey on this account.
+      </p>
+
+      <button class="add-option" type="button" disabled={registering} onclick={handleRegister}>
+        <span class="add-option-title">This device</span>
+        <span class="add-option-body">
+          Use the authenticator built into this browser or a security key plugged in here.
+          Registration runs immediately and the passkey is active right away — you can use it for
+          login and SSH on this account.
+        </span>
+        <span class="add-option-cta"
+          >{registering ? "Waiting for passkey…" : "Register here →"}</span
+        >
+      </button>
+
+      <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
+        <span class="add-option-title">Another device</span>
+        <span class="add-option-body">
+          Generate a single-use link (valid for 1 hour) to open on the other device. That device
+          completes the WebAuthn ceremony, then the new passkey sits in <em>pending confirmation</em
+          >
+          — it cannot log in, sign anything, or be copied as an SSH key until you come back here and click
+          <strong>Confirm</strong>.
+        </span>
+        <span class="add-option-cta">{inviting ? "Creating invite…" : "Create invite link →"}</span>
+      </button>
+
+      {#snippet actions()}
+        <button class="btn btn-secondary" type="button" onclick={() => (showAddModal = false)}
+          >Cancel</button
+        >
+      {/snippet}
+    </Modal>
+  {/if}
 
   {#if lastCreatedInvite?.token}
     <div class="invite-callout">
@@ -445,9 +484,62 @@
 
   .register-section {
     margin-top: var(--space-5);
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
+  }
+
+  .modal-desc {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: 0 0 var(--space-3);
+    line-height: 1.5;
+  }
+
+  .add-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: var(--space-3);
+    margin-bottom: var(--space-2);
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    transition:
+      border-color 0.15s,
+      background-color 0.15s;
+  }
+
+  .add-option:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: var(--surface-container-low, var(--bg-primary));
+  }
+
+  .add-option:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .add-option-title {
+    display: block;
+    font-weight: 600;
+    font-size: var(--body-md);
+    margin-bottom: var(--space-1);
+  }
+
+  .add-option-body {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .add-option-cta {
+    display: block;
+    margin-top: var(--space-2);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--primary);
   }
 
   .subhead {
