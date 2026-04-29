@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "34d6b1e3-b530-4120-b300-cc69d64e4f69",
+  "id": "1ee09762-d697-4528-a29c-0fef19d51640",
   "prevId": "a1b2c3d4-0003-4fff-8aaa-fingerprintfix",
   "tables": {
     "accounts": {
@@ -296,104 +296,6 @@
           "columnsFrom": ["account_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "passkey_invites": {
-      "name": "passkey_invites",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token": {
-          "name": "token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consumed_at": {
-          "name": "consumed_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revoked_at": {
-          "name": "revoked_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "credential_id": {
-          "name": "credential_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "passkey_invites_token_unique": {
-          "name": "passkey_invites_token_unique",
-          "columns": ["token"],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "passkey_invites_account_id_accounts_id_fk": {
-          "name": "passkey_invites_account_id_accounts_id_fk",
-          "tableFrom": "passkey_invites",
-          "tableTo": "accounts",
-          "columnsFrom": ["account_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "passkey_invites_credential_id_webauthn_credentials_id_fk": {
-          "name": "passkey_invites_credential_id_webauthn_credentials_id_fk",
-          "tableFrom": "passkey_invites",
-          "tableTo": "webauthn_credentials",
-          "columnsFrom": ["credential_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
