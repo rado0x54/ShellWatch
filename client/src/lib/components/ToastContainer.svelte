@@ -122,7 +122,7 @@
           </div>
           <div class="toast-actions">
             <button
-              class="btn btn-secondary btn-details"
+              class="btn btn-ghost"
               onclick={() => handleDetails(toast.action!.actionId, toast.id)}
               disabled={isProcessing}
             >
@@ -265,11 +265,6 @@
     display: flex;
     justify-content: flex-end;
     gap: var(--space-3);
-  }
-
-  .toast-actions :global(.btn-details:hover) {
-    color: var(--primary);
-    box-shadow: inset 0 -1px 0 var(--primary);
   }
 
   .toast-simple {
