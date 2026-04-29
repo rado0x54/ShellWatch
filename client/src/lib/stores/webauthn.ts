@@ -116,6 +116,7 @@ export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite
 /** Fetch invite metadata for the public registration page. */
 export async function fetchInviteByToken(token: string): Promise<{
   label: string;
+  accountName: string | null;
   expiresAt: string;
 }> {
   const res = await fetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
@@ -127,16 +128,17 @@ export async function fetchInviteByToken(token: string): Promise<{
 }
 
 /**
- * Run the WebAuthn ceremony on device B against an invite token. Returns the
- * server-assigned label (deduplicated against existing passkeys on the
- * account) and the SHA256 fingerprint of the new credential's public key —
- * device B displays the fingerprint so the user can compare it against the
- * one shown on device A's confirm screen.
+ * Run the WebAuthn ceremony on device B against an invite token. The server
+ * inserts the credential with an AAGUID-derived label as a default; device B
+ * is expected to call `confirmInviteLabel` next to commit a final name. The
+ * fingerprint is for cross-device visual comparison against device A's
+ * confirm screen.
  */
-export async function registerWithInviteToken(params: {
-  token: string;
-  label?: string;
-}): Promise<{ label: string; fingerprint: string | null }> {
+export async function registerWithInviteToken(params: { token: string }): Promise<{
+  credentialId: string;
+  label: string;
+  fingerprint: string | null;
+}> {
   const optionsRes = await fetch("/api/passkey-invite/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -154,18 +156,34 @@ export async function registerWithInviteToken(params: {
   const verifyRes = await fetch("/api/passkey-invite/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      token: params.token,
-      challengeId,
-      credential,
-      label: params.label,
-    }),
+    body: JSON.stringify({ token: params.token, challengeId, credential }),
   });
   if (!verifyRes.ok) {
     const err = await verifyRes.json().catch(() => ({}));
     throw new Error(err.error || "Registration failed");
   }
   return verifyRes.json();
+}
+
+/**
+ * Confirm/rename the just-registered credential. The invite token is the
+ * bearer of authority — device B has no session. After this call succeeds the
+ * server consumes the slot, so subsequent rename attempts will 404.
+ */
+export async function confirmInviteLabel(params: {
+  token: string;
+  label: string;
+}): Promise<{ label: string }> {
+  const res = await fetch("/api/passkey-invite/register/label", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to confirm name");
+  }
+  return res.json();
 }
 
 /**

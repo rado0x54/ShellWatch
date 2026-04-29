@@ -1,14 +1,32 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import { fetchInviteByToken, registerWithInviteToken } from "$lib/stores/webauthn.js";
+  import {
+    confirmInviteLabel,
+    fetchInviteByToken,
+    registerWithInviteToken,
+  } from "$lib/stores/webauthn.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
 
-  type LocalState = "loading" | "ready" | "registering" | "done" | "unavailable" | "error";
+  // ready    — slot is alive; user clicks Register to run the WebAuthn ceremony
+  // registering — ceremony in flight
+  // naming   — server returned an AAGUID-derived label; user confirms or edits
+  // saving   — PATCH in flight (rename PATCH)
+  // done     — slot consumed; rename window closed; user can leave
+  // unavailable / error — terminal failure states
+  type LocalState =
+    | "loading"
+    | "ready"
+    | "registering"
+    | "naming"
+    | "saving"
+    | "done"
+    | "unavailable"
+    | "error";
 
   let local = $state<LocalState>("loading");
-  let suggestedLabel = $state("");
+  let accountName = $state<string | null>(null);
   let labelInput = $state("");
   let assignedLabel = $state("");
   let assignedFingerprint = $state<string | null>(null);
@@ -22,7 +40,9 @@
   const token = $derived(page.params.token ?? "");
 
   $effect(() => {
-    if (local !== "ready") return;
+    // Run the timer in any state where the slot is still relevant. Once the
+    // user is past the rename ("done") or unavailable, the timer is moot.
+    if (local !== "ready" && local !== "naming") return;
     const id = setInterval(() => {
       now = Date.now();
     }, 1000);
@@ -32,7 +52,7 @@
   const remainingMs = $derived(expiresAt ? Date.parse(expiresAt) - now : 0);
 
   $effect(() => {
-    if (local === "ready" && remainingMs <= 0) {
+    if ((local === "ready" || local === "naming") && remainingMs <= 0) {
       local = "unavailable";
     }
   });
@@ -48,8 +68,7 @@
       // already-consumed slots come back as 404 from the in-memory store and
       // surface here as a thrown error.
       const info = await fetchInviteByToken(token);
-      suggestedLabel = info.label;
-      labelInput = info.label;
+      accountName = info.accountName;
       expiresAt = info.expiresAt;
       local = "ready";
     } catch {
@@ -62,16 +81,33 @@
     local = "registering";
     error = "";
     try {
-      const result = await registerWithInviteToken({
-        token,
-        label: labelInput.trim() || undefined,
-      });
+      const result = await registerWithInviteToken({ token });
       assignedLabel = result.label;
       assignedFingerprint = result.fingerprint;
-      local = "done";
+      labelInput = result.label;
+      local = "naming";
     } catch (err) {
       error = errorMessage(err);
       local = "ready";
+    }
+  }
+
+  async function handleConfirmName() {
+    if (!token) return;
+    const trimmed = labelInput.trim();
+    if (!trimmed) {
+      error = "Pick a name for this passkey";
+      return;
+    }
+    local = "saving";
+    error = "";
+    try {
+      const result = await confirmInviteLabel({ token, label: trimmed });
+      assignedLabel = result.label;
+      local = "done";
+    } catch (err) {
+      error = errorMessage(err);
+      local = "naming";
     }
   }
 
@@ -87,47 +123,73 @@
 <div class="invite-page">
   <div class="invite-card">
     <h1>Add a passkey to <Wordmark /></h1>
+    {#if accountName}
+      <p class="account">for <strong>{accountName}</strong></p>
+    {/if}
 
     {#if local === "loading"}
       <p class="status">Loading invite…</p>
     {:else if local === "ready"}
+      <div class="invite-status">
+        <span class="invite-status-dot" aria-hidden="true"></span>
+        <span class="invite-status-label">Active</span>
+        <span class="invite-status-timer">{formatRemaining(remainingMs)}</span>
+      </div>
       <p class="description">
-        You've been invited to enroll a new passkey on this device. Once you register here, the
-        device that issued this invite will need to confirm it before the passkey becomes usable.
+        Register a new passkey on this device. The other device will need to confirm it before it's
+        usable.
       </p>
-      <p class="meta">
-        Expires in <span class="timer">{formatRemaining(remainingMs)}</span>
-      </p>
-      <label class="field">
-        <span class="field-label">Name this passkey</span>
-        <input
-          class="input"
-          type="text"
-          bind:value={labelInput}
-          placeholder={suggestedLabel}
-          maxlength="64"
-        />
-      </label>
       <button class="btn-primary" onclick={handleRegister}>Register passkey</button>
       {#if error}
         <p class="error">{error}</p>
       {/if}
     {:else if local === "registering"}
       <p class="status">Waiting for your authenticator…</p>
-    {:else if local === "done"}
+    {:else if local === "naming" || local === "saving"}
+      <div class="invite-status">
+        <span class="invite-status-dot" aria-hidden="true"></span>
+        <span class="invite-status-label">Active</span>
+        <span class="invite-status-timer">{formatRemaining(remainingMs)}</span>
+      </div>
       <p class="description">
-        <span class="check">✓</span> Passkey <strong>{assignedLabel}</strong> registered. Go back to
-        your other device and click <strong>Confirm</strong> to activate it. Until then, the passkey cannot
-        be used to log in or sign anything.
+        Passkey registered. Pick a name for it — you can keep the suggestion or change it. After you
+        confirm, this name is locked.
       </p>
+      <label class="field">
+        <span class="field-label">Passkey name</span>
+        <input
+          class="input"
+          type="text"
+          bind:value={labelInput}
+          maxlength="64"
+          disabled={local === "saving"}
+        />
+      </label>
       {#if assignedFingerprint}
         <div class="fingerprint-card">
           <span class="fingerprint-label">Fingerprint</span>
           <code class="fingerprint-value">{assignedFingerprint}</code>
           <p class="fingerprint-help">
-            Verify this string matches the fingerprint shown on the original device before you
-            confirm there. They will be identical if the passkey was registered on the right invite.
+            Verify this matches the fingerprint shown on the original device when you confirm there.
           </p>
+        </div>
+      {/if}
+      <button class="btn-primary" onclick={handleConfirmName} disabled={local === "saving"}>
+        {local === "saving" ? "Saving…" : "Confirm name"}
+      </button>
+      {#if error}
+        <p class="error">{error}</p>
+      {/if}
+    {:else if local === "done"}
+      <p class="description">
+        <span class="check">✓</span> Passkey <strong>{assignedLabel}</strong> registered. Go back to
+        the original device and click <strong>Confirm</strong> to activate it. Until then, this passkey
+        can't be used.
+      </p>
+      {#if assignedFingerprint}
+        <div class="fingerprint-card">
+          <span class="fingerprint-label">Fingerprint</span>
+          <code class="fingerprint-value">{assignedFingerprint}</code>
         </div>
       {/if}
     {:else if local === "unavailable"}
@@ -175,17 +237,63 @@
     line-height: 1.55;
   }
 
-  .meta {
+  .account {
     font-size: 0.78rem;
     color: var(--text-muted);
-    margin-bottom: 1rem;
+    margin: -0.25rem 0 0.75rem;
   }
 
-  .timer {
+  /* Same green status pill used in the in-account modal. Standalone line, not
+     inline in the body copy. */
+  .invite-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.7rem;
+    margin-bottom: 0.85rem;
+    background: color-mix(in srgb, var(--green, #4ade80) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--green, #4ade80) 50%, transparent);
+    border-radius: 999px;
+  }
+
+  .invite-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green, #4ade80);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--green, #4ade80) 70%, transparent);
+    animation: invite-pulse 1.6s ease-out infinite;
+  }
+
+  .invite-status-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--green, #4ade80);
+  }
+
+  .invite-status-timer {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    color: var(--on-surface);
+    font-size: 0.85rem;
+    color: var(--green, #4ade80);
     font-weight: 600;
+  }
+
+  @keyframes invite-pulse {
+    0% {
+      box-shadow: 0 0 0 0 var(--green, #4ade80);
+      opacity: 1;
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+      opacity: 0.6;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+      opacity: 1;
+    }
   }
 
   .status {

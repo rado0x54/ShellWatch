@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/index.js";
-import { webauthnCredentials } from "../db/schema.js";
+import { accounts, webauthnCredentials } from "../db/schema.js";
 import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { sha256Fingerprint } from "./fingerprint.js";
@@ -12,6 +12,7 @@ import {
   createInviteSlot,
   findInviteByToken,
   findInviteForAccount,
+  markInviteRegistered,
   type InviteSlot,
 } from "./invite-store.js";
 import type { RateLimitConfig } from "./routes.js";
@@ -122,6 +123,13 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         .where(eq(webauthnCredentials.id, id))
         .run();
 
+      // If a slot for this account still references the just-confirmed cred,
+      // drop it. Stops a leaked token from re-renaming after activation.
+      const slot = findInviteForAccount(request.accountId);
+      if (slot && slot.credentialId === id) {
+        consumeInviteSlot(request.accountId);
+      }
+
       request.log.info(
         { event: "passkey_invite.confirmed", credentialId: id, accountId: request.accountId },
         "passkey invite confirmed",
@@ -147,8 +155,18 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         reply.status(404);
         return { error: "Invite not found or expired" };
       }
+      // The account name is fine to surface to the invite holder — the token
+      // already grants register-a-passkey-on-this-account, and showing
+      // "ShellWatch · for <name>" lets device B's user verify they're
+      // enrolling on the right account.
+      const acct = db
+        .select({ name: accounts.name })
+        .from(accounts)
+        .where(eq(accounts.id, slot.accountId))
+        .get();
       return {
         label: slot.label,
+        accountName: acct?.name ?? null,
         expiresAt: new Date(slot.expiresAt).toISOString(),
       };
     },
@@ -207,8 +225,13 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   );
 
   // --- Public: complete invite registration ---
+  // The slot is NOT consumed here — it stays alive so device B can use the
+  // same token to confirm/rename via PATCH /api/passkey-invite/register/label.
+  // The slot's natural 5-minute expiry (or device A's confirm action) is what
+  // ultimately retires it. The credential is inserted with the AAGUID-derived
+  // label; device B sees that suggestion and can edit it before confirming.
   app.post<{
-    Body: { token: string; challengeId: string; credential: unknown; label?: string };
+    Body: { token: string; challengeId: string; credential: unknown };
   }>(
     "/api/passkey-invite/register",
     {
@@ -220,20 +243,21 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       },
     },
     async (request, reply) => {
-      const { token, challengeId, credential, label } = request.body ?? ({} as never);
+      const { token, challengeId, credential } = request.body ?? ({} as never);
       if (!token || typeof token !== "string") {
         reply.status(400);
         return { error: "Token is required" };
-      }
-      const trimmedLabel = typeof label === "string" ? label.trim() : "";
-      if (trimmedLabel.length > 64) {
-        reply.status(400);
-        return { error: "Label must be 64 characters or less" };
       }
       const slot = findInviteByToken(token);
       if (!slot) {
         reply.status(404);
         return { error: "Invite not found or expired" };
+      }
+      if (slot.credentialId) {
+        // Slot already produced a credential. Single-use: refuse a second
+        // ceremony rather than allow the rename-window to be hijacked.
+        reply.status(409);
+        return { error: "Invite was already used" };
       }
 
       const result = await verifyAndDecodeRegistration({
@@ -247,21 +271,12 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         return { error: result.error };
       }
 
-      // Atomically: drop the invite slot, then insert the credential row in
-      // `pending_confirmation`. If a parallel attempt already consumed the
-      // slot we abort before any DB mutation, keeping single-use semantics.
-      const consumed = consumeInviteSlot(slot.accountId);
-      if (!consumed || consumed.token !== token) {
-        reply.status(409);
-        return { error: "Invite was already used" };
-      }
-
-      const decoded = {
-        ...result.decoded,
-        baseLabel: trimmedLabel || slot.label,
-      };
       const inserted = db.transaction((tx) => {
-        const { id, label: insertedLabel } = insertCredentialRow(tx, slot.accountId, decoded);
+        const { id, label: insertedLabel } = insertCredentialRow(
+          tx,
+          slot.accountId,
+          result.decoded,
+        );
         tx.update(webauthnCredentials)
           .set({ state: CREDENTIAL_STATE.pendingConfirmation })
           .where(eq(webauthnCredentials.id, id))
@@ -269,20 +284,110 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         return { id, label: insertedLabel };
       });
 
+      // Mark the slot as registered. Race lost (slot expired/superseded
+      // between findInviteByToken and now): undo the insert so we don't leave
+      // an orphaned pending credential nobody can finish confirming.
+      const ok = markInviteRegistered(slot.accountId, inserted.id);
+      if (!ok) {
+        db.delete(webauthnCredentials).where(eq(webauthnCredentials.id, inserted.id)).run();
+        reply.status(409);
+        return { error: "Invite expired during registration" };
+      }
+
       request.log.info(
         {
           event: "passkey_invite.registered",
           credentialId: inserted.id,
           accountId: slot.accountId,
         },
-        "passkey invite registered (pending confirmation)",
+        "passkey invite registered (pending confirmation, awaiting rename)",
       );
 
       return {
         status: "registered",
+        credentialId: inserted.id,
         label: inserted.label,
         fingerprint: fingerprintFromOpenSsh(result.decoded.authorizedKeysEntry),
       };
+    },
+  );
+
+  // --- Public: confirm/rename the just-registered credential ---
+  // Device B has no session, so the invite token is the bearer of authority
+  // for this one PATCH. Once accepted, the slot is consumed — device B can't
+  // come back and rename again, and a leaked link can't either.
+  app.patch<{ Body: { token: string; label: string } }>(
+    "/api/passkey-invite/register/label",
+    {
+      config: {
+        rateLimit: {
+          max: rateLimitConfig.passkeyRegister.max,
+          timeWindow: `${rateLimitConfig.passkeyRegister.windowMinutes} minutes`,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { token, label } = request.body ?? ({} as never);
+      if (!token || typeof token !== "string") {
+        reply.status(400);
+        return { error: "Token is required" };
+      }
+      const trimmed = typeof label === "string" ? label.trim() : "";
+      if (!trimmed) {
+        reply.status(400);
+        return { error: "Label is required" };
+      }
+      if (trimmed.length > 64) {
+        reply.status(400);
+        return { error: "Label must be 64 characters or less" };
+      }
+      const slot = findInviteByToken(token);
+      if (!slot || !slot.credentialId) {
+        reply.status(404);
+        return { error: "Invite not found or registration not completed" };
+      }
+
+      // Refuse on label collision within the account, same as the
+      // session-authenticated rename endpoint. An accidental match would
+      // surface as a confusing duplicate name in the credentials list.
+      const conflict = db
+        .select({ id: webauthnCredentials.id })
+        .from(webauthnCredentials)
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, slot.accountId),
+            eq(webauthnCredentials.label, trimmed),
+          ),
+        )
+        .get();
+      if (conflict && conflict.id !== slot.credentialId) {
+        reply.status(409);
+        return { error: "A passkey with this label already exists on the account" };
+      }
+
+      db.update(webauthnCredentials)
+        .set({ label: trimmed })
+        .where(
+          and(
+            eq(webauthnCredentials.id, slot.credentialId),
+            eq(webauthnCredentials.state, CREDENTIAL_STATE.pendingConfirmation),
+          ),
+        )
+        .run();
+
+      // Drop the slot — single-use rename window is over.
+      consumeInviteSlot(slot.accountId);
+
+      request.log.info(
+        {
+          event: "passkey_invite.label_confirmed",
+          credentialId: slot.credentialId,
+          accountId: slot.accountId,
+        },
+        "passkey invite label confirmed",
+      );
+
+      return { status: "confirmed", label: trimmed };
     },
   );
 }

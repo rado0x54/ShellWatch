@@ -26,6 +26,13 @@ export interface InviteSlot {
   label: string;
   expiresAt: number;
   createdAt: number;
+  /**
+   * Set after device B has run the WebAuthn ceremony. While present, the slot
+   * is the bearer of authority for the post-registration rename PATCH —
+   * device B has no session, so it must use the same token to relabel the
+   * credential it just produced. Cleared on full consume.
+   */
+  credentialId: string | null;
 }
 
 export interface CreateInviteParams {
@@ -54,9 +61,23 @@ export function createInviteSlot(params: CreateInviteParams): InviteSlot {
     label: params.label,
     expiresAt: now + (params.ttlMs ?? TTL_MS),
     createdAt: now,
+    credentialId: null,
   };
   byAccount.set(params.accountId, slot);
   return slot;
+}
+
+/**
+ * Record that device B has registered a credential against this slot. Returns
+ * false when the slot is gone (caller raced with expiry/supersede). The slot
+ * stays alive afterwards so device B can use the same token for the
+ * post-registration rename PATCH.
+ */
+export function markInviteRegistered(accountId: string, credentialId: string): boolean {
+  const slot = byAccount.get(accountId);
+  if (!slot) return false;
+  slot.credentialId = credentialId;
+  return true;
 }
 
 /** Return the active invite for an account, or null if none / expired. */
