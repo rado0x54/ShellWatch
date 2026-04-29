@@ -91,6 +91,24 @@ export function consumeInviteSlot(accountId: string): InviteSlot | null {
   return slot;
 }
 
+/**
+ * Consume the slot only if the currently-held token matches. Atomic under
+ * Node's single-threaded model (no awaits inside), which closes the race in
+ * `/api/passkey-invite/register` where a supersede can land between the
+ * findByToken lookup and the consume — without this check, the consume would
+ * delete the *new* (valid) slot, locking the user out until they re-issued
+ * a third time.
+ */
+export function consumeInviteSlotIfTokenMatches(
+  accountId: string,
+  token: string,
+): InviteSlot | null {
+  const slot = byAccount.get(accountId);
+  if (!slot || slot.token !== token) return null;
+  byAccount.delete(accountId);
+  return slot;
+}
+
 /** Test helper: drop all slots. */
 export function _resetInviteStore(): void {
   byAccount.clear();

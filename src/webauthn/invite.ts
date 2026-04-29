@@ -8,7 +8,7 @@ import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import {
-  consumeInviteSlot,
+  consumeInviteSlotIfTokenMatches,
   createInviteSlot,
   findInviteByToken,
   findInviteForAccount,
@@ -250,10 +250,13 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         return { error: result.error };
       }
 
-      const consumed = consumeInviteSlot(slot.accountId);
-      if (!consumed || consumed.token !== token) {
-        // Lost the race against another concurrent register attempt or a
-        // supersede on this account. Refuse before any DB mutation.
+      // Atomic supersede check: the in-flight `verifyAndDecodeRegistration`
+      // above is async, so a concurrent /api/webauthn/invite supersede can
+      // land between the findInviteByToken at the top of this handler and
+      // here. consumeInviteSlotIfTokenMatches refuses to delete a freshly
+      // superseded slot on the wrong token.
+      const consumed = consumeInviteSlotIfTokenMatches(slot.accountId, token);
+      if (!consumed) {
         reply.status(409);
         return { error: "Invite was already used" };
       }

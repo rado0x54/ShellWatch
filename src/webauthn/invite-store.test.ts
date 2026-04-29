@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   _resetInviteStore,
   consumeInviteSlot,
+  consumeInviteSlotIfTokenMatches,
   createInviteSlot,
   findInviteByToken,
   findInviteForAccount,
@@ -63,5 +64,27 @@ describe("invite-store", () => {
     expect(consumed?.token).toBe(slot.token);
     expect(consumeInviteSlot(ACCT_A)).toBeNull();
     expect(findInviteForAccount(ACCT_A)).toBeNull();
+  });
+
+  it("consumeInviteSlotIfTokenMatches refuses to delete a superseded slot", () => {
+    // Simulate the race: device B holds T_old, /register handler is mid-await,
+    // device A supersedes (T_new is now the live slot). The handler resumes
+    // and calls consume — must NOT delete T_new just because the slot exists.
+    const tOld = createInviteSlot({ accountId: ACCT_A });
+    const tNew = createInviteSlot({ accountId: ACCT_A });
+
+    expect(consumeInviteSlotIfTokenMatches(ACCT_A, tOld.token)).toBeNull();
+    // The new (valid) slot is still in place — user with T_new can still
+    // complete their ceremony.
+    expect(findInviteByToken(tNew.token)?.token).toBe(tNew.token);
+  });
+
+  it("consumeInviteSlotIfTokenMatches deletes when the token matches", () => {
+    const slot = createInviteSlot({ accountId: ACCT_A });
+    const consumed = consumeInviteSlotIfTokenMatches(ACCT_A, slot.token);
+    expect(consumed?.token).toBe(slot.token);
+    expect(findInviteForAccount(ACCT_A)).toBeNull();
+    // Re-running is a no-op, not a re-fetch of stale state.
+    expect(consumeInviteSlotIfTokenMatches(ACCT_A, slot.token)).toBeNull();
   });
 });
