@@ -5,7 +5,6 @@ import {
   createInviteSlot,
   findInviteByToken,
   findInviteForAccount,
-  markInviteRegistered,
 } from "./invite-store.js";
 
 const ACCT_A = "00000000-0000-0000-0000-00000000000a";
@@ -66,19 +65,5 @@ describe("invite-store", () => {
     expect(consumed?.token).toBe(slot.token);
     expect(consumeInviteSlot(ACCT_A)).toBeNull();
     expect(findInviteForAccount(ACCT_A)).toBeNull();
-  });
-
-  it("markInviteRegistered attaches a credentialId without consuming the slot", () => {
-    const slot = createInviteSlot({ accountId: ACCT_A, label: "Phone" });
-    expect(slot.credentialId).toBeNull();
-    expect(markInviteRegistered(ACCT_A, "cred-123")).toBe(true);
-    const after = findInviteForAccount(ACCT_A);
-    expect(after?.credentialId).toBe("cred-123");
-    // The same token still resolves — used by the rename PATCH that follows.
-    expect(findInviteByToken(slot.token)?.credentialId).toBe("cred-123");
-  });
-
-  it("markInviteRegistered returns false when the slot is gone", () => {
-    expect(markInviteRegistered(ACCT_A, "cred-123")).toBe(false);
   });
 });

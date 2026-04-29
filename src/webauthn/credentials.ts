@@ -4,8 +4,8 @@ import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { detectAlgorithm } from "./credential-utils.js";
-import { sha256Fingerprint } from "./fingerprint.js";
-import { buildPublicKeyBlob, getSshdConfigLine, toSkPublicKeyBlob } from "./ssh-key-format.js";
+import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
+import { getSshdConfigLine } from "./ssh-key-format.js";
 
 export interface CredentialRoutesParams {
   app: FastifyInstance;
@@ -47,11 +47,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
           credentialId: c.credentialId,
           label: c.label,
           algorithm: detectAlgorithm(c.publicKey),
-          fingerprint: c.publicKeyOpenSsh
-            ? sha256Fingerprint(
-                toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: c.publicKeyOpenSsh })),
-              )
-            : null,
+          fingerprint: fingerprintFromAuthorizedKeys(c.publicKeyOpenSsh),
           authorizedKeysEntry: isActive ? (c.publicKeyOpenSsh ?? null) : null,
           revoked: c.revoked,
           state: c.state,

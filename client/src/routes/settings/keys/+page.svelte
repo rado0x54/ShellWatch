@@ -120,19 +120,36 @@
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
 
-  async function handleConfirm(id: string) {
+  // The confirm flow runs through a modal so the fingerprint sits in a real
+  // <code> block — not a confirm() text blob — and the user has to tick an
+  // explicit "verified" checkbox before the activation button enables. The
+  // fingerprint is the only thing that catches an intercepted-link attack, so
+  // this is the moment to slow the user down.
+  let confirmTarget = $state<{
+    id: string;
+    label: string;
+    fingerprint: string | null;
+  } | null>(null);
+  let confirmVerified = $state(false);
+
+  function openConfirmModal(id: string) {
     const cred = $credentials.find((c) => c.id === id);
-    // Show the fingerprint in the confirm prompt so the user can compare it
-    // against the one shown on the device that registered the passkey.
-    // If for some reason no fingerprint was derivable (non-ES256 / unusual
-    // authenticator), fall back to a plain prompt so the user isn't blocked.
-    const promptText = cred?.fingerprint
-      ? `Activate "${cred.label}"?\n\nFingerprint:\n${cred.fingerprint}\n\nVerify this matches what was shown on the device that registered this passkey before continuing. Once active, this passkey can log in and sign SSH for this account.`
-      : `Activate "${cred?.label ?? "this passkey"}"? Once active, it can log in and sign SSH for this account.`;
-    if (!confirm(promptText)) return;
-    confirmingId = id;
+    if (!cred) return;
+    confirmTarget = { id, label: cred.label, fingerprint: cred.fingerprint };
+    confirmVerified = false;
+  }
+
+  function closeConfirmModal() {
+    confirmTarget = null;
+    confirmVerified = false;
+  }
+
+  async function handleConfirm() {
+    if (!confirmTarget) return;
+    confirmingId = confirmTarget.id;
     try {
-      await confirmPasskey(id);
+      await confirmPasskey(confirmTarget.id);
+      closeConfirmModal();
     } catch (err) {
       toastError(`Could not confirm: ${errorMessage(err)}`);
     }
@@ -319,7 +336,7 @@
             <button
               class="btn btn-primary"
               disabled={confirmingId === pk.id}
-              onclick={() => handleConfirm(pk.id)}
+              onclick={() => openConfirmModal(pk.id)}
               >{confirmingId === pk.id ? "Confirming..." : "Confirm"}</button
             >
           {/if}
@@ -395,6 +412,46 @@
         <button class="btn btn-secondary" type="button" onclick={closeAddModal}
           >{modalCreatedInvite ? "Done" : "Cancel"}</button
         >
+      {/snippet}
+    </Modal>
+  {/if}
+
+  {#if confirmTarget}
+    {@const target = confirmTarget}
+    <Modal title="Activate this passkey?" onClose={closeConfirmModal}>
+      <p class="modal-desc">
+        Activating <strong>{target.label}</strong> lets it log in and sign SSH for this account. Confirm
+        only after verifying the fingerprint below matches the one shown on the device that registered
+        the passkey.
+      </p>
+
+      {#if target.fingerprint}
+        <div class="confirm-fingerprint">
+          <span class="confirm-fingerprint-label">Fingerprint</span>
+          <code class="confirm-fingerprint-value">{target.fingerprint}</code>
+        </div>
+      {:else}
+        <p class="modal-hint">
+          No fingerprint is available for this credential. Verify out-of-band (e.g. by asking the
+          person who registered it) that they expected to enroll on this account.
+        </p>
+      {/if}
+
+      <label class="confirm-check">
+        <input type="checkbox" bind:checked={confirmVerified} />
+        <span>I've verified this fingerprint matches the one shown on the registering device.</span>
+      </label>
+
+      {#snippet actions()}
+        <button class="btn btn-secondary" type="button" onclick={closeConfirmModal}>Cancel</button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          disabled={!confirmVerified || confirmingId === target.id}
+          onclick={handleConfirm}
+        >
+          {confirmingId === target.id ? "Activating…" : "Activate passkey"}
+        </button>
       {/snippet}
     </Modal>
   {/if}
@@ -750,6 +807,51 @@
   .invite-link-copy:hover {
     border-color: var(--green, #4ade80);
     color: var(--green, #4ade80);
+  }
+
+  /* Confirm-passkey modal: prominent fingerprint block + verified checkbox. */
+  .confirm-fingerprint {
+    margin: var(--space-3) 0;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    text-align: left;
+  }
+
+  .confirm-fingerprint-label {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .confirm-fingerprint-value {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--on-surface);
+    word-break: break-all;
+  }
+
+  .confirm-check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+    font-size: 0.82rem;
+    color: var(--on-surface);
+    cursor: pointer;
+    line-height: 1.45;
+  }
+
+  .confirm-check input[type="checkbox"] {
+    margin-top: 0.2rem;
+    flex-shrink: 0;
   }
 
   .label-btn {

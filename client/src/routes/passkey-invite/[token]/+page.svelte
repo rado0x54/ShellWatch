@@ -1,48 +1,32 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import {
-    confirmInviteLabel,
-    fetchInviteByToken,
-    registerWithInviteToken,
-  } from "$lib/stores/webauthn.js";
+  import { fetchInviteByToken, registerWithInviteToken } from "$lib/stores/webauthn.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
 
-  // ready    — slot is alive; user clicks Register to run the WebAuthn ceremony
-  // registering — ceremony in flight
-  // naming   — server returned an AAGUID-derived label; user confirms or edits
-  // saving   — PATCH in flight (rename PATCH)
-  // done     — slot consumed; rename window closed; user can leave
+  // ready       — slot is alive; user clicks Register to run the WebAuthn ceremony
+  // registering — ceremony + insert in flight
+  // done        — credential created; user reads the fingerprint, then leaves.
+  //               Renaming is intentionally device A's job (any rename done by
+  //               an intercepted token would weaponise device A's confirm UI).
   // unavailable / error — terminal failure states
-  type LocalState =
-    | "loading"
-    | "ready"
-    | "registering"
-    | "naming"
-    | "saving"
-    | "done"
-    | "unavailable"
-    | "error";
+  type LocalState = "loading" | "ready" | "registering" | "done" | "unavailable" | "error";
 
   let local = $state<LocalState>("loading");
   let accountName = $state<string | null>(null);
-  let labelInput = $state("");
   let assignedLabel = $state("");
   let assignedFingerprint = $state<string | null>(null);
   let expiresAt = $state("");
   let error = $state("");
-  // Ticks every second while the page is in the "ready" state — drives the
-  // live m:ss countdown and flips to "unavailable" the instant the slot
-  // expires (even if the user just sat on the page).
+  // Ticks every second while the slot is still relevant — drives the live m:ss
+  // countdown and flips to "unavailable" if the user just sat on the page.
   let now = $state(Date.now());
 
   const token = $derived(page.params.token ?? "");
 
   $effect(() => {
-    // Run the timer in any state where the slot is still relevant. Once the
-    // user is past the rename ("done") or unavailable, the timer is moot.
-    if (local !== "ready" && local !== "naming") return;
+    if (local !== "ready") return;
     const id = setInterval(() => {
       now = Date.now();
     }, 1000);
@@ -52,7 +36,7 @@
   const remainingMs = $derived(expiresAt ? Date.parse(expiresAt) - now : 0);
 
   $effect(() => {
-    if ((local === "ready" || local === "naming") && remainingMs <= 0) {
+    if (local === "ready" && remainingMs <= 0) {
       local = "unavailable";
     }
   });
@@ -64,9 +48,6 @@
       return;
     }
     try {
-      // Server returns the slot only when it's still active; expired or
-      // already-consumed slots come back as 404 from the in-memory store and
-      // surface here as a thrown error.
       const info = await fetchInviteByToken(token);
       accountName = info.accountName;
       expiresAt = info.expiresAt;
@@ -84,30 +65,10 @@
       const result = await registerWithInviteToken({ token });
       assignedLabel = result.label;
       assignedFingerprint = result.fingerprint;
-      labelInput = result.label;
-      local = "naming";
-    } catch (err) {
-      error = errorMessage(err);
-      local = "ready";
-    }
-  }
-
-  async function handleConfirmName() {
-    if (!token) return;
-    const trimmed = labelInput.trim();
-    if (!trimmed) {
-      error = "Pick a name for this passkey";
-      return;
-    }
-    local = "saving";
-    error = "";
-    try {
-      const result = await confirmInviteLabel({ token, label: trimmed });
-      assignedLabel = result.label;
       local = "done";
     } catch (err) {
       error = errorMessage(err);
-      local = "naming";
+      local = "ready";
     }
   }
 
@@ -145,51 +106,20 @@
       {/if}
     {:else if local === "registering"}
       <p class="status">Waiting for your authenticator…</p>
-    {:else if local === "naming" || local === "saving"}
-      <div class="invite-status">
-        <span class="invite-status-dot" aria-hidden="true"></span>
-        <span class="invite-status-label">Active</span>
-        <span class="invite-status-timer">{formatRemaining(remainingMs)}</span>
-      </div>
+    {:else if local === "done"}
       <p class="description">
-        Passkey registered. Pick a name for it — you can keep the suggestion or change it. After you
-        confirm, this name is locked.
+        <span class="check">✓</span> Passkey registered as <strong>{assignedLabel}</strong>. Now go
+        back to the original device and click <strong>Confirm</strong> there to activate it. The passkey
+        can't be used until that confirmation lands.
       </p>
-      <label class="field">
-        <span class="field-label">Passkey name</span>
-        <input
-          class="input"
-          type="text"
-          bind:value={labelInput}
-          maxlength="64"
-          disabled={local === "saving"}
-        />
-      </label>
       {#if assignedFingerprint}
         <div class="fingerprint-card">
           <span class="fingerprint-label">Fingerprint</span>
           <code class="fingerprint-value">{assignedFingerprint}</code>
           <p class="fingerprint-help">
-            Verify this matches the fingerprint shown on the original device when you confirm there.
+            Verify this exact string is also shown on the original device's confirmation dialog
+            before activating.
           </p>
-        </div>
-      {/if}
-      <button class="btn-primary" onclick={handleConfirmName} disabled={local === "saving"}>
-        {local === "saving" ? "Saving…" : "Confirm name"}
-      </button>
-      {#if error}
-        <p class="error">{error}</p>
-      {/if}
-    {:else if local === "done"}
-      <p class="description">
-        <span class="check">✓</span> Passkey <strong>{assignedLabel}</strong> registered. Go back to
-        the original device and click <strong>Confirm</strong> to activate it. Until then, this passkey
-        can't be used.
-      </p>
-      {#if assignedFingerprint}
-        <div class="fingerprint-card">
-          <span class="fingerprint-label">Fingerprint</span>
-          <code class="fingerprint-value">{assignedFingerprint}</code>
         </div>
       {/if}
     {:else if local === "unavailable"}
@@ -330,39 +260,6 @@
     color: var(--red);
     font-size: 0.85rem;
     margin-top: 0.75rem;
-  }
-
-  .field {
-    display: block;
-    text-align: left;
-    margin-bottom: 1rem;
-  }
-
-  .field-label {
-    display: block;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 0.35rem;
-  }
-
-  .input {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 0.5rem 0.6rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font: inherit;
-    font-size: 0.85rem;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: var(--primary);
   }
 
   .fingerprint-card {

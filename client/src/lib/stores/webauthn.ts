@@ -129,13 +129,12 @@ export async function fetchInviteByToken(token: string): Promise<{
 
 /**
  * Run the WebAuthn ceremony on device B against an invite token. The server
- * inserts the credential with an AAGUID-derived label as a default; device B
- * is expected to call `confirmInviteLabel` next to commit a final name. The
- * fingerprint is for cross-device visual comparison against device A's
- * confirm screen.
+ * inserts the credential with an AAGUID-derived label and consumes the slot
+ * — renaming is left to device A so an intercepted token can't influence the
+ * label that device A's confirm UI shows. The fingerprint is for cross-device
+ * visual comparison against device A's confirm modal.
  */
 export async function registerWithInviteToken(params: { token: string }): Promise<{
-  credentialId: string;
   label: string;
   fingerprint: string | null;
 }> {
@@ -163,27 +162,6 @@ export async function registerWithInviteToken(params: { token: string }): Promis
     throw new Error(err.error || "Registration failed");
   }
   return verifyRes.json();
-}
-
-/**
- * Confirm/rename the just-registered credential. The invite token is the
- * bearer of authority — device B has no session. After this call succeeds the
- * server consumes the slot, so subsequent rename attempts will 404.
- */
-export async function confirmInviteLabel(params: {
-  token: string;
-  label: string;
-}): Promise<{ label: string }> {
-  const res = await fetch("/api/passkey-invite/register/label", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to confirm name");
-  }
-  return res.json();
 }
 
 /**
