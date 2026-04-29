@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { ShellWatchDB } from "../db/connection.js";
-import { deduplicateLabel } from "../db/repositories/credential-queries.js";
+import {
+  CREDENTIAL_STATE,
+  type CredentialState,
+  deduplicateLabel,
+} from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
 import { consumeChallenge } from "./challenge-store.js";
@@ -87,17 +91,27 @@ export async function verifyAndDecodeRegistration(
   };
 }
 
+export interface InsertCredentialOptions {
+  /**
+   * Lifecycle state at insert time. Defaults to `active` (matches the column
+   * default). The invite flow passes `pending_confirmation` so the credential
+   * is gated until the inviting device confirms — see invite.ts.
+   */
+  state?: CredentialState;
+}
+
 /**
  * Insert a verified credential row. Caller owns the transactional context —
  * pass the top-level DB for a standalone insert, or a transaction proxy when
  * the insert needs to be atomic with other writes (account creation in
- * self-register; future invite-token consumption). Label is deduplicated
- * against the account's existing passkeys.
+ * self-register; invite-token consumption). Label is deduplicated against
+ * the account's existing passkeys.
  */
 export function insertCredentialRow(
   dbOrTx: ShellWatchDB,
   accountId: string,
   decoded: DecodedRegistration,
+  options: InsertCredentialOptions = {},
 ): { id: string; label: string } {
   const id = randomUUID();
   const label = deduplicateLabel(dbOrTx, accountId, decoded.baseLabel);
@@ -114,6 +128,7 @@ export function insertCredentialRow(
       transports: JSON.stringify(decoded.transports),
       label,
       publicKeyOpenSsh: decoded.authorizedKeysEntry,
+      state: options.state ?? CREDENTIAL_STATE.active,
       createdAt: now,
     })
     .run();

@@ -29,6 +29,13 @@
       "when": 1776300000000,
       "tag": "0003_fingerprint_standard_base64",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1777480895677,
+      "tag": "0004_credential_state",
+      "breakpoints": true
     }
   ]
 }

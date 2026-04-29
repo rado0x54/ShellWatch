@@ -19,9 +19,16 @@
   let mobileMenuOpen = $state(false);
   let sessionModes = $state<Record<string, string>>({});
 
-  const isFullscreenPage = $derived(
-    page.url.pathname.endsWith("/login") || page.url.pathname.endsWith("/register"),
-  );
+  // `/passkey-invite/<token>` is reached by a *second* device that has no
+  // session yet — it must render fullscreen (no sidebar) and skip the
+  // auth-gated bootstrap below, same as /login and /register.
+  function isUnauthPath(path: string): boolean {
+    return (
+      path.endsWith("/login") || path.endsWith("/register") || path.includes("/passkey-invite/")
+    );
+  }
+
+  const isFullscreenPage = $derived(isUnauthPath(page.url.pathname));
 
   onMount(async () => {
     // Initialize runtime config from server-injected config.js
@@ -32,7 +39,7 @@
     initBuildInfoFromWindow();
 
     const currentPath = window.location.pathname;
-    const isUnauthPage = currentPath.endsWith("/login") || currentPath.endsWith("/register");
+    const isUnauthPage = isUnauthPath(currentPath);
 
     if (!isUnauthPage) {
       const { authenticated } = await checkAuth();

@@ -1,5 +1,5 @@
 import { generateRegistrationOptions } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
@@ -37,10 +37,21 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
       // we don't leak the global credential-id list to authenticated callers.
       // The anonymous self-register flow uses /api/auth/register/options
       // (returns no excludeCredentials).
+      //
+      // Revoked credentials are intentionally NOT excluded — the user
+      // explicitly destroyed the prior credential, and they should be able
+      // to re-enroll the same authenticator. Otherwise the browser/authenticator
+      // throws "The authenticator was previously registered" and the only
+      // recovery is to delete the row out-of-band.
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.accountId, request.accountId))
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, request.accountId),
+            eq(webauthnCredentials.revoked, false),
+          ),
+        )
         .all();
 
       // userName: max 64 bytes per WebAuthn recommendation

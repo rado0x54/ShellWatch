@@ -1,10 +1,11 @@
 import { and, eq, ne } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
+import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { detectAlgorithm } from "./credential-utils.js";
-import { sha256Fingerprint } from "./fingerprint.js";
-import { buildPublicKeyBlob, getSshdConfigLine, toSkPublicKeyBlob } from "./ssh-key-format.js";
+import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
+import { getSshdConfigLine } from "./ssh-key-format.js";
 
 export interface CredentialRoutesParams {
   app: FastifyInstance;
@@ -24,6 +25,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
         label: webauthnCredentials.label,
         revoked: webauthnCredentials.revoked,
+        state: webauthnCredentials.state,
         createdAt: webauthnCredentials.createdAt,
         lastUsedAt: webauthnCredentials.lastUsedAt,
       })
@@ -32,21 +34,27 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
       .all();
 
     return {
-      credentials: creds.map((c) => ({
-        id: c.id,
-        credentialId: c.credentialId,
-        label: c.label,
-        algorithm: detectAlgorithm(c.publicKey),
-        fingerprint: c.publicKeyOpenSsh
-          ? sha256Fingerprint(
-              toSkPublicKeyBlob(buildPublicKeyBlob({ publicKey: c.publicKeyOpenSsh })),
-            )
-          : null,
-        authorizedKeysEntry: c.publicKeyOpenSsh ?? null,
-        revoked: c.revoked,
-        createdAt: c.createdAt,
-        lastUsedAt: c.lastUsedAt,
-      })),
+      credentials: creds.map((c) => {
+        const isActive = c.state === CREDENTIAL_STATE.active;
+        // The fingerprint is surfaced for pending creds too — it's a public
+        // hash the user reads aloud / eyeballs across two devices to confirm
+        // the right passkey is being activated (see /passkey-invite confirm
+        // flow). The SSH `authorizedKeysEntry` stays withheld until confirmed:
+        // copying it into authorized_keys would let the new passkey reach
+        // servers before the user has approved it.
+        return {
+          id: c.id,
+          credentialId: c.credentialId,
+          label: c.label,
+          algorithm: detectAlgorithm(c.publicKey),
+          fingerprint: fingerprintFromAuthorizedKeys(c.publicKeyOpenSsh),
+          authorizedKeysEntry: isActive ? (c.publicKeyOpenSsh ?? null) : null,
+          revoked: c.revoked,
+          state: c.state,
+          createdAt: c.createdAt,
+          lastUsedAt: c.lastUsedAt,
+        };
+      }),
       sshdConfig: getSshdConfigLine(),
     };
   });
@@ -112,7 +120,11 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
 
       // Verify ownership
       const cred = db
-        .select({ id: webauthnCredentials.id, revoked: webauthnCredentials.revoked })
+        .select({
+          id: webauthnCredentials.id,
+          revoked: webauthnCredentials.revoked,
+          state: webauthnCredentials.state,
+        })
         .from(webauthnCredentials)
         .where(
           and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.accountId, request.accountId)),
@@ -127,20 +139,25 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         return { error: "Credential is already revoked" };
       }
 
-      // Prevent revoking the last active passkey
-      const activeCount = db
-        .select({ id: webauthnCredentials.id })
-        .from(webauthnCredentials)
-        .where(
-          and(
-            eq(webauthnCredentials.accountId, request.accountId),
-            eq(webauthnCredentials.revoked, false),
-          ),
-        )
-        .all().length;
-      if (activeCount <= 1) {
-        reply.status(400);
-        return { error: "Cannot revoke the last active passkey" };
+      // Pending credentials don't count as the user's last login factor —
+      // they can't log in. Only enforce the "last active passkey" guard for
+      // active credentials.
+      if (cred.state === CREDENTIAL_STATE.active) {
+        const activeCount = db
+          .select({ id: webauthnCredentials.id })
+          .from(webauthnCredentials)
+          .where(
+            and(
+              eq(webauthnCredentials.accountId, request.accountId),
+              eq(webauthnCredentials.revoked, false),
+              eq(webauthnCredentials.state, CREDENTIAL_STATE.active),
+            ),
+          )
+          .all().length;
+        if (activeCount <= 1) {
+          reply.status(400);
+          return { error: "Cannot revoke the last active passkey" };
+        }
       }
 
       // Revoke the credential

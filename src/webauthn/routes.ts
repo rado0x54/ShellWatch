@@ -3,6 +3,7 @@ import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { Config } from "../config/index.js";
 import { registerCredentialRoutes } from "./credentials.js";
+import { registerPasskeyInviteRoutes } from "./invite.js";
 import { registerLoginRoutes } from "./login.js";
 import { registerRegistrationRoutes } from "./registration.js";
 import { registerSelfRegisterRoutes } from "./self-register.js";
@@ -47,6 +48,13 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     rateLimitConfig,
   });
   registerCredentialRoutes({ app, db });
+  registerPasskeyInviteRoutes({
+    app,
+    db,
+    rpId,
+    trustedOrigins,
+    rateLimitConfig,
+  });
   registerLoginRoutes({
     app,
     db,

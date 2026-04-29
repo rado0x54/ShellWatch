@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../../db/connection.js";
 import type { AccountRepository } from "../../db/index.js";
+import { CREDENTIAL_STATE } from "../../db/repositories/credential-queries.js";
 import {
   accounts as accountsTable,
   apiKeys as apiKeysTable,
@@ -146,7 +147,11 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       })
       .from(webauthnCredentials)
       .where(
-        and(eq(webauthnCredentials.accountId, adminId), eq(webauthnCredentials.revoked, false)),
+        and(
+          eq(webauthnCredentials.accountId, adminId),
+          eq(webauthnCredentials.revoked, false),
+          eq(webauthnCredentials.state, CREDENTIAL_STATE.active),
+        ),
       )
       .all();
 

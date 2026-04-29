@@ -1,6 +1,8 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { writable } from "svelte/store";
 
+export type CredentialState = "active" | "pending_confirmation";
+
 export interface WebAuthnCredential {
   id: string;
   credentialId: string;
@@ -9,8 +11,15 @@ export interface WebAuthnCredential {
   fingerprint: string | null;
   authorizedKeysEntry: string | null;
   revoked: boolean;
+  state: CredentialState;
   createdAt: string;
   lastUsedAt: string | null;
+}
+
+export interface PasskeyInvite {
+  expiresAt: string;
+  createdAt: string;
+  token: string;
 }
 
 export const credentials = writable<WebAuthnCredential[]>([]);
@@ -59,6 +68,98 @@ export async function startPasskeyRegistration(name?: string): Promise<{
     credentialId: result.id,
     label: result.label,
   };
+}
+
+/** Confirm a pending-confirmation credential, flipping it to active. */
+export async function confirmPasskey(credentialId: string): Promise<void> {
+  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to confirm passkey");
+  }
+  await fetchCredentials();
+}
+
+// --- Passkey invite (single in-memory slot per account, 5min TTL) ---
+
+/**
+ * Fetch the account's currently active invite (if any). Returns null when
+ * the slot is empty — that's a 404 from the server, not an error.
+ */
+export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
+  const res = await fetch("/api/webauthn/invite");
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invite");
+  }
+  const data = await res.json();
+  return data.invite as PasskeyInvite;
+}
+
+/** Create or supersede the active invite for the account. */
+export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
+  const res = await fetch("/api/webauthn/invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create invite");
+  }
+  const data = await res.json();
+  return data.invite as PasskeyInvite;
+}
+
+/** Fetch invite metadata for the public registration page. */
+export async function fetchInviteByToken(token: string): Promise<{
+  accountName: string | null;
+  expiresAt: string;
+}> {
+  const res = await fetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invite");
+  }
+  return res.json();
+}
+
+/**
+ * Run the WebAuthn ceremony on device B against an invite token. The server
+ * inserts the credential with an AAGUID-derived label and consumes the slot
+ * — renaming is left to device A so an intercepted token can't influence the
+ * label that device A's confirm UI shows. The fingerprint is for cross-device
+ * visual comparison against device A's confirm modal.
+ */
+export async function registerWithInviteToken(params: { token: string }): Promise<{
+  label: string;
+  fingerprint: string | null;
+}> {
+  const optionsRes = await fetch("/api/passkey-invite/register/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: params.token }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to get registration options");
+  }
+  const options = await optionsRes.json();
+  const { challengeId, ...registrationOptions } = options;
+
+  const credential = await startRegistration({ optionsJSON: registrationOptions });
+
+  const verifyRes = await fetch("/api/passkey-invite/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: params.token, challengeId, credential }),
+  });
+  if (!verifyRes.ok) {
+    const err = await verifyRes.json().catch(() => ({}));
+    throw new Error(err.error || "Registration failed");
+  }
+  return verifyRes.json();
 }
 
 /**

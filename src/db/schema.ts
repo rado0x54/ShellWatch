@@ -42,6 +42,13 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   label: text("label").notNull(), // User-friendly name (e.g., "YubiKey 5 NFC")
   publicKeyOpenSsh: text("public_key_openssh"), // OpenSSH authorized_keys format (if convertible)
   revoked: integer("revoked", { mode: "boolean" }).notNull().default(false),
+  /**
+   * Lifecycle state. `active` = usable for login, SSH signing, listed as SSH key.
+   * `pending_confirmation` = registered via an invite but not yet confirmed by the
+   * inviting (already-authenticated) device. Pending creds are listed in account
+   * settings only — never returned to login flows or SSH signing.
+   */
+  state: text("state").notNull().default("active"),
   createdAt: text("created_at").notNull(),
   lastUsedAt: text("last_used_at"),
 });
