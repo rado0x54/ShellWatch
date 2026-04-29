@@ -24,13 +24,14 @@
   let registering = $state(false);
   let inviting = $state(false);
   let showAddModal = $state(false);
+  // Set after a successful Invite creation; switches the modal from the
+  // pick-flow view to the link-display view. The list endpoint always returns
+  // the token while the invite is `pending`, so the link is recoverable from
+  // the Pending Invites section even after the modal closes.
+  let modalCreatedInvite = $state<PasskeyInvite | null>(null);
   let confirmingId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
   let editLabel = $state("");
-  // Most-recent invite (with token) is shown inline so the user can copy the
-  // link once. The token is never persisted to the list endpoint, so once the
-  // user navigates away we can't bring it back.
-  let lastCreatedInvite = $state<PasskeyInvite | null>(null);
 
   onMount(() => {
     fetchCredentials();
@@ -46,12 +47,18 @@
     inviting = true;
     try {
       const invite = await createPasskeyInvite();
-      lastCreatedInvite = invite;
-      showAddModal = false;
+      // Stay in the modal: switch to the link-display view so the user can
+      // copy the URL right where they triggered the action.
+      modalCreatedInvite = invite;
     } catch (err) {
       toastError(`Could not create invite: ${errorMessage(err)}`);
     }
     inviting = false;
+  }
+
+  function closeAddModal() {
+    showAddModal = false;
+    modalCreatedInvite = null;
   }
 
   async function handleRevokeInvite(id: string) {
@@ -63,7 +70,7 @@
       return;
     try {
       await revokePasskeyInvite(id);
-      if (lastCreatedInvite?.id === id) lastCreatedInvite = null;
+      if (modalCreatedInvite?.id === id) closeAddModal();
     } catch (err) {
       toastError(errorMessage(err));
     }
@@ -294,65 +301,65 @@
   </div>
 
   {#if showAddModal}
-    <Modal title="Add a passkey" onClose={() => (showAddModal = false)}>
-      <p class="modal-desc">
-        Pick where the new passkey lives. Both options enroll a passkey on this account.
-      </p>
-
-      <button class="add-option" type="button" disabled={registering} onclick={handleRegister}>
-        <span class="add-option-title">This device</span>
-        <span class="add-option-body">
-          Use the authenticator built into this browser or a security key plugged in here.
-          Registration runs immediately and the passkey is active right away — you can use it for
-          login and SSH on this account.
-        </span>
-        <span class="add-option-cta"
-          >{registering ? "Waiting for passkey…" : "Register here →"}</span
-        >
-      </button>
-
-      <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
-        <span class="add-option-title">Another device</span>
-        <span class="add-option-body">
-          Generate a single-use link (valid for 1 hour) to open on the other device. That device
-          completes the WebAuthn ceremony, then the new passkey sits in <em>pending confirmation</em
+    <Modal title={modalCreatedInvite ? "Invite created" : "Add a passkey"} onClose={closeAddModal}>
+      {#if modalCreatedInvite?.token}
+        <p class="modal-desc">
+          Single-use · expires in {formatExpiry(modalCreatedInvite.expiresAt)}. Open this link on
+          the device you want to enroll. It can only complete registration once. After the device
+          registers, come back here and click <strong>Confirm</strong> on the new passkey.
+        </p>
+        <div class="invite-link-row">
+          <code class="invite-link">{inviteUrl(modalCreatedInvite.token)}</code>
+          <button
+            class="btn btn-secondary"
+            type="button"
+            onclick={(e) =>
+              copyKey(inviteUrl(modalCreatedInvite!.token!), e.currentTarget as HTMLButtonElement)}
+            >Copy</button
           >
-          — it cannot log in, sign anything, or be copied as an SSH key until you come back here and click
-          <strong>Confirm</strong>.
-        </span>
-        <span class="add-option-cta">{inviting ? "Creating invite…" : "Create invite link →"}</span>
-      </button>
+        </div>
+        <p class="modal-hint">
+          You can re-copy this link anytime from <strong>Pending invites</strong> below until it expires,
+          is consumed, or is revoked.
+        </p>
+      {:else}
+        <p class="modal-desc">
+          Pick where the new passkey lives. Both options enroll a passkey on this account.
+        </p>
+
+        <button class="add-option" type="button" disabled={registering} onclick={handleRegister}>
+          <span class="add-option-title">This device</span>
+          <span class="add-option-body">
+            Use the authenticator built into this browser or a security key plugged in here.
+            Registration runs immediately and the passkey is active right away — you can use it for
+            login and SSH on this account.
+          </span>
+          <span class="add-option-cta"
+            >{registering ? "Waiting for passkey…" : "Register here →"}</span
+          >
+        </button>
+
+        <button class="add-option" type="button" disabled={inviting} onclick={handleInvite}>
+          <span class="add-option-title">Another device</span>
+          <span class="add-option-body">
+            Generate a single-use link (valid for 1 hour) to open on the other device. That device
+            completes the WebAuthn ceremony, then the new passkey sits in
+            <em>pending confirmation</em>
+            — it cannot log in, sign anything, or be copied as an SSH key until you come back here and
+            click <strong>Confirm</strong>.
+          </span>
+          <span class="add-option-cta"
+            >{inviting ? "Creating invite…" : "Create invite link →"}</span
+          >
+        </button>
+      {/if}
 
       {#snippet actions()}
-        <button class="btn btn-secondary" type="button" onclick={() => (showAddModal = false)}
-          >Cancel</button
+        <button class="btn btn-secondary" type="button" onclick={closeAddModal}
+          >{modalCreatedInvite ? "Done" : "Cancel"}</button
         >
       {/snippet}
     </Modal>
-  {/if}
-
-  {#if lastCreatedInvite?.token}
-    <div class="invite-callout">
-      <div class="invite-callout-head">
-        <strong>Invite created</strong>
-        <span class="invite-meta"
-          >Single-use · expires in {formatExpiry(lastCreatedInvite.expiresAt)}</span
-        >
-      </div>
-      <p class="invite-help">
-        Open this link on the device you want to enroll. It can only complete registration once.
-        After the device registers, come back here and click <strong>Confirm</strong> on the new passkey.
-      </p>
-      <div class="invite-link-row">
-        <code class="invite-link">{inviteUrl(lastCreatedInvite.token)}</code>
-        <button
-          class="btn btn-secondary"
-          onclick={(e) =>
-            copyKey(inviteUrl(lastCreatedInvite!.token!), e.currentTarget as HTMLButtonElement)}
-          >Copy</button
-        >
-      </div>
-    </div>
   {/if}
 
   {#if pendingInvites.length > 0}
@@ -376,6 +383,15 @@
             {/if}
           {/snippet}
           {#snippet actions()}
+            {#if inv.token}
+              <button
+                class="btn btn-secondary"
+                title="Copy invite link"
+                onclick={(e) =>
+                  copyKey(inviteUrl(inv.token!), e.currentTarget as HTMLButtonElement)}
+                >Copy link</button
+              >
+            {/if}
             <button class="btn btn-secondary" onclick={() => handleRevokeInvite(inv.id)}
               >Revoke</button
             >
@@ -551,38 +567,11 @@
     letter-spacing: 0.05em;
   }
 
-  .invite-callout {
-    margin-top: var(--space-4);
-    padding: var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-container-low, var(--bg-primary));
-  }
-
-  .invite-callout-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: var(--space-2);
-    margin-bottom: var(--space-2);
-  }
-
-  .invite-meta {
-    font-size: var(--label-sm);
-    color: var(--text-muted);
-  }
-
-  .invite-help {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    margin: 0 0 var(--space-2);
-    line-height: 1.5;
-  }
-
   .invite-link-row {
     display: flex;
     gap: var(--space-2);
     align-items: center;
+    margin-bottom: var(--space-2);
   }
 
   .invite-link {
@@ -596,6 +585,13 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: var(--space-1) var(--space-2);
+  }
+
+  .modal-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.5;
   }
 
   .label-btn {

@@ -23,11 +23,14 @@ export interface PasskeyInviteRoutesParams {
 }
 
 /**
- * Shape returned to UI / invite link consumer. Hides the raw token from list
- * endpoints (the token is only visible at create-time so the inviter can copy
- * it once); reveals it only on the create response.
+ * Shape returned to UI / invite link consumer. The token is included while the
+ * invite is still `pending` (so the inviter can re-copy the link from the
+ * settings list at any time) and stripped once the invite reaches a terminal
+ * state — at that point the token is useless and there's no reason to keep
+ * surfacing it.
  */
-function publicInviteShape(invite: PasskeyInviteInfo, includeToken: boolean) {
+function publicInviteShape(invite: PasskeyInviteInfo) {
+  const status = inviteStatus(invite);
   return {
     id: invite.id,
     label: invite.label,
@@ -36,8 +39,8 @@ function publicInviteShape(invite: PasskeyInviteInfo, includeToken: boolean) {
     consumedAt: invite.consumedAt,
     revokedAt: invite.revokedAt,
     credentialId: invite.credentialId,
-    status: inviteStatus(invite),
-    ...(includeToken ? { token: invite.token } : {}),
+    status,
+    ...(status === "pending" ? { token: invite.token } : {}),
   };
 }
 
@@ -66,7 +69,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         { event: "passkey_invite.created", inviteId: invite.id, accountId: request.accountId },
         "passkey invite created",
       );
-      return { invite: publicInviteShape(invite, true) };
+      return { invite: publicInviteShape(invite) };
     },
   );
 
@@ -74,7 +77,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   app.get("/api/webauthn/invites", async (request) => {
     const invites = inviteRepo.listForAccount(request.accountId);
     return {
-      invites: invites.map((i) => publicInviteShape(i, false)),
+      invites: invites.map((i) => publicInviteShape(i)),
     };
   });
 
