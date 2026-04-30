@@ -88,12 +88,34 @@ describe("OAuth DCR flow", () => {
     });
   }
 
-  it("exposes RFC 9728 protected-resource metadata pointing at /mcp", async () => {
+  it("exposes RFC 9728 protected-resource metadata at the unsuffixed legacy path (back-compat alias for /mcp)", async () => {
     const res = await fetch(`${appServer.url}/.well-known/oauth-protected-resource`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.resource).toBe(`${appServer.url}/mcp`);
     expect(body.authorization_servers).toContain(appServer.url);
+    expect(body.bearer_methods_supported).toEqual(["header"]);
+    expect(body.scopes_supported).toEqual(["mcp"]);
+  });
+
+  it("exposes RFC 9728 protected-resource metadata at the spec-correct /mcp path", async () => {
+    const res = await fetch(`${appServer.url}/.well-known/oauth-protected-resource/mcp`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.resource).toBe(`${appServer.url}/mcp`);
+    expect(body.authorization_servers).toContain(appServer.url);
+    expect(body.bearer_methods_supported).toEqual(["header"]);
+    expect(body.scopes_supported).toEqual(["mcp"]);
+  });
+
+  it("exposes RFC 9728 protected-resource metadata at /.well-known/oauth-protected-resource/agent-proxy", async () => {
+    const res = await fetch(`${appServer.url}/.well-known/oauth-protected-resource/agent-proxy`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.resource).toBe(`${appServer.url}/agent-proxy`);
+    expect(body.authorization_servers).toContain(appServer.url);
+    expect(body.bearer_methods_supported).toEqual(["header"]);
+    expect(body.scopes_supported).toEqual(["agent"]);
   });
 
   it("exposes RFC 8414 authorization-server metadata with all expected endpoints", async () => {
@@ -126,13 +148,25 @@ describe("OAuth DCR flow", () => {
     expect(body.client_name).toBe("Claude Desktop");
   });
 
-  it("MCP 401 includes WWW-Authenticate with resource_metadata pointer", async () => {
+  it("MCP 401 includes WWW-Authenticate pointing at the /mcp resource metadata", async () => {
     const res = await fetch(`${appServer.url}/mcp`, { method: "POST" });
     expect(res.status).toBe(401);
     const challenge = res.headers.get("www-authenticate");
     expect(challenge).toContain("Bearer");
+    expect(challenge).toContain(`realm="shellwatch"`);
     expect(challenge).toContain(
-      `resource_metadata="${appServer.url}/.well-known/oauth-protected-resource"`,
+      `resource_metadata="${appServer.url}/.well-known/oauth-protected-resource/mcp"`,
+    );
+  });
+
+  it("agent-proxy 401 includes WWW-Authenticate pointing at the /agent-proxy resource metadata", async () => {
+    const res = await fetch(`${appServer.url}/agent-proxy`, { method: "GET" });
+    expect(res.status).toBe(401);
+    const challenge = res.headers.get("www-authenticate");
+    expect(challenge).toContain("Bearer");
+    expect(challenge).toContain(`realm="shellwatch"`);
+    expect(challenge).toContain(
+      `resource_metadata="${appServer.url}/.well-known/oauth-protected-resource/agent-proxy"`,
     );
   });
 
@@ -870,15 +904,28 @@ describe("OAuth DCR flow", () => {
       expect(body.token_endpoint).toBe("https://oauth.example.com/oauth/token");
       expect(body.registration_endpoint).toBe("https://oauth.example.com/oauth/register");
 
-      const prRes = await fetch(`${appServer.url}/.well-known/oauth-protected-resource`);
-      const pr = await prRes.json();
-      expect(pr.resource).toBe("https://oauth.example.com/mcp");
-      expect(pr.authorization_servers).toEqual(["https://oauth.example.com"]);
+      // All three protected-resource forms must reflect the new externalUrl.
+      for (const path of [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource/agent-proxy",
+      ]) {
+        const prRes = await fetch(`${appServer.url}${path}`);
+        const pr = await prRes.json();
+        expect(pr.authorization_servers).toEqual(["https://oauth.example.com"]);
+        expect(pr.resource.startsWith("https://oauth.example.com/")).toBe(true);
+      }
 
       const mcpRes = await fetch(`${appServer.url}/mcp`, { method: "POST" });
       expect(mcpRes.status).toBe(401);
       expect(mcpRes.headers.get("www-authenticate")).toContain(
-        "https://oauth.example.com/.well-known/oauth-protected-resource",
+        "https://oauth.example.com/.well-known/oauth-protected-resource/mcp",
+      );
+
+      const agentRes = await fetch(`${appServer.url}/agent-proxy`);
+      expect(agentRes.status).toBe(401);
+      expect(agentRes.headers.get("www-authenticate")).toContain(
+        "https://oauth.example.com/.well-known/oauth-protected-resource/agent-proxy",
       );
     } finally {
       appServer.config.server.externalUrl = original;

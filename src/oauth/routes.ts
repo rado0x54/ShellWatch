@@ -25,7 +25,12 @@ import type { Config } from "../config/index.js";
 // reached for here because the OAuth callback needs the cross-tenant findByHash. See #136.
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
-import { BEARER_PATHS, BEARER_SCOPES, type BearerScope } from "../server/auth/bearer-gate.js";
+import {
+  BEARER_PATHS,
+  BEARER_SCOPES,
+  RESOURCE_METADATA_PATHS,
+  type BearerScope,
+} from "../server/auth/bearer-gate.js";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 import { verifyPkceS256 } from "./pkce.js";
 import { renderAuthorizePage, type AuthorizeMode } from "./render.js";
@@ -150,14 +155,23 @@ export function registerOAuth({
     },
   );
 
-  app.get("/.well-known/oauth-protected-resource", async () => {
+  // RFC 9728 protected-resource metadata. We expose one document per scope,
+  // each at the spec-compliant `/.well-known/oauth-protected-resource/<path>`
+  // form, plus a legacy unsuffixed alias for /mcp so pre-existing MCP clients
+  // (Claude Desktop, MCP Inspector) keep working with cached discovery state.
+  const resourceMetadata = (scope: BearerScope): Record<string, unknown> => {
     const base = baseUrl();
     return {
-      resource: `${base}${BEARER_PATHS.mcp}`,
+      resource: `${base}${BEARER_PATHS[scope]}`,
       authorization_servers: [base],
       bearer_methods_supported: ["header"],
+      scopes_supported: [scope],
     };
-  });
+  };
+
+  app.get("/.well-known/oauth-protected-resource", async () => resourceMetadata("mcp"));
+  app.get(RESOURCE_METADATA_PATHS.mcp, async () => resourceMetadata("mcp"));
+  app.get(RESOURCE_METADATA_PATHS.agent, async () => resourceMetadata("agent"));
 
   app.get("/.well-known/oauth-authorization-server", async () => {
     const base = baseUrl();

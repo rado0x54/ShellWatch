@@ -126,8 +126,8 @@ export async function buildApp(params: BuildAppParams) {
     accountRepo,
     config,
     paths: {
-      [BEARER_PATHS.mcp]: { requiredScope: "mcp", failureFormat: "rfc6750" },
-      [BEARER_PATHS.agent]: { requiredScope: "agent", failureFormat: "plain" },
+      [BEARER_PATHS.mcp]: { requiredScope: "mcp" },
+      [BEARER_PATHS.agent]: { requiredScope: "agent" },
     },
   });
   const oauth = registerOAuth({ app, apiKeyRepo, config });
