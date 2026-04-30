@@ -11,6 +11,14 @@ import { randomBytes } from "node:crypto";
  *   - Account-bound (rejected if presented by a different session).
  *   - Short-lived (default 90 s).
  *
+ * Tokens are NOT bound to a specific credential id — only to {account, action}.
+ * Asserting with passkey Y is enough to revoke passkey X on the same account,
+ * which is the explicit goal: revoking a *lost* authenticator means the user
+ * has to assert with a different one. Same logic applies to `confirm_passkey`
+ * (no "matching" credential exists yet for a brand-new pending row). The
+ * trade-off is that any active credential authorises the action — if that's
+ * ever too loose for a future flow, we'd need a `credentialId`-bound variant.
+ *
  * Why in-memory: tokens live for ~90 s, so persistence has no recovery value.
  * Bound tightly to a single Node process — for multi-instance deployment this
  * needs to move into a shared cache (same caveat as challenge-store).

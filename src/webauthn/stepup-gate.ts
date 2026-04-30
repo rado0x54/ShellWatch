@@ -7,21 +7,13 @@ import {
 
 const STEPUP_HEADER = "x-shellwatch-stepup-token";
 
-/**
- * Pull the step-up token off the request. Header takes precedence so the
- * client doesn't have to splice it into a body that may already have a
- * narrow schema (e.g. the registration verify body). Body is the fallback
- * for callers that find headers awkward (and for parity with how the issue
- * spec was written).
- */
+/** Pull the step-up token off the request header. */
 function extractStepUpToken(request: FastifyRequest): string | null {
   const header = request.headers[STEPUP_HEADER];
   if (typeof header === "string" && header.length > 0) return header;
   if (Array.isArray(header) && header.length > 0 && typeof header[0] === "string") {
     return header[0];
   }
-  const body = request.body as { stepUpToken?: unknown } | undefined;
-  if (body && typeof body.stepUpToken === "string") return body.stepUpToken;
   return null;
 }
 

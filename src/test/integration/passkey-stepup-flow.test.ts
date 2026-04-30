@@ -358,7 +358,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       expect(body.action).toBe(STEPUP_ACTION.registerPasskey);
     });
 
-    it("404s a caller with no active credentials", async () => {
+    it("400s a caller with no active credentials", async () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/options",
