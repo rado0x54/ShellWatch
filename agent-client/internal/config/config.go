@@ -1,17 +1,27 @@
-// Package config handles configuration from CLI flags and environment variables
-// with precedence: flags > env > defaults.
+// Package config handles configuration from CLI flags, environment variables,
+// and the credstore with precedence: flags > env > credstore > defaults.
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/rado0x54/shellwatch-agent/internal/credstore"
 )
 
 // DefaultServer is the hosted ShellWatch instance, used when neither
 // --server nor SHELLWATCH_SERVER is set.
 const DefaultServer = "https://app.shellwatch.ai"
+
+// newCredStore is the package-level seam tests use to inject a fake
+// credstore. Production callers get the real OS keyring + file fallback;
+// `config_test.go` swaps it for an empty in-memory store via TestMain so
+// `TestResolve*` never reads (or prints warnings about) a developer's
+// actual saved tokens.
+var newCredStore = credstore.New
 
 type Config struct {
 	Server     string
@@ -106,12 +116,38 @@ func resolve(fv flagValues, ev envValues) *Config {
 		cfg.SocketPath = defaultSocketPath()
 	}
 
+	// Final fallback for ApiKey: consult the credstore. Lets users run
+	// `shellwatch-agent login` once and have the daemon pick up the token
+	// automatically — no env var, no flag, no plaintext config file.
+	// Lookup-misses (no token saved yet) fall through silently so
+	// Validate() can surface a friendlier "no API key for X" message;
+	// open/read failures (broken HOME, unreadable file) get a one-line
+	// warning to stderr so the user has a hint when "no API key" is
+	// hiding a real problem.
+	if cfg.ApiKey == "" {
+		store, err := newCredStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not open credstore: %v\n", err)
+		} else {
+			token, err := store.Get(cfg.Server)
+			if err == nil {
+				cfg.ApiKey = token
+			} else if !errors.Is(err, credstore.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "warning: credstore lookup for %s failed: %v\n", cfg.Server, err)
+			}
+		}
+	}
+
 	return cfg
 }
 
 func (c *Config) Validate() error {
 	if c.ApiKey == "" {
-		return fmt.Errorf("API key is required (use --api-key or SHELLWATCH_API_KEY)")
+		return fmt.Errorf(
+			"no API key for %s — run `shellwatch-agent login --server %s` to authorize, "+
+				"or set SHELLWATCH_API_KEY / pass --api-key",
+			c.Server, c.Server,
+		)
 	}
 	return nil
 }
