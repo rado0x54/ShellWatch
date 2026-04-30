@@ -1,5 +1,5 @@
-// Package config handles configuration from CLI flags and environment variables
-// with precedence: flags > env > defaults.
+// Package config handles configuration from CLI flags, environment variables,
+// and the credstore with precedence: flags > env > credstore > defaults.
 package config
 
 import (
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/rado0x54/shellwatch-agent/internal/credstore"
 )
 
 // DefaultServer is the hosted ShellWatch instance, used when neither
@@ -106,12 +108,29 @@ func resolve(fv flagValues, ev envValues) *Config {
 		cfg.SocketPath = defaultSocketPath()
 	}
 
+	// Final fallback for ApiKey: consult the credstore. Lets users run
+	// `shellwatch-agent login` once and have the daemon pick up the token
+	// automatically — no env var, no flag, no plaintext config file.
+	// Failures are silent on purpose; Validate() surfaces a friendlier
+	// message than "couldn't open credstore".
+	if cfg.ApiKey == "" {
+		if store, err := credstore.New(); err == nil {
+			if token, err := store.Get(cfg.Server); err == nil {
+				cfg.ApiKey = token
+			}
+		}
+	}
+
 	return cfg
 }
 
 func (c *Config) Validate() error {
 	if c.ApiKey == "" {
-		return fmt.Errorf("API key is required (use --api-key or SHELLWATCH_API_KEY)")
+		return fmt.Errorf(
+			"no API key for %s — run `shellwatch-agent login --server %s` to authorize, "+
+				"or set SHELLWATCH_API_KEY / pass --api-key",
+			c.Server, c.Server,
+		)
 	}
 	return nil
 }
