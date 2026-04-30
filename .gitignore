@@ -5,7 +5,7 @@ coverage/
 .idea/
 *.pem
 *.key
-keys/
+/keys/
 logs/*
 !logs/.gitkeep
 config.yaml
