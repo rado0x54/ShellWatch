@@ -3,9 +3,10 @@
  *
  * What this exercises:
  *   - The HTTP gate on /api/webauthn/register, /api/webauthn/credentials/:id/
- *     revoke, /api/webauthn/credentials/:id/confirm, and /api/webauthn/invite:
- *     missing/expired/wrong-action/wrong-account tokens are rejected with 401
- *     + machine-readable code.
+ *     revoke, and /api/webauthn/credentials/:id/confirm: missing/expired/
+ *     wrong-action/wrong-account tokens are rejected with 401 + machine-
+ *     readable code. (POST /api/webauthn/invite is intentionally NOT gated
+ *     — see the describe block.)
  *   - The revoke happy path — a valid token + a non-last credential succeeds.
  *   - Cross-flow challenge purpose binding: a challenge minted by /stepup/
  *     options for one action can't be consumed by /stepup/verify with a
@@ -374,49 +375,15 @@ describe("passkey step-up gate — HTTP integration", () => {
   // ---- /api/webauthn/invite gate ----
 
   describe("/api/webauthn/invite", () => {
-    it("rejects a request without a step-up token", async () => {
+    it("POST is NOT gated (the gate lives on confirm)", async () => {
+      // Creating an invite produces a `pending_confirmation` credential
+      // that's unusable until the in-account confirm step (which IS gated).
+      // Asking for an assertion at both ends of the chain would force the
+      // user to re-authenticate twice for one logical add.
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/invite",
         headers: { cookie: testApp.cookieA, "content-type": "application/json" },
-        payload: {},
-      });
-      expect(res.statusCode).toBe(401);
-      expect((res.json() as { code: string }).code).toBe("stepup_required");
-    });
-
-    it("rejects a token minted for the revoke action", async () => {
-      const minted = mintStepUpToken({
-        accountId: ACCOUNT_A,
-        action: STEPUP_ACTION.revokePasskey,
-      });
-      const res = await testApp.app.inject({
-        method: "POST",
-        url: "/api/webauthn/invite",
-        headers: {
-          cookie: testApp.cookieA,
-          "content-type": "application/json",
-          "x-shellwatch-stepup-token": minted.token,
-        },
-        payload: {},
-      });
-      expect(res.statusCode).toBe(401);
-      expect((res.json() as { code: string }).code).toBe("stepup_wrong_action");
-    });
-
-    it("happy path: valid create_invite token mints an invite", async () => {
-      const minted = mintStepUpToken({
-        accountId: ACCOUNT_A,
-        action: STEPUP_ACTION.createInvite,
-      });
-      const res = await testApp.app.inject({
-        method: "POST",
-        url: "/api/webauthn/invite",
-        headers: {
-          cookie: testApp.cookieA,
-          "content-type": "application/json",
-          "x-shellwatch-stepup-token": minted.token,
-        },
         payload: {},
       });
       expect(res.statusCode).toBe(200);

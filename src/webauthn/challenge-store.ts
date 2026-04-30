@@ -17,7 +17,6 @@ export const CHALLENGE_PURPOSE = {
   stepupRegisterPasskey: "stepup:register_passkey",
   stepupRevokePasskey: "stepup:revoke_passkey",
   stepupConfirmPasskey: "stepup:confirm_passkey",
-  stepupCreateInvite: "stepup:create_invite",
 } as const;
 
 export type ChallengePurpose = (typeof CHALLENGE_PURPOSE)[keyof typeof CHALLENGE_PURPOSE];

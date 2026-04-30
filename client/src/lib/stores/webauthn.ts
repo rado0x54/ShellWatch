@@ -5,11 +5,7 @@ import { writable } from "svelte/store";
  * Step-up actions recognised by the server. Mirrors STEPUP_ACTION on the
  * backend; kept inline here to avoid importing server code into the client.
  */
-export type StepUpAction =
-  | "register_passkey"
-  | "revoke_passkey"
-  | "confirm_passkey"
-  | "create_invite";
+export type StepUpAction = "register_passkey" | "revoke_passkey" | "confirm_passkey";
 
 /**
  * Run the WebAuthn step-up assertion for an action and return the resulting
@@ -160,13 +156,12 @@ export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
 
 /** Create or supersede the active invite for the account. */
 export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
-  // Step-up: minting an invite is the first step in adding a new login
-  // factor. Gating both ends of the invite chain (here + confirm) prevents
-  // a stolen-cookie end-run around the in-account register step-up.
-  const stepUpToken = await performStepUp("create_invite");
+  // No step-up here: minting an invite produces a `pending_confirmation`
+  // credential that's unusable until the in-account confirm step, which IS
+  // step-up gated. Asking for an assertion twice in one chain is overkill.
   const res = await fetch("/api/webauthn/invite", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
   });
   if (!res.ok) {

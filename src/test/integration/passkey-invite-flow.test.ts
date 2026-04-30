@@ -147,11 +147,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: {
-        cookie: testApp.cookie,
-        "content-type": "application/json",
-        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.createInvite),
-      },
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
       payload: {},
     });
     expect(created.statusCode).toBe(200);
@@ -172,11 +168,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: {
-        cookie: testApp.cookie,
-        "content-type": "application/json",
-        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.createInvite),
-      },
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
       payload: {},
     });
     const token = (created.json() as { invite: { token: string } }).invite.token;
@@ -197,11 +189,7 @@ describe("passkey invite — HTTP integration", () => {
     const first = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: {
-        cookie: testApp.cookie,
-        "content-type": "application/json",
-        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.createInvite),
-      },
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
       payload: {},
     });
     const firstToken = (first.json() as { invite: { token: string } }).invite.token;
@@ -209,11 +197,7 @@ describe("passkey invite — HTTP integration", () => {
     const second = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: {
-        cookie: testApp.cookie,
-        "content-type": "application/json",
-        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.createInvite),
-      },
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
       payload: {},
     });
     const secondToken = (second.json() as { invite: { token: string } }).invite.token;
@@ -243,11 +227,7 @@ describe("passkey invite — HTTP integration", () => {
     await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: {
-        cookie: testApp.cookie,
-        "content-type": "application/json",
-        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.createInvite),
-      },
+      headers: { cookie: testApp.cookie, "content-type": "application/json" },
       payload: {},
     });
 

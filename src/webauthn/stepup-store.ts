@@ -22,7 +22,6 @@ export const STEPUP_ACTION = {
   registerPasskey: "register_passkey",
   revokePasskey: "revoke_passkey",
   confirmPasskey: "confirm_passkey",
-  createInvite: "create_invite",
 } as const;
 
 export type StepUpAction = (typeof STEPUP_ACTION)[keyof typeof STEPUP_ACTION];

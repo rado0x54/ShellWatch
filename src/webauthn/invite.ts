@@ -49,22 +49,13 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         },
       },
     },
-    async (request, reply) => {
-      // Step-up gate: minting an invite is the first step in adding a new
-      // login factor (the resulting credential lands as pending and only
-      // needs a confirm to become live). Both ends of that chain are gated
-      // so a stolen-cookie attacker can't end-run the in-account register
-      // step-up by going through the invite flow.
-      if (
-        !requireStepUp({
-          request,
-          reply,
-          action: STEPUP_ACTION.createInvite,
-        })
-      ) {
-        return reply;
-      }
-
+    async (request) => {
+      // No step-up here. Creating an invite by itself doesn't change a login
+      // factor — the credential it produces lands as `pending_confirmation`
+      // and is unusable for login until the in-account confirm step (which
+      // IS step-up gated). Asking the user to assert twice (once to mint
+      // the invite, once to confirm the resulting credential) is overkill;
+      // the confirm gate is the load-bearing one in this chain.
       const slot = createInviteSlot({ accountId: request.accountId });
       request.log.info(
         { event: "passkey_invite.created", accountId: request.accountId },
