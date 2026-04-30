@@ -118,8 +118,12 @@ export async function buildApp(params: BuildAppParams) {
     accountRepo,
   });
 
-  // IP allowlist + bearer-gate (covers /mcp and /agent-proxy) + OAuth shim.
+  // IP allowlist + bearer-gate (covers /mcp and, when enabled, /agent-proxy) + OAuth shim.
   registerIpAllowlist(app, config.security.allowedNetworks, [BEARER_PATHS.mcp]);
+  // Only gate /agent-proxy when the proxy is actually enabled — otherwise the
+  // path 401s at the bearer gate while no route is mounted, which is misleading
+  // and lets clients mint agent-scoped keys that are useless.
+  const agentProxyEnabled = config.agentSocket.proxyEnabled;
   registerBearerGate({
     app,
     apiKeyRepo,
@@ -127,10 +131,10 @@ export async function buildApp(params: BuildAppParams) {
     config,
     paths: {
       [BEARER_PATHS.mcp]: { requiredScope: "mcp" },
-      [BEARER_PATHS.agent]: { requiredScope: "agent" },
+      ...(agentProxyEnabled ? { [BEARER_PATHS.agent]: { requiredScope: "agent" } } : {}),
     },
   });
-  const oauth = registerOAuth({ app, apiKeyRepo, config });
+  const oauth = registerOAuth({ app, apiKeyRepo, config, agentProxyEnabled });
   app.addHook("onClose", async () => oauth.destroy());
 
   app.get("/health", async () => ({ status: "ok" }));

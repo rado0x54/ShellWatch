@@ -1006,4 +1006,132 @@ describe("OAuth DCR flow", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // Repeated query keys (?scope=mcp&scope=agent) and repeated form fields
+  // become arrays under Fastify's qs parser. The handler used to crash on
+  // these because it cast `req.query` to `Record<string, string>`. Make sure
+  // the resolver handles arrays end-to-end.
+  describe("array-valued scope/resource inputs", () => {
+    it("handles repeated ?scope= keys without crashing", async () => {
+      const { challenge } = mkPkce();
+      const url =
+        `${appServer.url}/oauth/authorize?` +
+        new URLSearchParams([
+          ["response_type", "code"],
+          ["client_id", "sw-client"],
+          ["redirect_uri", "http://127.0.0.1:54321/cb"],
+          ["state", "s"],
+          ["code_challenge", challenge],
+          ["code_challenge_method", "S256"],
+          ["scope", "mcp"],
+          ["scope", "agent"],
+        ]).toString();
+      const res = await fetch(url, { headers: authorizeHeaders() });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("<strong>Issued scopes:</strong> agent mcp");
+      // Display value joins repeated keys with a space.
+      expect(html).toContain("<strong>Requested:</strong> mcp agent");
+    });
+
+    it("handles repeated ?resource= keys, unioning recognized scopes", async () => {
+      const { challenge } = mkPkce();
+      const url =
+        `${appServer.url}/oauth/authorize?` +
+        new URLSearchParams([
+          ["response_type", "code"],
+          ["client_id", "sw-client"],
+          ["redirect_uri", "http://127.0.0.1:54321/cb"],
+          ["state", "s"],
+          ["code_challenge", challenge],
+          ["code_challenge_method", "S256"],
+          ["resource", `${appServer.url}/mcp`],
+          ["resource", `${appServer.url}/agent-proxy`],
+        ]).toString();
+      const res = await fetch(url, { headers: authorizeHeaders() });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("<strong>Issued scopes:</strong> agent mcp");
+    });
+  });
+});
+
+// Separate describe block — needs its own app instance with proxyEnabled=false.
+// The default startTestApp now enables the proxy so /agent-proxy is routable
+// in tests; this suite verifies the disabled path.
+describe("OAuth DCR flow with /agent-proxy disabled", () => {
+  let log: TestLog;
+  let sshServer: TestSshServer;
+  let appServer: TestAppServer;
+
+  beforeAll(async () => {
+    log = createTestLog();
+    sshServer = await startTestSshServer(log);
+    appServer = await startTestApp(sshServer, log, { agentProxyEnabled: false });
+  });
+
+  afterAll(async () => {
+    await appServer?.close();
+    await sshServer?.close();
+  });
+
+  afterEach(() => {
+    onTestFailed(() => log.dump());
+    log.clear();
+  });
+
+  it("does not advertise /agent-proxy in the AS scopes_supported", async () => {
+    const res = await fetch(`${appServer.url}/.well-known/oauth-authorization-server`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.scopes_supported).toEqual(["mcp"]);
+  });
+
+  it("does not serve the /agent-proxy resource metadata doc", async () => {
+    const res = await fetch(`${appServer.url}/.well-known/oauth-protected-resource/agent-proxy`);
+    expect(res.status).toBe(404);
+  });
+
+  it("still serves the /mcp resource metadata doc and the legacy alias", async () => {
+    for (const path of [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
+    ]) {
+      const res = await fetch(`${appServer.url}${path}`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.scopes_supported).toEqual(["mcp"]);
+    }
+  });
+
+  it("/agent-proxy 404s (no bearer-gate, no route) instead of misleadingly 401-ing", async () => {
+    const res = await fetch(`${appServer.url}/agent-proxy`);
+    expect(res.status).toBe(404);
+  });
+
+  it("scope=agent silently falls back to mcp on the authorize page", async () => {
+    const challenge = computePkceS256(randomBytes(32).toString("base64url"));
+    const cookie = await (async () => {
+      // Reuse the test app's session cookie machinery — it's set up identically.
+      return appServer.sessionCookie;
+    })();
+    const res = await fetch(
+      `${appServer.url}/oauth/authorize?` +
+        new URLSearchParams({
+          response_type: "code",
+          client_id: "sw-client",
+          redirect_uri: "http://127.0.0.1:54321/cb",
+          state: "s",
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          scope: "agent",
+        }).toString(),
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> mcp");
+    // The raw request is still surfaced for transparency.
+    expect(html).toContain("<strong>Requested:</strong> agent");
+  });
 });

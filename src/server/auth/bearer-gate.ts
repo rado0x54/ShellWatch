@@ -35,14 +35,15 @@ export const BEARER_PATHS: Record<BearerScope, string> = {
 /**
  * Per-scope RFC 9728 protected-resource metadata path (relative to externalUrl).
  * Per spec §3.1, the well-known URI appends the resource path to
- * `/.well-known/oauth-protected-resource`. Both `/mcp` and `/agent-proxy`
- * follow that convention; the legacy unsuffixed `/.well-known/oauth-protected-resource`
- * still exists as a back-compat alias for `/mcp` (see `routes.ts`).
+ * `${WELL_KNOWN_PROTECTED_RESOURCE}`. Derived rather than hand-written so a
+ * future rename of `BEARER_PATHS.agent` propagates here automatically. The
+ * legacy unsuffixed `/.well-known/oauth-protected-resource` still exists as a
+ * back-compat alias for `/mcp` (see `routes.ts`).
  */
-export const RESOURCE_METADATA_PATHS: Record<BearerScope, string> = {
-  mcp: "/.well-known/oauth-protected-resource/mcp",
-  agent: "/.well-known/oauth-protected-resource/agent-proxy",
-};
+export const WELL_KNOWN_PROTECTED_RESOURCE = "/.well-known/oauth-protected-resource";
+export const RESOURCE_METADATA_PATHS: Record<BearerScope, string> = Object.fromEntries(
+  BEARER_SCOPES.map((s) => [s, `${WELL_KNOWN_PROTECTED_RESOURCE}${BEARER_PATHS[s]}`]),
+) as Record<BearerScope, string>;
 
 export interface BearerPathConfig {
   /** Required scope on the API key. Requests with a key lacking this scope get 403. */
@@ -86,9 +87,8 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
     kind: "missing" | "invalid" | "scope",
   ): void {
     const status = kind === "scope" ? 403 : 401;
-    // realm="shellwatch" is a generic identifier — RFC 6750 §3 leaves the
-    // realm value to the resource server; making it path-specific would
-    // leak which scope a token needs without adding any value clients use.
+    // RFC 6750 §3 leaves the realm value to the resource server; we use a
+    // single generic identifier across both protected paths.
     const parts = [
       `Bearer realm="shellwatch"`,
       `resource_metadata="${resourceMetadataUrl(scope)}"`,

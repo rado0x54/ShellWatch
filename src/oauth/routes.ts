@@ -29,6 +29,7 @@ import {
   BEARER_PATHS,
   BEARER_SCOPES,
   RESOURCE_METADATA_PATHS,
+  WELL_KNOWN_PROTECTED_RESOURCE,
   type BearerScope,
 } from "../server/auth/bearer-gate.js";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
@@ -45,6 +46,15 @@ export interface RegisterOAuthParams {
    * (which a direct-exposed deployment cannot trust).
    */
   config: Config;
+  /**
+   * Whether `/agent-proxy` is actually mounted on this deployment
+   * (`config.agentSocket.proxyEnabled`). Drives every agent-scope-related
+   * surface in this module: the discovery doc at /.well-known/oauth-protected-resource/agent-proxy,
+   * the `agent` entry in AS `scopes_supported`, and `resolveScopes`'s
+   * recognition of `scope=agent` and `resource=…/agent-proxy`. Defaults to
+   * false so a misconfigured deployment doesn't advertise an unusable path.
+   */
+  agentProxyEnabled?: boolean;
   /** Optional override for code TTL — primarily for tests. */
   codeTtlMs?: number;
 }
@@ -75,29 +85,53 @@ export interface ResolvedScopes {
 }
 
 /**
+ * Normalize a query/body param that may arrive as `string`, `string[]` (qs
+ * turns repeated keys like `?scope=mcp&scope=agent` into arrays), or
+ * `undefined`. Filters non-strings, drops empties, returns the normalized
+ * `string[]` for the caller to interpret.
+ */
+function toStringArray(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (typeof raw === "string") return raw === "" ? [] : [raw];
+  if (Array.isArray(raw)) {
+    return raw.filter((x): x is string => typeof x === "string" && x.length > 0);
+  }
+  return [];
+}
+
+/**
  * Map the request's `scope` and `resource` parameters to the scope set we'll
  * issue. The shim is liberal: unknown scope tokens (`mcp:tools` style aliases,
  * outright bogus strings) and unknown `resource` URIs are silently dropped
  * rather than rejected — the user sees what they requested and what they
  * get on the authorize page, and can decide whether to proceed.
+ *
+ * Accepts array-shaped inputs (Fastify's qs parser turns repeated keys into
+ * arrays). Multiple `resource` values get unioned per RFC 8707; multiple
+ * `scope` values get joined as if they were one space-delimited string.
  */
 function resolveScopes(
-  rawScope: string | undefined,
-  rawResource: string | undefined,
+  rawScope: unknown,
+  rawResource: unknown,
+  agentProxyEnabled: boolean,
 ): ResolvedScopes {
   const issued = new Set<BearerScope>();
+  const scopeStrings = toStringArray(rawScope);
+  const resourceStrings = toStringArray(rawResource);
 
-  if (rawScope) {
-    for (const t of rawScope.split(/\s+/).filter(Boolean)) {
-      if ((BEARER_SCOPES as readonly string[]).includes(t)) issued.add(t as BearerScope);
+  for (const s of scopeStrings) {
+    for (const t of s.split(/\s+/).filter(Boolean)) {
+      if (t === "mcp") issued.add("mcp");
+      else if (t === "agent" && agentProxyEnabled) issued.add("agent");
+      // unknown / disabled tokens fall through silently
     }
   }
 
-  if (rawResource) {
+  for (const r of resourceStrings) {
     try {
-      const path = new URL(rawResource).pathname.replace(/\/+$/, "");
+      const path = new URL(r).pathname.replace(/\/+$/, "");
       if (path === BEARER_PATHS.mcp) issued.add("mcp");
-      else if (path === BEARER_PATHS.agent) issued.add("agent");
+      else if (path === BEARER_PATHS.agent && agentProxyEnabled) issued.add("agent");
     } catch {
       // unparseable URL — ignore, will be shown to the user verbatim
     }
@@ -106,8 +140,9 @@ function resolveScopes(
   if (issued.size === 0) issued.add(DEFAULT_SCOPE);
   return {
     issued: [...issued].sort() as BearerScope[],
-    rawScope: rawScope || undefined,
-    rawResource: rawResource || undefined,
+    // Join multi-value inputs to a single string for display + round-trip.
+    rawScope: scopeStrings.length > 0 ? scopeStrings.join(" ") : undefined,
+    rawResource: resourceStrings.length > 0 ? resourceStrings.join(" ") : undefined,
   };
 }
 
@@ -128,6 +163,7 @@ export function registerOAuth({
   app,
   apiKeyRepo,
   config,
+  agentProxyEnabled = false,
   codeTtlMs,
 }: RegisterOAuthParams): OAuthHandle {
   const store = createAuthCodeStore({ ttlMs: codeTtlMs });
@@ -169,9 +205,13 @@ export function registerOAuth({
     };
   };
 
-  app.get("/.well-known/oauth-protected-resource", async () => resourceMetadata("mcp"));
+  app.get(WELL_KNOWN_PROTECTED_RESOURCE, async () => resourceMetadata("mcp"));
   app.get(RESOURCE_METADATA_PATHS.mcp, async () => resourceMetadata("mcp"));
-  app.get(RESOURCE_METADATA_PATHS.agent, async () => resourceMetadata("agent"));
+  // Agent discovery only when /agent-proxy is actually mounted — otherwise we
+  // advertise a path that always 401s.
+  if (agentProxyEnabled) {
+    app.get(RESOURCE_METADATA_PATHS.agent, async () => resourceMetadata("agent"));
+  }
 
   app.get("/.well-known/oauth-authorization-server", async () => {
     const base = baseUrl();
@@ -184,7 +224,9 @@ export function registerOAuth({
       grant_types_supported: ["authorization_code"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
-      scopes_supported: [...BEARER_SCOPES],
+      // Filter `agent` from advertised scopes when /agent-proxy is disabled —
+      // there's no point minting keys for an endpoint that doesn't exist.
+      scopes_supported: BEARER_SCOPES.filter((s) => s !== "agent" || agentProxyEnabled),
     };
   });
 
@@ -206,13 +248,16 @@ export function registerOAuth({
   });
 
   app.get("/oauth/authorize", async (req, reply) => {
-    const q = (req.query ?? {}) as Record<string, string>;
-    const responseType = q.response_type;
-    const redirectUri = q.redirect_uri;
-    const codeChallenge = q.code_challenge;
-    const codeChallengeMethod = q.code_challenge_method;
-    const clientId = q.client_id ?? STUB_CLIENT_ID;
-    const state = q.state ?? "";
+    // Fastify's qs parser turns `?k=a&k=b` into `["a","b"]` — `unknown` is the
+    // honest type. Single-valued fields go through `asString`; `scope` and
+    // `resource` are passed through to `resolveScopes` which handles arrays.
+    const q = (req.query ?? {}) as Record<string, unknown>;
+    const responseType = asString(q.response_type);
+    const redirectUri = asString(q.redirect_uri);
+    const codeChallenge = asString(q.code_challenge);
+    const codeChallengeMethod = asString(q.code_challenge_method);
+    const clientId = asString(q.client_id) ?? STUB_CLIENT_ID;
+    const state = asString(q.state) ?? "";
 
     if (responseType !== "code") {
       return reply.status(400).send({
@@ -238,7 +283,7 @@ export function registerOAuth({
       });
     }
 
-    const resolved = resolveScopes(q.scope, q.resource);
+    const resolved = resolveScopes(q.scope, q.resource, agentProxyEnabled);
     const html = renderAuthorizePage({
       clientId,
       redirectUri,
@@ -270,7 +315,7 @@ export function registerOAuth({
         .send({ error: "invalid_request", error_description: "missing/invalid flow parameters" });
     }
 
-    const resolved = resolveScopes(b.scope, b.resource);
+    const resolved = resolveScopes(b.scope, b.resource, agentProxyEnabled);
 
     // 200 + error banner is the web-form convention. We still send the form
     // back so the user can correct their input without losing flow context.
