@@ -8,7 +8,7 @@ import {
 } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
-import { consumeChallenge } from "./challenge-store.js";
+import { type ChallengePurpose, consumeChallenge } from "./challenge-store.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
 
 export interface VerifyAndDecodeParams {
@@ -16,6 +16,12 @@ export interface VerifyAndDecodeParams {
   credential: unknown;
   rpId: string;
   trustedOrigins: string[];
+  /**
+   * Which flow minted the challenge. The consume call refuses to surface a
+   * challenge stored under a different purpose, so this MUST match the
+   * purpose passed to `storeChallenge` at the matching `/options` endpoint.
+   */
+  challengePurpose: ChallengePurpose;
 }
 
 export interface DecodedRegistration {
@@ -40,7 +46,7 @@ export type VerifyResult =
 export async function verifyAndDecodeRegistration(
   params: VerifyAndDecodeParams,
 ): Promise<VerifyResult> {
-  const challenge = consumeChallenge(params.challengeId);
+  const challenge = consumeChallenge(params.challengeId, params.challengePurpose);
   if (!challenge) {
     return { ok: false, error: "Challenge expired or not found" };
   }

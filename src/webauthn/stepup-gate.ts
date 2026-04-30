@@ -1,7 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   consumeStepUpToken,
-  peekStepUpToken,
   type ConsumeFailureReason,
   type StepUpAction,
 } from "./stepup-store.js";
@@ -44,26 +43,18 @@ export interface RequireStepUpParams {
   request: FastifyRequest;
   reply: FastifyReply;
   action: StepUpAction;
-  /**
-   * `consume`: token is single-use and is removed on first read. Used by the
-   *            terminal endpoint of an action chain (e.g. /register, /revoke).
-   * `peek`:    token is validated but kept alive so a follow-up endpoint in
-   *            the same chain can consume it. Used by /register/options,
-   *            which precedes /register in the same registration ceremony.
-   */
-  mode: "consume" | "peek";
 }
 
 /**
- * Validate a step-up token off the request. On failure, sets the response to
- * 401 with a machine-readable error code so the client can prompt the user
- * to re-authenticate, and returns false. On success, returns true.
+ * Consume a step-up token off the request. Single-use: the token is removed
+ * on first read regardless of whether the action / account match. On
+ * failure, sets the response to 401 with a machine-readable error code so
+ * the client can prompt the user to re-authenticate, and returns false.
  */
 export function requireStepUp(params: RequireStepUpParams): boolean {
-  const { request, reply, action, mode } = params;
+  const { request, reply, action } = params;
   const token = extractStepUpToken(request);
-  const check = mode === "consume" ? consumeStepUpToken : peekStepUpToken;
-  const result = check({
+  const result = consumeStepUpToken({
     token,
     accountId: request.accountId,
     action,

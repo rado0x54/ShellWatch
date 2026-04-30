@@ -8,7 +8,7 @@ import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { storeChallenge, consumeChallenge } from "./challenge-store.js";
+import { CHALLENGE_PURPOSE, consumeChallenge, storeChallenge } from "./challenge-store.js";
 import type { RateLimitConfig, SessionConfig } from "./routes.js";
 
 export interface LoginRoutesParams {
@@ -58,7 +58,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
         allowCredentials: creds.map((c) => ({ id: c.credentialId })),
       });
 
-      const challengeId = storeChallenge(options.challenge);
+      const challengeId = storeChallenge(options.challenge, CHALLENGE_PURPOSE.login);
       return { ...options, challengeId };
     },
   );
@@ -82,7 +82,7 @@ export function registerLoginRoutes(params: LoginRoutesParams) {
 
       const { challengeId, credential } = request.body;
 
-      const challenge = consumeChallenge(challengeId);
+      const challenge = consumeChallenge(challengeId, CHALLENGE_PURPOSE.login);
       if (!challenge) {
         reply.status(400);
         return { error: "Challenge expired or not found" };

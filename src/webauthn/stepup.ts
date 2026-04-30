@@ -7,7 +7,12 @@ import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { consumeChallenge, storeChallenge } from "./challenge-store.js";
+import {
+  CHALLENGE_PURPOSE,
+  type ChallengePurpose,
+  consumeChallenge,
+  storeChallenge,
+} from "./challenge-store.js";
 import type { RateLimitConfig } from "./routes.js";
 import { mintStepUpToken, STEPUP_ACTION, type StepUpAction } from "./stepup-store.js";
 
@@ -19,13 +24,22 @@ export interface StepUpRoutesParams {
   rateLimitConfig: RateLimitConfig;
 }
 
-const STEPUP_ACTIONS = new Set<StepUpAction>([
-  STEPUP_ACTION.registerPasskey,
-  STEPUP_ACTION.revokePasskey,
-]);
+/**
+ * Each step-up action gets its own challenge purpose. The challenge minted
+ * by /stepup/options is stored under this purpose, and /stepup/verify
+ * consumes with the same purpose. An attacker who swaps the `action` field
+ * in the verify request body can't surface the challenge — the consume call
+ * fails closed.
+ */
+const ACTION_TO_PURPOSE: Record<StepUpAction, ChallengePurpose> = {
+  [STEPUP_ACTION.registerPasskey]: CHALLENGE_PURPOSE.stepupRegisterPasskey,
+  [STEPUP_ACTION.revokePasskey]: CHALLENGE_PURPOSE.stepupRevokePasskey,
+  [STEPUP_ACTION.confirmPasskey]: CHALLENGE_PURPOSE.stepupConfirmPasskey,
+  [STEPUP_ACTION.createInvite]: CHALLENGE_PURPOSE.stepupCreateInvite,
+};
 
 function isStepUpAction(value: unknown): value is StepUpAction {
-  return typeof value === "string" && STEPUP_ACTIONS.has(value as StepUpAction);
+  return typeof value === "string" && value in ACTION_TO_PURPOSE;
 }
 
 export function registerStepUpRoutes(params: StepUpRoutesParams) {
@@ -64,12 +78,12 @@ export function registerStepUpRoutes(params: StepUpRoutesParams) {
         .all();
 
       if (creds.length === 0) {
-        // No active credential to assert with — a step-up requirement on a
-        // fresh account with no passkey yet would be a chicken-and-egg lock.
-        // The only way to reach here is the bootstrap window before the first
-        // passkey exists; the gated endpoints handle that by allowing the
-        // first add separately (see step-up-gate). For defence-in-depth we
-        // still refuse to mint a meaningless options payload.
+        // Defensive: an authenticated session implies the account has at
+        // least one credential row (created at self-register time) and the
+        // last-active-passkey guard in /revoke prevents getting back to
+        // zero. So this branch is unreachable under normal operation —
+        // we 400 rather than mint a meaningless options payload if the
+        // invariant is ever violated.
         reply.status(400);
         return { error: "no_active_credentials" };
       }
@@ -80,7 +94,7 @@ export function registerStepUpRoutes(params: StepUpRoutesParams) {
         allowCredentials: creds.map((c) => ({ id: c.credentialId })),
       });
 
-      const challengeId = storeChallenge(options.challenge);
+      const challengeId = storeChallenge(options.challenge, ACTION_TO_PURPOSE[action]);
       return { ...options, challengeId, action };
     },
   );
@@ -104,7 +118,7 @@ export function registerStepUpRoutes(params: StepUpRoutesParams) {
         return { error: "Invalid or missing action" };
       }
 
-      const challenge = consumeChallenge(challengeId);
+      const challenge = consumeChallenge(challengeId, ACTION_TO_PURPOSE[action]);
       if (!challenge) {
         reply.status(400);
         return { error: "Challenge expired or not found" };

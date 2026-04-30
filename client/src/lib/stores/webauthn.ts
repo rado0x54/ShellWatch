@@ -5,7 +5,11 @@ import { writable } from "svelte/store";
  * Step-up actions recognised by the server. Mirrors STEPUP_ACTION on the
  * backend; kept inline here to avoid importing server code into the client.
  */
-export type StepUpAction = "register_passkey" | "revoke_passkey";
+export type StepUpAction =
+  | "register_passkey"
+  | "revoke_passkey"
+  | "confirm_passkey"
+  | "create_invite";
 
 /**
  * Run the WebAuthn step-up assertion for an action and return the resulting
@@ -83,13 +87,14 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   label: string;
 }> {
   // Step-up first: prove fresh possession of an existing passkey before we
-  // even ask the server for registration options. Two browser prompts in a
-  // row — step-up assertion, then the new-passkey ceremony.
+  // run the registration ceremony. The token is attached only to /register
+  // (the verify call) — /register/options isn't gated, so the user only
+  // sees two browser prompts: step-up assertion, then new-passkey ceremony.
   const stepUpToken = await performStepUp("register_passkey");
 
   const optionsRes = await fetch("/api/webauthn/register/options", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label: "pending", name }),
   });
   if (!optionsRes.ok) {
@@ -120,7 +125,15 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
 /** Confirm a pending-confirmation credential, flipping it to active. */
 export async function confirmPasskey(credentialId: string): Promise<void> {
-  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, { method: "POST" });
+  // Step-up: confirm is the moment a pending credential becomes a live login
+  // factor. A stolen-cookie attacker would otherwise be able to register a
+  // passkey from their own device via the invite flow and then confirm it
+  // here; the gate forces fresh proof of an existing authenticator.
+  const stepUpToken = await performStepUp("confirm_passkey");
+  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, {
+    method: "POST",
+    headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Failed to confirm passkey");
@@ -147,9 +160,13 @@ export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
 
 /** Create or supersede the active invite for the account. */
 export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
+  // Step-up: minting an invite is the first step in adding a new login
+  // factor. Gating both ends of the invite chain (here + confirm) prevents
+  // a stolen-cookie end-run around the in-account register step-up.
+  const stepUpToken = await performStepUp("create_invite");
   const res = await fetch("/api/webauthn/invite", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
     body: JSON.stringify({ label }),
   });
   if (!res.ok) {

@@ -118,15 +118,14 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/revoke",
     async (request, reply) => {
-      // Step-up gate (consume): single endpoint, single token. Label edits
-      // (PATCH /label) intentionally don't require step-up — labels are
-      // cosmetic, not a factor change.
+      // Step-up gate: single endpoint, single token. Label edits (PATCH
+      // /label) intentionally don't require step-up — labels are cosmetic,
+      // not a factor change.
       if (
         !requireStepUp({
           request,
           reply,
           action: STEPUP_ACTION.revokePasskey,
-          mode: "consume",
         })
       ) {
         return reply;

@@ -21,6 +21,8 @@ const DEFAULT_TTL_MS = 90 * 1000;
 export const STEPUP_ACTION = {
   registerPasskey: "register_passkey",
   revokePasskey: "revoke_passkey",
+  confirmPasskey: "confirm_passkey",
+  createInvite: "create_invite",
 } as const;
 
 export type StepUpAction = (typeof STEPUP_ACTION)[keyof typeof STEPUP_ACTION];
@@ -93,33 +95,6 @@ export function consumeStepUpToken(params: ConsumeStepUpTokenParams): ConsumeRes
   byToken.delete(entry.token);
 
   if (isExpired(entry, Date.now())) return { ok: false, reason: "expired" };
-  if (entry.accountId !== accountId) return { ok: false, reason: "wrong_account" };
-  if (entry.action !== action) return { ok: false, reason: "wrong_action" };
-
-  return { ok: true, token: entry };
-}
-
-/**
- * Validate a step-up token without consuming it. Used by the
- * `register/options` step of the registration ceremony — we don't want to
- * burn the token there because the same token has to survive to the
- * subsequent `register` (verify) call. The verify endpoint is the only one
- * that actually consumes.
- *
- * Same failure semantics as `consumeStepUpToken`, but expired tokens are
- * removed from the store as a side effect (they can never become valid).
- */
-export function peekStepUpToken(params: ConsumeStepUpTokenParams): ConsumeResult {
-  const { token, accountId, action } = params;
-  if (!token || typeof token !== "string") return { ok: false, reason: "missing" };
-
-  const entry = byToken.get(token);
-  if (!entry) return { ok: false, reason: "missing" };
-
-  if (isExpired(entry, Date.now())) {
-    byToken.delete(entry.token);
-    return { ok: false, reason: "expired" };
-  }
   if (entry.accountId !== accountId) return { ok: false, reason: "wrong_account" };
   if (entry.action !== action) return { ok: false, reason: "wrong_action" };
 

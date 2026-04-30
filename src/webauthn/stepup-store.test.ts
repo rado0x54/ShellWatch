@@ -3,7 +3,6 @@ import {
   _resetStepUpStore,
   consumeStepUpToken,
   mintStepUpToken,
-  peekStepUpToken,
   STEPUP_ACTION,
 } from "./stepup-store.js";
 
@@ -115,55 +114,5 @@ describe("step-up token store", () => {
         action: STEPUP_ACTION.registerPasskey,
       }).ok,
     ).toBe(false);
-  });
-
-  it("peek validates without consuming", () => {
-    const minted = mintStepUpToken({
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-
-    const peek1 = peekStepUpToken({
-      token: minted.token,
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-    expect(peek1.ok).toBe(true);
-
-    // A second peek still works — peek doesn't burn the token.
-    const peek2 = peekStepUpToken({
-      token: minted.token,
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-    expect(peek2.ok).toBe(true);
-
-    // And a follow-up consume still succeeds.
-    const consume = consumeStepUpToken({
-      token: minted.token,
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-    expect(consume.ok).toBe(true);
-  });
-
-  it("peek with wrong action does not burn the token", () => {
-    const minted = mintStepUpToken({
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-    const wrong = peekStepUpToken({
-      token: minted.token,
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.revokePasskey,
-    });
-    expect(wrong.ok).toBe(false);
-    // Correct action still consumes successfully.
-    const ok = consumeStepUpToken({
-      token: minted.token,
-      accountId: ACCOUNT_A,
-      action: STEPUP_ACTION.registerPasskey,
-    });
-    expect(ok.ok).toBe(true);
   });
 });
