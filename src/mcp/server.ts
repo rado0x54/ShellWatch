@@ -25,6 +25,8 @@ export async function createMcpServer(
     "sudo:",
     "- Do NOT pass -n (non-interactive). The human operator can attach to your session and type the password directly, so a [sudo] password: prompt is not a failure mode.",
     "- If you see a [sudo] password: prompt, ask the operator (in your reply) to enter the password in the session, then continue once read_output shows the prompt has cleared.",
+    "- Do NOT chain sudo commands with && or || (e.g., `sudo cmd1 && sudo cmd2`). When a prompt appears the operator can't tell which command it belongs to. Send each sudo command separately so every prompt is unambiguous.",
+    "- Sudo auth may go through a PAM module the operator satisfies out-of-band (push notification, hardware token, etc.) and can take tens of seconds — possibly falling back to a password prompt if the out-of-band step is declined or times out. A stalled prompt is not failure: keep polling read_output until the prompt clears or you see an explicit denial.",
   ];
 
   const instructions = [
