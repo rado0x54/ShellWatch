@@ -132,6 +132,16 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         // and credential atomically — there is no unauth path here.
         const { id, label } = insertCredentialRow(db, request.accountId, result.decoded);
 
+        request.log.info(
+          {
+            event: "passkey.registered",
+            accountId: request.accountId,
+            credentialRowId: id,
+            label,
+          },
+          "passkey registered (in-account)",
+        );
+
         return {
           verified: true,
           credentialId: result.decoded.credentialId,

@@ -181,6 +181,15 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         .where(eq(webauthnCredentials.id, id))
         .run();
 
+      request.log.info(
+        {
+          event: "passkey.revoked",
+          accountId: request.accountId,
+          credentialRowId: id,
+        },
+        "passkey revoked",
+      );
+
       return { status: "revoked" };
     },
   );

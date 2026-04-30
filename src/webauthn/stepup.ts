@@ -194,6 +194,16 @@ export function registerStepUpRoutes(params: StepUpRoutesParams) {
           action,
         });
 
+        request.log.info(
+          {
+            event: "passkey_stepup.minted",
+            accountId: request.accountId,
+            action,
+            credentialRowId: storedCred.id,
+          },
+          "step-up token minted",
+        );
+
         return {
           stepUpToken: minted.token,
           expiresAt: new Date(minted.expiresAt).toISOString(),

@@ -59,8 +59,26 @@ export function requireStepUp(params: RequireStepUpParams): boolean {
     accountId: request.accountId,
     action,
   });
-  if (result.ok) return true;
+  if (result.ok) {
+    request.log.info(
+      { event: "passkey_stepup.consumed", accountId: request.accountId, action },
+      "step-up token consumed",
+    );
+    return true;
+  }
 
+  // Rejections are the most interesting line for incident detection — a
+  // wrong-account or wrong-action rejection on an authenticated session is
+  // either a buggy client or an attacker probing.
+  request.log.warn(
+    {
+      event: "passkey_stepup.rejected",
+      accountId: request.accountId,
+      action,
+      reason: result.reason,
+    },
+    "step-up token rejected",
+  );
   reply.status(401);
   reply.send({
     error: ERROR_MESSAGE[result.reason],
