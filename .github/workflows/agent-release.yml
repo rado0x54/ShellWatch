@@ -97,6 +97,8 @@ jobs:
           - { goos: linux, goarch: arm64 }
           - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
-          BINARY="shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BINARY="shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           go build -ldflags="-s -w -X main.Version=${VERSION}" \
             -o "../${BINARY}" ./cmd/shellwatch-agent
           cd ..
@@ -126,8 +128,8 @@ jobs:
         with:
           name: agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}
-            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
 
   release:
     name: Release

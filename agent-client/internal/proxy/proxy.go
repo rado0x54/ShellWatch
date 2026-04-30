@@ -1,5 +1,6 @@
-// Package proxy implements the SSH agent protocol relay between
-// a local Unix socket and a remote ShellWatch WebSocket endpoint.
+// Package proxy implements the SSH agent protocol relay between a local
+// listener (Unix domain socket on macOS/Linux, named pipe on Windows) and
+// a remote ShellWatch WebSocket endpoint.
 package proxy
 
 import (
@@ -52,24 +53,18 @@ type ProxyConfig struct {
 	Version    string
 }
 
-// Run starts the agent proxy. It listens on a Unix socket and relays
-// SSH agent protocol frames over WebSocket to the ShellWatch server.
+// Run starts the agent proxy. It listens on a local socket (Unix domain
+// socket on macOS/Linux, named pipe on Windows) and relays SSH agent
+// protocol frames over WebSocket to the ShellWatch server.
 // Blocks until interrupted.
 func Run(cfg ProxyConfig) error {
-	// Clean up stale socket
 	if err := cleanStaleSocket(cfg.SocketPath); err != nil {
 		return fmt.Errorf("socket path in use: %w", err)
 	}
 
-	listener, err := net.Listen("unix", cfg.SocketPath)
+	listener, err := listenSocket(cfg.SocketPath)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.SocketPath, err)
-	}
-
-	// Set socket permissions to owner-only (0600)
-	if err := os.Chmod(cfg.SocketPath, 0600); err != nil {
-		listener.Close()
-		return fmt.Errorf("chmod socket: %w", err)
+		return err
 	}
 
 	// Build WebSocket URL
@@ -85,7 +80,7 @@ func Run(cfg ProxyConfig) error {
 
 	log.Printf("ShellWatch agent proxy listening on %s", cfg.SocketPath)
 	log.Printf("Connected to %s", cfg.ServerURL)
-	fmt.Fprintf(os.Stderr, "  export SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
+	fmt.Fprintf(os.Stderr, "  SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
 
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
@@ -95,7 +90,7 @@ func Run(cfg ProxyConfig) error {
 		<-sigCh
 		log.Println("Shutting down...")
 		listener.Close()
-		os.Remove(cfg.SocketPath)
+		removeSocketFile(cfg.SocketPath)
 	}()
 
 	for {
@@ -390,23 +385,6 @@ func readFrame(r io.Reader) ([]byte, error) {
 	}
 
 	return frame, nil
-}
-
-// cleanStaleSocket removes a socket file if it exists but no one is listening.
-func cleanStaleSocket(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil
-	}
-
-	// Try to connect — if it succeeds, something is already listening
-	conn, err := net.DialTimeout("unix", path, time.Second)
-	if err == nil {
-		conn.Close()
-		return fmt.Errorf("another process is listening on %s", path)
-	}
-
-	// Stale socket — remove it
-	return os.Remove(path)
 }
 
 // buildWSURL converts an HTTP(S) server URL to its WebSocket equivalent

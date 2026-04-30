@@ -3,6 +3,7 @@ module github.com/rado0x54/shellwatch-agent
 go 1.24.3
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/zalando/go-keyring v0.2.8
 )

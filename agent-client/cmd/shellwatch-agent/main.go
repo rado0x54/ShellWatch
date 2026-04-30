@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/rado0x54/shellwatch-agent/internal/config"
@@ -76,7 +77,13 @@ func runDaemon() error {
 		return err
 	}
 	if printEnv {
-		fmt.Printf("export SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
+		// Windows users running PowerShell can `iex (shellwatch-agent --print-env)`;
+		// bash/zsh/fish all accept `eval "$(shellwatch-agent --print-env)"`.
+		if runtime.GOOS == "windows" {
+			fmt.Printf("$env:SSH_AUTH_SOCK = '%s'\n", cfg.SocketPath)
+		} else {
+			fmt.Printf("export SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
+		}
 		return nil
 	}
 	if err := cfg.Validate(); err != nil {
@@ -186,9 +193,12 @@ DAEMON FLAGS
   --server URL          ShellWatch server (default: $SHELLWATCH_SERVER or
                         ` + config.DefaultServer + `)
   --api-key KEY         Static API key. Skips the credstore lookup.
-  --socket PATH         Local Unix socket for SSH_AUTH_SOCK. Defaults to
-                        $XDG_RUNTIME_DIR/shellwatch-agent.sock or a
-                        per-user path under $TMPDIR.
+  --socket PATH         Listener path. On macOS/Linux, a Unix socket
+                        ($XDG_RUNTIME_DIR/shellwatch-agent.sock or a
+                        per-user path under $TMPDIR by default).
+                        On Windows, a named pipe (default
+                        \\.\pipe\openssh-ssh-agent so stock OpenSSH
+                        for Windows finds the proxy automatically).
   --insecure            Allow ws:// (no TLS). Local dev only.
   --print-env           Print 'export SSH_AUTH_SOCK=...' and exit.
 

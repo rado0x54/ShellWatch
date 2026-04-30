@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/rado0x54/shellwatch-agent/internal/credstore"
 )
@@ -28,14 +27,6 @@ type Config struct {
 	ApiKey     string
 	SocketPath string
 	Insecure   bool
-}
-
-func defaultSocketPath() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "shellwatch-agent.sock")
-	}
-	// Use UID suffix to avoid predictable paths in shared /tmp (symlink attack vector)
-	return filepath.Join(os.TempDir(), fmt.Sprintf("shellwatch-agent-%d.sock", os.Getuid()))
 }
 
 // flagValues holds the parsed flag inputs along with which flags the user
