@@ -82,6 +82,13 @@ export interface ResolvedScopes {
   rawScope?: string;
   /** Verbatim `resource` param (if any), preserved for display. */
   rawResource?: string;
+  /**
+   * Scopes the client explicitly requested but the deployment can't grant
+   * (currently: `agent` when `agentSocket.proxyEnabled` is false). Used by
+   * the consent screen to surface a one-line explanation rather than
+   * silently diverging from what the client asked for. Sorted, deduped.
+   */
+  unavailable: BearerScope[];
 }
 
 /**
@@ -115,34 +122,47 @@ function resolveScopes(
   rawResource: unknown,
   agentProxyEnabled: boolean,
 ): ResolvedScopes {
+  const requested = new Set<BearerScope>();
   const issued = new Set<BearerScope>();
   const scopeStrings = toStringArray(rawScope);
   const resourceStrings = toStringArray(rawResource);
 
+  // Currently `agent` is the only scope with deployment-level gating. New
+  // scopes added to BEARER_SCOPES are accepted by default; extend this if a
+  // future scope needs a similar gate.
+  const grantable = (s: BearerScope): boolean => s !== "agent" || agentProxyEnabled;
+
   for (const s of scopeStrings) {
     for (const t of s.split(/\s+/).filter(Boolean)) {
-      if (t === "mcp") issued.add("mcp");
-      else if (t === "agent" && agentProxyEnabled) issued.add("agent");
-      // unknown / disabled tokens fall through silently
+      if (!(BEARER_SCOPES as readonly string[]).includes(t)) continue;
+      const scope = t as BearerScope;
+      requested.add(scope);
+      if (grantable(scope)) issued.add(scope);
     }
   }
 
   for (const r of resourceStrings) {
+    let path: string;
     try {
-      const path = new URL(r).pathname.replace(/\/+$/, "");
-      if (path === BEARER_PATHS.mcp) issued.add("mcp");
-      else if (path === BEARER_PATHS.agent && agentProxyEnabled) issued.add("agent");
+      path = new URL(r).pathname.replace(/\/+$/, "");
     } catch {
-      // unparseable URL — ignore, will be shown to the user verbatim
+      continue;
+    }
+    for (const scope of BEARER_SCOPES) {
+      if (path !== BEARER_PATHS[scope]) continue;
+      requested.add(scope);
+      if (grantable(scope)) issued.add(scope);
     }
   }
 
   if (issued.size === 0) issued.add(DEFAULT_SCOPE);
+  const unavailable = [...requested].filter((s) => !issued.has(s)).sort() as BearerScope[];
   return {
     issued: [...issued].sort() as BearerScope[],
     // Join multi-value inputs to a single string for display + round-trip.
     rawScope: scopeStrings.length > 0 ? scopeStrings.join(" ") : undefined,
     rawResource: resourceStrings.length > 0 ? resourceStrings.join(" ") : undefined,
+    unavailable,
   };
 }
 

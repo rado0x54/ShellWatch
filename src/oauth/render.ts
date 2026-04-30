@@ -148,6 +148,19 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
     box-shadow: var(--glow-error);
   }
 
+  .notice {
+    background: rgba(248, 160, 16, 0.06);
+    border-left: 2px solid var(--secondary);
+    color: var(--on-surface);
+    padding: 0.75rem 0.9rem;
+    margin: 1rem 0;
+    font-size: 0.875rem;
+  }
+  .notice code {
+    background: var(--surface-container-high);
+    color: var(--secondary);
+  }
+
   .danger {
     background: var(--surface-container);
     border-left: 2px solid var(--secondary);
@@ -302,6 +315,11 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
   ${p.resolved.rawScope ? `<div><strong>Requested:</strong> ${escapeHtml(p.resolved.rawScope)}</div>` : ""}
   ${p.resolved.rawResource ? `<div><strong>Resource:</strong> ${escapeHtml(p.resolved.rawResource)}</div>` : ""}
 </div>
+${
+  p.resolved.unavailable.length > 0
+    ? `<div class="notice">The <code>${p.resolved.unavailable.map(escapeHtml).join("</code>, <code>")}</code> scope${p.resolved.unavailable.length === 1 ? " is" : "s are"} not enabled on this deployment. The client requested ${p.resolved.unavailable.length === 1 ? "it" : "them"} but you can only authorize the issued scopes above.</div>`
+    : ""
+}
 
 <form method="POST" action="/oauth/authorize">
   <div class="mode-toggle" role="tablist">

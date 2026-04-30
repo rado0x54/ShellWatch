@@ -258,6 +258,8 @@ describe("OAuth DCR flow", () => {
     expect(html).toContain("<strong>Issued scopes:</strong> agent");
     // Hidden field round-trips the raw client request for re-render display
     expect(html).toContain('name="scope" value="agent"');
+    // No "not enabled" notice when the scope is actually grantable.
+    expect(html).not.toContain('class="notice"');
   });
 
   it("scope=mcp agent: issues both scopes (sorted)", async () => {
@@ -1109,12 +1111,8 @@ describe("OAuth DCR flow with /agent-proxy disabled", () => {
     expect(res.status).toBe(404);
   });
 
-  it("scope=agent silently falls back to mcp on the authorize page", async () => {
+  it("scope=agent falls back to mcp and the page explains why", async () => {
     const challenge = computePkceS256(randomBytes(32).toString("base64url"));
-    const cookie = await (async () => {
-      // Reuse the test app's session cookie machinery — it's set up identically.
-      return appServer.sessionCookie;
-    })();
     const res = await fetch(
       `${appServer.url}/oauth/authorize?` +
         new URLSearchParams({
@@ -1126,12 +1124,37 @@ describe("OAuth DCR flow with /agent-proxy disabled", () => {
           code_challenge_method: "S256",
           scope: "agent",
         }).toString(),
-      { headers: { cookie } },
+      { headers: { cookie: appServer.sessionCookie } },
     );
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<strong>Issued scopes:</strong> mcp");
-    // The raw request is still surfaced for transparency.
+    // Raw request is still surfaced for transparency.
     expect(html).toContain("<strong>Requested:</strong> agent");
+    // And we now explain why the issued set diverges from what was requested.
+    expect(html).toContain('class="notice"');
+    expect(html).toContain("not enabled on this deployment");
+  });
+
+  it("resource=…/agent-proxy also surfaces the not-enabled notice", async () => {
+    const challenge = computePkceS256(randomBytes(32).toString("base64url"));
+    const res = await fetch(
+      `${appServer.url}/oauth/authorize?` +
+        new URLSearchParams({
+          response_type: "code",
+          client_id: "sw-client",
+          redirect_uri: "http://127.0.0.1:54321/cb",
+          state: "s",
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          resource: `${appServer.url}/agent-proxy`,
+        }).toString(),
+      { headers: { cookie: appServer.sessionCookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> mcp");
+    expect(html).toContain('class="notice"');
+    expect(html).toContain("not enabled on this deployment");
   });
 });
