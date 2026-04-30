@@ -223,7 +223,9 @@
       <h2>Action Not Found</h2>
       <p class="sign-status-msg">{error ?? "This action does not exist or has expired."}</p>
       <div class="sign-actions">
-        <button class="btn btn-primary" onclick={() => goto(resolve("/"))}>Go Home</button>
+        <button type="button" class="btn btn-primary" onclick={() => goto(resolve("/"))}
+          >Go Home</button
+        >
       </div>
     </div>
   {:else if isTerminal}
@@ -253,7 +255,9 @@
         {/if}
       </p>
       <div class="sign-actions">
-        <button class="btn btn-primary" onclick={() => goto(resolve("/"))}>Go Home</button>
+        <button type="button" class="btn btn-primary" onclick={() => goto(resolve("/"))}
+          >Go Home</button
+        >
       </div>
     </div>
   {:else}
@@ -325,7 +329,7 @@
         {#if ctx && ctx.source === "agent-forwarding" && ctx.sessionId}
           <div class="sign-field">
             <span class="sign-label">Session</span>
-            <button class="sign-link" onclick={() => viewSession(ctx.sessionId)}>
+            <button type="button" class="sign-link" onclick={() => viewSession(ctx.sessionId)}>
               View Session
             </button>
           </div>
@@ -366,8 +370,10 @@
       {/if}
 
       <div class="sign-actions">
-        <button class="btn btn-secondary" onclick={handleDeny} disabled={processing}>Deny</button>
-        <button class="btn btn-primary" onclick={handleAction} disabled={processing}>
+        <button type="button" class="btn btn-secondary" onclick={handleDeny} disabled={processing}
+          >Deny</button
+        >
+        <button type="button" class="btn btn-primary" onclick={handleAction} disabled={processing}>
           {#if processing}
             {isKeyApprove ? "Approving..." : "Signing..."}
           {:else}

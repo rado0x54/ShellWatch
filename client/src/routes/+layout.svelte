@@ -85,7 +85,7 @@
   <div class="app-shell">
     <!-- Mobile header -->
     <header class="mobile-header">
-      <button class="hamburger" onclick={() => (mobileMenuOpen = !mobileMenuOpen)}>
+      <button type="button" class="hamburger" onclick={() => (mobileMenuOpen = !mobileMenuOpen)}>
         {#if mobileMenuOpen}
           &#x2715;
         {:else}

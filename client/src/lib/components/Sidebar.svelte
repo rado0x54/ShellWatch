@@ -76,7 +76,9 @@
             <div class="endpoint-info">
               <span class="endpoint-label" title={formatEndpointAddress(ep)}>{ep.label}</span>
             </div>
-            <button class="btn btn-primary" onclick={() => handleConnect(ep.id)}>Connect</button>
+            <button type="button" class="btn btn-primary" onclick={() => handleConnect(ep.id)}
+              >Connect</button
+            >
           </div>
         </li>
       {/each}
@@ -116,16 +118,22 @@
             </div>
             <div class="session-actions">
               {#if isObserver}
-                <button class="btn btn-warn" onclick={() => wsTakeControl(sess.sessionId)}
-                  >Take Control</button
+                <button
+                  type="button"
+                  class="btn btn-warn"
+                  onclick={() => wsTakeControl(sess.sessionId)}>Take Control</button
                 >
               {:else}
-                <button class="btn btn-ghost" onclick={() => wsReleaseControl(sess.sessionId)}
-                  >Release</button
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onclick={() => wsReleaseControl(sess.sessionId)}>Release</button
                 >
               {/if}
-              <button class="btn btn-secondary" onclick={() => handleClose(sess.sessionId)}
-                >Close</button
+              <button
+                type="button"
+                class="btn btn-secondary"
+                onclick={() => handleClose(sess.sessionId)}>Close</button
               >
             </div>
           </div>
@@ -147,6 +155,7 @@
       </div>
     {/if}
     <button
+      type="button"
       class="btn-nav"
       class:active={currentPath === "/observer"}
       onclick={() => navTo("/observer")}
@@ -154,6 +163,7 @@
       Observer Mode
     </button>
     <button
+      type="button"
       class="btn-nav"
       class:active={currentPath.startsWith("/settings")}
       onclick={() => navTo("/settings")}
@@ -162,6 +172,7 @@
     </button>
     {#if $account?.isAdmin}
       <button
+        type="button"
         class="btn-nav"
         class:active={currentPath.startsWith("/admin")}
         onclick={() => navTo("/admin")}
@@ -169,7 +180,7 @@
         Admin
       </button>
     {/if}
-    <button class="btn-nav btn-logout" onclick={logout}> Sign Out </button>
+    <button type="button" class="btn-nav btn-logout" onclick={logout}> Sign Out </button>
   </div>
 </nav>
 

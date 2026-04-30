@@ -122,6 +122,7 @@
           </div>
           <div class="toast-actions">
             <button
+              type="button"
               class="btn btn-ghost"
               onclick={() => handleDetails(toast.action!.actionId, toast.id)}
               disabled={isProcessing}
@@ -129,6 +130,7 @@
               Details
             </button>
             <button
+              type="button"
               class="btn btn-secondary"
               onclick={() => handleDeny(toast.action!.actionId, toast.id)}
               disabled={isProcessing}
@@ -136,6 +138,7 @@
               Deny
             </button>
             <button
+              type="button"
               class="btn btn-primary"
               onclick={() => handleAction(toast.action!, toast.id)}
               disabled={isProcessing}
@@ -155,7 +158,9 @@
               <span class="toast-icon toast-icon-info">&#8505;</span>
             {/if}
             <span class="toast-message">{toast.message}</span>
-            <button class="toast-close" onclick={() => removeToast(toast.id)}>&#10005;</button>
+            <button type="button" class="toast-close" onclick={() => removeToast(toast.id)}
+              >&#10005;</button
+            >
           </div>
         {/if}
       </div>

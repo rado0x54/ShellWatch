@@ -320,6 +320,7 @@
             />
           {:else}
             <button
+              type="button"
               class="row-label label-btn"
               class:revoked={pk.revoked}
               title="Rename"
@@ -344,6 +345,7 @@
         {#snippet actions()}
           {#if pk.authorizedKeysEntry && !pk.revoked && pk.state === "active"}
             <button
+              type="button"
               class="btn btn-secondary"
               title="Copy SSH public key"
               onclick={(e) =>
@@ -355,6 +357,7 @@
           {/if}
           {#if !pk.revoked && pk.state === "pending_confirmation"}
             <button
+              type="button"
               class="btn btn-primary"
               disabled={confirmingId === pk.id}
               onclick={() => openConfirmModal(pk.id)}
@@ -363,6 +366,7 @@
           {/if}
           {#if !pk.revoked}
             <button
+              type="button"
               class="btn btn-secondary"
               disabled={revoking}
               onclick={() => handleRevoke(pk.id)}>Revoke</button
@@ -374,7 +378,7 @@
   </SettingsList>
 
   <div class="register-section">
-    <button class="btn btn-primary" onclick={openAddModal}>Add passkey</button>
+    <button type="button" class="btn btn-primary" onclick={openAddModal}>Add passkey</button>
     {#if activeInvite}
       <button class="invite-pill" type="button" onclick={openInviteModal} title="Show invite link">
         <span class="invite-pill-dot" aria-hidden="true"></span>
@@ -512,6 +516,7 @@
           {#snippet actions()}
             {#if k.authorizedKeysEntry && !k.revoked}
               <button
+                type="button"
                 class="btn btn-secondary"
                 title="Copy SSH public key"
                 onclick={(e) =>
@@ -521,6 +526,7 @@
             {/if}
             {#if !k.revoked}
               <button
+                type="button"
                 class="btn btn-secondary"
                 disabled={revoking}
                 onclick={() => handleRevokeFileKey(k.id)}>Revoke</button

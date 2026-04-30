@@ -38,6 +38,9 @@ export default ts.config(
         svelteConfig,
       },
     },
+    rules: {
+      "svelte/button-has-type": "error",
+    },
   },
   {
     ignores: [

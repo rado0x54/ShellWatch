@@ -92,14 +92,14 @@
 
   {#if seedYaml}
     <div class="code-block-wrap">
-      <button class="btn btn-secondary copy-btn" onclick={handleCopy}>
+      <button type="button" class="btn btn-secondary copy-btn" onclick={handleCopy}>
         {copied ? "Copied!" : "Copy"}
       </button>
       <pre class="code-block">{seedYaml}</pre>
     </div>
   {/if}
 
-  <button class="btn btn-primary" disabled={exportLoading} onclick={handleExport}>
+  <button type="button" class="btn btn-primary" disabled={exportLoading} onclick={handleExport}>
     {exportLoading ? "Loading..." : seedYaml ? "Refresh" : "Generate"}
   </button>
 </section>

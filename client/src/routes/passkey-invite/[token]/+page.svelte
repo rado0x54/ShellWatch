@@ -100,7 +100,7 @@
         Register a new passkey on this device. The other device will need to confirm it before it's
         usable.
       </p>
-      <button class="btn-primary" onclick={handleRegister}>Register passkey</button>
+      <button type="button" class="btn-primary" onclick={handleRegister}>Register passkey</button>
       {#if error}
         <p class="error">{error}</p>
       {/if}
