@@ -9,11 +9,18 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-// pipeSecurityDescriptor restricts the agent pipe to the same set of principals
-// OpenSSH for Windows uses for its own ssh-agent pipe: owner (creator), local
-// system, and the Administrators group. Without this, the winio default DACL
-// would allow read by Everyone — too loose for a key-signing oracle.
-const pipeSecurityDescriptor = "O:BAG:SYD:P(A;;GA;;;BA)(A;;GA;;;SY)(A;;GA;;;OW)"
+// pipeSecurityDescriptor restricts the agent pipe to the calling user, Local
+// System, and the Administrators group. Without an explicit DACL the winio
+// default would allow read by Everyone — too loose for a key-signing oracle.
+//
+// Deliberately omits an O: (owner) component: setting the owner to anything
+// other than the caller's own SID requires SeRestorePrivilege, which a regular
+// interactive user doesn't hold. CreateNamedPipeW would then reject the SD
+// with ERROR_INVALID_OWNER at bind time. The OpenSSH ssh-agent service gets
+// away with O:BA only because it runs as LocalSystem. With no O: specified
+// the kernel sets the owner to the caller, which makes (A;;GA;;;OW) resolve
+// to "the running user" — exactly what we want.
+const pipeSecurityDescriptor = "D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)"
 
 // listenSocket binds a named pipe at path and returns a net.Listener.
 // Windows OpenSSH connects to pipes (\\.\pipe\<name>), not Unix sockets — so

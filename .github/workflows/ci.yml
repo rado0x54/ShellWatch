@@ -95,3 +95,44 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration
+
+  # Agent build matrix — catches windows/unix build-tag breakage at PR time
+  # rather than at release-cut. Build only; tests run once on linux below.
+  agent-build:
+    name: Agent Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent-client/go.mod
+          cache-dependency-path: agent-client/go.sum
+      - name: Build
+        working-directory: agent-client
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+  agent-test:
+    name: Agent Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent-client/go.mod
+          cache-dependency-path: agent-client/go.sum
+      - name: Test
+        working-directory: agent-client
+        run: go test ./...

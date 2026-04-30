@@ -200,7 +200,8 @@ DAEMON FLAGS
                         \\.\pipe\openssh-ssh-agent so stock OpenSSH
                         for Windows finds the proxy automatically).
   --insecure            Allow ws:// (no TLS). Local dev only.
-  --print-env           Print 'export SSH_AUTH_SOCK=...' and exit.
+  --print-env           Print SSH_AUTH_SOCK assignment and exit
+                        (sh on Unix, PowerShell on Windows).
 
 LOGIN FLAGS
   --server URL          Which ShellWatch instance to authorize against.
