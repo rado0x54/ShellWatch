@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { toastError } from "$lib/stores/toasts.js";
+
   interface SeedPasskey {
     credentialId: string;
     publicKeyHex: string;
@@ -65,8 +67,7 @@
       const res = await fetch("/api/accounts/export-seed");
       if (!res.ok) {
         const err = await res.json();
-        // TODO: replace alert() with inline error / toast notification
-        alert(err.error || "Failed to export seed config");
+        toastError(err.error || "Failed to export seed config");
         return;
       }
       const data = await res.json();

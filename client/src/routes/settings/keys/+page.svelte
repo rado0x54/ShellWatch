@@ -16,6 +16,7 @@
     type PasskeyInvite,
   } from "$lib/stores/webauthn.js";
   import Modal from "$lib/components/Modal.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
 
@@ -23,6 +24,11 @@
   let registering = $state(false);
   let inviting = $state(false);
   let showAddModal = $state(false);
+  let revokeTarget = $state<
+    | { kind: "passkey"; id: string; label: string }
+    | { kind: "file"; id: string; label: string }
+    | null
+  >(null);
   // Single source of truth for the active invite slot for this account. Used
   // both for the on-page indicator (with live countdown) and as the prefilled
   // value when the user opens the Add-Passkey modal.
@@ -185,11 +191,11 @@
     }, 1500);
   }
 
-  async function handleRevoke(id: string) {
-    // TODO: use basePath store instead of window.__BASE_PATH__ (applies to this fn and handleRevokeFileKey)
+  function openRevokePasskey(id: string) {
     const target = $credentials.find((c) => c.id === id);
+    if (!target) return;
     // Pending credentials don't count toward "last active" — they can't log in.
-    if (target?.state !== "pending_confirmation") {
+    if (target.state !== "pending_confirmation") {
       const activeCount = $credentials.filter((c) => !c.revoked && c.state === "active").length;
       if (activeCount <= 1) {
         // Client-side guard for UX; also enforced server-side in the revoke endpoint
@@ -197,7 +203,20 @@
         return;
       }
     }
-    if (!confirm("Revoke this passkey? This is permanent and cannot be undone.")) return;
+    revokeTarget = { kind: "passkey", id, label: target.label };
+  }
+
+  function openRevokeFileKey(id: string, label: string) {
+    revokeTarget = { kind: "file", id, label };
+  }
+
+  function closeRevokeDialog() {
+    if (revoking) return;
+    revokeTarget = null;
+  }
+
+  async function handleRevokePasskey(id: string) {
+    // TODO: use basePath store instead of window.__BASE_PATH__ (applies to this fn and handleRevokeFileKey)
     revoking = true;
     try {
       // Step-up before revoke. The user has to assert with an existing
@@ -209,7 +228,6 @@
         stepUpToken = await performStepUp("revoke_passkey");
       } catch (err) {
         toastError(`Step-up required: ${errorMessage(err)}`);
-        revoking = false;
         return;
       }
 
@@ -225,12 +243,12 @@
       await fetchCredentials();
     } catch (err) {
       toastError(errorMessage(err));
+    } finally {
+      revoking = false;
     }
-    revoking = false;
   }
 
   async function handleRevokeFileKey(id: string) {
-    if (!confirm("Revoke this SSH key? This is permanent and cannot be undone.")) return;
     revoking = true;
     try {
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
@@ -242,8 +260,20 @@
       await fetchSshKeys();
     } catch (err) {
       toastError(errorMessage(err));
+    } finally {
+      revoking = false;
     }
-    revoking = false;
+  }
+
+  async function handleRevokeConfirm() {
+    if (!revokeTarget) return;
+    const t = revokeTarget;
+    if (t.kind === "passkey") {
+      await handleRevokePasskey(t.id);
+    } else {
+      await handleRevokeFileKey(t.id);
+    }
+    revokeTarget = null;
   }
 
   async function handleRegister() {
@@ -369,7 +399,7 @@
               type="button"
               class="btn btn-secondary"
               disabled={revoking}
-              onclick={() => handleRevoke(pk.id)}>Revoke</button
+              onclick={() => openRevokePasskey(pk.id)}>Revoke</button
             >
           {/if}
         {/snippet}
@@ -481,6 +511,24 @@
     </Modal>
   {/if}
 
+  {#if revokeTarget}
+    {@const target = revokeTarget}
+    <ConfirmDialog
+      title={target.kind === "passkey" ? "Revoke passkey?" : "Revoke SSH key?"}
+      confirmLabel="Revoke"
+      onConfirm={handleRevokeConfirm}
+      onCancel={closeRevokeDialog}
+      processing={revoking}
+    >
+      <p class="modal-desc">
+        Revoke <strong>{target.label}</strong>? This is permanent and cannot be undone.
+        {#if target.kind === "passkey"}
+          You'll be asked to verify with another passkey first.
+        {/if}
+      </p>
+    </ConfirmDialog>
+  {/if}
+
   {#if hasAuthorizedKeys}
     <div class="settings-info">
       <h3>SSH Server Setup</h3>
@@ -529,7 +577,7 @@
                 type="button"
                 class="btn btn-secondary"
                 disabled={revoking}
-                onclick={() => handleRevokeFileKey(k.id)}>Revoke</button
+                onclick={() => openRevokeFileKey(k.id, k.label)}>Revoke</button
               >
             {/if}
           {/snippet}

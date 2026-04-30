@@ -3,6 +3,8 @@
   import Identicon from "$lib/components/Identicon.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { toastError } from "$lib/stores/toasts.js";
 
   interface AccountEntry {
     id: string;
@@ -16,6 +18,8 @@
 
   let accounts = $state<AccountEntry[]>([]);
   let deleting = $state(false);
+  let deleteTarget = $state<AccountEntry | null>(null);
+  let typedName = $state("");
 
   async function fetchAccounts() {
     const res = await fetch("/api/accounts");
@@ -27,21 +31,33 @@
 
   onMount(fetchAccounts);
 
-  async function handleDelete(id: string, name: string) {
-    if (
-      !confirm(
-        `Delete account "${name}"? This will permanently remove all their passkeys, endpoints, API keys, and sessions.`,
-      )
-    )
-      return;
+  function openDelete(acct: AccountEntry) {
+    deleteTarget = acct;
+    typedName = "";
+  }
+
+  function closeDelete() {
+    if (deleting) return;
+    deleteTarget = null;
+    typedName = "";
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget || typedName !== deleteTarget.name) return;
     deleting = true;
-    const res = await fetch(`/api/accounts/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Failed to delete account");
+    try {
+      const res = await fetch(`/api/accounts/${deleteTarget.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json();
+        toastError(err.error || "Failed to delete account");
+        return;
+      }
+      deleteTarget = null;
+      typedName = "";
+      await fetchAccounts();
+    } finally {
+      deleting = false;
     }
-    await fetchAccounts();
-    deleting = false;
   }
 
   function formatDate(iso: string | null): string {
@@ -76,7 +92,7 @@
               type="button"
               class="btn btn-secondary"
               disabled={deleting}
-              onclick={() => handleDelete(acct.id, acct.name)}
+              onclick={() => openDelete(acct)}
             >
               Delete
             </button>
@@ -85,6 +101,36 @@
       </SettingsRow>
     {/each}
   </SettingsList>
+
+  {#if deleteTarget}
+    <ConfirmDialog
+      title="Delete account?"
+      confirmLabel="Delete account"
+      onConfirm={handleDelete}
+      onCancel={closeDelete}
+      processing={deleting}
+      confirmDisabled={typedName !== deleteTarget.name}
+    >
+      <p class="modal-desc">
+        Permanently remove <strong>{deleteTarget.name}</strong>, all their passkeys, endpoints, API
+        keys, and sessions. This cannot be undone.
+      </p>
+      <label class="confirm-label" for="confirm-name">
+        Type <code>{deleteTarget.name}</code> to confirm
+      </label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        id="confirm-name"
+        type="text"
+        class="confirm-input"
+        bind:value={typedName}
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        autofocus
+      />
+    </ConfirmDialog>
+  {/if}
 </section>
 
 <style>
@@ -109,5 +155,46 @@
   .row-dot {
     color: var(--on-surface-faint);
     margin: 0 var(--space-2);
+  }
+
+  .modal-desc {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: 0 0 var(--space-3);
+    line-height: 1.5;
+  }
+
+  .confirm-label code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--on-surface);
+    background: var(--bg-primary);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+  }
+
+  .confirm-label {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .confirm-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.45rem 0.6rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--on-surface);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+
+  .confirm-input:focus {
+    outline: none;
+    border-color: var(--primary);
   }
 </style>
