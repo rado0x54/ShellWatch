@@ -110,7 +110,7 @@
 <section>
   <div class="header">
     <h2>SSH Endpoints</h2>
-    <button class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
+    <button type="button" class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
   </div>
 
   <SettingsList empty={$endpoints.length === 0} emptyText="No endpoints configured">
@@ -122,8 +122,10 @@
         {/snippet}
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
-          <button class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
-          <button class="btn btn-secondary" onclick={() => handleDelete(ep)}>Delete</button>
+          <button type="button" class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
+          <button type="button" class="btn btn-secondary" onclick={() => handleDelete(ep)}
+            >Delete</button
+          >
         {/snippet}
       </SettingsRow>
     {/each}

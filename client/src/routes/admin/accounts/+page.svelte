@@ -73,6 +73,7 @@
         {#snippet actions()}
           {#if !acct.isAdmin}
             <button
+              type="button"
               class="btn btn-secondary"
               disabled={deleting}
               onclick={() => handleDelete(acct.id, acct.name)}

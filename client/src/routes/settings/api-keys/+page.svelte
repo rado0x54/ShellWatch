@@ -77,7 +77,9 @@
         {/snippet}
         {#snippet actions()}
           {#if k.enabled}
-            <button class="btn btn-secondary" onclick={() => handleRevoke(k.id)}>Revoke</button>
+            <button type="button" class="btn btn-secondary" onclick={() => handleRevoke(k.id)}
+              >Revoke</button
+            >
           {/if}
         {/snippet}
       </SettingsRow>
@@ -93,7 +95,7 @@
         bind:value={label}
         style="flex: 1"
       />
-      <button class="btn btn-primary" onclick={handleGenerate}>Generate</button>
+      <button type="button" class="btn btn-primary" onclick={handleGenerate}>Generate</button>
     </div>
     <h4 class="scope-heading">Scopes</h4>
     <div class="scope-row">
@@ -116,10 +118,11 @@
       <pre class="code-block key-value">{generatedKey}</pre>
       {#snippet actions()}
         <button
+          type="button"
           class="btn btn-primary"
           onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
         >
-        <button class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
+        <button type="button" class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
       {/snippet}
     </Modal>
   {/if}

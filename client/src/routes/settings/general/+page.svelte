@@ -77,7 +77,9 @@
         <label for="account-name">Account Name</label>
         <div class="field-row">
           <input id="account-name" type="text" bind:value={nameInput} />
-          <button class="btn btn-primary" disabled={saving} onclick={handleSave}>Save</button>
+          <button type="button" class="btn btn-primary" disabled={saving} onclick={handleSave}
+            >Save</button
+          >
         </div>
         {#if message}
           <span class="message" class:success={message === "Saved"}>{message}</span>
@@ -88,6 +90,7 @@
         <label for="agent-forward">SSH Agent Forwarding</label>
         <div class="toggle-row">
           <button
+            type="button"
             id="agent-forward"
             class="toggle"
             class:active={$account.agentForward}

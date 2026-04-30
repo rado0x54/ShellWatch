@@ -44,7 +44,7 @@
   <div class="login-card">
     <img class="login-logo" src="/logo.svg" alt="" />
     <h1 class="wordmark-h1"><Wordmark /></h1>
-    <button class="login-btn" disabled={loading} onclick={handleLogin}>
+    <button type="button" class="login-btn" disabled={loading} onclick={handleLogin}>
       Sign in with Passkey
     </button>
     {#if error}
