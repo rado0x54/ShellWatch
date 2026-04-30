@@ -40,9 +40,10 @@ Cross-compile for other platforms:
 ```bash
 GOOS=linux GOARCH=amd64 go build -o shellwatch-agent-linux-amd64 ./cmd/shellwatch-agent/
 GOOS=linux GOARCH=arm64 go build -o shellwatch-agent-linux-arm64 ./cmd/shellwatch-agent/
+GOOS=windows GOARCH=amd64 go build -o shellwatch-agent-windows-amd64.exe ./cmd/shellwatch-agent/
 ```
 
-Windows is not supported yet — the current code listens on a Unix socket; Windows OpenSSH expects a named pipe. Tracked on #175.
+On Windows the proxy listens on a named pipe instead of a Unix socket — default `\\.\pipe\openssh-ssh-agent`, which is the same path stock OpenSSH for Windows looks for. See [Windows](#windows) below for usage.
 
 ## Quickstart
 
@@ -108,12 +109,44 @@ Precedence: CLI flags > environment variables > credstore > defaults.
 | `--insecure`  | —                       | Allow `ws://` (daemon) or `http://` (login) — local dev only |
 | `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
 
-The default socket path uses `os.TempDir()`:
+The default listener path is platform-specific:
 
 - **Linux:** `$XDG_RUNTIME_DIR/shellwatch-agent.sock` if set, otherwise `${TMPDIR:-/tmp}/shellwatch-agent-<uid>.sock`.
 - **macOS:** `${TMPDIR}/shellwatch-agent-<uid>.sock` — and `$TMPDIR` is set per-user to a `/var/folders/.../T/` path by launchd, _not_ `/tmp`.
+- **Windows:** `\\.\pipe\openssh-ssh-agent` (a named pipe, not a Unix socket). Matches the path stock OpenSSH for Windows expects, so `ssh.exe` finds it with no `SSH_AUTH_SOCK` set.
 
 The path is stable across restarts, so it's safe to compute once in your shell profile.
+
+## Windows
+
+`shellwatch-agent` runs natively on Windows 10/11. The daemon listens on a named pipe instead of a Unix socket; the credstore uses DPAPI via the OS Credential Manager (with a `%AppData%\shellwatch\credentials` 0600-style fallback when the keyring isn't reachable).
+
+There's no Homebrew or service-installer integration yet — run the binary directly, or wrap it with `nssm` / `sc.exe` if you want it to start at logon. Service installation is tracked on a follow-up to #175.
+
+```powershell
+# One-time browser login
+.\shellwatch-agent.exe login
+
+# Start the daemon (foreground)
+.\shellwatch-agent.exe
+
+# In another shell — verify
+ssh-add -l
+ssh user@host
+```
+
+The default pipe path matches what `ssh.exe` looks for, so no `SSH_AUTH_SOCK` is needed. If you do want to set it (e.g. for cross-shell scripts), `--print-env` emits PowerShell-friendly syntax:
+
+```powershell
+Invoke-Expression (& .\shellwatch-agent.exe --print-env)
+```
+
+If the built-in `ssh-agent` Windows service is also running, it will own the same pipe path and `shellwatch-agent` will fail to bind. Stop and disable it first:
+
+```powershell
+Stop-Service ssh-agent
+Set-Service ssh-agent -StartupType Disabled
+```
 
 ## Where credentials live
 
