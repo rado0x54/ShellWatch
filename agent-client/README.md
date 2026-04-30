@@ -6,6 +6,18 @@ Listens on a local Unix socket (`SSH_AUTH_SOCK`) and relays [SSH agent protocol]
 
 ## Install
 
+### Homebrew (macOS, Linux)
+
+```bash
+brew install rado0x54/tap/shellwatch-agent
+```
+
+The tap lives at [rado0x54/homebrew-tap](https://github.com/rado0x54/homebrew-tap); brew auto-derives the URL from the conventional `homebrew-` prefix, so no separate `brew tap` step is needed. The formula bundles a `service do` block, so `brew services start shellwatch-agent` works out of the box (see [Running permanently](#running-permanently-as-a-background-daemon) below).
+
+> **Currently 404s** while [rado0x54/ShellWatch](https://github.com/rado0x54/ShellWatch) is private — anonymous HTTP can't fetch release binaries from a private repo. Will work once the upstream goes public; tracked on issues #35 and #147.
+
+### Manual download
+
 Pre-built binaries are attached to each [`agent/v*` release](https://github.com/rado0x54/ShellWatch/releases).
 
 ```bash
@@ -16,7 +28,7 @@ chmod +x shellwatch-agent
 sudo mv shellwatch-agent /usr/local/bin/
 ```
 
-To build from source:
+### From source
 
 ```bash
 cd agent-client
@@ -29,6 +41,8 @@ Cross-compile for other platforms:
 GOOS=linux GOARCH=amd64 go build -o shellwatch-agent-linux-amd64 ./cmd/shellwatch-agent/
 GOOS=linux GOARCH=arm64 go build -o shellwatch-agent-linux-arm64 ./cmd/shellwatch-agent/
 ```
+
+Windows is not supported yet — the current code listens on a Unix socket; Windows OpenSSH expects a named pipe. Tracked on #175.
 
 ## Quickstart
 
@@ -150,9 +164,30 @@ export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/shellwatch-agent.so
 export SSH_AUTH_SOCK="${TMPDIR:-/tmp/}shellwatch-agent-$(id -u).sock"
 ```
 
-### macOS (`launchd` user agent)
+### Homebrew (`brew services`)
 
-Run `shellwatch-agent login` once first to populate the keyring, then create `~/Library/LaunchAgents/ai.shellwatch.agent.plist`:
+If you installed via the [Homebrew tap](#homebrew-macos-linux), the formula's `service do` block already declares the daemon to Homebrew. Authorize once, then start the service:
+
+```bash
+shellwatch-agent login            # browser flow, token lands in keyring
+brew services start shellwatch-agent
+```
+
+Homebrew translates the formula's service definition to a launchd plist on macOS (`~/Library/LaunchAgents/homebrew.shellwatch-agent.plist`) and a systemd-user unit on Linux (`~/.config/systemd/user/homebrew.shellwatch-agent.service`), then loads it. The daemon picks up its API key from the keyring on startup — no plaintext secret in the generated unit. Manage it with the usual `brew services` commands:
+
+```bash
+brew services list                         # status
+brew services restart shellwatch-agent
+brew services stop shellwatch-agent
+```
+
+Logs land in `${HOMEBREW_PREFIX}/var/log/shellwatch-agent.{log,err.log}` (e.g. `/opt/homebrew/var/log/...` on Apple Silicon, `/usr/local/var/log/...` on Intel macs, `/home/linuxbrew/.linuxbrew/var/log/...` on Linux).
+
+The Homebrew service uses the default server URL (`https://app.shellwatch.ai`). Self-hosted instances need to fall back to the manual launchd / systemd setup below — letting Homebrew thread a custom `--server` flag through is on the roadmap but not implemented yet.
+
+### macOS (`launchd` user agent) — manual setup
+
+Use this if you didn't install via the Homebrew tap, or if you need a custom `--server` flag the brew service block can't express today. Run `shellwatch-agent login` once first to populate the keyring, then create `~/Library/LaunchAgents/ai.shellwatch.agent.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -198,9 +233,9 @@ launchctl kickstart -k "gui/$(id -u)/ai.shellwatch.agent"   # restart after edit
 launchctl unload ~/Library/LaunchAgents/ai.shellwatch.agent.plist
 ```
 
-### Linux (`systemd --user` unit)
+### Linux (`systemd --user` unit) — manual setup
 
-Run `shellwatch-agent login` once first, then create `~/.config/systemd/user/shellwatch-agent.service`:
+Use this if you didn't install via the Homebrew tap, or if you need a custom `--server` flag the brew service block can't express today. Run `shellwatch-agent login` once first, then create `~/.config/systemd/user/shellwatch-agent.service`:
 
 ```ini
 [Unit]

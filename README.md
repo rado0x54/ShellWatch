@@ -220,16 +220,26 @@ agentSocket:
 Then run the [`shellwatch-agent`](./agent-client/) thin client on your workstation:
 
 ```bash
-cd agent-client && make build       # or: go build -o shellwatch-agent ./cmd/shellwatch-agent/
-./shellwatch-agent --server https://shellwatch.example.com --api-key sw_...
+# Install (Homebrew tap; blocked anonymously while this repo is private — #147):
+brew install rado0x54/tap/shellwatch-agent
 
-# In your shell profile:
-export SSH_AUTH_SOCK=/tmp/shellwatch-agent-<uid>.sock
+# Or build from source:
+cd agent-client && make build       # or: go build -o shellwatch-agent ./cmd/shellwatch-agent/
+
+# One-time browser-based login. Token persists in your OS keyring.
+shellwatch-agent login --server https://shellwatch.example.com
+
+# Run as a service via Homebrew, or use the manual launchd / systemd setup
+# in agent-client/README.md for self-hosted servers.
+brew services start shellwatch-agent
+
+# In your shell profile, export the socket path:
+eval "$(shellwatch-agent --print-env)"
 ```
 
 `make build` injects the agent version via `-ldflags` (pulled from `git describe`) so it's surfaced to the approver on `/sign/:id`. Override with `make build VERSION=x.y.z`.
 
-The API key must have `agent` scope. The `seedAdminApiKey` is seeded with this scope automatically.
+`login` uses the OAuth shim at `/oauth/authorize` to mint an `agent`-scoped API key without you ever pasting one — see [agent-client/README.md](./agent-client/README.md) for the full flow, the static-key fallback for CI/headless setups, and the credential-store layout.
 
 Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy signing — both require browser approval (no silent auto-sign for the agent-proxy path). Passkeys require **OpenSSH 10.3+** on the client. Approval happens on the `/sign/:id` page, which also shows the agent client's self-reported hostname/OS/version when available. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
 
