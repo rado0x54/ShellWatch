@@ -106,7 +106,7 @@ describe("OAuth DCR flow", () => {
     expect(body.registration_endpoint).toBe(`${appServer.url}/oauth/register`);
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
     expect(body.token_endpoint_auth_methods_supported).toEqual(["none"]);
-    expect(body.scopes_supported).toEqual(["mcp", "agent"]);
+    expect(body.scopes_supported).toEqual(["agent", "mcp"]);
   });
 
   it("DCR stub accepts any registration without a session", async () => {

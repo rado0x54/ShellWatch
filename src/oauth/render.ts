@@ -332,7 +332,7 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
   <input type="hidden" name="state" value="${escapeHtml(p.state)}" />
   <input type="hidden" name="code_challenge" value="${escapeHtml(p.codeChallenge)}" />
   <input type="hidden" name="code_challenge_method" value="${escapeHtml(p.codeChallengeMethod)}" />
-  ${p.resolved.rawScope !== undefined ? `<input type="hidden" name="scope" value="${escapeHtml(p.resolved.rawScope)}" />` : ""}
+  ${p.resolved.rawScope ? `<input type="hidden" name="scope" value="${escapeHtml(p.resolved.rawScope)}" />` : ""}
   ${p.resolved.rawResource ? `<input type="hidden" name="resource" value="${escapeHtml(p.resolved.rawResource)}" />` : ""}
   ${errorBanner}
   <button type="submit">Authorize</button>

@@ -25,7 +25,7 @@ import type { Config } from "../config/index.js";
 // reached for here because the OAuth callback needs the cross-tenant findByHash. See #136.
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
-import { BEARER_SCOPES, type BearerScope } from "../server/auth/bearer-gate.js";
+import { BEARER_PATHS, BEARER_SCOPES, type BearerScope } from "../server/auth/bearer-gate.js";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 import { verifyPkceS256 } from "./pkce.js";
 import { renderAuthorizePage, type AuthorizeMode } from "./render.js";
@@ -55,15 +55,6 @@ const STUB_CLIENT_ID = "sw-client";
 const SAFE_REDIRECT_SCHEMES_BLOCKED = new Set(["javascript:", "data:", "file:"]);
 
 const DEFAULT_SCOPE: BearerScope = "mcp";
-
-/**
- * Protected resource paths the OAuth shim recognizes. Both are also wired up
- * in `registerBearerGate` (`src/server/app.ts`) — the two lists must agree.
- * Kept inline here rather than plumbed through `RegisterOAuthParams` because
- * neither path is actually configurable in this codebase.
- */
-const MCP_PATH = "/mcp";
-const AGENT_PROXY_PATH = "/agent-proxy";
 
 export interface ResolvedScopes {
   /**
@@ -100,8 +91,8 @@ function resolveScopes(
   if (rawResource) {
     try {
       const path = new URL(rawResource).pathname.replace(/\/+$/, "");
-      if (path === MCP_PATH) issued.add("mcp");
-      else if (path === AGENT_PROXY_PATH) issued.add("agent");
+      if (path === BEARER_PATHS.mcp) issued.add("mcp");
+      else if (path === BEARER_PATHS.agent) issued.add("agent");
     } catch {
       // unparseable URL — ignore, will be shown to the user verbatim
     }
@@ -162,7 +153,7 @@ export function registerOAuth({
   app.get("/.well-known/oauth-protected-resource", async () => {
     const base = baseUrl();
     return {
-      resource: `${base}${MCP_PATH}`,
+      resource: `${base}${BEARER_PATHS.mcp}`,
       authorization_servers: [base],
       bearer_methods_supported: ["header"],
     };

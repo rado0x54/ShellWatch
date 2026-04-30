@@ -10,11 +10,27 @@ export type BearerScope = "mcp" | "agent";
 
 /**
  * Single source of truth for the set of bearer scopes ShellWatch supports.
- * The OAuth shim renders one consent checkbox per entry and validates pasted /
- * minted keys against this list. Adding a new scope requires updating this
- * array, the `BearerScope` union, and any bearer-gate path config in `app.ts`.
+ * The OAuth shim validates pasted / minted keys against this list and exposes
+ * it via `scopes_supported` in the discovery doc. Sorted alphabetically so
+ * the rendered "Issued scopes" line and the discovery doc agree on order.
+ * Adding a new scope requires updating this array, the `BearerScope` union,
+ * and the `BEARER_PATHS` map below.
  */
-export const BEARER_SCOPES = ["mcp", "agent"] as const satisfies readonly BearerScope[];
+export const BEARER_SCOPES = ["agent", "mcp"] as const satisfies readonly BearerScope[];
+
+/**
+ * Single source of truth for the protected-resource paths each scope guards.
+ * Mirrored by:
+ *   - `registerBearerGate`'s `paths` config in `src/server/app.ts` (which
+ *     scope is required at each path),
+ *   - the OAuth shim's `resolveScopes` (which path each `resource` indicator
+ *     maps to), and
+ *   - the discovery doc's `resource` field.
+ */
+export const BEARER_PATHS: Record<BearerScope, string> = {
+  mcp: "/mcp",
+  agent: "/agent-proxy",
+};
 
 export interface BearerPathConfig {
   /** Required scope on the API key. Requests with a key lacking this scope get 403. */

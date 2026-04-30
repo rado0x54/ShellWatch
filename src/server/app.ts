@@ -28,7 +28,7 @@ import { registerOAuth } from "../oauth/index.js";
 import type { AccountLifecycle } from "./account-lifecycle.js";
 import { buildInfo } from "./buildInfo.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
-import { registerBearerGate } from "./auth/bearer-gate.js";
+import { BEARER_PATHS, registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
@@ -119,15 +119,15 @@ export async function buildApp(params: BuildAppParams) {
   });
 
   // IP allowlist + bearer-gate (covers /mcp and /agent-proxy) + OAuth shim.
-  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
+  registerIpAllowlist(app, config.security.allowedNetworks, [BEARER_PATHS.mcp]);
   registerBearerGate({
     app,
     apiKeyRepo,
     accountRepo,
     config,
     paths: {
-      "/mcp": { requiredScope: "mcp", failureFormat: "rfc6750" },
-      "/agent-proxy": { requiredScope: "agent", failureFormat: "plain" },
+      [BEARER_PATHS.mcp]: { requiredScope: "mcp", failureFormat: "rfc6750" },
+      [BEARER_PATHS.agent]: { requiredScope: "agent", failureFormat: "plain" },
     },
   });
   const oauth = registerOAuth({ app, apiKeyRepo, config });
