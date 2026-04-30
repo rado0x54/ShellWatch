@@ -40,6 +40,7 @@
   <div class="tabs-strip">
     {#each tabs as tab (tab.path)}
       <button
+        type="button"
         class="tab"
         class:active={currentPath === tab.path}
         onclick={() => goto(resolve(tab.path))}
