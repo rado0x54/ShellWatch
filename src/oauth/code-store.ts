@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { BearerScope } from "../server/auth/bearer-gate.js";
 
 /**
  * What `/oauth/token` will turn into the access token when this code is
@@ -9,11 +10,13 @@ import { randomBytes } from "node:crypto";
  * - `create` is a pending request to mint a fresh key. We deliberately
  *   do NOT write the key to the DB at authorize-POST — only after PKCE
  *   has verified at the token endpoint — so abandoned or failed flows
- *   don't leave orphan credentials behind.
+ *   don't leave orphan credentials behind. `scopes` is the (deduped,
+ *   sorted) set of internal scopes the minted key will carry — derived
+ *   from the requested OAuth scope param + resource indicator.
  */
 export type AuthCodePending =
   | { kind: "existing"; apiKey: string }
-  | { kind: "create"; accountId: string; label: string };
+  | { kind: "create"; accountId: string; label: string; scopes: BearerScope[] };
 
 export interface StoredAuthCode {
   codeChallenge: string;
