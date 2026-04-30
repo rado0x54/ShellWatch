@@ -215,7 +215,7 @@
     revokeTarget = null;
   }
 
-  async function handleRevokePasskey(id: string) {
+  async function handleRevokePasskey(id: string): Promise<boolean> {
     // TODO: use basePath store instead of window.__BASE_PATH__ (applies to this fn and handleRevokeFileKey)
     revoking = true;
     try {
@@ -228,7 +228,7 @@
         stepUpToken = await performStepUp("revoke_passkey");
       } catch (err) {
         toastError(`Step-up required: ${errorMessage(err)}`);
-        return;
+        return false;
       }
 
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
@@ -239,16 +239,19 @@
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to revoke");
+        return false;
       }
       await fetchCredentials();
+      return true;
     } catch (err) {
       toastError(errorMessage(err));
+      return false;
     } finally {
       revoking = false;
     }
   }
 
-  async function handleRevokeFileKey(id: string) {
+  async function handleRevokeFileKey(id: string): Promise<boolean> {
     revoking = true;
     try {
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
@@ -256,10 +259,13 @@
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to revoke");
+        return false;
       }
       await fetchSshKeys();
+      return true;
     } catch (err) {
       toastError(errorMessage(err));
+      return false;
     } finally {
       revoking = false;
     }
@@ -268,12 +274,9 @@
   async function handleRevokeConfirm() {
     if (!revokeTarget) return;
     const t = revokeTarget;
-    if (t.kind === "passkey") {
-      await handleRevokePasskey(t.id);
-    } else {
-      await handleRevokeFileKey(t.id);
-    }
-    revokeTarget = null;
+    const ok =
+      t.kind === "passkey" ? await handleRevokePasskey(t.id) : await handleRevokeFileKey(t.id);
+    if (ok) revokeTarget = null;
   }
 
   async function handleRegister() {

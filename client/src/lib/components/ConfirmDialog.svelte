@@ -25,18 +25,13 @@
   }: Props = $props();
 </script>
 
-<Modal {title} onClose={onCancel} {width}>
+<Modal {title} onClose={onCancel} onSubmit={onConfirm} {width}>
   {@render children()}
   {#snippet actions()}
     <button type="button" class="btn btn-secondary" onclick={onCancel} disabled={processing}>
       Cancel
     </button>
-    <button
-      type="button"
-      class="btn btn-primary"
-      onclick={onConfirm}
-      disabled={confirmDisabled || processing}
-    >
+    <button type="submit" class="btn btn-primary" disabled={confirmDisabled || processing}>
       {processing ? "Working…" : confirmLabel}
     </button>
   {/snippet}

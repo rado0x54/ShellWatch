@@ -5,6 +5,7 @@
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { toastError } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
 
   interface AccountEntry {
     id: string;
@@ -55,6 +56,8 @@
       deleteTarget = null;
       typedName = "";
       await fetchAccounts();
+    } catch (err) {
+      toastError(errorMessage(err));
     } finally {
       deleting = false;
     }
@@ -118,7 +121,6 @@
       <label class="confirm-label" for="confirm-name">
         Type <code>{deleteTarget.name}</code> to confirm
       </label>
-      <!-- svelte-ignore a11y_autofocus -->
       <input
         id="confirm-name"
         type="text"
@@ -127,7 +129,6 @@
         autocomplete="off"
         autocapitalize="off"
         spellcheck="false"
-        autofocus
       />
     </ConfirmDialog>
   {/if}
