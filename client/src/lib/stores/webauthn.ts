@@ -1,6 +1,49 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { writable } from "svelte/store";
 
+/**
+ * Step-up actions recognised by the server. Mirrors STEPUP_ACTION on the
+ * backend; kept inline here to avoid importing server code into the client.
+ */
+export type StepUpAction = "register_passkey" | "revoke_passkey";
+
+/**
+ * Run the WebAuthn step-up assertion for an action and return the resulting
+ * single-use token. The token is bound to {accountId, action} server-side and
+ * must be passed via the X-Shellwatch-Stepup-Token header on the gated endpoint.
+ *
+ * Throws on cancellation (the caller should treat that as "user aborted").
+ */
+export async function performStepUp(action: StepUpAction): Promise<string> {
+  const optionsRes = await fetch("/api/webauthn/stepup/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json().catch(() => ({}));
+    throw new Error(err.error || "Could not start step-up");
+  }
+  const { challengeId, action: _, ...assertionOptions } = await optionsRes.json();
+
+  // Browser prompt — throws (DOMException, name "NotAllowedError") if the
+  // user cancels. We let it propagate; the caller's catch decides what to
+  // surface.
+  const credential = await startAuthentication({ optionsJSON: assertionOptions });
+
+  const verifyRes = await fetch("/api/webauthn/stepup/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challengeId, credential, action }),
+  });
+  if (!verifyRes.ok) {
+    const err = await verifyRes.json().catch(() => ({}));
+    throw new Error(err.error || "Step-up verification failed");
+  }
+  const { stepUpToken } = await verifyRes.json();
+  return stepUpToken as string;
+}
+
 export type CredentialState = "active" | "pending_confirmation";
 
 export interface WebAuthnCredential {
@@ -39,9 +82,14 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   credentialId: string;
   label: string;
 }> {
+  // Step-up first: prove fresh possession of an existing passkey before we
+  // even ask the server for registration options. Two browser prompts in a
+  // row — step-up assertion, then the new-passkey ceremony.
+  const stepUpToken = await performStepUp("register_passkey");
+
   const optionsRes = await fetch("/api/webauthn/register/options", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
     body: JSON.stringify({ label: "pending", name }),
   });
   if (!optionsRes.ok) {
@@ -55,7 +103,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const verifyRes = await fetch("/api/webauthn/register", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
     body: JSON.stringify({ challengeId, credential }),
   });
   if (!verifyRes.ok) {

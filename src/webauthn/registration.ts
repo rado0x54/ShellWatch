@@ -7,6 +7,8 @@ import { storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
 import type { RateLimitConfig } from "./routes.js";
+import { requireStepUp } from "./stepup-gate.js";
+import { STEPUP_ACTION } from "./stepup-store.js";
 
 export interface RegistrationRoutesParams {
   app: FastifyInstance;
@@ -31,7 +33,24 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
+      // Step-up gate: peek the token without consuming. The same token has to
+      // survive to the subsequent /api/webauthn/register call (the verify
+      // step), which is where it actually gets burned. Both endpoints check
+      // so an attacker with a session cookie can't even enumerate the
+      // account's existing credentials via excludeCredentials below without
+      // first proving fresh possession.
+      if (
+        !requireStepUp({
+          request,
+          reply,
+          action: STEPUP_ACTION.registerPasskey,
+          mode: "peek",
+        })
+      ) {
+        return reply;
+      }
+
       const { label, name } = request.body;
       // Auth-gated route: scope excludeCredentials to the calling account so
       // we don't leak the global credential-id list to authenticated callers.
@@ -90,6 +109,21 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
       },
     },
     async (request, reply) => {
+      // Step-up gate (consume): this is the terminal endpoint of the
+      // registration ceremony, so we burn the token here. A successful
+      // ceremony => one consumed step-up token; cancellation/failure on the
+      // client side just leaves the token to expire naturally.
+      if (
+        !requireStepUp({
+          request,
+          reply,
+          action: STEPUP_ACTION.registerPasskey,
+          mode: "consume",
+        })
+      ) {
+        return reply;
+      }
+
       const { challengeId, credential } = request.body;
 
       try {

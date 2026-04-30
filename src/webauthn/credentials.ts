@@ -6,6 +6,8 @@ import { webauthnCredentials } from "../db/schema.js";
 import { detectAlgorithm } from "./credential-utils.js";
 import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
+import { requireStepUp } from "./stepup-gate.js";
+import { STEPUP_ACTION } from "./stepup-store.js";
 
 export interface CredentialRoutesParams {
   app: FastifyInstance;
@@ -116,6 +118,20 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/revoke",
     async (request, reply) => {
+      // Step-up gate (consume): single endpoint, single token. Label edits
+      // (PATCH /label) intentionally don't require step-up — labels are
+      // cosmetic, not a factor change.
+      if (
+        !requireStepUp({
+          request,
+          reply,
+          action: STEPUP_ACTION.revokePasskey,
+          mode: "consume",
+        })
+      ) {
+        return reply;
+      }
+
       const { id } = request.params;
 
       // Verify ownership
