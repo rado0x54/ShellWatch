@@ -16,6 +16,13 @@ import (
 // --server nor SHELLWATCH_SERVER is set.
 const DefaultServer = "https://app.shellwatch.ai"
 
+// newCredStore is the package-level seam tests use to inject a fake
+// credstore. Production callers get the real OS keyring + file fallback;
+// `config_test.go` swaps it for an empty in-memory store via TestMain so
+// `TestResolve*` never reads (or prints warnings about) a developer's
+// actual saved tokens.
+var newCredStore = credstore.New
+
 type Config struct {
 	Server     string
 	ApiKey     string
@@ -118,7 +125,7 @@ func resolve(fv flagValues, ev envValues) *Config {
 	// warning to stderr so the user has a hint when "no API key" is
 	// hiding a real problem.
 	if cfg.ApiKey == "" {
-		store, err := credstore.New()
+		store, err := newCredStore()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not open credstore: %v\n", err)
 		} else {
