@@ -96,6 +96,21 @@ func TestFileStore_AtomicReplace(t *testing.T) {
 	}
 }
 
+// Regression: dualStore.Delete used to return nil when the keyring was
+// "unavailable" (typical on a headless CI runner without D-Bus) and the
+// file had no entry, even though nothing was actually removed — making
+// `shellwatch-agent logout` print "OK: removed token" on a fresh box.
+// We exercise that path indirectly via the file backend (the only
+// portable backend in tests): a Delete on an empty store must report
+// ErrNotFound, not nil.
+func TestFileStore_DeleteOnEmptyReturnsNotFound(t *testing.T) {
+	store := NewFileStore(filepath.Join(t.TempDir(), "credentials"))
+	err := store.Delete("https://example.com")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete on empty store: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestFileStore_CorruptFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials")
 	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {

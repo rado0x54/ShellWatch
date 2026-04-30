@@ -124,14 +124,20 @@ func (d *dualStore) Delete(serverURL string) error {
 	// Best-effort across both backends — we want logout to leave nothing behind.
 	keyringErr := d.keyring.Delete(key)
 	fileErr := d.file.Delete(key)
-	// "Not found" in either backend is fine; only surface real errors.
+	// Surface real failures (permission denied, stuck D-Bus, malformed file).
 	if keyringErr != nil && !isMissing(keyringErr) && !isUnavailable(keyringErr) {
 		return keyringErr
 	}
 	if fileErr != nil && !errors.Is(fileErr, ErrNotFound) {
 		return fileErr
 	}
-	if isMissing(keyringErr) && errors.Is(fileErr, ErrNotFound) {
+	// Nothing to delete: either both backends explicitly reported "not
+	// found", or the keyring was unavailable AND the file had no entry.
+	// Without this second case, an unavailable keyring would silently make
+	// logout return "OK" when in fact nothing was removed.
+	keyringNothing := isMissing(keyringErr) || isUnavailable(keyringErr)
+	fileNothing := errors.Is(fileErr, ErrNotFound)
+	if keyringNothing && fileNothing {
 		return ErrNotFound
 	}
 	return nil
@@ -203,8 +209,11 @@ func isUnavailable(err error) bool {
 	}
 	// go-keyring reports "secret service is not available" on Linux without
 	// a session bus and similar shapes on Windows when the credential
-	// manager is locked. Match by string since the lib doesn't export
-	// sentinels for these.
+	// manager is locked. The library doesn't export sentinels for these
+	// shapes, so we match by string. NOTE: if go-keyring is bumped beyond
+	// v0.2.8, sanity-check these strings against the upstream source —
+	// silently regressing "unavailable" detection will turn the dual-store
+	// fallback into a hard failure on headless runners.
 	msg := err.Error()
 	return strings.Contains(msg, "secret service is not available") ||
 		strings.Contains(msg, "no such interface")
@@ -297,19 +306,20 @@ func (f *fileStore) write(cf credentialFile) error {
 	return nil
 }
 
-// defaultFilePath resolves $XDG_CONFIG_HOME/shellwatch/credentials, falling
-// back to ~/.config/shellwatch/credentials. Used on macOS/Linux/Windows
-// alike — `gh` and other cross-platform CLIs converge on this convention,
-// even though Apple's HIG would prefer ~/Library/Application Support/.
+// defaultFilePath resolves the per-user config dir + "shellwatch/credentials".
+// Delegates to os.UserConfigDir for platform-correct paths:
+//   - Linux:   $XDG_CONFIG_HOME (or ~/.config)
+//   - macOS:   ~/Library/Application Support
+//   - Windows: %AppData% (which inherits user-only ACLs from the Windows
+//     profile, so the 0600-mode write actually has the protection callers
+//     would expect — Go's os.Chmod on Windows only flips read-only and
+//     doesn't set ACLs, so path choice is what's load-bearing).
 func defaultFilePath() (string, error) {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "shellwatch", "credentials"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+		return "", fmt.Errorf("resolve user config dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "shellwatch", "credentials"), nil
+	return filepath.Join(dir, "shellwatch", "credentials"), nil
 }
 
 // NewFileStore constructs a file-only store at an explicit path. Used by

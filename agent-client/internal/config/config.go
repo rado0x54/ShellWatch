@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -111,12 +112,21 @@ func resolve(fv flagValues, ev envValues) *Config {
 	// Final fallback for ApiKey: consult the credstore. Lets users run
 	// `shellwatch-agent login` once and have the daemon pick up the token
 	// automatically — no env var, no flag, no plaintext config file.
-	// Failures are silent on purpose; Validate() surfaces a friendlier
-	// message than "couldn't open credstore".
+	// Lookup-misses (no token saved yet) fall through silently so
+	// Validate() can surface a friendlier "no API key for X" message;
+	// open/read failures (broken HOME, unreadable file) get a one-line
+	// warning to stderr so the user has a hint when "no API key" is
+	// hiding a real problem.
 	if cfg.ApiKey == "" {
-		if store, err := credstore.New(); err == nil {
-			if token, err := store.Get(cfg.Server); err == nil {
+		store, err := credstore.New()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not open credstore: %v\n", err)
+		} else {
+			token, err := store.Get(cfg.Server)
+			if err == nil {
 				cfg.ApiKey = token
+			} else if !errors.Is(err, credstore.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "warning: credstore lookup for %s failed: %v\n", cfg.Server, err)
 			}
 		}
 	}

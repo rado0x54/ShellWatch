@@ -272,8 +272,8 @@ func exchangeCode(ctx context.Context, server, redirectURI, code, verifier strin
 	return tok.AccessToken, tok.TokenType, nil
 }
 
-// newPkce returns (verifier, S256 challenge). Verifier is 32 random bytes,
-// base64url-encoded — well above RFC 7636's 43-char minimum.
+// newPkce returns (verifier, S256 challenge). Verifier is 32 random bytes
+// base64url-encoded — exactly 43 chars, which is RFC 7636 §4.1's minimum.
 func newPkce() (verifier, challenge string, err error) {
 	verifier, err = randomString(32)
 	if err != nil {

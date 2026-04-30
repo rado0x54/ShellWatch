@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -175,29 +176,41 @@ func TestLogin_StateMismatchIsRejected(t *testing.T) {
 	srv := newFakeAuthServer(t)
 	defer srv.Close()
 
-	// Tamper with the state value mid-flight by overriding the browser to
-	// hit the callback with a forged state. The handler should ignore it
-	// (CSRF protection), and the timeout will eventually fire.
+	// Synchronously deliver a forged-state callback to the loopback
+	// listener and assert the agent's handler rejected it (HTTP 400 with
+	// the "State mismatch" error page). Earlier this test fired the
+	// tampering GET in a goroutine and only asserted the outer ctx
+	// timeout fired — which would also fire even if the handler had
+	// happily delivered the bogus code. Synchronous + status assertion
+	// pins the actual CSRF-rejection path.
 	tamperingBrowser := func(rawURL string) error {
 		u, _ := url.Parse(rawURL)
 		q := u.Query()
-		// Compute the loopback callback URL and hit it directly with a
-		// bogus state — simulating an attacker-induced redirect.
 		redirect := q.Get("redirect_uri")
 		bogus, _ := url.Parse(redirect)
 		bq := bogus.Query()
 		bq.Set("code", "anything")
 		bq.Set("state", "wrong-state")
 		bogus.RawQuery = bq.Encode()
-		go func() {
-			_, _ = http.Get(bogus.String())
-		}()
+		resp, err := http.Get(bogus.String())
+		if err != nil {
+			t.Fatalf("tampering GET: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("forged callback: got HTTP %d, want 400", resp.StatusCode)
+		}
+		if !strings.Contains(string(body), "State mismatch") {
+			t.Fatalf("forged callback body: want 'State mismatch', got %q", string(body))
+		}
 		return nil
 	}
 
-	// Use a short test timeout — once the bogus callback is rejected, the
-	// real flow has nothing pending and will time out at LoginTimeout.
-	// We assert the timeout error rather than waiting 5 minutes.
+	// Once the handler has dropped the bogus callback, the flow has
+	// nothing pending and we expect ctx to time out. The error we
+	// surface here means: handler rejected the forgery AND no real
+	// callback came through to override it.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -207,8 +220,8 @@ func TestLogin_StateMismatchIsRejected(t *testing.T) {
 		OpenBrowser:   tamperingBrowser,
 		Stdout:        io.Discard,
 	})
-	if err == nil {
-		t.Fatal("expected error when state is forged, got nil")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected ctx.DeadlineExceeded after forged-state rejection, got %v", err)
 	}
 }
 

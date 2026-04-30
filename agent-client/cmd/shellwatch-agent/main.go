@@ -123,7 +123,7 @@ func runLogin(args []string) error {
 		return fmt.Errorf("save credential: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "\n✓ Authorized for %s\n", result.ServerURL)
+	fmt.Fprintf(os.Stdout, "\nOK: authorized for %s\n", result.ServerURL)
 	fmt.Fprintf(os.Stdout, "  Token saved. The agent daemon will pick it up automatically.\n")
 	return nil
 }
@@ -150,7 +150,7 @@ func runLogout(args []string) error {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "✓ Removed local token for %s.\n", serverURL)
+	fmt.Fprintf(os.Stdout, "OK: removed local token for %s.\n", serverURL)
 	fmt.Fprintf(os.Stdout, "  Note: the API key still exists server-side. To revoke it entirely,\n")
 	fmt.Fprintf(os.Stdout, "  delete it in Settings → API Keys at %s.\n", serverURL)
 	return nil
