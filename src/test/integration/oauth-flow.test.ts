@@ -260,6 +260,45 @@ describe("OAuth DCR flow", () => {
     expect(html).toContain('name="scope" value="agent"');
     // No "not enabled" notice when the scope is actually grantable.
     expect(html).not.toContain('class="notice"');
+    // Agent-only flows are launched by `shellwatch-agent login` — point the
+    // user at that label rather than the historical "Claude Desktop" hint.
+    expect(html).toContain('placeholder="e.g. shellwatch-agent"');
+    expect(html).not.toContain('placeholder="e.g. Claude Desktop"');
+  });
+
+  it("scope=mcp+agent: keeps the historical placeholder (multi-scope is not agent-only)", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: "mcp agent",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    const html = await pageRes.text();
+    expect(html).toContain('placeholder="e.g. Claude Desktop"');
+  });
+
+  it("default scope (no scope param): keeps the historical placeholder", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    const html = await pageRes.text();
+    expect(html).toContain('placeholder="e.g. Claude Desktop"');
   });
 
   it("scope=mcp agent: issues both scopes (sorted)", async () => {

@@ -39,6 +39,13 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
   const isExisting = mode === "existing";
   const isCreate = mode === "create";
   const issuedList = p.resolved.issued.join(" ");
+  // Scope-aware placeholder for the "Name for the new API key" input. Agent-
+  // only flows are launched by `shellwatch-agent login` and the user benefits
+  // from a hint pointing at that obvious label. MCP and multi-scope flows
+  // keep the historical "Claude Desktop" hint since most MCP clients run
+  // there and the user picks per-app names.
+  const isAgentOnly = p.resolved.issued.length === 1 && p.resolved.issued[0] === "agent";
+  const newKeyPlaceholder = isAgentOnly ? "e.g. shellwatch-agent" : "e.g. Claude Desktop";
   const errorBanner = p.errorMessage
     ? `<div class="error">${escapeHtml(p.errorMessage)}</div>`
     : "";
@@ -335,7 +342,7 @@ ${
 
   <div class="field mode-create"${isCreate ? "" : " hidden"}>
     <label for="new_key_label">Name for the new API key</label>
-    <input type="text" id="new_key_label" name="new_key_label" autocomplete="off"${isCreate ? " autofocus" : ""} placeholder="e.g. Claude Desktop" value="${escapeHtml(p.newKeyLabel ?? "")}" />
+    <input type="text" id="new_key_label" name="new_key_label" autocomplete="off"${isCreate ? " autofocus" : ""} placeholder="${escapeHtml(newKeyPlaceholder)}" value="${escapeHtml(p.newKeyLabel ?? "")}" />
     <div class="help">A fresh key with the issued scopes above will be created. You can revoke it any time in Settings → API Keys.</div>
   </div>
 
