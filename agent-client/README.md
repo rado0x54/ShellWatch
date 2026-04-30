@@ -103,20 +103,29 @@ The path is stable across restarts, so it's safe to compute once in your shell p
 
 ## Where credentials live
 
-`shellwatch-agent login` writes the token to whichever store is reachable on your system:
+`shellwatch-agent login` writes the token to whichever store is reachable on your system. The file fallback path follows Go's [`os.UserConfigDir`](https://pkg.go.dev/os#UserConfigDir) convention, so it lands in the platform-correct location:
 
-| Platform | Primary store                             | Fallback                                  |
-| -------- | ----------------------------------------- | ----------------------------------------- |
-| macOS    | Keychain (via `security`)                 | `~/.config/shellwatch/credentials` (0600) |
-| Linux    | libsecret D-Bus (gnome-keyring / KWallet) | `~/.config/shellwatch/credentials` (0600) |
-| Windows  | DPAPI / Credential Manager                | `%APPDATA%\shellwatch\credentials` (0600) |
+| Platform | Primary store                             | Fallback (mode 0600)                                         |
+| -------- | ----------------------------------------- | ------------------------------------------------------------ |
+| macOS    | Keychain (via `security`)                 | `~/Library/Application Support/shellwatch/credentials`       |
+| Linux    | libsecret D-Bus (gnome-keyring / KWallet) | `${XDG_CONFIG_HOME:-~/.config}/shellwatch/credentials`       |
+| Windows  | DPAPI / Credential Manager                | `%AppData%\shellwatch\credentials` (user-only by parent ACL) |
 
 The fallback is used when the OS keyring isn't reachable in the current session — a Mac mini you SSH'd into without a logged-in GUI user, a Linux VPS without a D-Bus session bus, or a CI runner. In those cases the token lands in the file with a one-line warning.
+
+**On Windows, the 0600 mode bits don't actually do anything** — Go's `os.Chmod` only flips the read-only bit on Windows, not NTFS ACLs. Protection comes from `%AppData%`'s parent ACLs, which Windows configures user-only by default when the profile is created. If you've manually loosened those ACLs, the fallback file inherits the looser permissions; prefer the keyring path on Windows for any multi-user box.
 
 If you want to inspect or back up the file directly:
 
 ```bash
-cat ~/.config/shellwatch/credentials
+# macOS:
+cat "$HOME/Library/Application Support/shellwatch/credentials"
+
+# Linux:
+cat "${XDG_CONFIG_HOME:-$HOME/.config}/shellwatch/credentials"
+
+# Windows (PowerShell):
+Get-Content "$env:AppData\shellwatch\credentials"
 ```
 
 The file is JSON: `{ "tokens": { "https://app.shellwatch.ai": "sw_..." } }`.
