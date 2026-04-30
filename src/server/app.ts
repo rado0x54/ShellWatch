@@ -120,18 +120,17 @@ export async function buildApp(params: BuildAppParams) {
 
   // IP allowlist + bearer-gate (covers /mcp and /agent-proxy) + OAuth shim.
   registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
-  const mcpPath = "/mcp";
   registerBearerGate({
     app,
     apiKeyRepo,
     accountRepo,
     config,
     paths: {
-      [mcpPath]: { requiredScope: "mcp", failureFormat: "rfc6750" },
+      "/mcp": { requiredScope: "mcp", failureFormat: "rfc6750" },
       "/agent-proxy": { requiredScope: "agent", failureFormat: "plain" },
     },
   });
-  const oauth = registerOAuth({ app, apiKeyRepo, config, mcpPath });
+  const oauth = registerOAuth({ app, apiKeyRepo, config });
   app.addHook("onClose", async () => oauth.destroy());
 
   app.get("/health", async () => ({ status: "ok" }));

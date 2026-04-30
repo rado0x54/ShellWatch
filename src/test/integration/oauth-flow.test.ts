@@ -55,14 +55,20 @@ describe("OAuth DCR flow", () => {
     withSession?: boolean;
     mode?: "existing" | "create";
     newKeyLabel?: string;
+    /** Raw scope string. Omit to exercise the default (mcp); accepts space-delimited list and unknown tokens. */
+    scope?: string;
+    /** RFC 8707 resource indicator. */
+    resource?: string;
   }) {
     const formFields: Record<string, string> = {
-      client_id: params.clientId ?? "sw-mcp",
+      client_id: params.clientId ?? "sw-client",
       redirect_uri: params.redirectUri,
       state: params.state ?? "s",
       code_challenge: params.challenge,
       code_challenge_method: "S256",
     };
+    if (params.scope) formFields.scope = params.scope;
+    if (params.resource) formFields.resource = params.resource;
     const mode = params.mode ?? "existing";
     formFields.mode = mode;
     if (mode === "existing") {
@@ -100,6 +106,7 @@ describe("OAuth DCR flow", () => {
     expect(body.registration_endpoint).toBe(`${appServer.url}/oauth/register`);
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
     expect(body.token_endpoint_auth_methods_supported).toEqual(["none"]);
+    expect(body.scopes_supported).toEqual(["mcp", "agent"]);
   });
 
   it("DCR stub accepts any registration without a session", async () => {
@@ -113,7 +120,7 @@ describe("OAuth DCR flow", () => {
     });
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.client_id).toBe("sw-mcp");
+    expect(body.client_id).toBe("sw-client");
     expect(body.token_endpoint_auth_method).toBe("none");
     expect(body.redirect_uris).toEqual(["http://127.0.0.1:54321/callback"]);
     expect(body.client_name).toBe("Claude Desktop");
@@ -135,7 +142,7 @@ describe("OAuth DCR flow", () => {
       "/oauth/authorize?" +
       new URLSearchParams({
         response_type: "code",
-        client_id: "sw-mcp",
+        client_id: "sw-client",
         redirect_uri: "http://127.0.0.1:54321/cb",
         state: "s",
         code_challenge: challenge,
@@ -160,14 +167,14 @@ describe("OAuth DCR flow", () => {
     expect(res.headers.get("location")!.startsWith("/login?redirect=")).toBe(true);
   });
 
-  it("authorize page renders big redirect-URL warning + mode toggle", async () => {
+  it("authorize page renders big redirect-URL warning + mode toggle (defaults to create)", async () => {
     const { challenge } = mkPkce();
     const redirectUri = "http://totally-untrusted.example/cb";
     const authorizeUrl =
       `${appServer.url}/oauth/authorize?` +
       new URLSearchParams({
         response_type: "code",
-        client_id: "sw-mcp",
+        client_id: "sw-client",
         redirect_uri: redirectUri,
         state: "abc",
         code_challenge: challenge,
@@ -176,7 +183,7 @@ describe("OAuth DCR flow", () => {
     const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
     expect(pageRes.status).toBe(200);
     const html = await pageRes.text();
-    expect(html).toContain("Authorize MCP client");
+    expect(html).toContain("Authorize client");
     expect(html).toContain(redirectUri);
     expect(html).toContain("does NOT verify");
     // Client name row is no longer part of the page
@@ -188,6 +195,95 @@ describe("OAuth DCR flow", () => {
     expect(html).toContain('name="new_key_label"');
     expect(html).toContain(`value="abc"`);
     expect(html).toContain(`value="${challenge}"`);
+    // Default mode is "create": the user shouldn't have to know about API
+    // keys to get one. The "existing" radio must NOT be pre-selected and the
+    // "create" radio MUST be pre-selected.
+    expect(html).toContain('name="mode" value="create" checked');
+    expect(html).not.toContain('name="mode" value="existing" checked');
+    // No scope in the request → default to mcp.
+    expect(html).toContain("<strong>Issued scopes:</strong> mcp");
+    expect(html).not.toContain("<strong>Requested:</strong>");
+  });
+
+  it("scope=agent: issues agent scope only", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: "agent",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> agent");
+    // Hidden field round-trips the raw client request for re-render display
+    expect(html).toContain('name="scope" value="agent"');
+  });
+
+  it("scope=mcp agent: issues both scopes (sorted)", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: "mcp agent",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> agent mcp");
+  });
+
+  it("unknown scope tokens default to mcp and show the raw request", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: "mcp:tools wat",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    // No invalid_scope rejection — fall back to mcp default + show raw.
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> mcp");
+    expect(html).toContain("<strong>Requested:</strong> mcp:tools wat");
+  });
+
+  it("partial-match scope keeps recognized tokens, drops unknown ones", async () => {
+    const { challenge } = mkPkce();
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: "mcp:tools agent",
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> agent");
+    expect(html).toContain("<strong>Requested:</strong> mcp:tools agent");
   });
 
   it("full round-trip: authorize → submit → exchange → hit /mcp", async () => {
@@ -212,7 +308,7 @@ describe("OAuth DCR flow", () => {
         code: code!,
         redirect_uri: redirectUri,
         code_verifier: verifier,
-        client_id: "sw-mcp",
+        client_id: "sw-client",
       }).toString(),
     });
     expect(tokenRes.status).toBe(200);
@@ -255,21 +351,22 @@ describe("OAuth DCR flow", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
     expect(html).toContain("not recognized");
-    expect(html).toContain("Authorize MCP client");
+    expect(html).toContain("Authorize client");
   });
 
-  it("POST authorize rejects a key that lacks the mcp scope", async () => {
+  it("POST authorize rejects a key that lacks the mcp scope (default scope = mcp)", async () => {
     const { challenge } = mkPkce();
     const res = await submitAuthorize({
-      apiKey: appServer.nonMcpApiKey,
+      apiKey: appServer.nonMcpApiKey, // agent-only
       redirectUri: "http://127.0.0.1:54321/cb",
       challenge,
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
-    expect(html).toContain("does not have");
-    expect(html).toContain("scope");
+    expect(html).toContain("missing required scope");
+    // Apostrophes are HTML-escaped in the rendered banner.
+    expect(html).toContain("&#39;mcp&#39;");
   });
 
   it("POST authorize with empty api_key re-renders the form", async () => {
@@ -299,7 +396,7 @@ describe("OAuth DCR flow", () => {
         code,
         redirect_uri: redirectUri,
         code_verifier: "x".repeat(64),
-        client_id: "sw-mcp",
+        client_id: "sw-client",
       }).toString(),
     });
     expect(tokenRes.status).toBe(400);
@@ -366,7 +463,7 @@ describe("OAuth DCR flow", () => {
       `${appServer.url}/oauth/authorize?` +
         new URLSearchParams({
           response_type: "code",
-          client_id: "sw-mcp",
+          client_id: "sw-client",
           redirect_uri: "javascript:alert(1)",
           state: "s",
           code_challenge: challenge,
@@ -518,6 +615,233 @@ describe("OAuth DCR flow", () => {
     expect(persisted!.keyPrefix).toBe((token.access_token as string).slice(0, 10));
   });
 
+  it("scope=agent: create-mode mints a key with agent scope (not mcp)", async () => {
+    const { verifier, challenge } = mkPkce();
+    const redirectUri = "http://127.0.0.1:54321/cb";
+    const label = `agent-${randomBytes(4).toString("hex")}`;
+
+    const submitRes = await submitAuthorize({
+      redirectUri,
+      challenge,
+      mode: "create",
+      newKeyLabel: label,
+      scope: "agent",
+    });
+    expect(submitRes.status).toBe(302);
+    const code = new URL(submitRes.headers.get("location")!).searchParams.get("code")!;
+
+    const tokenRes = await fetch(`${appServer.url}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const token = await tokenRes.json();
+    expect(token.access_token).toMatch(/^sw_[0-9a-f]{48}$/);
+
+    const persisted = (await appServer.apiKeyRepo.findAllForAccount(appServer.accountId)).find(
+      (k) => k.label === label,
+    );
+    expect(persisted).toBeDefined();
+    expect(persisted!.scopes).toEqual(["agent"]);
+    expect(persisted!.scopes).not.toContain("mcp");
+  });
+
+  it("scope=agent: existing-mode rejects an mcp-only pasted key", async () => {
+    const { challenge } = mkPkce();
+    const res = await submitAuthorize({
+      apiKey: appServer.apiKey, // mcp-only
+      redirectUri: "http://127.0.0.1:54321/cb",
+      challenge,
+      scope: "agent",
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const html = await res.text();
+    expect(html).toContain("missing required scope");
+    // Apostrophes are HTML-escaped in the rendered banner.
+    expect(html).toContain("&#39;agent&#39;");
+  });
+
+  it("resource alone (no scope param) infers scope from /agent-proxy", async () => {
+    const { verifier, challenge } = mkPkce();
+    const redirectUri = "http://127.0.0.1:54321/cb";
+    const label = `resource-only-${randomBytes(4).toString("hex")}`;
+
+    const submitRes = await submitAuthorize({
+      redirectUri,
+      challenge,
+      mode: "create",
+      newKeyLabel: label,
+      resource: `${appServer.url}/agent-proxy`,
+    });
+    expect(submitRes.status).toBe(302);
+    const code = new URL(submitRes.headers.get("location")!).searchParams.get("code")!;
+
+    const tokenRes = await fetch(`${appServer.url}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const persisted = (await appServer.apiKeyRepo.findAllForAccount(appServer.accountId)).find(
+      (k) => k.label === label,
+    );
+    expect(persisted!.scopes).toEqual(["agent"]);
+  });
+
+  it("resource is shown in the meta box and round-tripped via hidden field", async () => {
+    const { challenge } = mkPkce();
+    const resource = `${appServer.url}/agent-proxy`;
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        resource,
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain(`<strong>Resource:</strong> ${resource}`);
+    expect(html).toContain(`name="resource" value="${resource}"`);
+  });
+
+  it("scope=mcp + resource=/agent-proxy issues both scopes (union, not conflict)", async () => {
+    const { verifier, challenge } = mkPkce();
+    const redirectUri = "http://127.0.0.1:54321/cb";
+    const label = `union-${randomBytes(4).toString("hex")}`;
+
+    const submitRes = await submitAuthorize({
+      redirectUri,
+      challenge,
+      mode: "create",
+      newKeyLabel: label,
+      scope: "mcp",
+      resource: `${appServer.url}/agent-proxy`,
+    });
+    expect(submitRes.status).toBe(302);
+    const code = new URL(submitRes.headers.get("location")!).searchParams.get("code")!;
+
+    const tokenRes = await fetch(`${appServer.url}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const persisted = (await appServer.apiKeyRepo.findAllForAccount(appServer.accountId)).find(
+      (k) => k.label === label,
+    );
+    // Both signals contribute: scope=mcp adds mcp, resource=/agent-proxy adds agent.
+    expect(persisted!.scopes.sort()).toEqual(["agent", "mcp"]);
+  });
+
+  it("resource pointing at an unknown path is shown verbatim and falls back to mcp", async () => {
+    const { challenge } = mkPkce();
+    const resource = `${appServer.url}/some-other-thing`;
+    const authorizeUrl =
+      `${appServer.url}/oauth/authorize?` +
+      new URLSearchParams({
+        response_type: "code",
+        client_id: "sw-client",
+        redirect_uri: "http://127.0.0.1:54321/cb",
+        state: "s",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        resource,
+      }).toString();
+    const pageRes = await fetch(authorizeUrl, { headers: authorizeHeaders() });
+    // No invalid_target — unknown resource is informational, scope falls back.
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("<strong>Issued scopes:</strong> mcp");
+    expect(html).toContain(`<strong>Resource:</strong> ${resource}`);
+  });
+
+  it("scope=agent: existing-mode accepts an agent-scoped pasted key", async () => {
+    const { verifier, challenge } = mkPkce();
+    const redirectUri = "http://127.0.0.1:54321/cb";
+    const submitRes = await submitAuthorize({
+      apiKey: appServer.nonMcpApiKey, // agent-only
+      redirectUri,
+      challenge,
+      scope: "agent",
+    });
+    expect(submitRes.status).toBe(302);
+    const code = new URL(submitRes.headers.get("location")!).searchParams.get("code")!;
+
+    const tokenRes = await fetch(`${appServer.url}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const token = await tokenRes.json();
+    // The pasted key flows through unchanged.
+    expect(token.access_token).toBe(appServer.nonMcpApiKey);
+  });
+
+  it("existing-mode: a key with extra scopes is fine — only the requested ones must be present", async () => {
+    // Use a multi-scope key (seed mcp+agent) when client asked only for mcp.
+    const { verifier, challenge } = mkPkce();
+    const redirectUri = "http://127.0.0.1:54321/cb";
+    const multiKey = `sw_${randomBytes(24).toString("hex")}`;
+    await appServer.apiKeyRepo.create({
+      id: `multi-${randomBytes(4).toString("hex")}`,
+      accountId: appServer.accountId,
+      label: "multi-scope",
+      keyHash: hashApiKey(multiKey),
+      keyPrefix: multiKey.slice(0, 10),
+      scopes: ["mcp", "agent"],
+    });
+
+    const submitRes = await submitAuthorize({
+      apiKey: multiKey,
+      redirectUri,
+      challenge,
+      scope: "mcp", // client only asks for mcp
+    });
+    expect(submitRes.status).toBe(302);
+    const code = new URL(submitRes.headers.get("location")!).searchParams.get("code")!;
+    const tokenRes = await fetch(`${appServer.url}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const token = await tokenRes.json();
+    expect(token.access_token).toBe(multiKey);
+  });
+
   it("create-mode: rejects missing label and preserves create-mode selection on re-render", async () => {
     const { challenge } = mkPkce();
     const res = await submitAuthorize({
@@ -578,7 +902,6 @@ describe("OAuth DCR flow", () => {
       app,
       apiKeyRepo,
       config: cfg,
-      mcpPath: "/mcp",
       codeTtlMs: 40,
     });
     await app.listen({ port: 0, host: "127.0.0.1" });
@@ -595,7 +918,7 @@ describe("OAuth DCR flow", () => {
         codeChallengeMethod: "S256",
         pending: { kind: "existing", apiKey: storedKey },
         redirectUri,
-        clientId: "sw-mcp",
+        clientId: "sw-client",
       });
 
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -626,7 +949,7 @@ describe("OAuth DCR flow", () => {
       `${appServer.url}/oauth/authorize?` +
         new URLSearchParams({
           response_type: "code",
-          client_id: "sw-mcp",
+          client_id: "sw-client",
           redirect_uri: "http://127.0.0.1:54321/cb",
           state: "s",
           code_challenge: "abc",

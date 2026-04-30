@@ -8,6 +8,14 @@ import { hashApiKey } from "./api-key-auth.js";
 
 export type BearerScope = "mcp" | "agent";
 
+/**
+ * Single source of truth for the set of bearer scopes ShellWatch supports.
+ * The OAuth shim renders one consent checkbox per entry and validates pasted /
+ * minted keys against this list. Adding a new scope requires updating this
+ * array, the `BearerScope` union, and any bearer-gate path config in `app.ts`.
+ */
+export const BEARER_SCOPES = ["mcp", "agent"] as const satisfies readonly BearerScope[];
+
 export interface BearerPathConfig {
   /** Required scope on the API key. Requests with a key lacking this scope get 403. */
   requiredScope: BearerScope;

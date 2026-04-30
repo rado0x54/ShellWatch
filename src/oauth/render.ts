@@ -1,3 +1,5 @@
+import type { ResolvedScopes } from "./routes.js";
+
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -18,18 +20,25 @@ export interface RenderAuthorizePageParams {
   state: string;
   codeChallenge: string;
   codeChallengeMethod: string;
+  /** Resolved scope set + raw client request, plumbed through from routes.ts. */
+  resolved: ResolvedScopes;
   /** Shown in a red banner above the submit button when a prior submit failed. */
   errorMessage?: string;
-  /** Which radio tab is pre-selected. Defaults to "existing". */
+  /**
+   * Which radio tab is pre-selected. Defaults to "create" — the common path
+   * for first-time setup is "log in, mint a key for this client", and forcing
+   * users to know what an API key is before they get one is hostile.
+   */
   mode?: AuthorizeMode;
   /** Preserves the "new key" label input value across re-renders on error. */
   newKeyLabel?: string;
 }
 
 export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
-  const mode: AuthorizeMode = p.mode === "create" ? "create" : "existing";
+  const mode: AuthorizeMode = p.mode === "existing" ? "existing" : "create";
   const isExisting = mode === "existing";
   const isCreate = mode === "create";
+  const issuedList = p.resolved.issued.join(" ");
   const errorBanner = p.errorMessage
     ? `<div class="error">${escapeHtml(p.errorMessage)}</div>`
     : "";
@@ -39,7 +48,7 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ShellWatch — Authorize MCP client</title>
+<title>ShellWatch — Authorize client</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -277,42 +286,45 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
   <img src="/logo.svg" alt="" />
   <span class="wordmark"><span class="shell">SHELL</span><span class="watch">WATCH</span></span>
 </div>
-<h1>Authorize MCP client</h1>
-<p class="subtitle">A client is requesting access to this instance's <code>/mcp</code> endpoint.</p>
+<h1>Authorize client</h1>
+<p class="subtitle">A client is requesting an API key for this ShellWatch instance.</p>
 
 <div class="danger">
   <h2>Review before you continue</h2>
   <p>If you authorize, your API key will be delivered to the URL below. <strong>ShellWatch does NOT verify this URL</strong> — it was supplied by the client and could point anywhere on the internet.</p>
   <span class="url">${escapeHtml(p.redirectUri)}</span>
-  <p>Only proceed if you recognize this URL as the callback for the MCP client you are setting up. If you did not start this flow yourself, close this page now.</p>
+  <p>Only proceed if you recognize this URL as the callback for the client you are setting up. If you did not start this flow yourself, close this page now.</p>
 </div>
 
 <div class="meta">
   <div><strong>Client ID:</strong> ${escapeHtml(p.clientId)}</div>
+  <div><strong>Issued scopes:</strong> ${escapeHtml(issuedList)}</div>
+  ${p.resolved.rawScope ? `<div><strong>Requested:</strong> ${escapeHtml(p.resolved.rawScope)}</div>` : ""}
+  ${p.resolved.rawResource ? `<div><strong>Resource:</strong> ${escapeHtml(p.resolved.rawResource)}</div>` : ""}
 </div>
 
 <form method="POST" action="/oauth/authorize">
   <div class="mode-toggle" role="tablist">
-    <label class="mode-option${isExisting ? " selected" : ""}" data-mode="existing">
-      <input type="radio" name="mode" value="existing"${isExisting ? " checked" : ""} />
-      <span>Use existing key</span>
-    </label>
     <label class="mode-option${isCreate ? " selected" : ""}" data-mode="create">
       <input type="radio" name="mode" value="create"${isCreate ? " checked" : ""} />
       <span>Create new key</span>
     </label>
-  </div>
-
-  <div class="field mode-existing"${isExisting ? "" : " hidden"}>
-    <label for="api_key">ShellWatch API key</label>
-    <input type="password" id="api_key" name="api_key" autocomplete="off"${isExisting ? " autofocus" : ""} placeholder="sw_..." />
-    <div class="help">Paste an API key from Settings → API Keys. The key must have the <code>mcp</code> scope.</div>
+    <label class="mode-option${isExisting ? " selected" : ""}" data-mode="existing">
+      <input type="radio" name="mode" value="existing"${isExisting ? " checked" : ""} />
+      <span>Use existing key</span>
+    </label>
   </div>
 
   <div class="field mode-create"${isCreate ? "" : " hidden"}>
     <label for="new_key_label">Name for the new API key</label>
     <input type="text" id="new_key_label" name="new_key_label" autocomplete="off"${isCreate ? " autofocus" : ""} placeholder="e.g. Claude Desktop" value="${escapeHtml(p.newKeyLabel ?? "")}" />
-    <div class="help">A fresh key with the <code>mcp</code> scope will be created for this client. You can revoke it any time in Settings → API Keys.</div>
+    <div class="help">A fresh key with the issued scopes above will be created. You can revoke it any time in Settings → API Keys.</div>
+  </div>
+
+  <div class="field mode-existing"${isExisting ? "" : " hidden"}>
+    <label for="api_key">ShellWatch API key</label>
+    <input type="password" id="api_key" name="api_key" autocomplete="off"${isExisting ? " autofocus" : ""} placeholder="sw_..." />
+    <div class="help">Paste an API key from Settings → API Keys. The key must include the issued scopes above. <strong>Note:</strong> the access token returned to the client is the pasted key verbatim, so any extra scopes on it are forwarded too.</div>
   </div>
 
   <input type="hidden" name="client_id" value="${escapeHtml(p.clientId)}" />
@@ -320,6 +332,8 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
   <input type="hidden" name="state" value="${escapeHtml(p.state)}" />
   <input type="hidden" name="code_challenge" value="${escapeHtml(p.codeChallenge)}" />
   <input type="hidden" name="code_challenge_method" value="${escapeHtml(p.codeChallengeMethod)}" />
+  ${p.resolved.rawScope !== undefined ? `<input type="hidden" name="scope" value="${escapeHtml(p.resolved.rawScope)}" />` : ""}
+  ${p.resolved.rawResource ? `<input type="hidden" name="resource" value="${escapeHtml(p.resolved.rawResource)}" />` : ""}
   ${errorBanner}
   <button type="submit">Authorize</button>
 </form>
@@ -334,7 +348,7 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
     var options = document.querySelectorAll('.mode-option');
     function update() {
       var checked = document.querySelector('input[name="mode"]:checked');
-      var mode = checked ? checked.value : 'existing';
+      var mode = checked ? checked.value : 'create';
       options.forEach(function (o) {
         o.classList.toggle('selected', o.getAttribute('data-mode') === mode);
       });
