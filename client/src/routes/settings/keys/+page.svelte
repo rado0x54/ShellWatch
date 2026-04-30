@@ -10,6 +10,7 @@
     credentials,
     fetchActiveInvite,
     fetchCredentials,
+    performStepUp,
     renamePasskey,
     startPasskeyRegistration,
     type PasskeyInvite,
@@ -199,8 +200,24 @@
     if (!confirm("Revoke this passkey? This is permanent and cannot be undone.")) return;
     revoking = true;
     try {
+      // Step-up before revoke. The user has to assert with an existing
+      // passkey, then the resulting single-use token is forwarded as the
+      // X-Shellwatch-Stepup-Token header. Cancelling the prompt aborts here without
+      // hitting the revoke endpoint.
+      let stepUpToken: string;
+      try {
+        stepUpToken = await performStepUp("revoke_passkey");
+      } catch (err) {
+        toastError(`Step-up required: ${errorMessage(err)}`);
+        revoking = false;
+        return;
+      }
+
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
-      const res = await fetch(`${base}/api/webauthn/credentials/${id}/revoke`, { method: "POST" });
+      const res = await fetch(`${base}/api/webauthn/credentials/${id}/revoke`, {
+        method: "POST",
+        headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
+      });
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to revoke");

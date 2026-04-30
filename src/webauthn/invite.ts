@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/index.js";
 import { accounts, webauthnCredentials } from "../db/schema.js";
-import { storeChallenge } from "./challenge-store.js";
+import { CHALLENGE_PURPOSE, storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import {
@@ -15,6 +15,8 @@ import {
   type InviteSlot,
 } from "./invite-store.js";
 import type { RateLimitConfig } from "./routes.js";
+import { requireStepUp } from "./stepup-gate.js";
+import { STEPUP_ACTION } from "./stepup-store.js";
 
 export interface PasskeyInviteRoutesParams {
   app: FastifyInstance;
@@ -48,6 +50,12 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       },
     },
     async (request) => {
+      // No step-up here. Creating an invite by itself doesn't change a login
+      // factor — the credential it produces lands as `pending_confirmation`
+      // and is unusable for login until the in-account confirm step (which
+      // IS step-up gated). Asking the user to assert twice (once to mint
+      // the invite, once to confirm the resulting credential) is overkill;
+      // the confirm gate is the load-bearing one in this chain.
       const slot = createInviteSlot({ accountId: request.accountId });
       request.log.info(
         { event: "passkey_invite.created", accountId: request.accountId },
@@ -68,8 +76,14 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   });
 
   // --- Authenticated: confirm a pending credential ---
+  // Step-up gated via preHandler. Confirm flips a pending credential to
+  // active, which is the moment it becomes a usable login factor — the most
+  // load-bearing gate in the invite flow. Without it, a stolen-cookie
+  // attacker could create an invite, register a pending credential from
+  // their own device, and confirm it back here.
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/confirm",
+    { preHandler: requireStepUp(STEPUP_ACTION.confirmPasskey) },
     async (request, reply) => {
       const { id } = request.params;
       const cred = db
@@ -206,7 +220,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         excludeCredentials: existing.map((c) => ({ id: c.credentialId })),
       });
 
-      const challengeId = storeChallenge(options.challenge);
+      const challengeId = storeChallenge(options.challenge, CHALLENGE_PURPOSE.registerInvite);
       return { ...options, challengeId };
     },
   );
@@ -244,6 +258,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
         credential,
         rpId,
         trustedOrigins,
+        challengePurpose: CHALLENGE_PURPOSE.registerInvite,
       });
       if (!result.ok) {
         reply.status(400);

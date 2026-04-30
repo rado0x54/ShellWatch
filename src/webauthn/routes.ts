@@ -7,6 +7,7 @@ import { registerPasskeyInviteRoutes } from "./invite.js";
 import { registerLoginRoutes } from "./login.js";
 import { registerRegistrationRoutes } from "./registration.js";
 import { registerSelfRegisterRoutes } from "./self-register.js";
+import { registerStepUpRoutes } from "./stepup.js";
 
 export interface SessionConfig {
   secret: string;
@@ -41,6 +42,13 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
   } = params;
 
   registerRegistrationRoutes({
+    app,
+    db,
+    rpId,
+    trustedOrigins,
+    rateLimitConfig,
+  });
+  registerStepUpRoutes({
     app,
     db,
     rpId,

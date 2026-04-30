@@ -6,6 +6,8 @@ import { webauthnCredentials } from "../db/schema.js";
 import { detectAlgorithm } from "./credential-utils.js";
 import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
+import { requireStepUp } from "./stepup-gate.js";
+import { STEPUP_ACTION } from "./stepup-store.js";
 
 export interface CredentialRoutesParams {
   app: FastifyInstance;
@@ -113,8 +115,11 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   );
 
   // --- Revoke Credential (permanent, scoped to account) ---
+  // Step-up gated via preHandler. Label edits (PATCH /label) intentionally
+  // don't require step-up — labels are cosmetic, not a factor change.
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/revoke",
+    { preHandler: requireStepUp(STEPUP_ACTION.revokePasskey) },
     async (request, reply) => {
       const { id } = request.params;
 
@@ -165,6 +170,15 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         .set({ revoked: true })
         .where(eq(webauthnCredentials.id, id))
         .run();
+
+      request.log.info(
+        {
+          event: "passkey.revoked",
+          accountId: request.accountId,
+          credentialRowId: id,
+        },
+        "passkey revoked",
+      );
 
       return { status: "revoked" };
     },

@@ -34,6 +34,12 @@ import { registerAuthGate } from "../../server/auth/auth-gate.js";
 import { createSessionCookie } from "../../server/auth/session-cookie.js";
 import { _resetInviteStore } from "../../webauthn/invite-store.js";
 import { registerWebAuthnRoutes } from "../../webauthn/routes.js";
+import {
+  _resetStepUpStore,
+  mintStepUpToken,
+  STEPUP_ACTION,
+  type StepUpAction,
+} from "../../webauthn/stepup-store.js";
 
 const ACCOUNT_ID = "00000000-0000-0000-0000-00000000000a";
 const COOKIE_SECRET = "test-cookie-secret-passkey-invite";
@@ -78,6 +84,19 @@ async function makeTestApp(): Promise<TestApp> {
   return { app, conn, cookie };
 }
 
+/**
+ * Mint a step-up token for the calling account and return it as a header
+ * fragment ready to spread into `inject({ headers })`. Saves repeating the
+ * mint + header dance at every gated call site.
+ */
+function stepUpHeader(
+  accountId: string,
+  action: StepUpAction,
+): { "x-shellwatch-stepup-token": string } {
+  const minted = mintStepUpToken({ accountId, action });
+  return { "x-shellwatch-stepup-token": minted.token };
+}
+
 function insertCredential(
   conn: DatabaseConnection,
   opts: {
@@ -111,6 +130,7 @@ describe("passkey invite — HTTP integration", () => {
 
   beforeEach(async () => {
     _resetInviteStore();
+    _resetStepUpStore();
     testApp = await makeTestApp();
   });
 
@@ -118,6 +138,7 @@ describe("passkey invite — HTTP integration", () => {
     await testApp.app.close();
     testApp.conn.close();
     _resetInviteStore();
+    _resetStepUpStore();
   });
 
   // ---- Invite slot state machine via HTTP ----
@@ -347,7 +368,10 @@ describe("passkey invite — HTTP integration", () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
-      headers: { cookie: testApp.cookie },
+      headers: {
+        cookie: testApp.cookie,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
+      },
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as { status: string }).status).toBe("active");
@@ -363,7 +387,10 @@ describe("passkey invite — HTTP integration", () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/credentials/does-not-exist/confirm",
-      headers: { cookie: testApp.cookie },
+      headers: {
+        cookie: testApp.cookie,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
+      },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -373,7 +400,10 @@ describe("passkey invite — HTTP integration", () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
-      headers: { cookie: testApp.cookie },
+      headers: {
+        cookie: testApp.cookie,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
+      },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -387,7 +417,10 @@ describe("passkey invite — HTTP integration", () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
-      headers: { cookie: testApp.cookie },
+      headers: {
+        cookie: testApp.cookie,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
+      },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -416,7 +449,10 @@ describe("passkey invite — HTTP integration", () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: `/api/webauthn/credentials/${id}/confirm`,
-      headers: { cookie: testApp.cookie },
+      headers: {
+        cookie: testApp.cookie,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
+      },
     });
     expect(res.statusCode).toBe(404);
   });
