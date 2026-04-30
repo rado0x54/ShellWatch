@@ -1,12 +1,14 @@
 import { generateRegistrationOptions } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { webauthnCredentials } from "../db/schema.js";
-import { storeChallenge } from "./challenge-store.js";
+import { CHALLENGE_PURPOSE, storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
 import type { RateLimitConfig } from "./routes.js";
+import { requireStepUp } from "./stepup-gate.js";
+import { STEPUP_ACTION } from "./stepup-store.js";
 
 export interface RegistrationRoutesParams {
   app: FastifyInstance;
@@ -32,15 +34,32 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
       },
     },
     async (request) => {
+      // No step-up gate here. The terminal /api/webauthn/register endpoint
+      // is the gate; gating /options as well would either need a "peek"
+      // semantic (extra surface area) or burn two assertions for one
+      // registration. The credential-id list returned in excludeCredentials
+      // is already exposed by the un-gated GET /api/webauthn/credentials, so
+      // gating /options here would not have meaningfully reduced enumeration.
       const { label, name } = request.body;
       // Auth-gated route: scope excludeCredentials to the calling account so
       // we don't leak the global credential-id list to authenticated callers.
       // The anonymous self-register flow uses /api/auth/register/options
       // (returns no excludeCredentials).
+      //
+      // Revoked credentials are intentionally NOT excluded — the user
+      // explicitly destroyed the prior credential, and they should be able
+      // to re-enroll the same authenticator. Otherwise the browser/authenticator
+      // throws "The authenticator was previously registered" and the only
+      // recovery is to delete the row out-of-band.
       const existing = db
         .select({ credentialId: webauthnCredentials.credentialId })
         .from(webauthnCredentials)
-        .where(eq(webauthnCredentials.accountId, request.accountId))
+        .where(
+          and(
+            eq(webauthnCredentials.accountId, request.accountId),
+            eq(webauthnCredentials.revoked, false),
+          ),
+        )
         .all();
 
       // userName: max 64 bytes per WebAuthn recommendation
@@ -62,15 +81,19 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         })),
       });
 
-      const challengeId = storeChallenge(options.challenge);
+      const challengeId = storeChallenge(options.challenge, CHALLENGE_PURPOSE.registerInAccount);
       return { ...options, challengeId };
     },
   );
 
   // --- Registration: Verify Response ---
+  // Step-up gated via preHandler: burns one assertion per successful
+  // registration; cancellation/failure on the client side leaves the token
+  // to expire naturally.
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
     "/api/webauthn/register",
     {
+      preHandler: requireStepUp(STEPUP_ACTION.registerPasskey),
       config: {
         rateLimit: {
           max: rateLimitConfig.passkeyRegister.max,
@@ -87,6 +110,7 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
           credential,
           rpId,
           trustedOrigins,
+          challengePurpose: CHALLENGE_PURPOSE.registerInAccount,
         });
         if (!result.ok) {
           reply.status(400);
@@ -98,6 +122,16 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
         // /api/auth/register (self-register.ts), which creates the account
         // and credential atomically — there is no unauth path here.
         const { id, label } = insertCredentialRow(db, request.accountId, result.decoded);
+
+        request.log.info(
+          {
+            event: "passkey.registered",
+            accountId: request.accountId,
+            credentialRowId: id,
+            label,
+          },
+          "passkey registered (in-account)",
+        );
 
         return {
           verified: true,

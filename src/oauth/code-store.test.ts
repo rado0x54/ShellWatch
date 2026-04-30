@@ -13,7 +13,7 @@ describe("auth code store", () => {
     codeChallengeMethod: "S256" as const,
     pending: { kind: "existing" as const, apiKey: "sw_test" },
     redirectUri: "http://127.0.0.1:55555/cb",
-    clientId: "sw-mcp",
+    clientId: "sw-client",
   };
 
   it("create returns a unique code that consume retrieves once", () => {

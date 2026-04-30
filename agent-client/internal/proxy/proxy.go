@@ -1,9 +1,13 @@
-// Package proxy implements the SSH agent protocol relay between
-// a local Unix socket and a remote ShellWatch WebSocket endpoint.
+// Package proxy implements the SSH agent protocol relay between a local
+// listener (Unix domain socket on macOS/Linux, named pipe on Windows) and
+// a remote ShellWatch WebSocket endpoint.
 package proxy
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +24,27 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Tunables for keepalive + reconnect.
+const (
+	// pingInterval is how often we send a WebSocket ping.
+	pingInterval = 30 * time.Second
+	// pongWait is the read deadline; if no data or pong arrives within this
+	// window, the connection is considered dead. With a 30 s ping cadence and
+	// 60 s deadline, stale links are detected ~1 min after they break,
+	// instead of waiting for the OS TCP keepalive (often 2 h).
+	pongWait = 60 * time.Second
+	// pingWriteTimeout caps how long a ping write can block.
+	pingWriteTimeout = 10 * time.Second
+
+	// dialInitialBackoff is the first retry wait after a transient dial failure.
+	dialInitialBackoff = 500 * time.Millisecond
+	// dialMaxBackoff caps the exponential backoff.
+	dialMaxBackoff = 30 * time.Second
+	// dialBudget caps the total time a single dialWithRetry spends before
+	// giving up — keeps the calling SSH client from hanging indefinitely.
+	dialBudget = 60 * time.Second
+)
+
 type ProxyConfig struct {
 	SocketPath string
 	ServerURL  string
@@ -28,24 +53,18 @@ type ProxyConfig struct {
 	Version    string
 }
 
-// Run starts the agent proxy. It listens on a Unix socket and relays
-// SSH agent protocol frames over WebSocket to the ShellWatch server.
+// Run starts the agent proxy. It listens on a local socket (Unix domain
+// socket on macOS/Linux, named pipe on Windows) and relays SSH agent
+// protocol frames over WebSocket to the ShellWatch server.
 // Blocks until interrupted.
 func Run(cfg ProxyConfig) error {
-	// Clean up stale socket
 	if err := cleanStaleSocket(cfg.SocketPath); err != nil {
 		return fmt.Errorf("socket path in use: %w", err)
 	}
 
-	listener, err := net.Listen("unix", cfg.SocketPath)
+	listener, err := listenSocket(cfg.SocketPath)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.SocketPath, err)
-	}
-
-	// Set socket permissions to owner-only (0600)
-	if err := os.Chmod(cfg.SocketPath, 0600); err != nil {
-		listener.Close()
-		return fmt.Errorf("chmod socket: %w", err)
+		return err
 	}
 
 	// Build WebSocket URL
@@ -61,7 +80,7 @@ func Run(cfg ProxyConfig) error {
 
 	log.Printf("ShellWatch agent proxy listening on %s", cfg.SocketPath)
 	log.Printf("Connected to %s", cfg.ServerURL)
-	fmt.Fprintf(os.Stderr, "  export SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
+	fmt.Fprintf(os.Stderr, "  SSH_AUTH_SOCK=%s\n", cfg.SocketPath)
 
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
@@ -71,7 +90,7 @@ func Run(cfg ProxyConfig) error {
 		<-sigCh
 		log.Println("Shutting down...")
 		listener.Close()
-		os.Remove(cfg.SocketPath)
+		removeSocketFile(cfg.SocketPath)
 	}()
 
 	for {
@@ -100,7 +119,7 @@ var agentFailureResponse = []byte{0, 0, 0, 1, sshAgentFailure}
 func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
 	defer conn.Close()
 
-	var ws *websocket.Conn
+	var ws *managedWS
 	defer func() {
 		if ws != nil {
 			ws.Close()
@@ -132,9 +151,11 @@ func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
 			continue
 		}
 
-		// Lazily dial the WebSocket on first real agent message
+		// Lazily dial the WebSocket on first real agent message.
+		// dialWithRetry handles transient network failures (laptop just
+		// woke up, WiFi switching, DNS hiccup) with exponential backoff.
 		if ws == nil {
-			ws, err = dialWS(wsURL, apiKey, version)
+			ws, err = dialWithRetry(wsURL, apiKey, version)
 			if err != nil {
 				log.Printf("WebSocket connect error: %v", err)
 				return
@@ -166,7 +187,104 @@ func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
 	}
 }
 
-func dialWS(wsURL, apiKey, version string) (*websocket.Conn, error) {
+// managedWS wraps a *websocket.Conn with WebSocket-level keepalive.
+// A background goroutine sends pings every pingInterval; the read deadline
+// is bumped on every successful read and on every pong. If the connection
+// goes silent (no data, no pong) for pongWait, ReadMessage returns an
+// error instead of hanging on the OS TCP keepalive (which is often hours).
+type managedWS struct {
+	conn     *websocket.Conn
+	stopPing chan struct{}
+	pingDone chan struct{}
+}
+
+func newManagedWS(conn *websocket.Conn) *managedWS {
+	m := &managedWS{
+		conn:     conn,
+		stopPing: make(chan struct{}),
+		pingDone: make(chan struct{}),
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
+	go m.pingLoop()
+	return m
+}
+
+func (m *managedWS) pingLoop() {
+	defer close(m.pingDone)
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stopPing:
+			return
+		case <-ticker.C:
+			// WriteControl is documented as safe to call concurrently
+			// with the regular write methods.
+			if err := m.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingWriteTimeout)); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (m *managedWS) WriteMessage(messageType int, data []byte) error {
+	return m.conn.WriteMessage(messageType, data)
+}
+
+func (m *managedWS) ReadMessage() (int, []byte, error) {
+	msgType, data, err := m.conn.ReadMessage()
+	if err == nil {
+		// Successful read counts as liveness — bump the deadline.
+		_ = m.conn.SetReadDeadline(time.Now().Add(pongWait))
+	}
+	return msgType, data, err
+}
+
+func (m *managedWS) Close() error {
+	select {
+	case <-m.stopPing:
+	default:
+		close(m.stopPing)
+	}
+	err := m.conn.Close()
+	<-m.pingDone
+	return err
+}
+
+// dialWithRetry calls dialOnce, retrying with exponential backoff
+// (capped at dialMaxBackoff, total time capped at dialBudget) when the
+// failure looks transient. On non-transient failures (bad URL, auth
+// rejection, etc.) it returns immediately.
+func dialWithRetry(wsURL, apiKey, version string) (*managedWS, error) {
+	deadline := time.Now().Add(dialBudget)
+	backoff := dialInitialBackoff
+	attempt := 0
+	for {
+		attempt++
+		conn, resp, err := dialOnce(wsURL, apiKey, version)
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("WebSocket reconnected after %d attempt(s)", attempt)
+			}
+			return newManagedWS(conn), nil
+		}
+		if !isTransientDialErr(err, resp) {
+			return nil, err
+		}
+		if time.Now().Add(backoff).After(deadline) {
+			return nil, fmt.Errorf("dial retries exhausted after %d attempt(s): %w", attempt, err)
+		}
+		log.Printf("dial failed (attempt %d), retry in %s: %v", attempt, backoff, err)
+		time.Sleep(backoff)
+		backoff = nextBackoff(backoff)
+	}
+}
+
+// dialOnce performs a single WebSocket dial.
+func dialOnce(wsURL, apiKey, version string) (*websocket.Conn, *http.Response, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+apiKey)
 
@@ -185,8 +303,65 @@ func dialWS(wsURL, apiKey, version string) (*websocket.Conn, error) {
 		HandshakeTimeout: 10 * time.Second,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, header)
-	return conn, err
+	return dialer.Dial(wsURL, header)
+}
+
+// nextBackoff doubles the current wait, capped at dialMaxBackoff.
+func nextBackoff(cur time.Duration) time.Duration {
+	next := cur * 2
+	if next > dialMaxBackoff {
+		return dialMaxBackoff
+	}
+	return next
+}
+
+// isTransientDialErr returns true when the dial failure looks worth
+// retrying — network blips, DNS hiccups, server restarts. Auth failures,
+// TLS/cert validation failures, and protocol errors are not retried.
+func isTransientDialErr(err error, resp *http.Response) bool {
+	if err == nil {
+		return false
+	}
+	// On bad-handshake errors gorilla/websocket attaches the HTTP response.
+	if resp != nil {
+		// Retry on 5xx and a few transient 4xx (request timeout, too many requests).
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests {
+			return true
+		}
+		// Other 4xx (e.g., 401/403/404) are not transient.
+		return false
+	}
+	// TLS / certificate validation failures will never succeed with the same
+	// config — don't burn the retry budget on them. Check before the generic
+	// net.Error arm because *tls.CertificateVerificationError is wrapped in
+	// *net.OpError, which implements net.Error.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return false
+	}
+	var unknownAuthErr x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return false
+	}
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return false
+	}
+	var certInvalidErr x509.CertificateInvalidError
+	if errors.As(err, &certInvalidErr) {
+		return false
+	}
+	// Network-layer errors (connection refused, no route to host, DNS, EOF)
+	// are typically *net.OpError / *url.Error wrapping these. *net.DNSError
+	// also implements net.Error, so it's caught by this arm.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return false
 }
 
 // readFrame reads one complete SSH agent protocol frame from the connection.
@@ -210,23 +385,6 @@ func readFrame(r io.Reader) ([]byte, error) {
 	}
 
 	return frame, nil
-}
-
-// cleanStaleSocket removes a socket file if it exists but no one is listening.
-func cleanStaleSocket(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil
-	}
-
-	// Try to connect — if it succeeds, something is already listening
-	conn, err := net.DialTimeout("unix", path, time.Second)
-	if err == nil {
-		conn.Close()
-		return fmt.Errorf("another process is listening on %s", path)
-	}
-
-	// Stale socket — remove it
-	return os.Remove(path)
 }
 
 // buildWSURL converts an HTTP(S) server URL to its WebSocket equivalent

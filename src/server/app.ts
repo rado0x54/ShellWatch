@@ -28,7 +28,7 @@ import { registerOAuth } from "../oauth/index.js";
 import type { AccountLifecycle } from "./account-lifecycle.js";
 import { buildInfo } from "./buildInfo.js";
 import { registerAuthGate } from "./auth/auth-gate.js";
-import { registerBearerGate } from "./auth/bearer-gate.js";
+import { BEARER_PATHS, registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
@@ -118,20 +118,23 @@ export async function buildApp(params: BuildAppParams) {
     accountRepo,
   });
 
-  // IP allowlist + bearer-gate (covers /mcp and /agent-proxy) + OAuth shim.
-  registerIpAllowlist(app, config.security.allowedNetworks, ["/mcp"]);
-  const mcpPath = "/mcp";
+  // IP allowlist + bearer-gate (covers /mcp and, when enabled, /agent-proxy) + OAuth shim.
+  registerIpAllowlist(app, config.security.allowedNetworks, [BEARER_PATHS.mcp]);
+  // Only gate /agent-proxy when the proxy is actually enabled — otherwise the
+  // path 401s at the bearer gate while no route is mounted, which is misleading
+  // and lets clients mint agent-scoped keys that are useless.
+  const agentProxyEnabled = config.agentSocket.proxyEnabled;
   registerBearerGate({
     app,
     apiKeyRepo,
     accountRepo,
     config,
     paths: {
-      [mcpPath]: { requiredScope: "mcp", failureFormat: "rfc6750" },
-      "/agent-proxy": { requiredScope: "agent", failureFormat: "plain" },
+      [BEARER_PATHS.mcp]: { requiredScope: "mcp" },
+      ...(agentProxyEnabled ? { [BEARER_PATHS.agent]: { requiredScope: "agent" } } : {}),
     },
   });
-  const oauth = registerOAuth({ app, apiKeyRepo, config, mcpPath });
+  const oauth = registerOAuth({ app, apiKeyRepo, config, agentProxyEnabled });
   app.addHook("onClose", async () => oauth.destroy());
 
   app.get("/health", async () => ({ status: "ok" }));

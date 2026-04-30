@@ -179,6 +179,7 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 ## Design Principles
 
 - **Local-first:** No external database or auth for the POC
+- **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows — invite tokens minted on one worker won't resolve on another. The product is currently scoped to one process per deployment.
 - **Shared core:** UI and MCP must use the same TerminalManager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately
 - **Passkey-first:** No passwords. WebAuthn passkeys for human auth, API keys for agents.

@@ -8,17 +8,46 @@ import { hashApiKey } from "./api-key-auth.js";
 
 export type BearerScope = "mcp" | "agent";
 
+/**
+ * Single source of truth for the set of bearer scopes ShellWatch supports.
+ * The OAuth shim validates pasted / minted keys against this list and exposes
+ * it via `scopes_supported` in the discovery doc. Sorted alphabetically so
+ * the rendered "Issued scopes" line and the discovery doc agree on order.
+ * Adding a new scope requires updating this array, the `BearerScope` union,
+ * and the `BEARER_PATHS` map below.
+ */
+export const BEARER_SCOPES = ["agent", "mcp"] as const satisfies readonly BearerScope[];
+
+/**
+ * Single source of truth for the protected-resource paths each scope guards.
+ * Mirrored by:
+ *   - `registerBearerGate`'s `paths` config in `src/server/app.ts` (which
+ *     scope is required at each path),
+ *   - the OAuth shim's `resolveScopes` (which path each `resource` indicator
+ *     maps to), and
+ *   - the per-resource discovery docs in `routes.ts`.
+ */
+export const BEARER_PATHS: Record<BearerScope, string> = {
+  mcp: "/mcp",
+  agent: "/agent-proxy",
+};
+
+/**
+ * Per-scope RFC 9728 protected-resource metadata path (relative to externalUrl).
+ * Per spec §3.1, the well-known URI appends the resource path to
+ * `${WELL_KNOWN_PROTECTED_RESOURCE}`. Derived rather than hand-written so a
+ * future rename of `BEARER_PATHS.agent` propagates here automatically. The
+ * legacy unsuffixed `/.well-known/oauth-protected-resource` still exists as a
+ * back-compat alias for `/mcp` (see `routes.ts`).
+ */
+export const WELL_KNOWN_PROTECTED_RESOURCE = "/.well-known/oauth-protected-resource";
+export const RESOURCE_METADATA_PATHS: Record<BearerScope, string> = Object.fromEntries(
+  BEARER_SCOPES.map((s) => [s, `${WELL_KNOWN_PROTECTED_RESOURCE}${BEARER_PATHS[s]}`]),
+) as Record<BearerScope, string>;
+
 export interface BearerPathConfig {
   /** Required scope on the API key. Requests with a key lacking this scope get 403. */
   requiredScope: BearerScope;
-  /**
-   * Failure-response shape:
-   * - `rfc6750`: WWW-Authenticate header with `Bearer realm` + `resource_metadata`
-   *   (so MCP clients can discover OAuth metadata and start the flow).
-   * - `plain`: bare 401/403 JSON body — used for /agent-proxy where the client is
-   *   a non-browser agent that doesn't speak OAuth discovery.
-   */
-  failureFormat: "rfc6750" | "plain";
 }
 
 export interface RegisterBearerGateParams {
@@ -26,15 +55,17 @@ export interface RegisterBearerGateParams {
   apiKeyRepo: ApiKeyAuthRepository;
   accountRepo: AccountRepository;
   config: Config;
-  /** Map of URL prefixes → required scope and failure format. */
+  /** Map of URL prefixes → required scope. */
   paths: Record<string, BearerPathConfig>;
 }
 
 /**
  * Single onRequest hook that authenticates bearer-token routes (/mcp,
  * /agent-proxy). Sets `request.accountId` and `request.apiKey` on success;
- * returns 401/403 with the configured failure format on failure. WS upgrades
- * are rejected pre-handshake (the client sees an HTTP 401 from the upgrade
+ * returns RFC 6750 401/403 with `WWW-Authenticate: Bearer ...` on failure,
+ * pointing the client at the matching RFC 9728 protected-resource metadata
+ * URL so OAuth-aware clients can discover the issuer. WS upgrades are
+ * rejected pre-handshake (the client sees an HTTP 401 from the upgrade
  * request, not a WS close code).
  *
  * Companion to the cookie-session auth-gate. Together the two gates cover all
@@ -46,24 +77,25 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
   const pathEntries = Object.entries(paths);
 
   // Read at request time — test helpers patch externalUrl after listen().
-  const resourceMetadataUrl = (): string =>
-    `${config.server.externalUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource`;
+  const resourceMetadataUrl = (scope: BearerScope): string =>
+    `${config.server.externalUrl.replace(/\/+$/, "")}${RESOURCE_METADATA_PATHS[scope]}`;
 
   function send401(
     reply: FastifyReply,
-    format: BearerPathConfig["failureFormat"],
+    scope: BearerScope,
     message: string,
     kind: "missing" | "invalid" | "scope",
   ): void {
     const status = kind === "scope" ? 403 : 401;
-    if (format === "rfc6750") {
-      const parts = [`Bearer realm="mcp"`, `resource_metadata="${resourceMetadataUrl()}"`];
-      if (kind === "invalid") parts.push(`error="invalid_token"`);
-      if (kind === "scope") parts.push(`error="insufficient_scope"`);
-      reply.status(status).header("WWW-Authenticate", parts.join(", ")).send({ error: message });
-    } else {
-      reply.status(status).send({ error: message });
-    }
+    // RFC 6750 §3 leaves the realm value to the resource server; we use a
+    // single generic identifier across both protected paths.
+    const parts = [
+      `Bearer realm="shellwatch"`,
+      `resource_metadata="${resourceMetadataUrl(scope)}"`,
+    ];
+    if (kind === "invalid") parts.push(`error="invalid_token"`);
+    if (kind === "scope") parts.push(`error="insufficient_scope"`);
+    reply.status(status).header("WWW-Authenticate", parts.join(", ")).send({ error: message });
   }
 
   function matchPath(url: string): BearerPathConfig | undefined {
@@ -80,19 +112,19 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
 
     const auth = request.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
-      send401(reply, cfg.failureFormat, "API key required", "missing");
+      send401(reply, cfg.requiredScope, "API key required", "missing");
       return;
     }
 
     const token = auth.slice(7);
     const key = await apiKeyRepo.findByHash(hashApiKey(token));
     if (!key) {
-      send401(reply, cfg.failureFormat, "Invalid API key", "invalid");
+      send401(reply, cfg.requiredScope, "Invalid API key", "invalid");
       return;
     }
 
     if (!key.scopes.includes(cfg.requiredScope)) {
-      send401(reply, cfg.failureFormat, `API key lacks '${cfg.requiredScope}' scope`, "scope");
+      send401(reply, cfg.requiredScope, `API key lacks '${cfg.requiredScope}' scope`, "scope");
       return;
     }
 

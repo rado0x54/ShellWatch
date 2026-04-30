@@ -588,4 +588,4 @@ See individual tickets for details:
 - **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
 - **Audit Log (#16)** — subscribes to TerminalManager events, persists to database
 - **Telegram notification channel** — new `NotificationChannel` implementation alongside WS/Push
-- **Agent client distribution (#35)** — goreleaser, Homebrew tap, install script
+- **Agent client distribution (#35)** — Homebrew tap exists at [rado0x54/homebrew-tap](https://github.com/rado0x54/homebrew-tap) (blocked on upstream-public release per #147); still pending: install script, deb/rpm packaging, install-service CLI; Windows support in #175

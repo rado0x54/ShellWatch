@@ -56,7 +56,22 @@ export interface TestAppServer {
   close(): Promise<void>;
 }
 
-export async function startTestApp(sshServer: TestSshServer, log: TestLog): Promise<TestAppServer> {
+export interface StartTestAppOptions {
+  /**
+   * Whether `/agent-proxy` is mounted. Drives the bearer-gate path config + the
+   * OAuth shim's agent discovery surfaces. Defaults to `true` because most
+   * integration tests assume both endpoints are available; opt out explicitly
+   * to verify the gated-off behavior.
+   */
+  agentProxyEnabled?: boolean;
+}
+
+export async function startTestApp(
+  sshServer: TestSshServer,
+  log: TestLog,
+  options: StartTestAppOptions = {},
+): Promise<TestAppServer> {
+  const { agentProxyEnabled = true } = options;
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -91,6 +106,7 @@ export async function startTestApp(sshServer: TestSshServer, log: TestLog): Prom
       },
     ],
     security: { cookieSecret: testCookieSecret },
+    agentSocket: { proxyEnabled: agentProxyEnabled },
   });
 
   const endpointRepo = new InMemoryEndpointRepository([

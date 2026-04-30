@@ -66,6 +66,7 @@
         <label for="push-toggle">Push Notifications</label>
         <div class="toggle-row">
           <button
+            type="button"
             id="push-toggle"
             class="toggle"
             class:active={$pushEnabled}

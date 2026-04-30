@@ -307,6 +307,7 @@
         {/if}
       {/if}
       <button
+        type="button"
         class="btn-primary"
         disabled={!isAdminSetup && !registeredCredentialId && accountName.trim().length < 3}
         onclick={next}
@@ -322,8 +323,8 @@
             : ""}. You can manage passkeys later in Settings.
         </p>
         <div class="nav-row">
-          <button class="btn-secondary" onclick={back}>Back</button>
-          <button class="btn-primary" onclick={next}>Continue</button>
+          <button type="button" class="btn-secondary" onclick={back}>Back</button>
+          <button type="button" class="btn-primary" onclick={next}>Continue</button>
         </div>
       {:else}
         <p class="description">
@@ -331,8 +332,13 @@
           settings.
         </p>
         <div class="nav-row">
-          <button class="btn-secondary" onclick={back}>Back</button>
-          <button class="btn-primary" disabled={loading} onclick={handleRegisterPasskey}>
+          <button type="button" class="btn-secondary" onclick={back}>Back</button>
+          <button
+            type="button"
+            class="btn-primary"
+            disabled={loading}
+            onclick={handleRegisterPasskey}
+          >
             Register Passkey
           </button>
         </div>
@@ -351,6 +357,7 @@
           >
           <code class="code-content">{SSHD_CONFIG_LINE}</code>
           <button
+            type="button"
             class="btn-copy"
             onclick={(e) => copyToClipboard(SSHD_CONFIG_LINE, e.currentTarget as HTMLButtonElement)}
             >Copy</button
@@ -361,6 +368,7 @@
           <span class="code-label">2. Add this passkey to <code>~/.ssh/authorized_keys</code></span>
           <code class="code-content">{sshOneLiner}</code>
           <button
+            type="button"
             class="btn-copy"
             onclick={(e) => copyToClipboard(sshOneLiner!, e.currentTarget as HTMLButtonElement)}
             >Copy</button
@@ -374,8 +382,8 @@
       {/if}
 
       <div class="nav-row">
-        <button class="btn-secondary" onclick={back}>Back</button>
-        <button class="btn-primary" onclick={next}>Continue</button>
+        <button type="button" class="btn-secondary" onclick={back}>Back</button>
+        <button type="button" class="btn-primary" onclick={next}>Continue</button>
       </div>
     {:else if currentStep === "endpoints"}
       <h1>Add SSH Endpoints</h1>
@@ -399,13 +407,13 @@
         <input type="text" class="input" bind:value={epAddress} placeholder="user@host:port" />
       </div>
       <div class="btn-row">
-        <button class="btn-secondary" disabled={loading} onclick={handleAddEndpoint}>
+        <button type="button" class="btn-secondary" disabled={loading} onclick={handleAddEndpoint}>
           Add Endpoint
         </button>
       </div>
       <div class="nav-row">
-        <button class="btn-secondary" onclick={back}>Back</button>
-        <button class="btn-primary" onclick={next}>
+        <button type="button" class="btn-secondary" onclick={back}>Back</button>
+        <button type="button" class="btn-primary" onclick={next}>
           {$endpoints.length > 0 ? "Continue" : "Skip"}
         </button>
       </div>
@@ -428,6 +436,7 @@
         <div class="code-block">
           <code class="code-content">{mcpUrl}</code>
           <button
+            type="button"
             class="btn-copy"
             onclick={(e) => copyToClipboard(mcpUrl, e.currentTarget as HTMLButtonElement)}
             >Copy</button
@@ -442,6 +451,7 @@
           <span class="code-label">API Key — copy now, shown only once</span>
           <code class="code-content">{generatedKey}</code>
           <button
+            type="button"
             class="btn-copy"
             onclick={(e) => copyToClipboard(generatedKey, e.currentTarget as HTMLButtonElement)}
             >Copy</button
@@ -451,6 +461,7 @@
           <span class="code-label">Sample agent config</span>
           <pre class="code-content code-pre">{mcpSampleConfig}</pre>
           <button
+            type="button"
             class="btn-copy"
             onclick={(e) => copyToClipboard(mcpSampleConfig, e.currentTarget as HTMLButtonElement)}
             >Copy</button
@@ -470,7 +481,12 @@
               bind:value={apiKeyLabel}
               placeholder="Agent name (e.g. claude-laptop)"
             />
-            <button class="btn-secondary" disabled={loading} onclick={handleGenerateApiKey}>
+            <button
+              type="button"
+              class="btn-secondary"
+              disabled={loading}
+              onclick={handleGenerateApiKey}
+            >
               Generate
             </button>
           </div>
@@ -478,8 +494,8 @@
       {/if}
 
       <div class="nav-row">
-        <button class="btn-secondary" onclick={back}>Back</button>
-        <button class="btn-primary" onclick={next}>Continue</button>
+        <button type="button" class="btn-secondary" onclick={back}>Back</button>
+        <button type="button" class="btn-primary" onclick={next}>Continue</button>
       </div>
     {:else if currentStep === "notifications"}
       <h1>Stay in the loop</h1>
@@ -499,6 +515,7 @@
       {:else}
         <div class="toggle-row">
           <button
+            type="button"
             class="toggle"
             class:active={$pushEnabled}
             disabled={$pushLoading}
@@ -526,8 +543,8 @@
       {/if}
 
       <div class="nav-row">
-        <button class="btn-secondary" onclick={back}>Back</button>
-        <button class="btn-primary" onclick={next}>Continue</button>
+        <button type="button" class="btn-secondary" onclick={back}>Back</button>
+        <button type="button" class="btn-primary" onclick={next}>Continue</button>
       </div>
     {:else if currentStep === "advanced"}
       <h1>What's next</h1>
@@ -543,10 +560,15 @@
           </p>
         </div>
         <div class="advanced-item">
-          <strong><code>pam_ssh_webauthn</code></strong>
+          <strong><code>pam-ssh-agent-webauthn</code></strong>
           <p>
             PAM module that gates remote actions (e.g. <code>sudo</code>) on a passkey signature
-            brokered through <Wordmark />.
+            brokered through <Wordmark />. Source at
+            <a
+              href="https://github.com/rado0x54/pam-ssh-agent-webauthn"
+              target="_blank"
+              rel="noopener noreferrer">github.com/rado0x54/pam-ssh-agent-webauthn</a
+            >.
           </p>
         </div>
         <div class="advanced-item">
@@ -561,8 +583,8 @@
       </div>
 
       <div class="nav-row">
-        <button class="btn-secondary" onclick={back}>Back</button>
-        <button class="btn-primary" onclick={finish}>Open ShellWatch</button>
+        <button type="button" class="btn-secondary" onclick={back}>Back</button>
+        <button type="button" class="btn-primary" onclick={finish}>Open ShellWatch</button>
       </div>
     {/if}
 

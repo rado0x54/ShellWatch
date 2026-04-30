@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Modal from "$lib/components/Modal.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { apiKeys, fetchApiKeys, generateApiKey, revokeApiKey } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
@@ -12,6 +13,8 @@
   let scopeAgent = $state(false);
   let showKeyModal = $state(false);
   let generatedKey = $state("");
+  let revokeTarget = $state<{ id: string; label: string } | null>(null);
+  let revoking = $state(false);
 
   onMount(() => {
     fetchApiKeys();
@@ -37,13 +40,25 @@
     }
   }
 
-  async function handleRevoke(id: string) {
-    if (confirm("Revoke this API key?")) {
-      try {
-        await revokeApiKey(id);
-      } catch (err) {
-        toastError(errorMessage(err));
-      }
+  function openRevoke(id: string, keyLabel: string) {
+    revokeTarget = { id, label: keyLabel };
+  }
+
+  function closeRevoke() {
+    if (revoking) return;
+    revokeTarget = null;
+  }
+
+  async function handleRevoke() {
+    if (!revokeTarget) return;
+    revoking = true;
+    try {
+      await revokeApiKey(revokeTarget.id);
+      revokeTarget = null;
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      revoking = false;
     }
   }
 
@@ -77,7 +92,11 @@
         {/snippet}
         {#snippet actions()}
           {#if k.enabled}
-            <button class="btn btn-secondary" onclick={() => handleRevoke(k.id)}>Revoke</button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick={() => openRevoke(k.id, k.label)}>Revoke</button
+            >
           {/if}
         {/snippet}
       </SettingsRow>
@@ -93,7 +112,7 @@
         bind:value={label}
         style="flex: 1"
       />
-      <button class="btn btn-primary" onclick={handleGenerate}>Generate</button>
+      <button type="button" class="btn btn-primary" onclick={handleGenerate}>Generate</button>
     </div>
     <h4 class="scope-heading">Scopes</h4>
     <div class="scope-row">
@@ -110,16 +129,32 @@
     </div>
   </div>
 
+  {#if revokeTarget}
+    <ConfirmDialog
+      title="Revoke API key?"
+      confirmLabel="Revoke"
+      onConfirm={handleRevoke}
+      onCancel={closeRevoke}
+      processing={revoking}
+    >
+      <p class="modal-desc">
+        Revoke <strong>{revokeTarget.label}</strong>? Any clients still using it will start failing
+        on the next request.
+      </p>
+    </ConfirmDialog>
+  {/if}
+
   {#if showKeyModal}
     <Modal title="API Key Created" onClose={handleCloseModal}>
       <p class="modal-desc">Copy this key now — it will not be shown again.</p>
       <pre class="code-block key-value">{generatedKey}</pre>
       {#snippet actions()}
         <button
+          type="button"
           class="btn btn-primary"
           onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
         >
-        <button class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
+        <button type="button" class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
       {/snippet}
     </Modal>
   {/if}

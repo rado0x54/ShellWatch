@@ -1,9 +1,11 @@
 /**
- * MCP-conformant OAuth 2.1 DCR **shim** — just enough protocol to satisfy
- * MCP clients (Claude Desktop, MCP Inspector, etc.) that refuse to speak
- * anything but OAuth. The access_token returned is either a ShellWatch
- * API key the user pasted, or one minted on the fly when the user chooses
- * "Create new key" on the authorize page. This is NOT a real OAuth AS:
+ * OAuth 2.1 DCR **shim** — just enough protocol to satisfy MCP clients
+ * (Claude Desktop, MCP Inspector, etc.) and `shellwatch-agent` that don't
+ * want to speak anything but OAuth. The access_token returned is either a
+ * ShellWatch API key the user pasted, or one minted on the fly when the
+ * user chooses "Create new key" on the authorize page. The minted key
+ * carries whichever scope the client requested (`mcp` for MCP clients,
+ * `agent` for the SSH agent thin client). This is NOT a real OAuth AS:
  *
  *   - DCR (`/oauth/register`) is ceremonial: any request is accepted and
  *     every client collapses onto a single shared `client_id`. There is
@@ -23,6 +25,13 @@ import type { Config } from "../config/index.js";
 // reached for here because the OAuth callback needs the cross-tenant findByHash. See #136.
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import { hashApiKey } from "../server/auth/api-key-auth.js";
+import {
+  BEARER_PATHS,
+  BEARER_SCOPES,
+  RESOURCE_METADATA_PATHS,
+  WELL_KNOWN_PROTECTED_RESOURCE,
+  type BearerScope,
+} from "../server/auth/bearer-gate.js";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 import { verifyPkceS256 } from "./pkce.js";
 import { renderAuthorizePage, type AuthorizeMode } from "./render.js";
@@ -38,11 +47,14 @@ export interface RegisterOAuthParams {
    */
   config: Config;
   /**
-   * Path where the MCP endpoint is mounted. Advertised as the `resource` in
-   * RFC 9728 protected-resource metadata. Must match the value passed to
-   * `registerApiKeyAuth` so the two don't drift.
+   * Whether `/agent-proxy` is actually mounted on this deployment
+   * (`config.agentSocket.proxyEnabled`). Drives every agent-scope-related
+   * surface in this module: the discovery doc at /.well-known/oauth-protected-resource/agent-proxy,
+   * the `agent` entry in AS `scopes_supported`, and `resolveScopes`'s
+   * recognition of `scope=agent` and `resource=…/agent-proxy`. Defaults to
+   * false so a misconfigured deployment doesn't advertise an unusable path.
    */
-  mcpPath: string;
+  agentProxyEnabled?: boolean;
   /** Optional override for code TTL — primarily for tests. */
   codeTtlMs?: number;
 }
@@ -54,9 +66,105 @@ export interface OAuthHandle {
   _store: AuthCodeStore;
 }
 
-const STUB_CLIENT_ID = "sw-mcp";
+const STUB_CLIENT_ID = "sw-client";
 const SAFE_REDIRECT_SCHEMES_BLOCKED = new Set(["javascript:", "data:", "file:"]);
-const REQUIRED_SCOPE = "mcp";
+
+const DEFAULT_SCOPE: BearerScope = "mcp";
+
+export interface ResolvedScopes {
+  /**
+   * The scope set we will actually grant — always non-empty, always a subset
+   * of BEARER_SCOPES, deduped and sorted. `[mcp]` is the fallback when no
+   * recognized scope was requested.
+   */
+  issued: BearerScope[];
+  /** Verbatim `scope` param (if any), preserved for display. */
+  rawScope?: string;
+  /** Verbatim `resource` param (if any), preserved for display. */
+  rawResource?: string;
+  /**
+   * Scopes the client explicitly requested but the deployment can't grant
+   * (currently: `agent` when `agentSocket.proxyEnabled` is false). Used by
+   * the consent screen to surface a one-line explanation rather than
+   * silently diverging from what the client asked for. Sorted, deduped.
+   */
+  unavailable: BearerScope[];
+}
+
+/**
+ * Normalize a query/body param that may arrive as `string`, `string[]` (qs
+ * turns repeated keys like `?scope=mcp&scope=agent` into arrays), or
+ * `undefined`. Filters non-strings, drops empties, returns the normalized
+ * `string[]` for the caller to interpret.
+ */
+function toStringArray(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (typeof raw === "string") return raw === "" ? [] : [raw];
+  if (Array.isArray(raw)) {
+    return raw.filter((x): x is string => typeof x === "string" && x.length > 0);
+  }
+  return [];
+}
+
+/**
+ * Map the request's `scope` and `resource` parameters to the scope set we'll
+ * issue. The shim is liberal: unknown scope tokens (`mcp:tools` style aliases,
+ * outright bogus strings) and unknown `resource` URIs are silently dropped
+ * rather than rejected — the user sees what they requested and what they
+ * get on the authorize page, and can decide whether to proceed.
+ *
+ * Accepts array-shaped inputs (Fastify's qs parser turns repeated keys into
+ * arrays). Multiple `resource` values get unioned per RFC 8707; multiple
+ * `scope` values get joined as if they were one space-delimited string.
+ */
+function resolveScopes(
+  rawScope: unknown,
+  rawResource: unknown,
+  agentProxyEnabled: boolean,
+): ResolvedScopes {
+  const requested = new Set<BearerScope>();
+  const issued = new Set<BearerScope>();
+  const scopeStrings = toStringArray(rawScope);
+  const resourceStrings = toStringArray(rawResource);
+
+  // Currently `agent` is the only scope with deployment-level gating. New
+  // scopes added to BEARER_SCOPES are accepted by default; extend this if a
+  // future scope needs a similar gate.
+  const grantable = (s: BearerScope): boolean => s !== "agent" || agentProxyEnabled;
+
+  for (const s of scopeStrings) {
+    for (const t of s.split(/\s+/).filter(Boolean)) {
+      if (!(BEARER_SCOPES as readonly string[]).includes(t)) continue;
+      const scope = t as BearerScope;
+      requested.add(scope);
+      if (grantable(scope)) issued.add(scope);
+    }
+  }
+
+  for (const r of resourceStrings) {
+    let path: string;
+    try {
+      path = new URL(r).pathname.replace(/\/+$/, "");
+    } catch {
+      continue;
+    }
+    for (const scope of BEARER_SCOPES) {
+      if (path !== BEARER_PATHS[scope]) continue;
+      requested.add(scope);
+      if (grantable(scope)) issued.add(scope);
+    }
+  }
+
+  if (issued.size === 0) issued.add(DEFAULT_SCOPE);
+  const unavailable = [...requested].filter((s) => !issued.has(s)).sort() as BearerScope[];
+  return {
+    issued: [...issued].sort() as BearerScope[],
+    // Join multi-value inputs to a single string for display + round-trip.
+    rawScope: scopeStrings.length > 0 ? scopeStrings.join(" ") : undefined,
+    rawResource: resourceStrings.length > 0 ? resourceStrings.join(" ") : undefined,
+    unavailable,
+  };
+}
 
 function isSafeRedirect(uri: string): boolean {
   try {
@@ -75,7 +183,7 @@ export function registerOAuth({
   app,
   apiKeyRepo,
   config,
-  mcpPath,
+  agentProxyEnabled = false,
   codeTtlMs,
 }: RegisterOAuthParams): OAuthHandle {
   const store = createAuthCodeStore({ ttlMs: codeTtlMs });
@@ -83,7 +191,6 @@ export function registerOAuth({
   // after `app.listen()` to make discovery URLs match the random test port.
   // Don't capture at register time.
   const baseUrl = (): string => config.server.externalUrl.replace(/\/+$/, "");
-  const trimmedMcpPath = mcpPath.startsWith("/") ? mcpPath : `/${mcpPath}`;
 
   // Global form-body parser. Intentional: /oauth/authorize and /oauth/token
   // are the only form-encoded endpoints in the app, so registering app-wide
@@ -104,14 +211,27 @@ export function registerOAuth({
     },
   );
 
-  app.get("/.well-known/oauth-protected-resource", async () => {
+  // RFC 9728 protected-resource metadata. We expose one document per scope,
+  // each at the spec-compliant `/.well-known/oauth-protected-resource/<path>`
+  // form, plus a legacy unsuffixed alias for /mcp so pre-existing MCP clients
+  // (Claude Desktop, MCP Inspector) keep working with cached discovery state.
+  const resourceMetadata = (scope: BearerScope): Record<string, unknown> => {
     const base = baseUrl();
     return {
-      resource: `${base}${trimmedMcpPath}`,
+      resource: `${base}${BEARER_PATHS[scope]}`,
       authorization_servers: [base],
       bearer_methods_supported: ["header"],
+      scopes_supported: [scope],
     };
-  });
+  };
+
+  app.get(WELL_KNOWN_PROTECTED_RESOURCE, async () => resourceMetadata("mcp"));
+  app.get(RESOURCE_METADATA_PATHS.mcp, async () => resourceMetadata("mcp"));
+  // Agent discovery only when /agent-proxy is actually mounted — otherwise we
+  // advertise a path that always 401s.
+  if (agentProxyEnabled) {
+    app.get(RESOURCE_METADATA_PATHS.agent, async () => resourceMetadata("agent"));
+  }
 
   app.get("/.well-known/oauth-authorization-server", async () => {
     const base = baseUrl();
@@ -124,6 +244,9 @@ export function registerOAuth({
       grant_types_supported: ["authorization_code"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
+      // Filter `agent` from advertised scopes when /agent-proxy is disabled —
+      // there's no point minting keys for an endpoint that doesn't exist.
+      scopes_supported: BEARER_SCOPES.filter((s) => s !== "agent" || agentProxyEnabled),
     };
   });
 
@@ -145,13 +268,16 @@ export function registerOAuth({
   });
 
   app.get("/oauth/authorize", async (req, reply) => {
-    const q = (req.query ?? {}) as Record<string, string>;
-    const responseType = q.response_type;
-    const redirectUri = q.redirect_uri;
-    const codeChallenge = q.code_challenge;
-    const codeChallengeMethod = q.code_challenge_method;
-    const clientId = q.client_id ?? STUB_CLIENT_ID;
-    const state = q.state ?? "";
+    // Fastify's qs parser turns `?k=a&k=b` into `["a","b"]` — `unknown` is the
+    // honest type. Single-valued fields go through `asString`; `scope` and
+    // `resource` are passed through to `resolveScopes` which handles arrays.
+    const q = (req.query ?? {}) as Record<string, unknown>;
+    const responseType = asString(q.response_type);
+    const redirectUri = asString(q.redirect_uri);
+    const codeChallenge = asString(q.code_challenge);
+    const codeChallengeMethod = asString(q.code_challenge_method);
+    const clientId = asString(q.client_id) ?? STUB_CLIENT_ID;
+    const state = asString(q.state) ?? "";
 
     if (responseType !== "code") {
       return reply.status(400).send({
@@ -177,12 +303,14 @@ export function registerOAuth({
       });
     }
 
+    const resolved = resolveScopes(q.scope, q.resource, agentProxyEnabled);
     const html = renderAuthorizePage({
       clientId,
       redirectUri,
       state,
       codeChallenge,
       codeChallengeMethod,
+      resolved,
     });
     reply.type("text/html; charset=utf-8").send(html);
   });
@@ -194,9 +322,8 @@ export function registerOAuth({
     const clientId = b.client_id || STUB_CLIENT_ID;
     const codeChallenge = b.code_challenge;
     const codeChallengeMethod = b.code_challenge_method;
-    const mode: AuthorizeMode = b.mode === "create" ? "create" : "existing";
+    const mode: AuthorizeMode = b.mode === "existing" ? "existing" : "create";
     const newKeyLabel = (b.new_key_label ?? "").trim();
-
     if (
       !redirectUri ||
       !isSafeRedirect(redirectUri) ||
@@ -208,6 +335,8 @@ export function registerOAuth({
         .send({ error: "invalid_request", error_description: "missing/invalid flow parameters" });
     }
 
+    const resolved = resolveScopes(b.scope, b.resource, agentProxyEnabled);
+
     // 200 + error banner is the web-form convention. We still send the form
     // back so the user can correct their input without losing flow context.
     const rerender = (errorMessage: string): FastifyReply =>
@@ -218,6 +347,7 @@ export function registerOAuth({
           state,
           codeChallenge,
           codeChallengeMethod,
+          resolved,
           errorMessage,
           mode,
           newKeyLabel,
@@ -226,7 +356,7 @@ export function registerOAuth({
 
     let pending:
       | { kind: "existing"; apiKey: string }
-      | { kind: "create"; accountId: string; label: string };
+      | { kind: "create"; accountId: string; label: string; scopes: BearerScope[] };
     if (mode === "create") {
       if (!newKeyLabel) {
         return rerender("Please provide a name for the new API key.");
@@ -236,7 +366,12 @@ export function registerOAuth({
       // completes /oauth/token (user closes the tab, PKCE fails, code TTL
       // expires), no credential is created. See code-store.ts for the
       // discriminated entry type.
-      pending = { kind: "create", accountId: req.accountId, label: newKeyLabel };
+      pending = {
+        kind: "create",
+        accountId: req.accountId,
+        label: newKeyLabel,
+        scopes: resolved.issued,
+      };
     } else {
       const pasted = b.api_key?.trim();
       if (!pasted) {
@@ -246,9 +381,19 @@ export function registerOAuth({
       if (!key) {
         return rerender("That API key is not recognized (or has been revoked).");
       }
-      if (!key.scopes.includes(REQUIRED_SCOPE)) {
+      // Validate the pasted key has *at least* the requested scopes. Extra
+      // scopes on the key are accepted, but they leak: the access token
+      // returned at /oauth/token is the pasted key verbatim, so the client
+      // ends up holding a key with broader rights than it requested. This is
+      // inherent to shared bearer tokens — the only way to avoid it is to
+      // mint a fresh narrow key (the "Create new key" flow). The page's
+      // existing-mode help text discloses this so the user can choose
+      // accordingly.
+      const missing = resolved.issued.filter((s) => !key.scopes.includes(s));
+      if (missing.length > 0) {
+        const list = missing.map((s) => `'${s}'`).join(", ");
         return rerender(
-          `This API key does not have the '${REQUIRED_SCOPE}' scope. Create a new key with MCP scope in Settings → API Keys.`,
+          `This API key is missing required scope${missing.length === 1 ? "" : "s"}: ${list}. Create a new key with all required scopes in Settings → API Keys.`,
         );
       }
       pending = { kind: "existing", apiKey: pasted };
@@ -320,7 +465,7 @@ export function registerOAuth({
         label: entry.pending.label,
         keyHash: hashApiKey(accessToken),
         keyPrefix: accessToken.slice(0, 10),
-        scopes: [REQUIRED_SCOPE],
+        scopes: entry.pending.scopes,
       });
     } else {
       accessToken = entry.pending.apiKey;

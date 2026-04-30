@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentSession } from "../agent/index.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import { buildInfo } from "../server/buildInfo.js";
 import { registerEndpointTools } from "./tools/endpoints.js";
 import { registerKeyTools } from "./tools/keys.js";
 import { registerSessionTools } from "./tools/sessions.js";
@@ -25,6 +26,8 @@ export async function createMcpServer(
     "sudo:",
     "- Do NOT pass -n (non-interactive). The human operator can attach to your session and type the password directly, so a [sudo] password: prompt is not a failure mode.",
     "- If you see a [sudo] password: prompt, ask the operator (in your reply) to enter the password in the session, then continue once read_output shows the prompt has cleared.",
+    "- Do NOT chain sudo commands with && or || (e.g., `sudo cmd1 && sudo cmd2`). When a prompt appears the operator can't tell which command it belongs to. Send each sudo command separately so every prompt is unambiguous.",
+    "- Sudo auth may go through a PAM module the operator satisfies out-of-band (push notification, hardware token, etc.) and can take tens of seconds — possibly falling back to a password prompt if the out-of-band step is declined or times out. A stalled prompt is not failure: keep polling read_output until the prompt clears or you see an explicit denial.",
   ];
 
   const instructions = [
@@ -51,7 +54,15 @@ export async function createMcpServer(
     ...sudoSection,
   ].join("\n");
 
-  const mcpServer = new McpServer({ name: "shellwatch", version: "0.5.0" }, { instructions });
+  // `version` is informational per MCP spec (just `z.string()`, no semver
+  // requirement). `buildInfo.display` resolves to the git tag on tagged
+  // releases (e.g. "v0.0.2") and `${ref}@${shortSha}` on develop/local
+  // builds (e.g. "develop@00e2002"). Beats the previous hardcoded "0.5.0"
+  // which had no relation to any real version.
+  const mcpServer = new McpServer(
+    { name: "shellwatch", version: buildInfo.display },
+    { instructions },
+  );
 
   // Capture the calling client's advertised clientInfo from the initialize
   // handshake so endpoint-auth sign requests can show "MCP Client" / version

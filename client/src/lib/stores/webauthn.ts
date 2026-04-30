@@ -1,6 +1,51 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { writable } from "svelte/store";
 
+/**
+ * Step-up actions recognised by the server. Mirrors STEPUP_ACTION on the
+ * backend; kept inline here to avoid importing server code into the client.
+ */
+export type StepUpAction = "register_passkey" | "revoke_passkey" | "confirm_passkey";
+
+/**
+ * Run the WebAuthn step-up assertion for an action and return the resulting
+ * single-use token. The token is bound to {accountId, action} server-side and
+ * must be passed via the X-Shellwatch-Stepup-Token header on the gated endpoint.
+ *
+ * Throws on cancellation (the caller should treat that as "user aborted").
+ */
+export async function performStepUp(action: StepUpAction): Promise<string> {
+  const optionsRes = await fetch("/api/webauthn/stepup/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json().catch(() => ({}));
+    throw new Error(err.error || "Could not start step-up");
+  }
+  const { challengeId, action: _, ...assertionOptions } = await optionsRes.json();
+
+  // Browser prompt — throws (DOMException, name "NotAllowedError") if the
+  // user cancels. We let it propagate; the caller's catch decides what to
+  // surface.
+  const credential = await startAuthentication({ optionsJSON: assertionOptions });
+
+  const verifyRes = await fetch("/api/webauthn/stepup/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challengeId, credential, action }),
+  });
+  if (!verifyRes.ok) {
+    const err = await verifyRes.json().catch(() => ({}));
+    throw new Error(err.error || "Step-up verification failed");
+  }
+  const { stepUpToken } = await verifyRes.json();
+  return stepUpToken as string;
+}
+
+export type CredentialState = "active" | "pending_confirmation";
+
 export interface WebAuthnCredential {
   id: string;
   credentialId: string;
@@ -9,8 +54,15 @@ export interface WebAuthnCredential {
   fingerprint: string | null;
   authorizedKeysEntry: string | null;
   revoked: boolean;
+  state: CredentialState;
   createdAt: string;
   lastUsedAt: string | null;
+}
+
+export interface PasskeyInvite {
+  expiresAt: string;
+  createdAt: string;
+  token: string;
 }
 
 export const credentials = writable<WebAuthnCredential[]>([]);
@@ -30,6 +82,12 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   credentialId: string;
   label: string;
 }> {
+  // Step-up first: prove fresh possession of an existing passkey before we
+  // run the registration ceremony. The token is attached only to /register
+  // (the verify call) — /register/options isn't gated, so the user only
+  // sees two browser prompts: step-up assertion, then new-passkey ceremony.
+  const stepUpToken = await performStepUp("register_passkey");
+
   const optionsRes = await fetch("/api/webauthn/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -46,7 +104,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const verifyRes = await fetch("/api/webauthn/register", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
     body: JSON.stringify({ challengeId, credential }),
   });
   if (!verifyRes.ok) {
@@ -59,6 +117,109 @@ export async function startPasskeyRegistration(name?: string): Promise<{
     credentialId: result.id,
     label: result.label,
   };
+}
+
+/** Confirm a pending-confirmation credential, flipping it to active. */
+export async function confirmPasskey(credentialId: string): Promise<void> {
+  // Step-up: confirm is the moment a pending credential becomes a live login
+  // factor. A stolen-cookie attacker would otherwise be able to register a
+  // passkey from their own device via the invite flow and then confirm it
+  // here; the gate forces fresh proof of an existing authenticator.
+  const stepUpToken = await performStepUp("confirm_passkey");
+  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, {
+    method: "POST",
+    headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to confirm passkey");
+  }
+  await fetchCredentials();
+}
+
+// --- Passkey invite (single in-memory slot per account, 5min TTL) ---
+
+/**
+ * Fetch the account's currently active invite (if any). Returns null when
+ * the slot is empty — that's a 404 from the server, not an error.
+ */
+export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
+  const res = await fetch("/api/webauthn/invite");
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invite");
+  }
+  const data = await res.json();
+  return data.invite as PasskeyInvite;
+}
+
+/** Create or supersede the active invite for the account. */
+export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite> {
+  // No step-up here: minting an invite produces a `pending_confirmation`
+  // credential that's unusable until the in-account confirm step, which IS
+  // step-up gated. Asking for an assertion twice in one chain is overkill.
+  const res = await fetch("/api/webauthn/invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create invite");
+  }
+  const data = await res.json();
+  return data.invite as PasskeyInvite;
+}
+
+/** Fetch invite metadata for the public registration page. */
+export async function fetchInviteByToken(token: string): Promise<{
+  accountName: string | null;
+  expiresAt: string;
+}> {
+  const res = await fetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch invite");
+  }
+  return res.json();
+}
+
+/**
+ * Run the WebAuthn ceremony on device B against an invite token. The server
+ * inserts the credential with an AAGUID-derived label and consumes the slot
+ * — renaming is left to device A so an intercepted token can't influence the
+ * label that device A's confirm UI shows. The fingerprint is for cross-device
+ * visual comparison against device A's confirm modal.
+ */
+export async function registerWithInviteToken(params: { token: string }): Promise<{
+  label: string;
+  fingerprint: string | null;
+}> {
+  const optionsRes = await fetch("/api/passkey-invite/register/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: params.token }),
+  });
+  if (!optionsRes.ok) {
+    const err = await optionsRes.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to get registration options");
+  }
+  const options = await optionsRes.json();
+  const { challengeId, ...registrationOptions } = options;
+
+  const credential = await startRegistration({ optionsJSON: registrationOptions });
+
+  const verifyRes = await fetch("/api/passkey-invite/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: params.token, challengeId, credential }),
+  });
+  if (!verifyRes.ok) {
+    const err = await verifyRes.json().catch(() => ({}));
+    throw new Error(err.error || "Registration failed");
+  }
+  return verifyRes.json();
 }
 
 /**

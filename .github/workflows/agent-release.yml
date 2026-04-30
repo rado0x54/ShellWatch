@@ -1,29 +1,108 @@
 name: Agent Release
 
+# Manually triggered. Enter the version (e.g. `0.0.3`).
+#
+# Steps:
+#   1. validate version > latest agent/v* tag, FF prerequisite
+#   2. cross-build linux/{amd64,arm64} + darwin/{amd64,arm64} binaries
+#   3. tag main HEAD as agent/vX.Y.Z, push tag
+#   4. create GitHub release with binaries + sha256s
+#   5. open agent-client/CHANGELOG.md PR to develop
+#
+# No source files are bumped. main.Version is injected via -ldflags at build
+# time. CHANGELOG.md updates flow through normal PR review, so main and
+# develop never receive bot-authored direct pushes — branch protection
+# rulesets stay active.
+
 on:
-  push:
-    tags: ["agent/v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.0.3 — no v prefix)"
+        required: true
+        type: string
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  group: agent-release
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build & Release Agent
+  prepare:
+    name: Validate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set.outputs.version }}
+      tag: ${{ steps.set.outputs.tag }}
+      prev_tag: ${{ steps.set.outputs.prev_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version: ${VERSION} (must be MAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+
+          PREV_TAG=$(git tag --list 'agent/v*' --sort=-v:refname | head -1 || true)
+          if [ -n "$PREV_TAG" ]; then
+            CURRENT="${PREV_TAG#agent/v}"
+            if ! dpkg --compare-versions "$VERSION" gt "$CURRENT"; then
+              echo "::error::Version ${VERSION} must be greater than latest agent tag ${PREV_TAG}"
+              exit 1
+            fi
+          fi
+
+          if git rev-parse "agent/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag agent/v${VERSION} already exists"
+            exit 1
+          fi
+
+          if gh release view "agent/v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release agent/v${VERSION} already exists"
+            exit 1
+          fi
+
+          git fetch origin develop
+          if ! git merge-base --is-ancestor origin/develop HEAD; then
+            echo "::error::develop has commits not in main. Fast-forward main from develop, then re-run."
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=agent/v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-go@v5
         with:
@@ -37,9 +116,10 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          VERSION=${GITHUB_REF_NAME#agent/}
-          BINARY="shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" \
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BINARY="shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build -ldflags="-s -w -X main.Version=${VERSION}" \
             -o "../${BINARY}" ./cmd/shellwatch-agent
           cd ..
           sha256sum "${BINARY}" > "${BINARY}.sha256"
@@ -48,16 +128,17 @@ jobs:
         with:
           name: agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            shellwatch-agent-*
-            !agent-client/
+            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            shellwatch-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
 
-  publish:
-    name: Publish Release
-    needs: release
+  release:
+    name: Release
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
@@ -65,69 +146,125 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate release notes
-        id: notes
+      - name: Generate path-scoped release notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PREV_TAG: ${{ needs.prepare.outputs.prev_tag }}
         run: |
-          # Find the previous agent tag
-          PREV_TAG=$(git tag --list 'agent/v*' --sort=-v:refname | grep -v "$GITHUB_REF_NAME" | head -1)
+          set -euo pipefail
           if [ -n "$PREV_TAG" ]; then
-            RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
+            RANGE="${PREV_TAG}..HEAD"
           else
-            RANGE="$GITHUB_REF_NAME"
+            RANGE="HEAD"
           fi
 
-          # Generate notes from commits touching agent-client/ only
-          NOTES=$(git log "$RANGE" --pretty=format:"* %s (%h)" -- agent-client/)
+          # Path-scope to agent-client/, and exclude the bot's prior CHANGELOG
+          # commits (which would otherwise echo every release into the next).
+          NOTES=$(git log "$RANGE" \
+            --pretty=format:"- %s" \
+            --invert-grep --grep='^chore: update agent CHANGELOG' \
+            -- agent-client/ || true)
+
           if [ -z "$NOTES" ]; then
-            NOTES="* Initial release"
+            if [ -n "$PREV_TAG" ]; then
+              NOTES="- No agent changes since ${PREV_TAG}"
+            else
+              NOTES="- Initial release"
+            fi
           fi
 
-          # Convert PR references to clickable markdown links
-          # First: bare (#N) from commit messages → clickable
-          NOTES=$(echo "$NOTES" | sed -E 's|\(#([0-9]+)\)|([#\1](https://github.com/rado0x54/ShellWatch/pull/\1))|g')
-          # Then: any remaining full URLs → clickable (safety net)
-          NOTES=$(echo "$NOTES" | sed -E 's|([^(])https://github\.com/rado0x54/ShellWatch/pull/([0-9]+)|\1[#\2](https://github.com/rado0x54/ShellWatch/pull/\2)|g')
+          # Convert (#N) PR refs to clickable links
+          REPO="${GITHUB_REPOSITORY}"
+          NOTES=$(echo "$NOTES" | sed -E "s|\\(#([0-9]+)\\)|([#\\1](https://github.com/${REPO}/pull/\\1))|g")
 
-          # Write to file for multi-line output
-          echo "$NOTES" > /tmp/release-notes.md
+          printf '%s\n' "$NOTES" > /tmp/release-body.md
+
+      - name: Tag commit & push tag
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag "${TAG}" HEAD
+          git push origin "refs/tags/${TAG}"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          VERSION=${GITHUB_REF_NAME#agent/}
-          gh release create "$GITHUB_REF_NAME" \
+          set -euo pipefail
+          gh release create "${TAG}" \
             --title "ShellWatch Agent ${VERSION}" \
-            --notes-file /tmp/release-notes.md \
+            --notes-file /tmp/release-body.md \
             artifacts/shellwatch-agent-*
 
-      - name: Update agent CHANGELOG
+      # main/develop are protected by rulesets — bot opens a PR. Admin pushes
+      # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire
+      # workflows), squash-merges, then fast-forwards main.
+      - name: Open CHANGELOG PR to develop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          VERSION=${GITHUB_REF_NAME#agent/}
-          NOTES=$(cat /tmp/release-notes.md)
-
-          ENTRY="## ${VERSION} ($(date -u +%Y-%m-%d))"
-          NEW_CONTENT="${ENTRY}"$'\n\n'"${NOTES}"
-
+          set -euo pipefail
+          BRANCH="chore/agent-changelog-${VERSION}"
+          NOTES=$(cat /tmp/release-body.md)
+          ENTRY="## ${TAG#agent/} ($(date -u +%Y-%m-%d))"
           CHANGELOG="agent-client/CHANGELOG.md"
-          if [ -f "$CHANGELOG" ]; then
-            echo -e "${NEW_CONTENT}\n\n$(cat $CHANGELOG)" > "$CHANGELOG"
-          else
-            echo -e "# Changelog\n\n${NEW_CONTENT}" > "$CHANGELOG"
-          fi
 
-      - name: Commit changelog
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main develop
-          git checkout main
-          git add agent-client/CHANGELOG.md
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: update agent CHANGELOG.md for ${GITHUB_REF_NAME}"
-          COMMIT=$(git rev-parse HEAD)
-          git push origin main
-          # Sync changelog to develop
-          git checkout develop
-          git cherry-pick "$COMMIT" || git cherry-pick --abort
-          git push origin develop || true
+          git fetch origin develop
+          git fetch origin "$BRANCH" 2>/dev/null || true
+          git checkout -B "$BRANCH" origin/develop
+
+          if [ -f "$CHANGELOG" ] && grep -qF "$ENTRY" "$CHANGELOG"; then
+            echo "$CHANGELOG already contains entry for ${TAG}; skipping"
+            exit 0
+          fi
+
+          # Insert above the first `## ` heading so a leading `# Changelog`
+          # title (if added later) stays at the top of the file.
+          ENTRY_FILE=/tmp/new-entry.md
+          {
+            printf '%s\n\n' "$ENTRY"
+            printf '%s\n\n' "$NOTES"
+          } > "$ENTRY_FILE"
+
+          if [ ! -f "$CHANGELOG" ]; then
+            cp "$ENTRY_FILE" "$CHANGELOG"
+          else
+            INSERT_LINE=$(grep -nE '^## ' "$CHANGELOG" | head -1 | cut -d: -f1 || true)
+            if [ -z "$INSERT_LINE" ]; then
+              cat "$CHANGELOG" "$ENTRY_FILE" > "${CHANGELOG}.new"
+            else
+              head -n $((INSERT_LINE - 1)) "$CHANGELOG" > "${CHANGELOG}.new"
+              cat "$ENTRY_FILE" >> "${CHANGELOG}.new"
+              tail -n +"$INSERT_LINE" "$CHANGELOG" >> "${CHANGELOG}.new"
+            fi
+            mv "${CHANGELOG}.new" "$CHANGELOG"
+          fi
+          rm -f "$ENTRY_FILE"
+
+          git add "$CHANGELOG"
+          if git diff --cached --quiet; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update agent CHANGELOG.md for ${TAG}"
+          git push --force-with-lease origin "$BRANCH"
+
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already open for $BRANCH; skipping create"
+            exit 0
+          fi
+
+          gh pr create \
+            --base develop \
+            --head "$BRANCH" \
+            --title "chore: update agent CHANGELOG.md for ${TAG}" \
+            --body "Auto-generated agent changelog for ${TAG}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."

@@ -5,7 +5,7 @@ import { hasPasskeys } from "../db/repositories/credential-queries.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import { accounts } from "../db/schema.js";
-import { storeChallenge } from "./challenge-store.js";
+import { CHALLENGE_PURPOSE, storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
 import type { RateLimitConfig, SessionConfig } from "./routes.js";
 
@@ -73,7 +73,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
         },
         supportedAlgorithmIDs: [-7], // ES256 (P-256) only — OpenSSH sk-* keys don't support Ed25519 webauthn
       });
-      const challengeId = storeChallenge(options.challenge);
+      const challengeId = storeChallenge(options.challenge, CHALLENGE_PURPOSE.selfRegister);
       return { ...options, challengeId };
     },
   );
@@ -113,6 +113,7 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           credential,
           rpId,
           trustedOrigins,
+          challengePurpose: CHALLENGE_PURPOSE.selfRegister,
         });
         if (!result.ok) {
           reply.status(400);
