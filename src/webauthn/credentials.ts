@@ -115,22 +115,12 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   );
 
   // --- Revoke Credential (permanent, scoped to account) ---
+  // Step-up gated via preHandler. Label edits (PATCH /label) intentionally
+  // don't require step-up — labels are cosmetic, not a factor change.
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/revoke",
+    { preHandler: requireStepUp(STEPUP_ACTION.revokePasskey) },
     async (request, reply) => {
-      // Step-up gate: single endpoint, single token. Label edits (PATCH
-      // /label) intentionally don't require step-up — labels are cosmetic,
-      // not a factor change.
-      if (
-        !requireStepUp({
-          request,
-          reply,
-          action: STEPUP_ACTION.revokePasskey,
-        })
-      ) {
-        return reply;
-      }
-
       const { id } = request.params;
 
       // Verify ownership

@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import {
   consumeStepUpToken,
   type ConsumeFailureReason,
@@ -31,50 +31,51 @@ const ERROR_MESSAGE: Record<ConsumeFailureReason, string> = {
   wrong_account: "Step-up token not valid for this account",
 };
 
-export interface RequireStepUpParams {
-  request: FastifyRequest;
-  reply: FastifyReply;
-  action: StepUpAction;
-}
-
 /**
- * Consume a step-up token off the request. Single-use: the token is removed
- * on first read regardless of whether the action / account match. On
- * failure, sets the response to 401 with a machine-readable error code so
- * the client can prompt the user to re-authenticate, and returns false.
+ * Build a Fastify `preHandler` hook that consumes a step-up token bound to
+ * the given action. Wire it into a route's options:
+ *
+ *     app.post("/api/webauthn/credentials/:id/revoke", {
+ *       preHandler: requireStepUp(STEPUP_ACTION.revokePasskey),
+ *     }, handler);
+ *
+ * On success the hook logs `passkey_stepup.consumed` and returns; the route
+ * handler runs as normal. On failure it logs `passkey_stepup.rejected` (warn
+ * level — the most useful signal for incident detection on a sensitive
+ * endpoint) and sends a 401 with a machine-readable code, which short-
+ * circuits the request before the handler runs.
+ *
+ * Tokens are single-use and burn on first read regardless of match outcome,
+ * so an attacker can't probe one token across actions.
  */
-export function requireStepUp(params: RequireStepUpParams): boolean {
-  const { request, reply, action } = params;
-  const token = extractStepUpToken(request);
-  const result = consumeStepUpToken({
-    token,
-    accountId: request.accountId,
-    action,
-  });
-  if (result.ok) {
-    request.log.info(
-      { event: "passkey_stepup.consumed", accountId: request.accountId, action },
-      "step-up token consumed",
-    );
-    return true;
-  }
-
-  // Rejections are the most interesting line for incident detection — a
-  // wrong-account or wrong-action rejection on an authenticated session is
-  // either a buggy client or an attacker probing.
-  request.log.warn(
-    {
-      event: "passkey_stepup.rejected",
+export function requireStepUp(action: StepUpAction): preHandlerHookHandler {
+  return async (request, reply) => {
+    const token = extractStepUpToken(request);
+    const result = consumeStepUpToken({
+      token,
       accountId: request.accountId,
       action,
-      reason: result.reason,
-    },
-    "step-up token rejected",
-  );
-  reply.status(401);
-  reply.send({
-    error: ERROR_MESSAGE[result.reason],
-    code: ERROR_CODE[result.reason],
-  });
-  return false;
+    });
+    if (result.ok) {
+      request.log.info(
+        { event: "passkey_stepup.consumed", accountId: request.accountId, action },
+        "step-up token consumed",
+      );
+      return;
+    }
+
+    request.log.warn(
+      {
+        event: "passkey_stepup.rejected",
+        accountId: request.accountId,
+        action,
+        reason: result.reason,
+      },
+      "step-up token rejected",
+    );
+    await reply.status(401).send({
+      error: ERROR_MESSAGE[result.reason],
+      code: ERROR_CODE[result.reason],
+    });
+  };
 }

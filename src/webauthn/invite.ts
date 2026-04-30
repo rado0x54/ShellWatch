@@ -76,24 +76,15 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
   });
 
   // --- Authenticated: confirm a pending credential ---
+  // Step-up gated via preHandler. Confirm flips a pending credential to
+  // active, which is the moment it becomes a usable login factor — the most
+  // load-bearing gate in the invite flow. Without it, a stolen-cookie
+  // attacker could create an invite, register a pending credential from
+  // their own device, and confirm it back here.
   app.post<{ Params: { id: string } }>(
     "/api/webauthn/credentials/:id/confirm",
+    { preHandler: requireStepUp(STEPUP_ACTION.confirmPasskey) },
     async (request, reply) => {
-      // Step-up gate: confirm flips a pending credential to active, which
-      // is the moment it becomes a usable login factor. This is the most
-      // load-bearing gate in the invite flow — without it, a stolen-cookie
-      // attacker could create an invite, register a pending credential from
-      // their own device, and confirm it back here.
-      if (
-        !requireStepUp({
-          request,
-          reply,
-          action: STEPUP_ACTION.confirmPasskey,
-        })
-      ) {
-        return reply;
-      }
-
       const { id } = request.params;
       const cred = db
         .select({

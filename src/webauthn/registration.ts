@@ -87,9 +87,13 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
   );
 
   // --- Registration: Verify Response ---
+  // Step-up gated via preHandler: burns one assertion per successful
+  // registration; cancellation/failure on the client side leaves the token
+  // to expire naturally.
   app.post<{ Body: { challengeId: string; credential: unknown } }>(
     "/api/webauthn/register",
     {
+      preHandler: requireStepUp(STEPUP_ACTION.registerPasskey),
       config: {
         rateLimit: {
           max: rateLimitConfig.passkeyRegister.max,
@@ -98,19 +102,6 @@ export function registerRegistrationRoutes(params: RegistrationRoutesParams) {
       },
     },
     async (request, reply) => {
-      // Step-up gate: consume the token. Burns one assertion per successful
-      // registration; cancellation/failure on the client side leaves the
-      // token to expire naturally.
-      if (
-        !requireStepUp({
-          request,
-          reply,
-          action: STEPUP_ACTION.registerPasskey,
-        })
-      ) {
-        return reply;
-      }
-
       const { challengeId, credential } = request.body;
 
       try {
