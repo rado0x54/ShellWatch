@@ -6,12 +6,18 @@
 
   let { children } = $props();
 
-  const tabs: { path: import("$app/types").Pathname; label: string }[] = [
+  type Pathname = import("$app/types").Pathname;
+  const tabs: { path: Pathname; label: string }[] = [
     { path: "/admin/general", label: "General" },
     { path: "/admin/accounts", label: "Accounts" },
   ];
 
   const currentPath = $derived(page.url.pathname);
+
+  function handleSelect(event: Event) {
+    const target = event.currentTarget as HTMLSelectElement;
+    goto(resolve(target.value as Pathname));
+  }
 </script>
 
 <div class="settings-page">
@@ -22,7 +28,8 @@
   {#if !$account?.isAdmin}
     <p class="no-access">Admin access required.</p>
   {:else}
-    <nav class="settings-tabs">
+    <!-- Tab strip + dropdown sibling, same pattern as settings/+layout.svelte. -->
+    <nav class="settings-tabs" aria-label="Admin sections">
       {#each tabs as tab (tab.path)}
         <button
           class="tab"
@@ -33,6 +40,15 @@
         </button>
       {/each}
     </nav>
+
+    <label class="settings-select-wrap">
+      <span class="visually-hidden">Admin section</span>
+      <select class="settings-select" value={currentPath} onchange={handleSelect}>
+        {#each tabs as tab (tab.path)}
+          <option value={tab.path}>{tab.label}</option>
+        {/each}
+      </select>
+    </label>
 
     <div class="settings-content">
       {@render children()}
@@ -102,14 +118,66 @@
     font-size: 0.85rem;
   }
 
+  /* Mobile-only dropdown — hidden on desktop. */
+  .settings-select-wrap {
+    display: none;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   @media (max-width: 768px) {
     .settings-page {
       padding: 1rem;
     }
 
-    .tab {
-      padding: 0.5rem 0.75rem;
-      font-size: 0.8rem;
+    .settings-tabs {
+      display: none;
+    }
+
+    .settings-select-wrap {
+      display: block;
+      margin-bottom: 1.5rem;
+    }
+
+    .settings-select {
+      width: 100%;
+      padding: 0.6rem 2.25rem 0.6rem 0.85rem;
+      background: var(--surface-container-low);
+      color: var(--on-surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: var(--label-sm);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      cursor: pointer;
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--on-surface-variant) 50%),
+        linear-gradient(135deg, var(--on-surface-variant) 50%, transparent 50%);
+      background-position:
+        right 1rem top 50%,
+        right 0.65rem top 50%;
+      background-size:
+        6px 6px,
+        6px 6px;
+      background-repeat: no-repeat;
+    }
+
+    .settings-select:focus {
+      outline: none;
+      border-color: var(--primary);
     }
   }
 </style>
