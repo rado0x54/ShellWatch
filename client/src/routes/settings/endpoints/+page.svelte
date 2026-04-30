@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Modal from "$lib/components/Modal.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     createEndpoint,
     deleteEndpoint,
@@ -27,6 +28,8 @@
   let formAddress = $state("");
   let formUserVerification = $state<UserVerification>("required");
   let formDescription = $state("");
+  let deleteTarget = $state<Endpoint | null>(null);
+  let deleting = $state(false);
 
   onMount(() => {
     fetchEndpoints();
@@ -96,13 +99,25 @@
     }
   }
 
-  async function handleDelete(ep: Endpoint) {
-    if (confirm(`Delete endpoint "${ep.label}"?`)) {
-      try {
-        await deleteEndpoint(ep.id);
-      } catch (err) {
-        toastError(errorMessage(err));
-      }
+  function openDelete(ep: Endpoint) {
+    deleteTarget = ep;
+  }
+
+  function closeDelete() {
+    if (deleting) return;
+    deleteTarget = null;
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    deleting = true;
+    try {
+      await deleteEndpoint(deleteTarget.id);
+      deleteTarget = null;
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      deleting = false;
     }
   }
 </script>
@@ -123,7 +138,7 @@
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
           <button type="button" class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
-          <button type="button" class="btn btn-secondary" onclick={() => handleDelete(ep)}
+          <button type="button" class="btn btn-secondary" onclick={() => openDelete(ep)}
             >Delete</button
           >
         {/snippet}
@@ -160,6 +175,21 @@
       <code>user verification requirement not met</code>. See the project README for details.
     </p>
   </div>
+
+  {#if deleteTarget}
+    <ConfirmDialog
+      title="Delete endpoint?"
+      confirmLabel="Delete"
+      onConfirm={handleDelete}
+      onCancel={closeDelete}
+      processing={deleting}
+    >
+      <p class="modal-desc">
+        Delete <strong>{deleteTarget.label}</strong> ({formatEndpointAddress(deleteTarget)})? Open
+        sessions to this endpoint won't be torn down, but no new ones can be opened.
+      </p>
+    </ConfirmDialog>
+  {/if}
 
   {#if modal}
     <Modal
@@ -286,5 +316,12 @@
     font-size: 0.7rem;
     color: var(--text-muted);
     text-align: right;
+  }
+
+  .modal-desc {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: 0 0 var(--space-3);
+    line-height: 1.5;
   }
 </style>
