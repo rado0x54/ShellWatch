@@ -209,17 +209,115 @@ func callbackHandler(state string, resultCh chan<- callbackResult) http.Handler 
 	return mux
 }
 
+// callbackPageTemplate is the single HTML shell used for both the success
+// and error responses. Style tokens mirror `src/oauth/render.ts` so the
+// loopback page reads as part of ShellWatch instead of a generic browser
+// dialog. Self-contained — the agent doesn't serve static assets, so
+// fonts are pulled from Google Fonts (same as the server-side authorize
+// page) and the brand is the wordmark only (no SVG logo).
+//
+// Placeholders: %s status accent var, %s page title, %s heading,
+//
+//	%s body paragraph (already HTML-escaped).
+const callbackPageTemplate = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShellWatch — %s</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
+<style>
+  :root {
+    --surface-dim: #0e0e0e;
+    --surface-container-low: #131313;
+    --primary: #69f6b8;
+    --primary-dark: #06b77f;
+    --error: #ff5a5a;
+    --on-surface: #f2f2f2;
+    --on-surface-variant: #adaaaa;
+    --font-display: "Geist", system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; border-radius: 0 !important; }
+  html, body { height: 100%%; margin: 0; }
+  body {
+    font-family: var(--font-display);
+    background: var(--surface-dim);
+    color: var(--on-surface);
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    background: var(--surface-container-low);
+    padding: 2.4rem;
+    width: 100%%;
+    max-width: 460px;
+    border-left: 2px solid %s;
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.4);
+  }
+  .wordmark {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin-bottom: 1.6rem;
+  }
+  .wordmark .shell { color: var(--primary-dark); }
+  .wordmark .watch { color: #f0efea; }
+  h1 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.6rem;
+    color: %s;
+  }
+  p { margin: 0; color: var(--on-surface-variant); font-size: 0.95rem; }
+  .hint {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    margin-top: 1.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="wordmark"><span class="shell">SHELL</span><span class="watch">WATCH</span></div>
+  <h1>%s</h1>
+  <p>%s</p>
+  <div class="hint">You can close this tab</div>
+</div>
+</body>
+</html>`
+
 func writeCallbackPage(w http.ResponseWriter, ok bool, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if ok {
-		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>ShellWatch — Authorized</title></head><body style="font-family:sans-serif;max-width:480px;margin:4rem auto;padding:1rem;color:#222"><h1 style="color:#06b77f">Authorized</h1><p>You can close this tab and return to your terminal.</p></body></html>`)
-		return
-	}
-	w.WriteHeader(http.StatusBadRequest)
-	fmt.Fprintf(w,
-		`<!doctype html><html><head><meta charset="utf-8"><title>ShellWatch — Error</title></head><body style="font-family:sans-serif;max-width:480px;margin:4rem auto;padding:1rem;color:#222"><h1 style="color:#ff5a5a">Error</h1><p>%s</p></body></html>`,
-		htmlEscape(message),
+	var (
+		title, heading, body, accent string
 	)
+	if ok {
+		title = "Authorized"
+		heading = "Authorized"
+		body = "This device is now authorized. Return to your terminal — the agent has the token."
+		accent = "var(--primary)"
+	} else {
+		title = "Error"
+		heading = "Authorization failed"
+		body = htmlEscape(message)
+		accent = "var(--error)"
+		w.WriteHeader(http.StatusBadRequest)
+	}
+	fmt.Fprintf(w, callbackPageTemplate, title, accent, accent, heading, body)
 }
 
 // exchangeCode redeems the authorization code at /oauth/token for an API key.

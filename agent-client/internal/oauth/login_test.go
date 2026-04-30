@@ -241,6 +241,51 @@ func TestPkce_ChallengeMatchesS256(t *testing.T) {
 	}
 }
 
+func TestWriteCallbackPage_BrandedSuccess(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeCallbackPage(rec, true, "")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<title>ShellWatch — Authorized</title>`,
+		`class="wordmark"`,
+		`class="shell">SHELL`,
+		`class="watch">WATCH`,
+		`Authorized`,
+		`var(--primary)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("success page missing %q", want)
+		}
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("success page status: got %d, want 200", rec.Code)
+	}
+}
+
+func TestWriteCallbackPage_BrandedError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeCallbackPage(rec, false, "boom <script>alert(1)</script>")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<title>ShellWatch — Error</title>`,
+		`Authorization failed`,
+		`var(--error)`,
+		`class="wordmark"`,
+		// HTML-escaped — script tag must not survive verbatim
+		`boom &lt;script&gt;`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("error page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Errorf("error page leaked unescaped HTML")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("error page status: got %d, want 400", rec.Code)
+	}
+}
+
 func TestCanonicalServer_StripsTrailingSlashAndQuery(t *testing.T) {
 	got, err := canonicalServer("HTTPS://APP.SHELLWATCH.AI/?foo=bar#baz", false)
 	if err != nil {
