@@ -394,6 +394,12 @@
     line-height: 0;
   }
 
+  /* SVG is decorative (aria-hidden); let clicks reach the <button> so the
+   * session-item's tagName==="BUTTON" guard isn't bypassed. */
+  .session-actions :global(.btn-icon svg) {
+    pointer-events: none;
+  }
+
   .session-actions :global(.btn-secondary.btn-icon:hover) {
     color: var(--error);
     box-shadow: none;
