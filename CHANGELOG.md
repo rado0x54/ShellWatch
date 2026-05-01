@@ -1,3 +1,28 @@
+## v0.1.0 (2026-05-01)
+
+## What's Changed
+
+- chore(release): open changelog PR instead of pushing directly to main by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/152
+- chore: remove pam_ssh_webauthn module by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/154
+- chore(release): workflow_dispatch + PR-based CHANGELOG flow by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/155
+- feat(agent): default --server, ws keepalive + reconnect, daemon docs by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/157
+- feat(client): add Details button to sign-request toast by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/158
+- feat(passkey): invite flow for enrolling passkeys on a second device (#101) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/160
+- feat(webauthn): step-up assertion for passkey add/revoke/confirm by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/163
+- fix(settings): mobile tabs unusable — swap for native dropdown + extract SectionTabs by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/165
+- chore(mcp): expand sudo guidance — no chaining, allow time for OOB PAM by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/167
+- chore(client): add type="button" to all <button> elements + lint rule by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/168
+- fix: anchor keys/ gitignore rule to repo root by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/169
+- fix(client): replace window.confirm/alert with in-app modals and toasts by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/170
+- feat(oauth): accept scope + resource params, support agent-scoped keys (#171) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/172
+- feat(agent): shellwatch-agent login/logout via loopback PKCE + credstore (#171) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/173
+- feat(oauth): scope-aware new-key placeholder (agent-only -> shellwatch-agent) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/174
+- docs: surface the homebrew tap as the primary install path by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/176
+- feat(agent): Windows support — named-pipe listener + windows build matrix (#175) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/177
+- Preprod Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/178
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v0.0.2...v0.1.0
+
 ## v0.0.2 (2026-04-27)
 
 ## What's Changed
