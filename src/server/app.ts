@@ -156,7 +156,7 @@ export async function buildApp(params: BuildAppParams) {
   // having already been closed by TerminalManager.closeAllForAccount.
   accountLifecycle.on("deleted", ({ accountId }) => {
     try {
-      const closed = terminalManager.closeAllForAccount(accountId);
+      const closed = terminalManager.closeAllForAccount(accountId, "account-deleted");
       if (closed > 0) {
         app.log.info(`Closed ${closed} session(s) for deleted account ${accountId}`);
       }

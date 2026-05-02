@@ -99,6 +99,13 @@ export const endpoints = sqliteTable("endpoints", {
 // --- Session Lifecycle Audit (#184) ---
 // Tracks session open → close transitions and the metadata available at each
 // boundary. Replaces the unused `session_history` table from the original schema.
+//
+// Coverage gap: only sessions that successfully reach the `open` state are
+// recorded — failed connection attempts (transportFactory throws in
+// TerminalManager.create) do not produce audit rows. This is intentional for
+// now because the writer's open/close model assumes a session row already
+// exists when close fires; capturing failed creates needs a third path that
+// synthesizes a directly-errored row. Tracked as a follow-up to #184.
 
 export const auditSessionLifecycle = sqliteTable(
   "audit_session_lifecycle",
@@ -107,6 +114,10 @@ export const auditSessionLifecycle = sqliteTable(
     accountId: text("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
+    // Intentionally no FK to endpoints(id): audit rows must outlive endpoint
+    // deletion so post-mortem queries about a removed endpoint still return
+    // history. Stored as the original endpoint id; resolution to a label is
+    // best-effort at read time.
     endpointId: text("endpoint_id").notNull(),
     source: text("source").notNull(), // 'ui' | 'mcp' | 'ssh'
     status: text("status").notNull(), // 'open' | 'closed' | 'error'

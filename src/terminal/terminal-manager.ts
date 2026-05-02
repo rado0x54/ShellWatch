@@ -192,7 +192,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
   }
 
   /** Close every live session owned by `accountId`. Returns the number closed. */
-  closeAllForAccount(accountId: string, reason: CloseReason = "account-deleted"): number {
+  closeAllForAccount(accountId: string, reason: CloseReason): number {
     let count = 0;
     for (const sessionId of this.listSessions()
       .filter((s) => s.accountId === accountId)
@@ -225,7 +225,15 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     const previousStatus = managed.session.status;
     if (previousStatus === status) return;
     managed.session.status = status;
-    if ((status === "closed" || status === "error") && reason && !managed.session.closeReason) {
+    // `closing` is included so the originating reason from close() is captured
+    // BEFORE transport.close() runs. If the transport ever emits 'close'
+    // synchronously inside its close() call, the listener fires with the saved
+    // reason rather than falling back to "server-hangup".
+    if (
+      (status === "closing" || status === "closed" || status === "error") &&
+      reason &&
+      !managed.session.closeReason
+    ) {
       managed.session.closeReason = reason;
     }
     this.emit("status-change", {

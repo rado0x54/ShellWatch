@@ -10,8 +10,10 @@
   let rows = $state<AuditSessionRow[]>([]);
   let nextCursor = $state<string | null>(null);
   let endpointId = $state<string>("");
-  // <input type="date"> values are bare YYYY-MM-DD; we expand to a full
-  // ISO instant at request time so the user picks "from this day onward".
+  // <input type="date"> gives a bare YYYY-MM-DD that the user picked in their
+  // local calendar. We expand to local-day boundaries (00:00 / 23:59:59.999
+  // local) and convert to UTC ISO instants so SQLite's text comparison on
+  // ISO-8601 createdAt matches what the user sees on screen.
   let fromDate = $state<string>("");
   let toDate = $state<string>("");
   let loading = $state(false);
@@ -22,6 +24,15 @@
     void load(true);
   });
 
+  function localDayStart(yyyymmdd: string): string {
+    const [y, m, d] = yyyymmdd.split("-").map(Number);
+    return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+  }
+  function localDayEnd(yyyymmdd: string): string {
+    const [y, m, d] = yyyymmdd.split("-").map(Number);
+    return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+  }
+
   async function load(reset: boolean) {
     if (loading) return;
     loading = true;
@@ -30,9 +41,8 @@
       const page = await fetchAuditPage(
         {
           endpointId: endpointId || undefined,
-          // Inclusive day-grain: from = start of day; to = end of day.
-          from: fromDate ? `${fromDate}T00:00:00.000Z` : undefined,
-          to: toDate ? `${toDate}T23:59:59.999Z` : undefined,
+          from: fromDate ? localDayStart(fromDate) : undefined,
+          to: toDate ? localDayEnd(toDate) : undefined,
         },
         cursor,
       );

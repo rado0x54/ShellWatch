@@ -127,6 +127,9 @@ try {
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
 
+  // Subscribes to terminalManager status-change events. Records sessions
+  // that successfully reach `open`; failed creates (transportFactory throws)
+  // are intentionally not captured today — see schema.ts comment for #184.
   const sessionLifecycleWriter = new SessionLifecycleWriter({
     terminalManager,
     repo: sessionLifecycleRepo,
