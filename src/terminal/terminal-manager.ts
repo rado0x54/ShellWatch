@@ -179,7 +179,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     return managed ? { ...managed.session } : null;
   }
 
-  close(sessionId: string, reason?: CloseReason): void {
+  close(sessionId: string, reason: CloseReason): void {
     const managed = this.getManaged(sessionId);
     if (managed.session.status === "closed" || managed.session.status === "closing") {
       return;

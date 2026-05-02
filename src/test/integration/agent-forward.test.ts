@@ -122,8 +122,6 @@ describe("SSH Agent Forwarding", () => {
 
       await waitFor(() => sshServer.agentForwardRequested);
       expect(sshServer.agentForwardRequested).toBe(true);
-
-      terminalManager.close(session.sessionId);
     } finally {
       terminalManager.destroy();
     }
@@ -144,8 +142,6 @@ describe("SSH Agent Forwarding", () => {
       await new Promise((r) => setTimeout(r, 100));
 
       expect(sshServer.agentForwardRequested).toBe(false);
-
-      terminalManager.close(session.sessionId);
     } finally {
       terminalManager.destroy();
     }
