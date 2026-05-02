@@ -20,3 +20,5 @@ CREATE TABLE `audit_session_lifecycle` (
 	`close_reason` text,
 	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade
 );
+--> statement-breakpoint
+CREATE INDEX `audit_session_lifecycle_account_created_idx` ON `audit_session_lifecycle` (`account_id`,`created_at`,`session_id`);

@@ -43,13 +43,6 @@
       "when": 1777999999999,
       "tag": "0005_audit_session_lifecycle",
       "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1777740705588,
-      "tag": "0006_white_revanche",
-      "breakpoints": true
     }
   ]
 }
