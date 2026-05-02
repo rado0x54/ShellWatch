@@ -214,6 +214,14 @@
     <button
       type="button"
       class="btn-nav"
+      class:active={currentPath.startsWith("/audit")}
+      onclick={() => navTo("/audit")}
+    >
+      Audit
+    </button>
+    <button
+      type="button"
+      class="btn-nav"
       class:active={currentPath.startsWith("/settings")}
       onclick={() => navTo("/settings")}
     >
