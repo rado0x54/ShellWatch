@@ -26,6 +26,10 @@ export interface AuditPage {
 
 export interface AuditFilters {
   endpointId?: string;
+  /** Inclusive lower bound on created_at (ISO-8601 string). */
+  from?: string;
+  /** Inclusive upper bound on created_at (ISO-8601 string). */
+  to?: string;
 }
 
 export async function fetchAuditPage(
@@ -35,6 +39,8 @@ export async function fetchAuditPage(
 ): Promise<AuditPage> {
   const params = new URLSearchParams();
   if (filters.endpointId) params.set("endpointId", filters.endpointId);
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
   if (cursor) params.set("cursor", cursor);
   params.set("limit", String(limit));
   const res = await fetch(`/api/audit/sessions?${params}`);

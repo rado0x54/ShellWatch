@@ -12,12 +12,16 @@ export function registerAuditRoutes(params: AuditRoutesParams) {
   app.get<{
     Querystring: {
       endpointId?: string;
+      from?: string;
+      to?: string;
       cursor?: string;
       limit?: string;
     };
   }>("/api/audit/sessions", async (request) => {
     const filters: SessionLifecycleFilters = {
       endpointId: request.query.endpointId,
+      from: request.query.from,
+      to: request.query.to,
     };
     const limit = parseLimit(request.query.limit);
     const page = sessionLifecycleRepo.list(request.accountId, filters, {

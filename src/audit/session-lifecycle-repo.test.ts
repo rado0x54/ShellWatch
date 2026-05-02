@@ -185,6 +185,67 @@ describe("DrizzleSessionLifecycleRepository", () => {
     });
   });
 
+  describe("from/to filter", () => {
+    beforeEach(() => {
+      seed({
+        sessionId: "early",
+        accountId: ACCT_A,
+        endpointId: ENDPOINT_A1,
+        createdAt: "2026-01-01T00:00:00Z",
+      });
+      seed({
+        sessionId: "mid",
+        accountId: ACCT_A,
+        endpointId: ENDPOINT_A1,
+        createdAt: "2026-01-15T12:00:00Z",
+      });
+      seed({
+        sessionId: "late",
+        accountId: ACCT_A,
+        endpointId: ENDPOINT_A1,
+        createdAt: "2026-02-01T00:00:00Z",
+      });
+    });
+
+    it("from is inclusive lower bound", () => {
+      const page = repo.list(ACCT_A, { from: "2026-01-15T00:00:00Z" }, {});
+      expect(page.rows.map((r) => r.sessionId)).toEqual(["late", "mid"]);
+    });
+
+    it("to is inclusive upper bound", () => {
+      const page = repo.list(ACCT_A, { to: "2026-01-15T23:59:59.999Z" }, {});
+      expect(page.rows.map((r) => r.sessionId)).toEqual(["mid", "early"]);
+    });
+
+    it("from + to brackets the window", () => {
+      const page = repo.list(
+        ACCT_A,
+        { from: "2026-01-10T00:00:00Z", to: "2026-01-20T00:00:00Z" },
+        {},
+      );
+      expect(page.rows.map((r) => r.sessionId)).toEqual(["mid"]);
+    });
+
+    it("composes with endpointId filter", () => {
+      seed({
+        sessionId: "other-ep",
+        accountId: ACCT_A,
+        endpointId: ENDPOINT_A2,
+        createdAt: "2026-01-15T12:00:00Z",
+      });
+      const page = repo.list(
+        ACCT_A,
+        {
+          endpointId: ENDPOINT_A1,
+          from: "2026-01-10T00:00:00Z",
+          to: "2026-01-20T00:00:00Z",
+        },
+        {},
+      );
+      expect(page.rows.map((r) => r.sessionId)).toEqual(["mid"]);
+    });
+  });
+
   describe("recordClose idempotency", () => {
     it("only the first close call wins; later calls do not overwrite timing", () => {
       seed({

@@ -10,6 +10,10 @@
   let rows = $state<AuditSessionRow[]>([]);
   let nextCursor = $state<string | null>(null);
   let endpointId = $state<string>("");
+  // <input type="date"> values are bare YYYY-MM-DD; we expand to a full
+  // ISO instant at request time so the user picks "from this day onward".
+  let fromDate = $state<string>("");
+  let toDate = $state<string>("");
   let loading = $state(false);
 
   const endpointLabel = $derived((id: string) => $endpoints.find((e) => e.id === id)?.label ?? id);
@@ -23,7 +27,15 @@
     loading = true;
     try {
       const cursor = reset ? undefined : (nextCursor ?? undefined);
-      const page = await fetchAuditPage({ endpointId: endpointId || undefined }, cursor);
+      const page = await fetchAuditPage(
+        {
+          endpointId: endpointId || undefined,
+          // Inclusive day-grain: from = start of day; to = end of day.
+          from: fromDate ? `${fromDate}T00:00:00.000Z` : undefined,
+          to: toDate ? `${toDate}T23:59:59.999Z` : undefined,
+        },
+        cursor,
+      );
       rows = reset ? page.rows : [...rows, ...page.rows];
       nextCursor = page.nextCursor;
     } catch (err) {
@@ -34,6 +46,12 @@
   }
 
   function onFilterChange() {
+    void load(true);
+  }
+
+  function clearDates() {
+    fromDate = "";
+    toDate = "";
     void load(true);
   }
 
@@ -62,13 +80,39 @@
   </div>
 
   <div class="audit-filter">
-    <label class="filter-label" for="endpoint-filter">Endpoint</label>
-    <select id="endpoint-filter" bind:value={endpointId} onchange={onFilterChange}>
-      <option value="">All endpoints</option>
-      {#each $endpoints as ep (ep.id)}
-        <option value={ep.id}>{ep.label}</option>
-      {/each}
-    </select>
+    <div class="filter-group">
+      <label class="filter-label" for="endpoint-filter">Endpoint</label>
+      <select id="endpoint-filter" bind:value={endpointId} onchange={onFilterChange}>
+        <option value="">All endpoints</option>
+        {#each $endpoints as ep (ep.id)}
+          <option value={ep.id}>{ep.label}</option>
+        {/each}
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="from-filter">From</label>
+      <input
+        id="from-filter"
+        type="date"
+        bind:value={fromDate}
+        max={toDate || undefined}
+        onchange={onFilterChange}
+      />
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="to-filter">To</label>
+      <input
+        id="to-filter"
+        type="date"
+        bind:value={toDate}
+        min={fromDate || undefined}
+        onchange={onFilterChange}
+      />
+    </div>
+    {#if fromDate || toDate}
+      <button type="button" class="btn btn-ghost btn-clear" onclick={clearDates}>Clear dates</button
+      >
+    {/if}
   </div>
 
   <SettingsList empty={rows.length === 0 && !loading} emptyText="No audit entries">
@@ -164,9 +208,16 @@
 
   .audit-filter {
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-4);
     margin-bottom: var(--space-4);
+  }
+
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
 
   .filter-label {
@@ -179,6 +230,14 @@
 
   .audit-filter select {
     min-width: 14rem;
+  }
+
+  .audit-filter input[type="date"] {
+    font-family: var(--font-mono);
+  }
+
+  .btn-clear {
+    align-self: flex-end;
   }
 
   .row-label {

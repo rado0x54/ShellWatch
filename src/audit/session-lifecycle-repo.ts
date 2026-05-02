@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
 import { auditSessionLifecycle } from "../db/schema.js";
 
@@ -48,6 +48,10 @@ export interface SessionLifecycleClose {
 
 export interface SessionLifecycleFilters {
   endpointId?: string;
+  /** Inclusive lower bound on created_at (ISO-8601 string). */
+  from?: string;
+  /** Inclusive upper bound on created_at (ISO-8601 string). */
+  to?: string;
 }
 
 export interface SessionLifecyclePage {
@@ -133,6 +137,12 @@ export class DrizzleSessionLifecycleRepository implements SessionLifecycleReposi
     const conditions = [eq(auditSessionLifecycle.accountId, accountId)];
     if (filters.endpointId) {
       conditions.push(eq(auditSessionLifecycle.endpointId, filters.endpointId));
+    }
+    if (filters.from) {
+      conditions.push(gte(auditSessionLifecycle.createdAt, filters.from));
+    }
+    if (filters.to) {
+      conditions.push(lte(auditSessionLifecycle.createdAt, filters.to));
     }
     if (cursor) {
       // (created_at, session_id) < (cursor.createdAt, cursor.sessionId) under DESC ordering.
