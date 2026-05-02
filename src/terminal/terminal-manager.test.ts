@@ -149,7 +149,7 @@ describe("TerminalManager", () => {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
-      manager.close(session.sessionId);
+      manager.close(session.sessionId, "client.ui");
       expect(manager.listSessions()).toHaveLength(0);
     });
   });
@@ -176,7 +176,7 @@ describe("TerminalManager", () => {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
-      manager.close(session.sessionId);
+      manager.close(session.sessionId, "client.ui");
       expect(mockTransport.close).toHaveBeenCalled();
       expect(manager.getSession(session.sessionId)).toBeNull();
     });
@@ -188,18 +188,17 @@ describe("TerminalManager", () => {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
-      manager.close(session.sessionId);
+      manager.close(session.sessionId, "client.ui");
       expect(closed).toContain(session.sessionId);
     });
 
-    it("is idempotent", async () => {
+    it("throws when called on an already-closed session", async () => {
       const session = await manager.create(testEndpoint, "test-account", {
         kind: "ui",
         sourceIp: "127.0.0.1",
       });
-      manager.close(session.sessionId);
-      // Second close should not throw
-      expect(() => manager.close(session.sessionId)).toThrow("not found");
+      manager.close(session.sessionId, "client.ui");
+      expect(() => manager.close(session.sessionId, "client.ui")).toThrow("not found");
     });
 
     it("preserves the originating close reason even if transport emits 'close' synchronously", async () => {
