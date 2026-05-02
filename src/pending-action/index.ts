@@ -8,10 +8,13 @@ export {
   type EndpointAuthTrigger,
   type KeyApproveAction,
   type PendingAction,
+  type PendingActionEventMap,
+  type PendingActionResolvedEvent,
   type PendingActionStatus,
   type PendingActionType,
   type PendingActionView,
   type SignRequestContext,
+  type SigningRequestOutcome,
   toActionView,
   type WebAuthnSignAction,
 } from "./types.js";

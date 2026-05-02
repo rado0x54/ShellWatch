@@ -1,4 +1,9 @@
-import { DrizzleSessionLifecycleRepository, SessionLifecycleWriter } from "./audit/index.js";
+import {
+  DrizzleSessionLifecycleRepository,
+  DrizzleSigningRequestsRepository,
+  SessionLifecycleWriter,
+  SigningRequestsWriter,
+} from "./audit/index.js";
 import { loadConfig } from "./config/index.js";
 import { startCleanupJob } from "./db/cleanup.js";
 import {
@@ -100,6 +105,10 @@ try {
   // status transitions and persists open/close events to audit_session_lifecycle.
   const sessionLifecycleRepo = new DrizzleSessionLifecycleRepository(db);
 
+  // Signing-request audit writer (#186). Subscribes to PendingActionStore
+  // events and persists each request + outcome to audit_signing_requests.
+  const signingRequestsRepo = new DrizzleSigningRequestsRepository(db);
+
   const app = await buildApp({
     config,
     terminalManager,
@@ -112,6 +121,7 @@ try {
     keyAvailability: keyWatcher,
     apiKeyRepo,
     sessionLifecycleRepo,
+    signingRequestsRepo,
     actionStore,
     wsChannel,
     pushSubRepo,
@@ -133,6 +143,14 @@ try {
   const sessionLifecycleWriter = new SessionLifecycleWriter({
     terminalManager,
     repo: sessionLifecycleRepo,
+    log: app.log,
+  });
+
+  // Subscribes to actionStore events and records signing requests + outcomes.
+  // Detached during shutdown after the store finishes expiring pending actions.
+  const signingRequestsWriter = new SigningRequestsWriter({
+    actionStore,
+    repo: signingRequestsRepo,
     log: app.log,
   });
 
@@ -173,7 +191,10 @@ try {
     // close events before we detach its listener.
     terminalManager.destroy();
     sessionLifecycleWriter.dispose();
+    // Destroy actionStore before disposing the writer so the writer captures
+    // the final batch of "expired" events emitted during teardown.
     actionStore.destroy();
+    signingRequestsWriter.dispose();
     accountRepo.destroy();
     await app.close();
     closeDb();

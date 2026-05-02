@@ -16,7 +16,7 @@ import type {
 // Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
 // the wider handle the bearer gate + OAuth callback need (findByHash). See #136.
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
-import type { SessionLifecycleRepository } from "../audit/index.js";
+import type { SessionLifecycleRepository, SigningRequestsRepository } from "../audit/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { PendingActionStore } from "../pending-action/index.js";
@@ -60,6 +60,8 @@ export interface BuildAppParams {
   apiKeyRepo: ApiKeyAuthRepository;
   /** Session-lifecycle audit repo (#184). When omitted, /api/audit/sessions is not registered. */
   sessionLifecycleRepo?: SessionLifecycleRepository;
+  /** Signing-request audit repo (#186). When omitted, /api/audit/signings is not registered. */
+  signingRequestsRepo?: SigningRequestsRepository;
   options?: AppOptions;
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;
@@ -190,8 +192,12 @@ export async function buildApp(params: BuildAppParams) {
 
   registerApiKeyRoutes({ app, apiKeyRepo });
 
-  if (params.sessionLifecycleRepo) {
-    registerAuditRoutes({ app, sessionLifecycleRepo: params.sessionLifecycleRepo });
+  if (params.sessionLifecycleRepo || params.signingRequestsRepo) {
+    registerAuditRoutes({
+      app,
+      sessionLifecycleRepo: params.sessionLifecycleRepo,
+      signingRequestsRepo: params.signingRequestsRepo,
+    });
   }
 
   if (params.pushSubRepo) {

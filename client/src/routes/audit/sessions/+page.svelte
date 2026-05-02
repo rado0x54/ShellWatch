@@ -84,11 +84,6 @@
 </script>
 
 <div class="audit-page">
-  <div class="audit-header">
-    <h1>Audit</h1>
-    <p class="subtitle">Session lifecycle log — newest first.</p>
-  </div>
-
   <div class="audit-filter">
     <div class="filter-group">
       <label class="filter-label" for="endpoint-filter">Endpoint</label>
@@ -197,29 +192,6 @@
 </div>
 
 <style>
-  .audit-page {
-    padding: 2rem;
-    overflow-y: auto;
-    height: 100%;
-  }
-
-  .audit-header {
-    margin-bottom: 1.5rem;
-  }
-
-  .audit-header h1 {
-    font-family: var(--font-display);
-    font-size: var(--display-md);
-    font-weight: 600;
-    letter-spacing: -0.035em;
-  }
-
-  .subtitle {
-    color: var(--on-surface-variant);
-    font-size: var(--body-md);
-    margin-top: var(--space-2);
-  }
-
   .audit-filter {
     display: flex;
     align-items: flex-end;
@@ -315,11 +287,5 @@
     color: var(--on-surface-faint);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-  }
-
-  @media (max-width: 768px) {
-    .audit-page {
-      padding: 1rem;
-    }
   }
 </style>

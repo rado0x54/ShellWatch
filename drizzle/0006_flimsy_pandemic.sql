@@ -1,0 +1,36 @@
+CREATE TABLE `audit_signing_requests` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`type` text NOT NULL,
+	`source` text NOT NULL,
+	`created_at` text NOT NULL,
+	`resolved_at` text,
+	`outcome` text,
+	`latency_ms` integer,
+	`source_ip` text,
+	`endpoint_label` text,
+	`endpoint_address` text,
+	`session_id` text,
+	`mcp_reason` text,
+	`mcp_client_name` text,
+	`mcp_client_version` text,
+	`api_key_label` text,
+	`api_key_prefix` text,
+	`client_hostname` text,
+	`client_os` text,
+	`client_version` text,
+	`credential_id` text,
+	`passkey_label` text,
+	`user_verification` text,
+	`key_label` text,
+	`key_fingerprint` text,
+	`cancel_reason` text,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "audit_signing_requests_type_chk" CHECK("audit_signing_requests"."type" IN ('webauthn-sign','key-approve')),
+	CONSTRAINT "audit_signing_requests_source_chk" CHECK("audit_signing_requests"."source" IN ('endpoint-auth','agent-forwarding','agent-proxy')),
+	CONSTRAINT "audit_signing_requests_outcome_chk" CHECK("audit_signing_requests"."outcome" IS NULL OR "audit_signing_requests"."outcome" IN ('approved','denied','expired','cancelled'))
+);
+--> statement-breakpoint
+CREATE INDEX `audit_signing_requests_account_created_idx` ON `audit_signing_requests` (`account_id`,`created_at`,`id`);--> statement-breakpoint
+CREATE INDEX `audit_signing_requests_account_credential_idx` ON `audit_signing_requests` (`account_id`,`credential_id`);--> statement-breakpoint
+CREATE INDEX `audit_signing_requests_account_session_idx` ON `audit_signing_requests` (`account_id`,`session_id`);
