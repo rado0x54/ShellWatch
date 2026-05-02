@@ -1,0 +1,1 @@
+CREATE INDEX `audit_session_lifecycle_account_created_idx` ON `audit_session_lifecycle` (`account_id`,`created_at`,`session_id`);

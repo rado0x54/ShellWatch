@@ -110,6 +110,8 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         accountId,
         maxSessions,
         sourceIp: request.ip,
+        apiKeyLabel: request.apiKey?.label,
+        apiKeyPrefix: request.apiKey?.keyPrefix,
       });
       const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, accountId);
 

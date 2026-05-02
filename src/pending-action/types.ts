@@ -20,15 +20,21 @@ export interface AgentProxyContext {
  * MCP triggers carry a `reason` string so the approval UI (and future audit
  * log, #16) can show the agent's stated intent — humans clicking through the
  * web UI already know what they meant, so the `ui` variant has no equivalent.
+ *
+ * `apiKeyLabel`/`apiKeyPrefix` are optional and present whenever the calling
+ * request was authenticated with an API key (cookie/passkey-authenticated UI
+ * sessions don't have one). Used by the session-lifecycle audit log (#184).
  */
 export type EndpointAuthTrigger =
-  | { kind: "ui"; sourceIp?: string }
+  | { kind: "ui"; sourceIp?: string; apiKeyLabel?: string; apiKeyPrefix?: string }
   | {
       kind: "mcp";
       reason: string;
       sourceIp?: string;
       mcpClientName?: string;
       mcpClientVersion?: string;
+      apiKeyLabel?: string;
+      apiKeyPrefix?: string;
     };
 
 export interface EndpointAuthContext {

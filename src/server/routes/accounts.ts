@@ -7,7 +7,6 @@ import {
   accounts as accountsTable,
   apiKeys as apiKeysTable,
   endpoints as endpointsTable,
-  sessionHistory,
   webauthnCredentials,
 } from "../../db/schema.js";
 import { formatEndpointAddress } from "../../utils/endpoint-address.js";
@@ -103,9 +102,9 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       return { error: "Cannot delete the admin account" };
     }
 
-    // Hard-delete: cascade all owned data (order matters for FK constraints)
+    // Hard-delete: cascade all owned data (order matters for FK constraints).
+    // audit_session_lifecycle has ON DELETE CASCADE; pushSubscriptions same.
     if (db) {
-      db.delete(sessionHistory).where(eq(sessionHistory.accountId, targetId)).run();
       db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
       db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
       db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();

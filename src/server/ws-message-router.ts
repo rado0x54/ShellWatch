@@ -120,7 +120,7 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }
-      terminalManager.close(msg.sessionId);
+      terminalManager.close(msg.sessionId, "client.ws");
       break;
     }
 

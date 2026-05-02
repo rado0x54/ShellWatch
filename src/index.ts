@@ -1,3 +1,4 @@
+import { DrizzleSessionLifecycleRepository, SessionLifecycleWriter } from "./audit/index.js";
 import { loadConfig } from "./config/index.js";
 import { startCleanupJob } from "./db/cleanup.js";
 import {
@@ -95,6 +96,10 @@ try {
 
   const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params));
 
+  // Session-lifecycle audit writer (#184). Subscribes to TerminalManager
+  // status transitions and persists open/close events to audit_session_lifecycle.
+  const sessionLifecycleRepo = new DrizzleSessionLifecycleRepository(db);
+
   const app = await buildApp({
     config,
     terminalManager,
@@ -106,6 +111,7 @@ try {
     wsExtensions: [wsChannel],
     keyAvailability: keyWatcher,
     apiKeyRepo,
+    sessionLifecycleRepo,
     actionStore,
     wsChannel,
     pushSubRepo,
@@ -120,6 +126,12 @@ try {
   });
 
   agentLog.current = { error: (msg) => app.log.error(msg) };
+
+  const sessionLifecycleWriter = new SessionLifecycleWriter({
+    terminalManager,
+    repo: sessionLifecycleRepo,
+    log: app.log,
+  });
 
   app.log.info(`WebAuthn rpId: ${config.security.rpId}`);
   app.log.info(`Trusted origins: ${config.security.trustedWebauthnOrigins.join(", ")}`);
@@ -154,7 +166,10 @@ try {
   const shutdown = async () => {
     stopCleanup();
     keyWatcher.stop();
+    // Destroy terminals first so the writer captures the final shutdown
+    // close events before we detach its listener.
     terminalManager.destroy();
+    sessionLifecycleWriter.dispose();
     actionStore.destroy();
     accountRepo.destroy();
     await app.close();

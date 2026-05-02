@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // --- Accounts ---
 
@@ -96,18 +96,51 @@ export const endpoints = sqliteTable("endpoints", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- Session History ---
+// --- Session Lifecycle Audit (#184) ---
+// Tracks session open → close transitions and the metadata available at each
+// boundary. Replaces the unused `session_history` table from the original schema.
 
-export const sessionHistory = sqliteTable("session_history", {
-  sessionId: text("session_id").primaryKey(),
-  endpointId: text("endpoint_id").notNull(),
-  accountId: text("account_id").notNull(),
-  source: text("source").notNull(),
-  status: text("status").notNull(),
-  createdAt: text("created_at").notNull(),
-  closedAt: text("closed_at"),
-  durationMs: integer("duration_ms"),
-});
+export const auditSessionLifecycle = sqliteTable(
+  "audit_session_lifecycle",
+  {
+    sessionId: text("session_id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    endpointId: text("endpoint_id").notNull(),
+    source: text("source").notNull(), // 'ui' | 'mcp' | 'ssh'
+    status: text("status").notNull(), // 'open' | 'closed' | 'error'
+    createdAt: text("created_at").notNull(),
+    closedAt: text("closed_at"),
+    durationMs: integer("duration_ms"),
+    // Trigger metadata (always-recorded when present)
+    sourceIp: text("source_ip"),
+    // MCP-trigger-only metadata
+    mcpReason: text("mcp_reason"),
+    mcpClientName: text("mcp_client_name"),
+    mcpClientVersion: text("mcp_client_version"),
+    // API-key-auth metadata (set whenever the session was authenticated via an API key)
+    apiKeyLabel: text("api_key_label"),
+    apiKeyPrefix: text("api_key_prefix"),
+    // Agent-client metadata — populated for sessions opened via shellwatch-agent
+    // paths once #12 (SSH bastion) lands. Reserved columns; left null until then.
+    clientHostname: text("client_hostname"),
+    clientOs: text("client_os"),
+    clientVersion: text("client_version"),
+    // Why the session ended (null while open, set on close transition).
+    // Subset of CloseReason (#185); see TerminalManager.
+    closeReason: text("close_reason"),
+  },
+  // Serves the keyset-paged list query: WHERE account_id = ? ORDER BY created_at DESC, session_id DESC.
+  // ASC index is fine — SQLite scans it in reverse for the DESC order-by.
+  (table) => [
+    index("audit_session_lifecycle_account_created_idx").on(
+      table.accountId,
+      table.createdAt,
+      table.sessionId,
+    ),
+  ],
+);
 
 // --- Push Subscriptions (Web Push API) ---
 

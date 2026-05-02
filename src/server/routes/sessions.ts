@@ -37,6 +37,8 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       const session = await terminalManager.create(endpoint, request.accountId, {
         kind: "ui",
         sourceIp: request.ip,
+        apiKeyLabel: request.apiKey?.label,
+        apiKeyPrefix: request.apiKey?.keyPrefix,
       });
 
       return session;
@@ -81,7 +83,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         reply.status(404);
         return { error: "Session not found" };
       }
-      terminalManager.close(request.params.sessionId);
+      terminalManager.close(request.params.sessionId, "client.ui");
       return { status: "closed" };
     },
   );
