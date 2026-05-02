@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dfccc9f1-3724-4405-b2e0-3e47a9e40c01",
+  "id": "41f29caa-723c-4c38-84d9-da5ca36655ff",
   "prevId": "1ee09762-d697-4528-a29c-0fef19d51640",
   "tables": {
     "accounts": {
@@ -338,6 +338,11 @@
           "name": "audit_session_lifecycle_account_created_idx",
           "columns": ["account_id", "created_at", "session_id"],
           "isUnique": false
+        },
+        "audit_session_lifecycle_account_endpoint_created_idx": {
+          "name": "audit_session_lifecycle_account_endpoint_created_idx",
+          "columns": ["account_id", "endpoint_id", "created_at", "session_id"],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -353,7 +358,16 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "audit_session_lifecycle_status_chk": {
+          "name": "audit_session_lifecycle_status_chk",
+          "value": "\"audit_session_lifecycle\".\"status\" IN ('open','closed','error')"
+        },
+        "audit_session_lifecycle_source_chk": {
+          "name": "audit_session_lifecycle_source_chk",
+          "value": "\"audit_session_lifecycle\".\"source\" IN ('ui','mcp','ssh')"
+        }
+      }
     },
     "endpoints": {
       "name": "endpoints",

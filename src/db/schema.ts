@@ -131,14 +131,25 @@ export const auditSessionLifecycle = sqliteTable(
     // Subset of CloseReason (#185); see TerminalManager.
     closeReason: text("close_reason"),
   },
-  // Serves the keyset-paged list query: WHERE account_id = ? ORDER BY created_at DESC, session_id DESC.
-  // ASC index is fine — SQLite scans it in reverse for the DESC order-by.
   (table) => [
+    // Unfiltered keyset-paged tail: WHERE account_id = ? ORDER BY created_at DESC, session_id DESC.
+    // ASC index is fine — SQLite scans it in reverse for the DESC order-by.
     index("audit_session_lifecycle_account_created_idx").on(
       table.accountId,
       table.createdAt,
       table.sessionId,
     ),
+    // Endpoint-filtered keyset-paged tail: adds endpoint_id as a leading equality
+    // so the same scan strategy applies when ?endpointId is passed.
+    index("audit_session_lifecycle_account_endpoint_created_idx").on(
+      table.accountId,
+      table.endpointId,
+      table.createdAt,
+      table.sessionId,
+    ),
+    // Reject typos in the writer at the DB layer rather than corrupting the audit.
+    check("audit_session_lifecycle_status_chk", sql`${table.status} IN ('open','closed','error')`),
+    check("audit_session_lifecycle_source_chk", sql`${table.source} IN ('ui','mcp','ssh')`),
   ],
 );
 

@@ -37,8 +37,6 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       const session = await terminalManager.create(endpoint, request.accountId, {
         kind: "ui",
         sourceIp: request.ip,
-        apiKeyLabel: request.apiKey?.label,
-        apiKeyPrefix: request.apiKey?.keyPrefix,
       });
 
       return session;

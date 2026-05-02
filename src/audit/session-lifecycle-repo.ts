@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
 import { auditSessionLifecycle } from "../db/schema.js";
 
@@ -73,7 +73,6 @@ export interface SessionLifecycleRepository {
     filters: SessionLifecycleFilters,
     paging: { cursor?: string; limit?: number },
   ): SessionLifecyclePage;
-  findOne(sessionId: string, accountId: string): SessionLifecycleRow | null;
 }
 
 export class DrizzleSessionLifecycleRepository implements SessionLifecycleRepository {
@@ -100,6 +99,9 @@ export class DrizzleSessionLifecycleRepository implements SessionLifecycleReposi
   }
 
   recordClose(row: SessionLifecycleClose): void {
+    // Idempotent on closed_at: a session that re-traverses a terminal state
+    // (e.g. error -> closing -> closed during shutdown) MUST NOT have its
+    // first-close timing rewritten. Drop later writes silently.
     this.db
       .update(auditSessionLifecycle)
       .set({
@@ -108,7 +110,12 @@ export class DrizzleSessionLifecycleRepository implements SessionLifecycleReposi
         durationMs: row.durationMs,
         closeReason: row.closeReason ?? null,
       })
-      .where(eq(auditSessionLifecycle.sessionId, row.sessionId))
+      .where(
+        and(
+          eq(auditSessionLifecycle.sessionId, row.sessionId),
+          isNull(auditSessionLifecycle.closedAt),
+        ),
+      )
       .run();
   }
 
@@ -157,20 +164,6 @@ export class DrizzleSessionLifecycleRepository implements SessionLifecycleReposi
         : null;
 
     return { rows: trimmed, nextCursor };
-  }
-
-  findOne(sessionId: string, accountId: string): SessionLifecycleRow | null {
-    const row = this.db
-      .select()
-      .from(auditSessionLifecycle)
-      .where(
-        and(
-          eq(auditSessionLifecycle.sessionId, sessionId),
-          eq(auditSessionLifecycle.accountId, accountId),
-        ),
-      )
-      .get();
-    return (row as SessionLifecycleRow | undefined) ?? null;
   }
 }
 

@@ -26,19 +26,6 @@ export function registerAuditRoutes(params: AuditRoutesParams) {
     });
     return page;
   });
-
-  app.get<{ Params: { sessionId: string } }>(
-    "/api/audit/sessions/:sessionId",
-    async (request, reply) => {
-      const row = sessionLifecycleRepo.findOne(request.params.sessionId, request.accountId);
-      if (!row) {
-        // Don't disclose existence of audit rows owned by other accounts.
-        reply.status(404);
-        return { error: "Audit row not found" };
-      }
-      return row;
-    },
-  );
 }
 
 function parseLimit(raw: string | undefined): number | undefined {

@@ -76,12 +76,12 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       // source lands (#12), extend EndpointAuthTrigger to include it.
       source: trigger.kind,
       sourceIp: trigger.sourceIp,
-      apiKeyLabel: trigger.apiKeyLabel,
-      apiKeyPrefix: trigger.apiKeyPrefix,
       ...(trigger.kind === "mcp" && {
         mcpReason: trigger.reason,
         mcpClientName: trigger.mcpClientName,
         mcpClientVersion: trigger.mcpClientVersion,
+        apiKeyLabel: trigger.apiKeyLabel,
+        apiKeyPrefix: trigger.apiKeyPrefix,
       }),
     };
 

@@ -21,12 +21,13 @@ export interface AgentProxyContext {
  * log, #16) can show the agent's stated intent — humans clicking through the
  * web UI already know what they meant, so the `ui` variant has no equivalent.
  *
- * `apiKeyLabel`/`apiKeyPrefix` are optional and present whenever the calling
- * request was authenticated with an API key (cookie/passkey-authenticated UI
- * sessions don't have one). Used by the session-lifecycle audit log (#184).
+ * `apiKeyLabel`/`apiKeyPrefix` are populated for MCP triggers (which are
+ * always bearer-authenticated). UI triggers come through the cookie auth-gate,
+ * which never sets `request.apiKey`, so the `ui` variant carries no API-key
+ * fields. Used by the session-lifecycle audit log (#184).
  */
 export type EndpointAuthTrigger =
-  | { kind: "ui"; sourceIp?: string; apiKeyLabel?: string; apiKeyPrefix?: string }
+  | { kind: "ui"; sourceIp?: string }
   | {
       kind: "mcp";
       reason: string;
