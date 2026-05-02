@@ -110,8 +110,12 @@
       />
     </div>
     {#if fromDate || toDate}
-      <button type="button" class="btn btn-ghost btn-clear" onclick={clearDates}>Clear dates</button
-      >
+      <div class="filter-group">
+        <span class="filter-label" aria-hidden="true">&nbsp;</span>
+        <button type="button" class="btn btn-secondary btn-clear" onclick={clearDates}
+          >Clear dates</button
+        >
+      </div>
     {/if}
   </div>
 
@@ -236,8 +240,9 @@
     font-family: var(--font-mono);
   }
 
+  /* Don't stretch to the column width — natural button size. */
   .btn-clear {
-    align-self: flex-end;
+    align-self: flex-start;
   }
 
   .row-label {
