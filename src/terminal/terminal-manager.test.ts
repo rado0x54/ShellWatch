@@ -201,6 +201,35 @@ describe("TerminalManager", () => {
       // Second close should not throw
       expect(() => manager.close(session.sessionId)).toThrow("not found");
     });
+
+    it("preserves the originating close reason even if transport emits 'close' synchronously", async () => {
+      // Build a transport whose close() synchronously fires the 'close' event
+      // — this is the contract corner ssh2 happens not to hit today, but the
+      // code must not depend on that. The status-change for "closed" must
+      // carry the originating reason from manager.close(), not the
+      // server-hangup fallback used when no in-flight reason exists.
+      const syncTransport = createMockTransport();
+      (syncTransport as unknown as { close: () => void }).close = vi.fn(() => {
+        syncTransport.emit("close");
+      });
+      const factory = vi.fn().mockResolvedValue(syncTransport);
+      const m = new TerminalManager(factory, {
+        idleTimeoutMs: 60_000,
+        cleanupIntervalMs: 60_000,
+      });
+      const session = await m.create(testEndpoint, "test-account", {
+        kind: "ui",
+        sourceIp: "127.0.0.1",
+      });
+      const events: { status: string; reason?: string }[] = [];
+      m.on("status-change", (e) => events.push({ status: e.status, reason: e.reason }));
+
+      m.close(session.sessionId, "client.ui");
+
+      const closedEvent = events.find((e) => e.status === "closed");
+      expect(closedEvent?.reason).toBe("client.ui");
+      m.destroy();
+    });
   });
 
   describe("closeAllForAccount", () => {
@@ -214,7 +243,7 @@ describe("TerminalManager", () => {
       const a2 = await manager.create(epA, acctA, { kind: "ui", sourceIp: "1.1.1.1" });
       const b1 = await manager.create(epB, acctB, { kind: "ui", sourceIp: "2.2.2.2" });
 
-      const closed = manager.closeAllForAccount(acctA);
+      const closed = manager.closeAllForAccount(acctA, "account-deleted");
       expect(closed).toBe(2);
 
       // A's sessions are gone
@@ -225,7 +254,7 @@ describe("TerminalManager", () => {
     });
 
     it("returns 0 when the account has no live sessions", async () => {
-      expect(manager.closeAllForAccount("ghost")).toBe(0);
+      expect(manager.closeAllForAccount("ghost", "account-deleted")).toBe(0);
     });
   });
 

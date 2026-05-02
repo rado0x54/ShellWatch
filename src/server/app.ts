@@ -16,6 +16,7 @@ import type {
 // Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
 // the wider handle the bearer gate + OAuth callback need (findByHash). See #136.
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
+import type { SessionLifecycleRepository } from "../audit/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { PendingActionStore } from "../pending-action/index.js";
@@ -33,6 +34,7 @@ import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
 import { registerApiKeyRoutes } from "./routes/api-keys.js";
+import { registerAuditRoutes } from "./routes/audit.js";
 import { registerEndpointRoutes } from "./routes/endpoints.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerPushRoutes } from "./routes/push.js";
@@ -56,6 +58,8 @@ export interface BuildAppParams {
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
   apiKeyRepo: ApiKeyAuthRepository;
+  /** Session-lifecycle audit repo (#184). When omitted, /api/audit/sessions is not registered. */
+  sessionLifecycleRepo?: SessionLifecycleRepository;
   options?: AppOptions;
   /** PendingAction store + WebSocket channel for sign request notifications */
   actionStore?: PendingActionStore;
@@ -152,7 +156,7 @@ export async function buildApp(params: BuildAppParams) {
   // having already been closed by TerminalManager.closeAllForAccount.
   accountLifecycle.on("deleted", ({ accountId }) => {
     try {
-      const closed = terminalManager.closeAllForAccount(accountId);
+      const closed = terminalManager.closeAllForAccount(accountId, "account-deleted");
       if (closed > 0) {
         app.log.info(`Closed ${closed} session(s) for deleted account ${accountId}`);
       }
@@ -185,6 +189,10 @@ export async function buildApp(params: BuildAppParams) {
   }
 
   registerApiKeyRoutes({ app, apiKeyRepo });
+
+  if (params.sessionLifecycleRepo) {
+    registerAuditRoutes({ app, sessionLifecycleRepo: params.sessionLifecycleRepo });
+  }
 
   if (params.pushSubRepo) {
     registerPushRoutes({

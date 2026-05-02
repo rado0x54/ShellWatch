@@ -5,6 +5,7 @@ import { resolveKeys } from "./keys.js";
 import { OutputBuffer } from "./output-buffer.js";
 import type { TerminalTransport, TransportFactory } from "./transport.js";
 import {
+  type CloseReason,
   generateSessionId,
   type OutputReadResult,
   type TerminalEventMap,
@@ -74,6 +75,14 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       // the kinds we implement today (ui, mcp). When the planned "ssh" agent
       // source lands (#12), extend EndpointAuthTrigger to include it.
       source: trigger.kind,
+      sourceIp: trigger.sourceIp,
+      ...(trigger.kind === "mcp" && {
+        mcpReason: trigger.reason,
+        mcpClientName: trigger.mcpClientName,
+        mcpClientVersion: trigger.mcpClientVersion,
+        apiKeyLabel: trigger.apiKeyLabel,
+        apiKeyPrefix: trigger.apiKeyPrefix,
+      }),
     };
 
     const output = new OutputBuffer(this.maxOutputBufferSize);
@@ -98,11 +107,14 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     });
 
     transport.on("close", () => {
-      this.setStatus(managed, "closed");
+      // If we already started a client-initiated close, preserve the originating
+      // reason (set by close()/setStatus); only fall back to server-hangup for
+      // transport-driven closes that arrive without a reason already in flight.
+      this.setStatus(managed, "closed", managed.session.closeReason ?? "server-hangup");
     });
 
     transport.on("error", () => {
-      this.setStatus(managed, "error");
+      this.setStatus(managed, "error", managed.session.closeReason ?? "transport-error");
     });
 
     this.setStatus(managed, "open");
@@ -167,25 +179,25 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     return managed ? { ...managed.session } : null;
   }
 
-  close(sessionId: string): void {
+  close(sessionId: string, reason?: CloseReason): void {
     const managed = this.getManaged(sessionId);
     if (managed.session.status === "closed" || managed.session.status === "closing") {
       return;
     }
-    this.setStatus(managed, "closing");
+    this.setStatus(managed, "closing", reason);
     managed.transport.close();
     managed.output.clear();
-    this.setStatus(managed, "closed");
+    this.setStatus(managed, "closed", reason);
     this.terminals.delete(sessionId);
   }
 
   /** Close every live session owned by `accountId`. Returns the number closed. */
-  closeAllForAccount(accountId: string): number {
+  closeAllForAccount(accountId: string, reason: CloseReason): number {
     let count = 0;
     for (const sessionId of this.listSessions()
       .filter((s) => s.accountId === accountId)
       .map((s) => s.sessionId)) {
-      this.close(sessionId);
+      this.close(sessionId, reason);
       count++;
     }
     return count;
@@ -197,7 +209,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       this.cleanupTimer = null;
     }
     for (const sessionId of this.terminals.keys()) {
-      this.close(sessionId);
+      this.close(sessionId, "shutdown");
     }
   }
 
@@ -209,17 +221,32 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
     return managed;
   }
 
-  private setStatus(managed: ManagedTerminal, status: TerminalStatus): void {
+  private setStatus(managed: ManagedTerminal, status: TerminalStatus, reason?: CloseReason): void {
     const previousStatus = managed.session.status;
     if (previousStatus === status) return;
     managed.session.status = status;
+    // `closing` is included so the originating reason from close() is captured
+    // BEFORE transport.close() runs. If the transport ever emits 'close'
+    // synchronously inside its close() call, the listener fires with the saved
+    // reason rather than falling back to "server-hangup".
+    if (
+      (status === "closing" || status === "closed" || status === "error") &&
+      reason &&
+      !managed.session.closeReason
+    ) {
+      managed.session.closeReason = reason;
+    }
     this.emit("status-change", {
       sessionId: managed.session.sessionId,
       status,
       previousStatus,
+      reason: managed.session.closeReason,
     });
     if (status === "closed") {
-      this.emit("close", { sessionId: managed.session.sessionId });
+      this.emit("close", {
+        sessionId: managed.session.sessionId,
+        reason: managed.session.closeReason,
+      });
     }
   }
 
@@ -229,7 +256,7 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
       if (managed.session.status !== "open") continue;
       const idle = now - managed.session.lastActivityAt.getTime();
       if (idle > this.idleTimeoutMs) {
-        this.close(sessionId);
+        this.close(sessionId, "idle-timeout");
       }
     }
   }

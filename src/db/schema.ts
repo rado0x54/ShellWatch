@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // --- Accounts ---
 
@@ -96,18 +96,73 @@ export const endpoints = sqliteTable("endpoints", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- Session History ---
+// --- Session Lifecycle Audit (#184) ---
+// Tracks session open → close transitions and the metadata available at each
+// boundary. Replaces the unused `session_history` table from the original schema.
+//
+// Coverage gap: only sessions that successfully reach the `open` state are
+// recorded — failed connection attempts (transportFactory throws in
+// TerminalManager.create) do not produce audit rows. This is intentional for
+// now because the writer's open/close model assumes a session row already
+// exists when close fires; capturing failed creates needs a third path that
+// synthesizes a directly-errored row. Tracked as a follow-up to #184.
 
-export const sessionHistory = sqliteTable("session_history", {
-  sessionId: text("session_id").primaryKey(),
-  endpointId: text("endpoint_id").notNull(),
-  accountId: text("account_id").notNull(),
-  source: text("source").notNull(),
-  status: text("status").notNull(),
-  createdAt: text("created_at").notNull(),
-  closedAt: text("closed_at"),
-  durationMs: integer("duration_ms"),
-});
+export const auditSessionLifecycle = sqliteTable(
+  "audit_session_lifecycle",
+  {
+    sessionId: text("session_id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    // Intentionally no FK to endpoints(id): audit rows must outlive endpoint
+    // deletion so post-mortem queries about a removed endpoint still return
+    // history. Stored as the original endpoint id; resolution to a label is
+    // best-effort at read time.
+    endpointId: text("endpoint_id").notNull(),
+    source: text("source").notNull(), // 'ui' | 'mcp' | 'ssh'
+    status: text("status").notNull(), // 'open' | 'closed' | 'error'
+    createdAt: text("created_at").notNull(),
+    closedAt: text("closed_at"),
+    durationMs: integer("duration_ms"),
+    // Trigger metadata (always-recorded when present)
+    sourceIp: text("source_ip"),
+    // MCP-trigger-only metadata
+    mcpReason: text("mcp_reason"),
+    mcpClientName: text("mcp_client_name"),
+    mcpClientVersion: text("mcp_client_version"),
+    // API-key-auth metadata (set whenever the session was authenticated via an API key)
+    apiKeyLabel: text("api_key_label"),
+    apiKeyPrefix: text("api_key_prefix"),
+    // Agent-client metadata — populated for sessions opened via shellwatch-agent
+    // paths once #12 (SSH bastion) lands. Reserved columns; left null until then.
+    clientHostname: text("client_hostname"),
+    clientOs: text("client_os"),
+    clientVersion: text("client_version"),
+    // Why the session ended (null while open, set on close transition).
+    // Subset of CloseReason (#185); see TerminalManager.
+    closeReason: text("close_reason"),
+  },
+  (table) => [
+    // Unfiltered keyset-paged tail: WHERE account_id = ? ORDER BY created_at DESC, session_id DESC.
+    // ASC index is fine — SQLite scans it in reverse for the DESC order-by.
+    index("audit_session_lifecycle_account_created_idx").on(
+      table.accountId,
+      table.createdAt,
+      table.sessionId,
+    ),
+    // Endpoint-filtered keyset-paged tail: adds endpoint_id as a leading equality
+    // so the same scan strategy applies when ?endpointId is passed.
+    index("audit_session_lifecycle_account_endpoint_created_idx").on(
+      table.accountId,
+      table.endpointId,
+      table.createdAt,
+      table.sessionId,
+    ),
+    // Reject typos in the writer at the DB layer rather than corrupting the audit.
+    check("audit_session_lifecycle_status_chk", sql`${table.status} IN ('open','closed','error')`),
+    check("audit_session_lifecycle_source_chk", sql`${table.source} IN ('ui','mcp','ssh')`),
+  ],
+);
 
 // --- Push Subscriptions (Web Push API) ---
 

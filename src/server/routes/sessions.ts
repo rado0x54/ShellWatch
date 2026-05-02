@@ -81,7 +81,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         reply.status(404);
         return { error: "Session not found" };
       }
-      terminalManager.close(request.params.sessionId);
+      terminalManager.close(request.params.sessionId, "client.ui");
       return { status: "closed" };
     },
   );
