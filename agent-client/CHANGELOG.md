@@ -1,3 +1,7 @@
+## v1.0.0 (2026-05-03)
+
+- chore: adopt MIT license ([#192](https://github.com/rado0x54/ShellWatch/pull/192))
+
 ## v0.1.0 (2026-05-01)
 
 - feat(agent): Windows support — named-pipe listener + windows build matrix ([#175](https://github.com/rado0x54/ShellWatch/pull/175)) ([#177](https://github.com/rado0x54/ShellWatch/pull/177))
