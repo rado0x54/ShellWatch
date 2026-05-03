@@ -27,6 +27,7 @@ COPY tsconfig.json ./
 COPY src/ src/
 COPY client/ client/
 COPY drizzle/ drizzle/
+COPY scripts/ scripts/
 
 # Bake build identity into the runtime — read by src/server/buildInfo.ts.
 # ARGs are passed through explicitly via shell substitution so this works
@@ -36,6 +37,10 @@ RUN GIT_SHA="$GIT_SHA" GIT_REF="$GIT_REF" \
     node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:new Date().toISOString()}));"
 
 RUN pnpm build
+# Bundle third-party license texts BEFORE pruning so devDeps still include
+# the resolver context that pnpm needs for license metadata. The script
+# walks --prod only, so the output covers runtime deps only.
+RUN pnpm licenses:bundle
 RUN pnpm prune --prod --ignore-scripts
 
 # Stage 3 — Runtime
@@ -43,6 +48,7 @@ FROM node:24-bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/rado0x54/ShellWatch"
 LABEL org.opencontainers.image.description="SSH session broker with browser UI and MCP interface"
+LABEL org.opencontainers.image.licenses="LicenseRef-FSL-1.1-Apache-2.0"
 
 # Replace the baked-in `node` user with a named `shellwatch` user pinned to
 # UID/GID 1000 so bind-mounted volumes owned by the typical host user (1000)
@@ -60,6 +66,8 @@ COPY --from=build --chown=shellwatch:shellwatch /app/node_modules/ node_modules/
 COPY --from=build --chown=shellwatch:shellwatch /app/drizzle/ drizzle/
 COPY --from=build --chown=shellwatch:shellwatch /app/package.json package.json
 COPY --from=build --chown=shellwatch:shellwatch /app/buildInfo.generated.json buildInfo.generated.json
+COPY --chown=shellwatch:shellwatch LICENSE LICENSE
+COPY --from=build --chown=shellwatch:shellwatch /app/THIRD_PARTY_LICENSES THIRD_PARTY_LICENSES
 RUN install -d -o shellwatch -g shellwatch /app/data /app/keys
 
 VOLUME ["/app/data", "/app/keys"]

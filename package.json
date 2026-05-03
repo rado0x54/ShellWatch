@@ -25,6 +25,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "update:aaguids": "tsx scripts/update-aaguids.ts",
+    "licenses:bundle": "node scripts/bundle-licenses.mjs",
     "prepare": "husky"
   },
   "engines": {
@@ -32,7 +33,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "packageManager": "pnpm@10.11.1",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
