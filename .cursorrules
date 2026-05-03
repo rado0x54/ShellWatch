@@ -1,7 +1,0 @@
-Please read and follow AGENTS.md for project context and conventions.
-
-Use pnpm for all package operations.
-Use single-line commit messages with category prefix (e.g., feat:, fix:, chore:).
-Use ES modules (import/export), not CommonJS (require).
-Use .js extensions in relative import paths.
-TypeScript strict mode — no `any` unless absolutely necessary.
