@@ -16,11 +16,17 @@ name: Release
 # review, so main and develop never receive bot-authored direct pushes —
 # branch protection rulesets stay active.
 #
-# Dispatch must run from main. The release promotes the :stable image (built
-# when main is pushed), so what's on develop is irrelevant — develop is free
-# to be ahead. The "ready to ship" gate is whatever you fast-forwarded onto
-# main; that push triggered preprod deploy via path #1, giving you a chance
-# to verify before clicking Run workflow.
+# Release model:
+#   - Fast-forwarding main from develop = "release to preprod". The maintainer
+#     does this whenever they decide a develop state is ready to soak; it
+#     triggers path #1 above, which builds :stable and deploys preprod.
+#   - Production release dispatches from main, promoting whatever :stable
+#     currently is. develop can be arbitrarily ahead of main — it doesn't
+#     affect what ships.
+#
+# Dispatch must run from main (enforced below). There is no automated check
+# that main matches the preprod-soaked state; the maintainer's discipline
+# (FF main → wait for preprod → verify → dispatch) is the gate.
 
 on:
   push:
@@ -235,7 +241,7 @@ jobs:
           DST="${{ env.IMAGE }}:${VERSION}"
 
           if ! crane manifest "$SRC" >/dev/null 2>&1; then
-            echo "::error::$SRC not found. Did you fast-forward main from develop and let the docker job complete before dispatching?"
+            echo "::error::$SRC not found. main must have been pushed (FF'd from develop) and the docker job completed before dispatching."
             exit 1
           fi
 

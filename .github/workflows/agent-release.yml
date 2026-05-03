@@ -2,6 +2,12 @@ name: Agent Release
 
 # Manually triggered from main. Enter the version (e.g. `0.0.3`).
 #
+# Release model:
+#   - Fast-forwarding main from develop = the maintainer's "this state is
+#     ready" signal (same gesture as the server release flow).
+#   - Agent release dispatches from main and tags main HEAD; develop can be
+#     arbitrarily ahead and doesn't affect what ships.
+#
 # Steps:
 #   1. validate dispatched from main + version > latest agent/v* tag
 #   2. cross-build linux/{amd64,arm64} + darwin/{amd64,arm64} binaries
