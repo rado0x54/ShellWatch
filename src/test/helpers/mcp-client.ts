@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { TestLog } from "./test-log.js";

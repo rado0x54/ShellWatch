@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import adapter from "@sveltejs/adapter-static";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 

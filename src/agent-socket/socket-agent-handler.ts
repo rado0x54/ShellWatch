@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Shared handler logic for SSH agent protocol connections.
  *

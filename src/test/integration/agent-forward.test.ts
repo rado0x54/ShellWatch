@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import ssh2 from "ssh2";
 
@@ -122,8 +123,6 @@ describe("SSH Agent Forwarding", () => {
 
       await waitFor(() => sshServer.agentForwardRequested);
       expect(sshServer.agentForwardRequested).toBe(true);
-
-      terminalManager.close(session.sessionId);
     } finally {
       terminalManager.destroy();
     }
@@ -144,8 +143,6 @@ describe("SSH Agent Forwarding", () => {
       await new Promise((r) => setTimeout(r, 100));
 
       expect(sshServer.agentForwardRequested).toBe(false);
-
-      terminalManager.close(session.sessionId);
     } finally {
       terminalManager.destroy();
     }

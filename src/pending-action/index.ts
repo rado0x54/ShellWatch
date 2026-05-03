@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 export { NotificationDispatcher, type NotificationChannel } from "./dispatcher.js";
 export { PendingActionStore } from "./store.js";
 export {
@@ -8,10 +9,13 @@ export {
   type EndpointAuthTrigger,
   type KeyApproveAction,
   type PendingAction,
+  type PendingActionEventMap,
+  type PendingActionResolvedEvent,
   type PendingActionStatus,
   type PendingActionType,
   type PendingActionView,
   type SignRequestContext,
+  type SigningRequestOutcome,
   toActionView,
   type WebAuthnSignAction,
 } from "./types.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Integration tests for the SSH agent proxy WebSocket endpoint.
  *

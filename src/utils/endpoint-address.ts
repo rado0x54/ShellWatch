@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 const DEFAULT_USERNAME = "shellwatch";
 const DEFAULT_PORT = 22;
 

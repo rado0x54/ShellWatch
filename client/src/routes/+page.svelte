@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <div class="placeholder-page">
   <div class="placeholder-inner">
     <div class="placeholder-logo" aria-hidden="true"></div>

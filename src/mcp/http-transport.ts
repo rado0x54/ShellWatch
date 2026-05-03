@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -110,6 +111,8 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         accountId,
         maxSessions,
         sourceIp: request.ip,
+        apiKeyLabel: request.apiKey?.label,
+        apiKeyPrefix: request.apiKey?.keyPrefix,
       });
       const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, accountId);
 

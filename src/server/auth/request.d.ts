@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import "fastify";
 import type { ApiKeyInfo } from "../../db/repositories/api-key-repo.js";
 

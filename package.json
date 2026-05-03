@@ -25,14 +25,17 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "update:aaguids": "tsx scripts/update-aaguids.ts",
+    "licenses:bundle": "node scripts/bundle-licenses.mjs",
+    "spdx:check": "node scripts/spdx-headers.mjs",
+    "spdx:write": "node scripts/spdx-headers.mjs --write",
     "prepare": "husky"
   },
   "engines": {
     "node": ">=22"
   },
   "keywords": [],
-  "author": "",
-  "license": "UNLICENSED",
+  "author": "Martin Riedel",
+  "license": "SEE LICENSE IN LICENSE",
   "packageManager": "pnpm@10.11.1",
   "devDependencies": {
     "@eslint/js": "^10.0.1",

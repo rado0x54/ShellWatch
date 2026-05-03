@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
@@ -108,7 +109,7 @@
             }}
           >
             <div class="session-info">
-              <span class="session-label">
+              <span class="session-label" title={getEndpointLabel(sess.endpointId)}>
                 <span class="status-dot {sess.status}"></span>{getEndpointLabel(sess.endpointId)}
                 {#if isObserver}
                   <span class="badge badge-observer">observer</span>
@@ -120,21 +121,70 @@
               {#if isObserver}
                 <button
                   type="button"
-                  class="btn btn-warn"
-                  onclick={() => wsTakeControl(sess.sessionId)}>Take Control</button
+                  class="btn btn-warn btn-icon"
+                  aria-label="Take control"
+                  title="Take control"
+                  onclick={() => wsTakeControl(sess.sessionId)}
                 >
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2 8h7M6 5l3 3-3 3" />
+                    <path d="M10 3h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2" />
+                  </svg>
+                </button>
               {:else}
                 <button
                   type="button"
-                  class="btn btn-ghost"
-                  onclick={() => wsReleaseControl(sess.sessionId)}>Release</button
+                  class="btn btn-ghost btn-icon"
+                  aria-label="Release control"
+                  title="Release control"
+                  onclick={() => wsReleaseControl(sess.sessionId)}
                 >
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M7 8h7M11 5l3 3-3 3" />
+                    <path d="M9 3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h5" />
+                  </svg>
+                </button>
               {/if}
               <button
                 type="button"
-                class="btn btn-secondary"
-                onclick={() => handleClose(sess.sessionId)}>Close</button
+                class="btn btn-secondary btn-icon"
+                aria-label="Close session"
+                title="Close session"
+                onclick={() => handleClose(sess.sessionId)}
               >
+                <svg
+                  viewBox="0 0 16 16"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
             </div>
           </div>
         </li>
@@ -161,6 +211,14 @@
       onclick={() => navTo("/observer")}
     >
       Observer Mode
+    </button>
+    <button
+      type="button"
+      class="btn-nav"
+      class:active={currentPath.startsWith("/audit")}
+      onclick={() => navTo("/audit")}
+    >
+      Audit
     </button>
     <button
       type="button"
@@ -312,6 +370,7 @@
     flex-direction: column;
     gap: 0.15rem;
     min-width: 0;
+    flex: 1;
   }
 
   .session-label {
@@ -333,6 +392,30 @@
     display: flex;
     gap: var(--space-1);
     flex-shrink: 0;
+  }
+
+  .session-actions :global(.btn-icon) {
+    padding: 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    line-height: 0;
+  }
+
+  /* SVG is decorative (aria-hidden); let clicks reach the <button> so the
+   * session-item's tagName==="BUTTON" guard isn't bypassed. */
+  .session-actions :global(.btn-icon svg) {
+    pointer-events: none;
+  }
+
+  .session-actions :global(.btn-secondary.btn-icon:hover) {
+    color: var(--error);
+    box-shadow: none;
+  }
+
+  .session-actions :global(.btn-warn.btn-icon:hover) {
+    box-shadow: var(--glow-secondary);
   }
 
   .sidebar-footer {

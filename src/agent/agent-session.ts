@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import type { OutputReadResult, TerminalManager, TerminalSession } from "../terminal/index.js";
@@ -18,6 +19,9 @@ export interface AgentSessionOptions {
   maxSessions?: number;
   /** Source IP of the calling agent (used when building the signing trigger). */
   sourceIp?: string;
+  /** API key label / prefix used to authenticate the agent connection (audit log #184). */
+  apiKeyLabel?: string;
+  apiKeyPrefix?: string;
 }
 
 /**
@@ -39,6 +43,8 @@ export class AgentSession {
   private readonly accountId: string;
   private readonly maxSessions: number;
   private readonly sourceIp?: string;
+  private readonly apiKeyLabel?: string;
+  private readonly apiKeyPrefix?: string;
 
   constructor(opts: AgentSessionOptions) {
     this.endpointRepo = opts.endpointRepo;
@@ -47,6 +53,8 @@ export class AgentSession {
     this.accountId = opts.accountId;
     this.maxSessions = opts.maxSessions ?? 5;
     this.sourceIp = opts.sourceIp;
+    this.apiKeyLabel = opts.apiKeyLabel;
+    this.apiKeyPrefix = opts.apiKeyPrefix;
   }
 
   /**
@@ -109,6 +117,8 @@ export class AgentSession {
       sourceIp: this.sourceIp,
       mcpClientName: this.mcpClientName,
       mcpClientVersion: this.mcpClientVersion,
+      apiKeyLabel: this.apiKeyLabel,
+      apiKeyPrefix: this.apiKeyPrefix,
     };
     const session = await this.terminalManager.create(endpoint, this.accountId, trigger);
     this.ownedSessions.add(session.sessionId);
@@ -132,7 +142,7 @@ export class AgentSession {
 
   closeSession(sessionId: string): void {
     this.assertOwnership(sessionId);
-    this.terminalManager.close(sessionId);
+    this.terminalManager.close(sessionId, "client.mcp");
     this.ownedSessions.delete(sessionId);
   }
 
@@ -140,7 +150,7 @@ export class AgentSession {
   destroy(): void {
     for (const sessionId of this.ownedSessions) {
       try {
-        this.terminalManager.close(sessionId);
+        this.terminalManager.close(sessionId, "agent-disconnect");
       } catch {
         // Session may already be closed
       }

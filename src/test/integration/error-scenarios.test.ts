@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import { makeTestConfig } from "../helpers/index.js";
 import {

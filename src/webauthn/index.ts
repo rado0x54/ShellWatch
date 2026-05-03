@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 export {
   buildFileKeyEntry,
   type CompositeAgentParams,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import js from "@eslint/js";
 import prettier from "eslint-config-prettier";
 import pluginPrettier from "eslint-plugin-prettier";

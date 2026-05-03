@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // shellwatch-agent is a thin SSH agent proxy that relays SSH agent
 // protocol requests from a local Unix socket to a remote ShellWatch
 // server over WebSocket.
@@ -191,7 +192,7 @@ COMMANDS
 
 DAEMON FLAGS
   --server URL          ShellWatch server (default: $SHELLWATCH_SERVER or
-                        ` + config.DefaultServer + `)
+                        `+config.DefaultServer+`)
   --api-key KEY         Static API key. Skips the credstore lookup.
   --socket PATH         Listener path. On macOS/Linux, a Unix socket
                         ($XDG_RUNTIME_DIR/shellwatch-agent.sock or a

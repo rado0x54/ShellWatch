@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Convert a WebAuthn ECDSA-P256 COSE public key to the custom
  * webauthn-sk-ecdsa-sha2-nistp256@openssh.com authorized_keys format.

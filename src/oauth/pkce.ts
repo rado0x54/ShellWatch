@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { createHash } from "node:crypto";
 
 export function computePkceS256(verifier: string): string {

@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import SectionTabs from "$lib/components/SectionTabs.svelte";
   import { account } from "$lib/stores/account.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { createHash, randomUUID } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import type { Config } from "../config/index.js";

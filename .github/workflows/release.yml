@@ -119,7 +119,7 @@ jobs:
             docker image prune -f
 
       - name: Smoke test
-        run: curl -fsS --retry 5 --retry-delay 3 https://app-dev.shellwatch.ai/health
+        run: curl -fsS --retry 5 --retry-delay 3 "${{ secrets.APP_URL_DEV }}/health"
 
   deploy-preprod:
     name: Deploy to app-preprod
@@ -141,7 +141,7 @@ jobs:
             docker image prune -f
 
       - name: Smoke test
-        run: curl -fsS --retry 5 --retry-delay 3 https://app-preprod.shellwatch.ai/health
+        run: curl -fsS --retry 5 --retry-delay 3 "${{ secrets.APP_URL_PREPROD }}/health"
 
   # -------------------------------------------------- workflow_dispatch path
 
@@ -266,7 +266,7 @@ jobs:
             docker image prune -f
 
       - name: Smoke test prod
-        run: curl -fsS --retry 5 --retry-delay 3 https://app.shellwatch.ai/health
+        run: curl -fsS --retry 5 --retry-delay 3 "${{ secrets.APP_URL_PROD }}/health"
 
       - name: Tag commit & push tag
         run: |

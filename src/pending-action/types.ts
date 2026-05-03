@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { UserVerification } from "../db/repositories/endpoint-repo.js";
 import type { SignResponse } from "../webauthn/ssh-agent.js";
 
@@ -20,6 +21,11 @@ export interface AgentProxyContext {
  * MCP triggers carry a `reason` string so the approval UI (and future audit
  * log, #16) can show the agent's stated intent — humans clicking through the
  * web UI already know what they meant, so the `ui` variant has no equivalent.
+ *
+ * `apiKeyLabel`/`apiKeyPrefix` are populated for MCP triggers (which are
+ * always bearer-authenticated). UI triggers come through the cookie auth-gate,
+ * which never sets `request.apiKey`, so the `ui` variant carries no API-key
+ * fields. Used by the session-lifecycle audit log (#184).
  */
 export type EndpointAuthTrigger =
   | { kind: "ui"; sourceIp?: string }
@@ -29,6 +35,8 @@ export type EndpointAuthTrigger =
       sourceIp?: string;
       mcpClientName?: string;
       mcpClientVersion?: string;
+      apiKeyLabel?: string;
+      apiKeyPrefix?: string;
     };
 
 export interface EndpointAuthContext {
@@ -114,3 +122,26 @@ export function toActionView(action: PendingAction): PendingActionView {
   const { resolve: _, reject: _r, ...view } = action;
   return view;
 }
+
+// --- Store events (audit-writer subscribes) ---
+
+/**
+ * Audit outcome for a signing request. Note this is a richer label than the
+ * in-memory `PendingActionStatus`: the store collapses both deny and cancel
+ * onto `status: "denied"`, while the audit log distinguishes them.
+ */
+export type SigningRequestOutcome = "approved" | "denied" | "expired" | "cancelled";
+
+export interface PendingActionResolvedEvent {
+  action: PendingAction;
+  outcome: SigningRequestOutcome;
+  /** Wall-clock ms when the terminal transition fired. */
+  resolvedAt: number;
+  /** Populated only when outcome === "cancelled" — propagated from cancelForConnection. */
+  cancelReason?: string;
+}
+
+export type PendingActionEventMap = {
+  created: [PendingAction];
+  resolved: [PendingActionResolvedEvent];
+};

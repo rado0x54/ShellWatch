@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 */
 @import "@xterm/xterm/css/xterm.css";
 
 *,
@@ -351,6 +352,9 @@ input[type="number"],
 input[type="email"],
 input[type="search"],
 input[type="url"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
 select,
 textarea {
   appearance: none;
@@ -367,6 +371,23 @@ textarea {
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
+}
+
+/* Render the native datepicker popup in dark mode so it matches the surface,
+ * and recolor the chromium calendar-icon affordance to be visible on dark.
+ * (Browsers don't expose enough CSS to fully theme the popup; this is the
+ * minimum that keeps it from clashing with the rest of the UI.) */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"] {
+  color-scheme: dark;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
 }
 
 /* Re-add a custom caret for <select> since appearance:none removes the native one. */
@@ -390,6 +411,9 @@ input[type="number"]:focus,
 input[type="email"]:focus,
 input[type="search"]:focus,
 input[type="url"]:focus,
+input[type="date"]:focus,
+input[type="datetime-local"]:focus,
+input[type="time"]:focus,
 select:focus,
 textarea:focus {
   outline: none;

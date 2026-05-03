@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { randomUUID } from "node:crypto";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository, SshKeyRepository } from "../db/index.js";

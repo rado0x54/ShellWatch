@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository, EndpointRepository } from "../../db/index.js";
 import type { TerminalManager } from "../../terminal/index.js";
@@ -81,7 +82,7 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
         reply.status(404);
         return { error: "Session not found" };
       }
-      terminalManager.close(request.params.sessionId);
+      terminalManager.close(request.params.sessionId, "client.ui");
       return { status: "closed" };
     },
   );

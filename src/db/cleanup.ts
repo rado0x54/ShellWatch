@@ -1,13 +1,7 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { and, eq, lt, ne, sql } from "drizzle-orm";
 import type { ShellWatchDB } from "./connection.js";
-import {
-  accounts,
-  adminAccount,
-  apiKeys,
-  endpoints,
-  sessionHistory,
-  webauthnCredentials,
-} from "./schema.js";
+import { accounts, adminAccount, apiKeys, endpoints, webauthnCredentials } from "./schema.js";
 
 const DEFAULT_INACTIVITY_DAYS = 90;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -41,8 +35,8 @@ export function cleanupInactiveAccounts(
   const deletedIds: string[] = [];
 
   for (const { id } of expired) {
-    // Delete owned data (order matters for FK constraints)
-    db.delete(sessionHistory).where(eq(sessionHistory.accountId, id)).run();
+    // Delete owned data (order matters for FK constraints).
+    // audit_session_lifecycle has ON DELETE CASCADE; pushSubscriptions same.
     db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, id)).run();
     db.delete(apiKeys).where(eq(apiKeys.accountId, id)).run();
     db.delete(endpoints).where(eq(endpoints.accountId, id)).run();

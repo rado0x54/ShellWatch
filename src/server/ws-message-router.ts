@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { TerminalManager, TerminalSession } from "../terminal/index.js";
 import type { ClientMessage, ServerMessage, SessionMode } from "./ws-protocol.js";
 
@@ -120,7 +121,7 @@ export function routeMessage(msg: ClientMessage, ctx: WsClientContext, deps: WsR
         sendError(`Session not found: ${msg.sessionId}`);
         return;
       }
-      terminalManager.close(msg.sessionId);
+      terminalManager.close(msg.sessionId, "client.ws");
       break;
     }
 
