@@ -13,7 +13,7 @@ For detailed architecture docs see [docs/architecture.md](./docs/architecture.md
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - pnpm
 
 ## Setup
@@ -220,7 +220,7 @@ agentSocket:
 Then run the [`shellwatch-agent`](./agent-client/) thin client on your workstation:
 
 ```bash
-# Install (Homebrew tap; blocked anonymously while this repo is private — #147):
+# Install (Homebrew tap):
 brew install rado0x54/tap/shellwatch-agent
 
 # Or build from source:
