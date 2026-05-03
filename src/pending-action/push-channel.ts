@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import webpush from "web-push";
 import type { PushSubscriptionRepository } from "../db/repositories/push-subscription-repo.js";
 import type { NotificationChannel } from "./dispatcher.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package oauth implements the loopback PKCE flow shellwatch-agent uses to
 // obtain an `agent`-scoped API key from a ShellWatch instance.
 //

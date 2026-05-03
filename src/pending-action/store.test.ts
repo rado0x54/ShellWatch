@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SignResponse } from "../webauthn/ssh-agent.js";
 import { PendingActionStore } from "./store.js";

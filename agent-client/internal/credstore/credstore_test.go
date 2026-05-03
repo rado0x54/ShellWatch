@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package credstore
 
 import (
@@ -158,4 +159,3 @@ func TestCanonicalizeServerURL_Rejects(t *testing.T) {
 		}
 	}
 }
-

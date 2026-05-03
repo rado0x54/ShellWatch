@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { TerminalManager, TerminalSession } from "../terminal/index.js";
 import type { ClientMessage, ServerMessage, SessionMode } from "./ws-protocol.js";
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AccountRepository } from "../../db/repositories/account-repo.js";
 import { verifySessionCookie } from "./session-cookie.js";

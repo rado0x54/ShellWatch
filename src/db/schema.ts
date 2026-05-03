@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { sql } from "drizzle-orm";
 import { blob, check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 

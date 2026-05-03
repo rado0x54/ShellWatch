@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";

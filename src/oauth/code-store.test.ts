@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { afterEach, describe, expect, it } from "vitest";
 import { createAuthCodeStore, type AuthCodeStore } from "./code-store.js";
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentSession } from "../agent/index.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";

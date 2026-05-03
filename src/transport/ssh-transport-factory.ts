@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { EndpointInfo } from "../db/repositories/endpoint-repo.js";
 import type { WebAuthnCredentialInfo } from "../db/repositories/credential-queries.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";

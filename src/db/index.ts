@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 export { createDatabase, type DatabaseConnection, type ShellWatchDB } from "./connection.js";
 export { runMigrations } from "./migrate.js";
 export {

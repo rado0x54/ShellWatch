@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Fetches the community-maintained AAGUID registry and extracts a
  * names-only lookup table for use in passkey label suggestions.

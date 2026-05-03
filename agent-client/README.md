@@ -405,3 +405,9 @@ If you ran `login` against a different server URL than the daemon is using, the 
 ```bash
 go test ./...
 ```
+
+## License
+
+[MIT](./LICENSE) — the agent runs on end-user machines, so we keep it
+permissive and frictionless. The ShellWatch server and client at the
+repository root ship under [FSL-1.1-Apache-2.0](../LICENSE) instead.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Custom ssh2 agent that delegates signing via WebAuthn.
  *

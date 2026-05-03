@@ -34,6 +34,7 @@ The goal is to act as a thin session broker between configured SSH targets, huma
 - Use `.js` extensions in relative import paths (required for Node16 module resolution)
 - Single-line commit messages with category prefix: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`
 - **Functions with 5+ parameters must use a typed parameter object** instead of positional args. Export the params interface for callers.
+- **Every new source file must carry an `SPDX-License-Identifier` header on its first line** (after the shebang, if any). Use `LicenseRef-FSL-1.1-Apache-2.0` for files at the repo root and `MIT` for anything under `agent-client/`. CI enforces this via `pnpm spdx:check`; run `pnpm spdx:write` to add headers to files you've just created. Comment styles by extension: `// …` for `.ts`/`.mjs`/`.js`/`.go`, `<!-- … -->` for `.svelte`/`.html`, `/* … */` for `.css`, `# …` for `.sh`/`Makefile`.
 
 ## Project Structure
 

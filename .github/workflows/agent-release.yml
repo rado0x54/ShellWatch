@@ -146,6 +146,15 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent-client/go.mod
+          cache-dependency-path: agent-client/go.sum
+
+      - name: Bundle agent third-party licenses
+        working-directory: agent-client
+        run: make licenses
+
       - name: Generate path-scoped release notes
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -195,10 +204,15 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
+          # Upload agent-client/LICENSE under a disambiguated name so a future
+          # umbrella release can include the root LICENSE without conflict.
+          cp agent-client/LICENSE LICENSE-shellwatch-agent
           gh release create "${TAG}" \
             --title "ShellWatch Agent ${VERSION}" \
             --notes-file /tmp/release-body.md \
-            artifacts/shellwatch-agent-*
+            artifacts/shellwatch-agent-* \
+            LICENSE-shellwatch-agent \
+            AGENT_THIRD_PARTY_LICENSES
 
       # main/develop are protected by rulesets — bot opens a PR. Admin pushes
       # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire

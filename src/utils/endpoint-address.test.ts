@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { describe, expect, it } from "vitest";
 import { formatEndpointAddress, parseEndpointAddress } from "./endpoint-address.js";
 

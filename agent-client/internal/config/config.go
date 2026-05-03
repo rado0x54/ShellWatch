@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package config handles configuration from CLI flags, environment variables,
 // and the credstore with precedence: flags > env > credstore > defaults.
 package config

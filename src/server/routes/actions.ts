@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance } from "fastify";
 import type { PendingActionStore } from "../../pending-action/index.js";
 import type { WebSocketChannel } from "../../pending-action/ws-channel.js";

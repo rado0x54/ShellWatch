@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Allowlist of recognized Web Push services. Anything outside this list is
 // rejected at submit-time so an attacker cannot turn /api/push/subscribe into
 // an SSRF primitive (the stored URL is later POSTed to by webpush.sendNotification).

@@ -310,3 +310,41 @@ pnpm test:coverage  # run with coverage report
 **"Auth failure"** — Ensure the private key matches the server's authorized keys and the username is correct.
 
 **Port already in use** — Kill the existing process: `lsof -ti:3000 | xargs kill`
+
+## License
+
+The ShellWatch server and client at the repository root are released under the
+[**Functional Source License, Version 1.1, Apache 2.0 Future License**](./LICENSE)
+(`FSL-1.1-Apache-2.0`, also published upstream as `FSL-1.1-ALv2`).
+
+In plain English:
+
+- **Self-hosting allowed** — run ShellWatch on your own infrastructure for any internal purpose.
+- **Modify it freely** — fork, patch, change anything you want for your own use.
+- **Use it in your business** — internal use is unrestricted, including by enterprises.
+- **No competing commercial use** — for two years, you may not offer ShellWatch (or anything substantially similar) as a hosted/commercial service to third parties.
+- **Becomes Apache 2.0 after 2 years** — every release auto-relicenses to permissive Apache 2.0 on its second anniversary.
+
+Sub-components ship under more permissive terms:
+
+| Path            | License                         | Why                                                                  |
+| --------------- | ------------------------------- | -------------------------------------------------------------------- |
+| repo root       | [FSL-1.1-Apache-2.0](./LICENSE) | The commercial product. Source-available now, Apache 2.0 in 2 years. |
+| `agent-client/` | [MIT](./agent-client/LICENSE)   | End-user-machine binary; keeping it MIT removes adoption friction.   |
+
+Third-party dependency license texts ship per release artifact:
+
+- **Node deps:** `/app/THIRD_PARTY_LICENSES` inside the Docker image — generated at image build by [`scripts/bundle-licenses.mjs`](./scripts/bundle-licenses.mjs). Run locally with `pnpm run licenses:bundle`.
+- **Go deps:** `AGENT_THIRD_PARTY_LICENSES` uploaded alongside each agent binary on the [`agent/v*` GitHub releases](https://github.com/rado0x54/ShellWatch/releases) — generated at release time by [`agent-client/scripts/bundle-licenses.sh`](./agent-client/scripts/bundle-licenses.sh). Run locally with `cd agent-client && make licenses`.
+
+> Note: GitHub's license sidebar will show "Other" — FSL is not yet in
+> [licensee](https://github.com/licensee/licensee), so the auto-detection
+> can't classify it. The LICENSE file is canonical.
+
+### Trademark
+
+"ShellWatch" and the ShellWatch logo are trademarks of Martin Riedel and are
+**not** licensed under FSL. The license grants you the right to use, modify,
+and redistribute the source code — it does **not** grant the right to use the
+ShellWatch name or logo to identify your fork or any derivative product or
+service. If you ship a fork, please pick a different name and logo.
