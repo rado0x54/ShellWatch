@@ -28,9 +28,9 @@ describe("parseEndpointAddress", () => {
   });
 
   it("parses user@host:port", () => {
-    expect(parseEndpointAddress("mriedel@de.v.riedel.nyc:62222")).toEqual({
-      username: "mriedel",
-      host: "de.v.riedel.nyc",
+    expect(parseEndpointAddress("deploy@dev.example.com:62222")).toEqual({
+      username: "deploy",
+      host: "dev.example.com",
       port: 62222,
     });
   });
@@ -97,7 +97,7 @@ describe("formatEndpointAddress", () => {
 
   it("includes both non-defaults", () => {
     expect(
-      formatEndpointAddress({ username: "mriedel", host: "de.v.riedel.nyc", port: 62222 }),
-    ).toBe("mriedel@de.v.riedel.nyc:62222");
+      formatEndpointAddress({ username: "deploy", host: "dev.example.com", port: 62222 }),
+    ).toBe("deploy@dev.example.com:62222");
   });
 });
