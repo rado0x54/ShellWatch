@@ -172,6 +172,13 @@ export const auditSessionLifecycle = sqliteTable(
 //
 // Challenge / signature bytes are intentionally NOT stored — high volume, low
 // value. credentialId is the correlation key for tying back to a passkey.
+//
+// Snapshot semantics: descriptive columns (passkey_label, key_label,
+// endpoint_label, mcp_client_name, api_key_label, etc.) are recorded as they
+// were at sign time and are intentionally not joined back to live tables on
+// read. A passkey rename or endpoint relabel must NOT rewrite history; resist
+// the urge to "fix" stale-looking values by joining to webauthn_credentials /
+// endpoints / api_keys at query time.
 
 export const auditSigningRequests = sqliteTable(
   "audit_signing_requests",
