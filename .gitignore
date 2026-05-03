@@ -17,3 +17,5 @@ agent-client/shellwatch-agent-*
 .claude/scheduled_tasks.lock
 buildInfo.generated.json
 THIRD_PARTY_LICENSES
+AGENT_THIRD_PARTY_LICENSES
+LICENSE-shellwatch-agent

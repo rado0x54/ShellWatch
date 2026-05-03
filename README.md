@@ -332,9 +332,10 @@ Sub-components ship under more permissive terms:
 | repo root       | [FSL-1.1-Apache-2.0](./LICENSE) | The commercial product. Source-available now, Apache 2.0 in 2 years. |
 | `agent-client/` | [MIT](./agent-client/LICENSE)   | End-user-machine binary; keeping it MIT removes adoption friction.   |
 
-Third-party dependency license texts are bundled into release artifacts as
-`THIRD_PARTY_LICENSES` (Docker image and agent binaries). Generate locally
-with `pnpm run licenses:bundle` or see [`scripts/bundle-licenses.mjs`](./scripts/bundle-licenses.mjs).
+Third-party dependency license texts ship per release artifact:
+
+- **Node deps:** `/app/THIRD_PARTY_LICENSES` inside the Docker image — generated at image build by [`scripts/bundle-licenses.mjs`](./scripts/bundle-licenses.mjs). Run locally with `pnpm run licenses:bundle`.
+- **Go deps:** `AGENT_THIRD_PARTY_LICENSES` uploaded alongside each agent binary on the [`agent/v*` GitHub releases](https://github.com/rado0x54/ShellWatch/releases) — generated at release time by [`agent-client/scripts/bundle-licenses.sh`](./agent-client/scripts/bundle-licenses.sh). Run locally with `cd agent-client && make licenses`.
 
 > Note: GitHub's license sidebar will show "Other" — FSL is not yet in
 > [licensee](https://github.com/licensee/licensee), so the auto-detection
