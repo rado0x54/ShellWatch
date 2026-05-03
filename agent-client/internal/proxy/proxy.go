@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package proxy implements the SSH agent protocol relay between a local
 // listener (Unix domain socket on macOS/Linux, named pipe on Windows) and
 // a remote ShellWatch WebSocket endpoint.

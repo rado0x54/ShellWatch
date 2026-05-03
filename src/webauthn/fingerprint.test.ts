@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { describe, expect, it } from "vitest";
 import { sha256Fingerprint } from "./fingerprint.js";
 import { toSkPublicKeyBlob } from "./ssh-key-format.js";

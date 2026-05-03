@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package credstore manages per-server API tokens for shellwatch-agent.
 //
 // Primary backend is the OS keyring (macOS Keychain, libsecret on Linux,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 const KEY_MAP: Record<string, string> = {
   "ctrl+c": "\x03",
   "ctrl+d": "\x04",

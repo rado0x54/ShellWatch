@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Sanitization for client-reported identity strings that cross a trust boundary
  * into pending-action payloads / approval UI (agent-proxy WS handshake headers,

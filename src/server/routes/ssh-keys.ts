@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository, SshKeyRepository } from "../../db/index.js";
 import type { KeyAvailability } from "../../transport/key-directory-watcher.js";

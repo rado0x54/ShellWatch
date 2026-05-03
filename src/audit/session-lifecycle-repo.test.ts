@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, type DatabaseConnection } from "../db/connection.js";
 import { runMigrations } from "../db/migrate.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // shellwatch-agent is a thin SSH agent proxy that relays SSH agent
 // protocol requests from a local Unix socket to a remote ShellWatch
 // server over WebSocket.

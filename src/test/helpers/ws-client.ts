@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import WebSocket from "ws";
 import type { TestLog } from "./test-log.js";
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Test the SSH signature wire format against known-good structure.
  * Compares our output with the expected OpenSSH wire format.

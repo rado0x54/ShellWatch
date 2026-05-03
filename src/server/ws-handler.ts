@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import type { TerminalManager } from "../terminal/index.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { WebSocket } from "ws";
 import type { WsExtension } from "../server/ws-extension.js";
 import type { NotificationChannel } from "./dispatcher.js";

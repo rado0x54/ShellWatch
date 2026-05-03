@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /// <reference types="@sveltejs/kit" />
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { EventEmitter } from "node:events";
 
 // App-level event bus for account-state changes that need cleanup outside the

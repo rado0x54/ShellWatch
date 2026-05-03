@@ -38,6 +38,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
 
+  spdx:
+    name: SPDX Headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/spdx-headers.mjs
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

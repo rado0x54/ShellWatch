@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository, EndpointRepository } from "../../db/index.js";

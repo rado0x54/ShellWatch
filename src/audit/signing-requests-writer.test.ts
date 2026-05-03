@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PendingActionStore } from "../pending-action/store.js";
 import type { CreateActionParams } from "../pending-action/types.js";

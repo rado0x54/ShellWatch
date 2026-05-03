@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 export { startTestApp, type TestAppServer } from "./app-server.js";
 export { createTestMcpClient, type TestMcpClient } from "./mcp-client.js";
 export { startTestSshServer, type TestSshServer } from "./ssh-server.js";

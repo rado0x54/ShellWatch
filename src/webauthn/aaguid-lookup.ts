@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // @ts-expect-error — Node 22+ supports JSON import attributes; tsc needs verbatimModuleSyntax for `with`
 import aaguidNames from "./aaguid-names.json" with { type: "json" };
 

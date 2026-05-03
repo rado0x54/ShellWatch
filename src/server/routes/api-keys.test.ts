@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { InMemoryApiKeyRepository } from "../../db/repositories/api-key-repo.js";

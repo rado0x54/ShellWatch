@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { and, eq, lt, ne, sql } from "drizzle-orm";
 import type { ShellWatchDB } from "./connection.js";
 import { accounts, adminAccount, apiKeys, endpoints, webauthnCredentials } from "./schema.js";

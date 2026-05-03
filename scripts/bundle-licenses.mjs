@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Generate THIRD_PARTY_LICENSES by aggregating license texts of every
 // production runtime dependency reported by `pnpm licenses list --prod`.
 //

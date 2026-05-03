@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 BINARY := shellwatch-agent
 CMD := ./cmd/shellwatch-agent
 

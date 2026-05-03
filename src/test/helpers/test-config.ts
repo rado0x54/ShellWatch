@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
 
 const defaults: Config = {

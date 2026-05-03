@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

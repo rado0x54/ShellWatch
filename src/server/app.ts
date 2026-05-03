@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";

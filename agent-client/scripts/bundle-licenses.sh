@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Generate AGENT_THIRD_PARTY_LICENSES at the repo root by walking every Go
 # module referenced in agent-client/go.sum and aggregating its LICENSE text.
 #
