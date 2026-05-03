@@ -12,8 +12,10 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
-const repoRoot = resolve(dirname(__filename), "..");
+const scriptsDir = dirname(__filename);
+const repoRoot = resolve(scriptsDir, "..");
 const outFile = join(repoRoot, "THIRD_PARTY_LICENSES");
+const overridesDir = join(scriptsDir, "license-overrides");
 
 const LICENSE_FILE_CANDIDATES = [
   "LICENSE",
@@ -42,6 +44,14 @@ function findLicenseText(pkgPath) {
   const prefixHit = entries.find((e) => /^(licen[sc]e|copying)/i.test(e));
   if (prefixHit) return readFileSync(join(pkgPath, prefixHit), "utf8").trim();
   return null;
+}
+
+function loadOverride(pkgName) {
+  // Filename convention: package name with `/` → `+`. See license-overrides/README.md.
+  const slug = pkgName.replace(/\//g, "+");
+  const path = join(overridesDir, `${slug}.txt`);
+  if (!existsSync(path)) return null;
+  return readFileSync(path, "utf8").trim();
 }
 
 const raw = execSync("pnpm licenses list --prod --long --json", {
@@ -92,7 +102,8 @@ lines.push("");
 lines.push("---");
 lines.push("");
 
-let missing = 0;
+const missing = [];
+let overridden = 0;
 for (const pkg of sorted) {
   lines.push(`## ${pkg.name}@${pkg.version}`);
   lines.push("");
@@ -104,24 +115,49 @@ for (const pkg of sorted) {
   }
   lines.push("");
 
-  const text = findLicenseText(pkg.path);
+  let text = findLicenseText(pkg.path);
+  let source = "package";
+  if (!text) {
+    text = loadOverride(pkg.name);
+    if (text) {
+      source = "override";
+      overridden += 1;
+    }
+  }
+
   if (text) {
+    if (source === "override") {
+      lines.push(
+        `> Source: \`scripts/license-overrides/${pkg.name.replace(/\//g, "+")}.txt\` (upstream tarball ships no LICENSE file).`,
+      );
+      lines.push("");
+    }
     lines.push("```");
     lines.push(text);
     lines.push("```");
   } else {
-    missing += 1;
-    lines.push(
-      `_(No LICENSE file shipped with this package; refer to the standard \`${pkg.license}\` text.)_`,
-    );
+    missing.push({ name: pkg.name, version: pkg.version, license: pkg.license });
   }
   lines.push("");
   lines.push("---");
   lines.push("");
 }
 
+if (missing.length > 0) {
+  console.error(`\nERROR: ${missing.length} package(s) ship no LICENSE file and have no override:`);
+  for (const m of missing) {
+    console.error(`  - ${m.name}@${m.version}  (declared: ${m.license})`);
+  }
+  console.error(
+    `\nFix by adding the upstream LICENSE text to scripts/license-overrides/<name>.txt`,
+  );
+  console.error(`(replace \`/\` in the package name with \`+\`). See:`);
+  console.error(`  scripts/license-overrides/README.md`);
+  process.exit(1);
+}
+
 writeFileSync(outFile, lines.join("\n"));
 
 console.log(`Wrote ${outFile}`);
 console.log(`  packages: ${sorted.length}`);
-if (missing > 0) console.log(`  missing license text: ${missing}`);
+if (overridden > 0) console.log(`  via license-overrides/: ${overridden}`);

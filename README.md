@@ -319,11 +319,11 @@ The ShellWatch server and client at the repository root are released under the
 
 In plain English:
 
-- ✅ **Self-hosting allowed** — run ShellWatch on your own infrastructure for any internal purpose.
-- ✅ **Modify it freely** — fork, patch, change anything you want for your own use.
-- ✅ **Use it in your business** — internal use is unrestricted, including by enterprises.
-- ❌ **No competing commercial use** — for two years, you may not offer ShellWatch (or anything substantially similar) as a hosted/commercial service to third parties.
-- ⏳ **Becomes Apache 2.0 after 2 years** — every release auto-relicenses to permissive Apache 2.0 on its second anniversary.
+- **Self-hosting allowed** — run ShellWatch on your own infrastructure for any internal purpose.
+- **Modify it freely** — fork, patch, change anything you want for your own use.
+- **Use it in your business** — internal use is unrestricted, including by enterprises.
+- **No competing commercial use** — for two years, you may not offer ShellWatch (or anything substantially similar) as a hosted/commercial service to third parties.
+- **Becomes Apache 2.0 after 2 years** — every release auto-relicenses to permissive Apache 2.0 on its second anniversary.
 
 Sub-components ship under more permissive terms:
 

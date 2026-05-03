@@ -32,7 +32,7 @@
     "node": ">=22"
   },
   "keywords": [],
-  "author": "",
+  "author": "Martin Riedel",
   "license": "SEE LICENSE IN LICENSE",
   "packageManager": "pnpm@10.11.1",
   "devDependencies": {

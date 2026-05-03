@@ -37,9 +37,7 @@ RUN GIT_SHA="$GIT_SHA" GIT_REF="$GIT_REF" \
     node -e "const fs=require('fs');fs.writeFileSync('buildInfo.generated.json',JSON.stringify({sha:process.env.GIT_SHA||'dev',ref:process.env.GIT_REF||'local',builtAt:new Date().toISOString()}));"
 
 RUN pnpm build
-# Bundle third-party license texts BEFORE pruning so devDeps still include
-# the resolver context that pnpm needs for license metadata. The script
-# walks --prod only, so the output covers runtime deps only.
+# Generate THIRD_PARTY_LICENSES for inclusion in the runtime image.
 RUN pnpm licenses:bundle
 RUN pnpm prune --prod --ignore-scripts
 
