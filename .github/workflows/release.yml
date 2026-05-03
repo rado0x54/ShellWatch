@@ -16,10 +16,17 @@ name: Release
 # review, so main and develop never receive bot-authored direct pushes —
 # branch protection rulesets stay active.
 #
-# Prerequisite for dispatch: main must already be at or ahead of develop.
-# The manual fast-forward of main from develop is your "ready to ship" gate;
-# it triggers preprod deploy via path #1, giving you a chance to verify
-# before clicking Run workflow.
+# Release model:
+#   - Fast-forwarding main from develop = "release to preprod". The maintainer
+#     does this whenever they decide a develop state is ready to soak; it
+#     triggers path #1 above, which builds :stable and deploys preprod.
+#   - Production release dispatches from main, promoting whatever :stable
+#     currently is. develop can be arbitrarily ahead of main — it doesn't
+#     affect what ships.
+#
+# Dispatch must run from main (enforced below). There is no automated check
+# that main matches the preprod-soaked state; the maintainer's discipline
+# (FF main → wait for preprod → verify → dispatch) is the gate.
 
 on:
   push:
@@ -156,11 +163,17 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Validate version & FF prerequisite
+      - name: Validate dispatch ref & version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::This workflow must be dispatched from main (got ${GITHUB_REF})"
+            exit 1
+          fi
+
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
 
@@ -185,14 +198,6 @@ jobs:
 
           if gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Release v${VERSION} already exists"
-            exit 1
-          fi
-
-          # Confirm main is at or ahead of develop. If develop has commits not
-          # yet on main, the user forgot to FF main from develop before dispatch.
-          git fetch origin develop
-          if ! git merge-base --is-ancestor origin/develop HEAD; then
-            echo "::error::develop has commits not in main. Fast-forward main from develop, verify preprod, then re-run."
             exit 1
           fi
 
@@ -236,7 +241,7 @@ jobs:
           DST="${{ env.IMAGE }}:${VERSION}"
 
           if ! crane manifest "$SRC" >/dev/null 2>&1; then
-            echo "::error::$SRC not found. Did you fast-forward main from develop and let the docker job complete before dispatching?"
+            echo "::error::$SRC not found. main must have been pushed (FF'd from develop) and the docker job completed before dispatching."
             exit 1
           fi
 

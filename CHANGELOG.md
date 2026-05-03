@@ -1,3 +1,24 @@
+## v1.0.0 (2026-05-03)
+
+## What's Changed
+
+- chore: update agent CHANGELOG.md for agent/v0.1.0 by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/179
+- fix(ui): icon-only sidebar session actions by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/183
+- feat(audit): session-lifecycle audit log + UI by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/187
+- chore(terminal): require CloseReason on TerminalManager.close() by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/188
+- feat(audit): persist signing requests and surface in UI (#186) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/190
+- chore: adopt FSL-1.1-Apache-2.0 license by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/192
+- fix(licenses): cover all cbor-extract platform variants by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/196
+- chore: scrub internal references for public release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/195
+- docs: consolidate agent instructions into CLAUDE.md and refresh positioning by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/198
+- Release PR by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/197
+
+## New Contributors
+
+- @github-actions[bot] made their first contribution in https://github.com/rado0x54/ShellWatch/pull/180
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v0.1.0...v1.0.0
+
 ## v0.1.0 (2026-05-01)
 
 ## What's Changed
