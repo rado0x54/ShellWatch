@@ -1,7 +1,4 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { resolve } from "$app/paths";
-  import { page } from "$app/state";
   import { onMount } from "svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
@@ -16,20 +13,14 @@
   let rows = $state<SigningRequestRow[]>([]);
   let nextCursor = $state<string | null>(null);
   let source = $state<string>("");
-  let type = $state<string>("");
   let outcome = $state<string>("");
-  // Initialised from query params on mount so cross-links to a specific
-  // credential / session land in a pre-filtered view.
-  let credentialId = $state<string>("");
-  let sessionId = $state<string>("");
   let fromDate = $state<string>("");
   let toDate = $state<string>("");
   let loading = $state(false);
 
+  const hasAnyFilter = $derived(!!(source || outcome || fromDate || toDate));
+
   onMount(() => {
-    const q = page.url.searchParams;
-    credentialId = q.get("credentialId") ?? "";
-    sessionId = q.get("sessionId") ?? "";
     void load(true);
   });
 
@@ -45,10 +36,7 @@
   function buildFilters(): SigningsFilters {
     return {
       source: source || undefined,
-      type: type || undefined,
       outcome: outcome || undefined,
-      credentialId: credentialId || undefined,
-      sessionId: sessionId || undefined,
       from: fromDate ? localDayStart(fromDate) : undefined,
       to: toDate ? localDayEnd(toDate) : undefined,
     };
@@ -75,10 +63,7 @@
 
   function clearAll() {
     source = "";
-    type = "";
     outcome = "";
-    credentialId = "";
-    sessionId = "";
     fromDate = "";
     toDate = "";
     void load(true);
@@ -103,7 +88,9 @@
     }
     if (row.source === "endpoint-auth") {
       if (row.mcpClientName) {
-        return [row.mcpClientName, row.apiKeyLabel, row.sourceIp].filter(Boolean).join(" · ");
+        return (
+          [row.mcpClientName, row.apiKeyLabel, row.sourceIp].filter(Boolean).join(" · ") || "—"
+        );
       }
       return row.sourceIp ?? "UI";
     }
@@ -128,14 +115,6 @@
         <option value="endpoint-auth">Endpoint auth</option>
         <option value="agent-forwarding">Agent forwarding</option>
         <option value="agent-proxy">Agent proxy</option>
-      </select>
-    </div>
-    <div class="filter-group">
-      <label class="filter-label" for="type-filter">Type</label>
-      <select id="type-filter" bind:value={type} onchange={onFilterChange}>
-        <option value="">All types</option>
-        <option value="webauthn-sign">WebAuthn sign</option>
-        <option value="key-approve">Key approve</option>
       </select>
     </div>
     <div class="filter-group">
@@ -168,7 +147,7 @@
         onchange={onFilterChange}
       />
     </div>
-    {#if credentialId || sessionId || source || type || outcome || fromDate || toDate}
+    {#if hasAnyFilter}
       <div class="filter-group">
         <span class="filter-label" aria-hidden="true">&nbsp;</span>
         <button type="button" class="btn btn-secondary btn-clear" onclick={clearAll}
@@ -177,17 +156,6 @@
       </div>
     {/if}
   </div>
-
-  {#if credentialId}
-    <div class="active-filter">
-      Filtered to credential <code>{credentialId.slice(0, 16)}…</code>
-    </div>
-  {/if}
-  {#if sessionId}
-    <div class="active-filter">
-      Filtered to session <code>{sessionId}</code>
-    </div>
-  {/if}
 
   <SettingsList empty={rows.length === 0 && !loading} emptyText="No signing requests recorded">
     {#each rows as row (row.id)}
@@ -231,18 +199,7 @@
             {/if}
             {#if row.sessionId}
               <dt>Session</dt>
-              <dd>
-                <a
-                  href={resolve("/audit/sessions")}
-                  onclick={(e) => {
-                    e.preventDefault();
-                    // Sessions filter doesn't currently support session_id, so
-                    // we just open the sessions tab — the cross-link is
-                    // bidirectional in spirit; tightening filters can come later.
-                    void goto(resolve("/audit/sessions"));
-                  }}>{row.sessionId}</a
-                >
-              </dd>
+              <dd><code>{row.sessionId}</code></dd>
             {/if}
             {#if row.sourceIp}
               <dt>Source IP</dt>
@@ -346,17 +303,6 @@
 
   .btn-clear {
     align-self: flex-start;
-  }
-
-  .active-filter {
-    font-family: var(--font-mono);
-    font-size: var(--label-sm);
-    color: var(--on-surface-variant);
-    margin-bottom: var(--space-3);
-  }
-
-  .active-filter code {
-    color: var(--on-surface);
   }
 
   .row-label {

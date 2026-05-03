@@ -89,10 +89,7 @@ export interface SigningsPage {
 
 export interface SigningsFilters {
   source?: string;
-  type?: string;
   outcome?: string;
-  credentialId?: string;
-  sessionId?: string;
   from?: string;
   to?: string;
 }
@@ -104,10 +101,7 @@ export async function fetchSigningsPage(
 ): Promise<SigningsPage> {
   const params = new URLSearchParams();
   if (filters.source) params.set("source", filters.source);
-  if (filters.type) params.set("type", filters.type);
   if (filters.outcome) params.set("outcome", filters.outcome);
-  if (filters.credentialId) params.set("credentialId", filters.credentialId);
-  if (filters.sessionId) params.set("sessionId", filters.sessionId);
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
   if (cursor) params.set("cursor", cursor);

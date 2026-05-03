@@ -31,6 +31,4 @@ CREATE TABLE `audit_signing_requests` (
 	CONSTRAINT "audit_signing_requests_outcome_chk" CHECK("audit_signing_requests"."outcome" IS NULL OR "audit_signing_requests"."outcome" IN ('approved','denied','expired','cancelled'))
 );
 --> statement-breakpoint
-CREATE INDEX `audit_signing_requests_account_created_idx` ON `audit_signing_requests` (`account_id`,`created_at`,`id`);--> statement-breakpoint
-CREATE INDEX `audit_signing_requests_account_credential_idx` ON `audit_signing_requests` (`account_id`,`credential_id`);--> statement-breakpoint
-CREATE INDEX `audit_signing_requests_account_session_idx` ON `audit_signing_requests` (`account_id`,`session_id`);
+CREATE INDEX `audit_signing_requests_account_created_idx` ON `audit_signing_requests` (`account_id`,`created_at`,`id`);

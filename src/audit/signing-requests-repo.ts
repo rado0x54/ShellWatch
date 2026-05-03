@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm";
 import type { ShellWatchDB } from "../db/connection.js";
 import { auditSigningRequests } from "../db/schema.js";
 
@@ -65,11 +65,8 @@ export interface SigningRequestResolution {
 }
 
 export interface SigningRequestFilters {
-  source?: string | string[];
-  type?: string | string[];
-  outcome?: string | string[];
-  credentialId?: string;
-  sessionId?: string;
+  source?: string;
+  outcome?: string;
   /** Inclusive lower bound on created_at (ISO-8601). */
   from?: string;
   /** Inclusive upper bound on created_at (ISO-8601). */
@@ -159,14 +156,11 @@ export class DrizzleSigningRequestsRepository implements SigningRequestsReposito
     const cursor = decodeCursor(paging.cursor);
 
     const conditions = [eq(auditSigningRequests.accountId, accountId)];
-    pushInOrEq(conditions, auditSigningRequests.source, filters.source);
-    pushInOrEq(conditions, auditSigningRequests.type, filters.type);
-    pushInOrEq(conditions, auditSigningRequests.outcome, filters.outcome);
-    if (filters.credentialId) {
-      conditions.push(eq(auditSigningRequests.credentialId, filters.credentialId));
+    if (filters.source) {
+      conditions.push(eq(auditSigningRequests.source, filters.source));
     }
-    if (filters.sessionId) {
-      conditions.push(eq(auditSigningRequests.sessionId, filters.sessionId));
+    if (filters.outcome) {
+      conditions.push(eq(auditSigningRequests.outcome, filters.outcome));
     }
     if (filters.from) {
       conditions.push(gte(auditSigningRequests.createdAt, filters.from));
@@ -210,21 +204,6 @@ export class DrizzleSigningRequestsRepository implements SigningRequestsReposito
       .where(and(eq(auditSigningRequests.accountId, accountId), eq(auditSigningRequests.id, id)))
       .get();
     return (row as SigningRequestRow | undefined) ?? null;
-  }
-}
-
-function pushInOrEq<T>(
-  conditions: unknown[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  column: any,
-  value: T | T[] | undefined,
-): void {
-  if (value === undefined) return;
-  if (Array.isArray(value)) {
-    if (value.length === 0) return;
-    conditions.push(inArray(column, value));
-  } else {
-    conditions.push(eq(column, value));
   }
 }
 

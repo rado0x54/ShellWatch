@@ -215,16 +215,15 @@ export const auditSigningRequests = sqliteTable(
     cancelReason: text("cancel_reason"),
   },
   (table) => [
-    // Unfiltered keyset-paged tail: WHERE account_id = ? ORDER BY created_at DESC, id DESC.
+    // Keyset-paged tail: WHERE account_id = ? [AND source = ?] [AND outcome = ?]
+    // [AND created_at BETWEEN …] ORDER BY created_at DESC, id DESC.
+    // Source and outcome have low cardinality, so the planner filters them in
+    // a scan over this index rather than needing dedicated indexes.
     index("audit_signing_requests_account_created_idx").on(
       table.accountId,
       table.createdAt,
       table.id,
     ),
-    // Credential-filtered tail: per-passkey sign history.
-    index("audit_signing_requests_account_credential_idx").on(table.accountId, table.credentialId),
-    // Session cross-link: signing rows ↔ audit_session_lifecycle.
-    index("audit_signing_requests_account_session_idx").on(table.accountId, table.sessionId),
     check("audit_signing_requests_type_chk", sql`${table.type} IN ('webauthn-sign','key-approve')`),
     check(
       "audit_signing_requests_source_chk",

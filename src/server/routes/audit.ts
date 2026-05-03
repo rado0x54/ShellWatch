@@ -13,7 +13,6 @@ export interface AuditRoutesParams {
 }
 
 const SOURCE_VALUES = ["endpoint-auth", "agent-forwarding", "agent-proxy"] as const;
-const TYPE_VALUES = ["webauthn-sign", "key-approve"] as const;
 const OUTCOME_VALUES = ["approved", "denied", "expired", "cancelled"] as const;
 
 export function registerAuditRoutes(params: AuditRoutesParams) {
@@ -46,11 +45,8 @@ export function registerAuditRoutes(params: AuditRoutesParams) {
   if (signingRequestsRepo) {
     app.get<{
       Querystring: {
-        source?: string | string[];
-        type?: string | string[];
-        outcome?: string | string[];
-        credentialId?: string;
-        sessionId?: string;
+        source?: string;
+        outcome?: string;
         from?: string;
         to?: string;
         cursor?: string;
@@ -59,17 +55,12 @@ export function registerAuditRoutes(params: AuditRoutesParams) {
     }>("/api/audit/signings", async (request, reply) => {
       const source = parseEnum(request.query.source, SOURCE_VALUES);
       if (source === "invalid") return reply.code(400).send({ error: "invalid source filter" });
-      const type = parseEnum(request.query.type, TYPE_VALUES);
-      if (type === "invalid") return reply.code(400).send({ error: "invalid type filter" });
       const outcome = parseEnum(request.query.outcome, OUTCOME_VALUES);
       if (outcome === "invalid") return reply.code(400).send({ error: "invalid outcome filter" });
 
       const filters: SigningRequestFilters = {
         source,
-        type,
         outcome,
-        credentialId: request.query.credentialId,
-        sessionId: request.query.sessionId,
         from: request.query.from,
         to: request.query.to,
       };
@@ -97,22 +88,16 @@ function parseLimit(raw: string | undefined): number | undefined {
 }
 
 /**
- * Parse a query-string enum filter that may be repeated (`?source=a&source=b`).
- * Returns:
+ * Parse and validate a single-value query-string enum filter. Returns:
  *   - `undefined` when the filter wasn't provided
- *   - a single string when one value was provided
- *   - an array when multiple were provided
- *   - the literal `"invalid"` when any value is outside the allowed set
+ *   - the value when it's in the allowed set
+ *   - the literal `"invalid"` when it isn't (caller emits 400)
  */
 function parseEnum<T extends string>(
-  raw: string | string[] | undefined,
+  raw: string | undefined,
   allowed: readonly T[],
-): T | T[] | undefined | "invalid" {
-  if (raw === undefined) return undefined;
-  const list = (Array.isArray(raw) ? raw : [raw]).filter((v) => v.length > 0);
-  if (list.length === 0) return undefined;
-  for (const v of list) {
-    if (!allowed.includes(v as T)) return "invalid";
-  }
-  return list.length === 1 ? (list[0] as T) : (list as T[]);
+): T | undefined | "invalid" {
+  if (raw === undefined || raw === "") return undefined;
+  if (!allowed.includes(raw as T)) return "invalid";
+  return raw as T;
 }

@@ -106,29 +106,9 @@ describe("DrizzleSigningRequestsRepository", () => {
       });
     });
 
-    it("source filter (single)", () => {
+    it("source filter narrows to one source", () => {
       const page = repo.list(ACCT_A, { source: "agent-proxy" }, {});
       expect(page.rows.map((r) => r.id)).toEqual(["wa-proxy"]);
-    });
-
-    it("source filter (array)", () => {
-      const page = repo.list(ACCT_A, { source: ["agent-proxy", "agent-forwarding"] }, {});
-      expect(page.rows.map((r) => r.id)).toEqual(["ka-fwd", "wa-proxy"]);
-    });
-
-    it("type filter", () => {
-      const page = repo.list(ACCT_A, { type: "webauthn-sign" }, {});
-      expect(page.rows.map((r) => r.id)).toEqual(["wa-auth", "wa-proxy"]);
-    });
-
-    it("credentialId filter", () => {
-      const page = repo.list(ACCT_A, { credentialId: "cred-1" }, {});
-      expect(page.rows.map((r) => r.id)).toEqual(["wa-proxy"]);
-    });
-
-    it("sessionId filter cross-links agent-forwarding rows", () => {
-      const page = repo.list(ACCT_A, { sessionId: "sess_a" }, {});
-      expect(page.rows.map((r) => r.id)).toEqual(["ka-fwd"]);
     });
 
     it("from/to bracket time window", () => {

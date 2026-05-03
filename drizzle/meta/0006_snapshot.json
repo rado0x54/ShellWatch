@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "affdcf87-663f-4e81-bfca-cca2a6c08c84",
+  "id": "3ef48364-48b4-4c51-8686-c11af4722eb9",
   "prevId": "41f29caa-723c-4c38-84d9-da5ca36655ff",
   "tables": {
     "accounts": {
@@ -559,16 +559,6 @@
         "audit_signing_requests_account_created_idx": {
           "name": "audit_signing_requests_account_created_idx",
           "columns": ["account_id", "created_at", "id"],
-          "isUnique": false
-        },
-        "audit_signing_requests_account_credential_idx": {
-          "name": "audit_signing_requests_account_credential_idx",
-          "columns": ["account_id", "credential_id"],
-          "isUnique": false
-        },
-        "audit_signing_requests_account_session_idx": {
-          "name": "audit_signing_requests_account_session_idx",
-          "columns": ["account_id", "session_id"],
           "isUnique": false
         }
       },
