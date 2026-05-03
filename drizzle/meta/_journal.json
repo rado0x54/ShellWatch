@@ -43,6 +43,13 @@
       "when": 1777743199117,
       "tag": "0005_audit_session_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1777783781140,
+      "tag": "0006_audit_signing_requests",
+      "breakpoints": true
     }
   ]
 }

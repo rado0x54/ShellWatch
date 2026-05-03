@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type { SignResponse } from "../webauthn/ssh-agent.js";
-import type { CreateActionParams, PendingAction } from "./types.js";
+import type { CreateActionParams, PendingAction, PendingActionEventMap } from "./types.js";
 
 const ACTION_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 10_000;
@@ -10,11 +11,25 @@ function generateActionId(): string {
   return randomBytes(16).toString("base64url");
 }
 
-export class PendingActionStore {
+/**
+ * In-memory store for pending sign/approval actions.
+ *
+ * Emits typed events so observers (e.g. the audit writer for #186) can record
+ * each transition without the store needing to know about persistence:
+ *
+ *   "created"  — fired after a new action is added.
+ *   "resolved" — fired on every terminal transition (approved | denied |
+ *                expired | cancelled) with the outcome label and timestamp.
+ *
+ * The audit log uses richer outcome labels than the in-memory `status` field:
+ * cancelForConnection sets `status: "denied"` but emits `outcome: "cancelled"`.
+ */
+export class PendingActionStore extends EventEmitter<PendingActionEventMap> {
   private actions = new Map<string, PendingAction>();
   private timer: ReturnType<typeof setInterval>;
 
   constructor() {
+    super();
     this.timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
   }
 
@@ -31,6 +46,7 @@ export class PendingActionStore {
       expiresAt: now + ACTION_TTL_MS,
     } as PendingAction;
     this.actions.set(action.id, action);
+    this.emit("created", action);
     return action;
   }
 
@@ -58,6 +74,7 @@ export class PendingActionStore {
     } else {
       action.resolve();
     }
+    this.emit("resolved", { action, outcome: "approved", resolvedAt: Date.now() });
     return true;
   }
 
@@ -67,10 +84,9 @@ export class PendingActionStore {
    * on-screen waiting to sign into a session that no longer exists. Returns the
    * affected actions (after mutation) so the caller can broadcast resolution.
    */
-  cancelForConnection(connectionId: string, _reason: string): PendingAction[] {
-    // `_reason` is logged by the caller in index.ts; kept in the signature as
-    // documentation of what onConnectionEnded propagates.
+  cancelForConnection(connectionId: string, reason: string): PendingAction[] {
     const cancelled: PendingAction[] = [];
+    const at = Date.now();
     for (const action of this.actions.values()) {
       if (action.status !== "pending") continue;
       if (action.connectionId !== connectionId) continue;
@@ -81,6 +97,12 @@ export class PendingActionStore {
       // broadcast is enough to clear UI state.
       action.status = "denied";
       cancelled.push(action);
+      this.emit("resolved", {
+        action,
+        outcome: "cancelled",
+        resolvedAt: at,
+        cancelReason: reason,
+      });
     }
     return cancelled;
   }
@@ -90,18 +112,22 @@ export class PendingActionStore {
     if (!action || action.status !== "pending") return false;
     action.status = "denied";
     action.reject(new Error("User denied signing request"));
+    this.emit("resolved", { action, outcome: "denied", resolvedAt: Date.now() });
     return true;
   }
 
   destroy(): void {
     clearInterval(this.timer);
+    const at = Date.now();
     for (const action of this.actions.values()) {
       if (action.status === "pending") {
         action.status = "expired";
         action.reject(new Error("PendingActionStore destroyed"));
+        this.emit("resolved", { action, outcome: "expired", resolvedAt: at });
       }
     }
     this.actions.clear();
+    this.removeAllListeners();
   }
 
   private sweep(): void {
@@ -110,6 +136,7 @@ export class PendingActionStore {
       if (action.status === "pending" && now >= action.expiresAt) {
         action.status = "expired";
         action.reject(new Error("Signing request expired — no response within 60 seconds"));
+        this.emit("resolved", { action, outcome: "expired", resolvedAt: now });
       }
       // Clean up terminal states older than 2 minutes (allows client to poll status)
       if (action.status !== "pending" && now - action.expiresAt > 120_000) {

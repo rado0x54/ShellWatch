@@ -121,3 +121,26 @@ export function toActionView(action: PendingAction): PendingActionView {
   const { resolve: _, reject: _r, ...view } = action;
   return view;
 }
+
+// --- Store events (audit-writer subscribes) ---
+
+/**
+ * Audit outcome for a signing request. Note this is a richer label than the
+ * in-memory `PendingActionStatus`: the store collapses both deny and cancel
+ * onto `status: "denied"`, while the audit log distinguishes them.
+ */
+export type SigningRequestOutcome = "approved" | "denied" | "expired" | "cancelled";
+
+export interface PendingActionResolvedEvent {
+  action: PendingAction;
+  outcome: SigningRequestOutcome;
+  /** Wall-clock ms when the terminal transition fired. */
+  resolvedAt: number;
+  /** Populated only when outcome === "cancelled" — propagated from cancelForConnection. */
+  cancelReason?: string;
+}
+
+export type PendingActionEventMap = {
+  created: [PendingAction];
+  resolved: [PendingActionResolvedEvent];
+};

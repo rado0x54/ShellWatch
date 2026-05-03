@@ -164,6 +164,85 @@ export const auditSessionLifecycle = sqliteTable(
   ],
 );
 
+// --- Signing Request Audit (#186) ---
+// Persists every signing request that flows through the broker — passkey
+// ceremonies (`webauthn-sign`) and file-key approvals (`key-approve`) — together
+// with the outcome (approved / denied / expired / cancelled). Sources: session
+// creation (endpoint-auth), agent forwarding (agent-forwarding), /agent-proxy.
+//
+// Challenge / signature bytes are intentionally NOT stored — high volume, low
+// value. credentialId is the correlation key for tying back to a passkey.
+//
+// Snapshot semantics: descriptive columns (passkey_label, key_label,
+// endpoint_label, mcp_client_name, api_key_label, etc.) are recorded as they
+// were at sign time and are intentionally not joined back to live tables on
+// read. A passkey rename or endpoint relabel must NOT rewrite history; resist
+// the urge to "fix" stale-looking values by joining to webauthn_credentials /
+// endpoints / api_keys at query time.
+
+export const auditSigningRequests = sqliteTable(
+  "audit_signing_requests",
+  {
+    id: text("id").primaryKey(), // PendingAction.id (22-char base64url)
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    type: text("type").notNull(), // 'webauthn-sign' | 'key-approve'
+    source: text("source").notNull(), // 'endpoint-auth' | 'agent-forwarding' | 'agent-proxy'
+    createdAt: text("created_at").notNull(),
+    resolvedAt: text("resolved_at"),
+    outcome: text("outcome"), // 'approved' | 'denied' | 'expired' | 'cancelled'
+    latencyMs: integer("latency_ms"),
+    // Trigger metadata (always-recorded when present)
+    sourceIp: text("source_ip"),
+    // endpoint-auth + agent-forwarding metadata
+    endpointLabel: text("endpoint_label"),
+    endpointAddress: text("endpoint_address"),
+    // agent-forwarding only — correlates to audit_session_lifecycle (#184)
+    sessionId: text("session_id"),
+    // endpoint-auth (mcp trigger) metadata
+    mcpReason: text("mcp_reason"),
+    mcpClientName: text("mcp_client_name"),
+    mcpClientVersion: text("mcp_client_version"),
+    // agent-proxy + endpoint-auth (mcp) — API-key auth metadata
+    apiKeyLabel: text("api_key_label"),
+    apiKeyPrefix: text("api_key_prefix"),
+    // agent-proxy advertised client metadata
+    clientHostname: text("client_hostname"),
+    clientOs: text("client_os"),
+    clientVersion: text("client_version"),
+    // webauthn-sign metadata
+    credentialId: text("credential_id"),
+    passkeyLabel: text("passkey_label"),
+    userVerification: text("user_verification"),
+    // key-approve metadata
+    keyLabel: text("key_label"),
+    keyFingerprint: text("key_fingerprint"),
+    // cancelled outcome — reason passed to cancelForConnection()
+    cancelReason: text("cancel_reason"),
+  },
+  (table) => [
+    // Keyset-paged tail: WHERE account_id = ? [AND source = ?] [AND outcome = ?]
+    // [AND created_at BETWEEN …] ORDER BY created_at DESC, id DESC.
+    // Source and outcome have low cardinality, so the planner filters them in
+    // a scan over this index rather than needing dedicated indexes.
+    index("audit_signing_requests_account_created_idx").on(
+      table.accountId,
+      table.createdAt,
+      table.id,
+    ),
+    check("audit_signing_requests_type_chk", sql`${table.type} IN ('webauthn-sign','key-approve')`),
+    check(
+      "audit_signing_requests_source_chk",
+      sql`${table.source} IN ('endpoint-auth','agent-forwarding','agent-proxy')`,
+    ),
+    check(
+      "audit_signing_requests_outcome_chk",
+      sql`${table.outcome} IS NULL OR ${table.outcome} IN ('approved','denied','expired','cancelled')`,
+    ),
+  ],
+);
+
 // --- Push Subscriptions (Web Push API) ---
 
 export const pushSubscriptions = sqliteTable("push_subscriptions", {
