@@ -16,10 +16,11 @@ name: Release
 # review, so main and develop never receive bot-authored direct pushes —
 # branch protection rulesets stay active.
 #
-# Prerequisite for dispatch: main must already be at or ahead of develop.
-# The manual fast-forward of main from develop is your "ready to ship" gate;
-# it triggers preprod deploy via path #1, giving you a chance to verify
-# before clicking Run workflow.
+# Dispatch must run from main. The release promotes the :stable image (built
+# when main is pushed), so what's on develop is irrelevant — develop is free
+# to be ahead. The "ready to ship" gate is whatever you fast-forwarded onto
+# main; that push triggered preprod deploy via path #1, giving you a chance
+# to verify before clicking Run workflow.
 
 on:
   push:
@@ -156,11 +157,17 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Validate version & FF prerequisite
+      - name: Validate dispatch ref & version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::This workflow must be dispatched from main (got ${GITHUB_REF})"
+            exit 1
+          fi
+
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
 
@@ -185,14 +192,6 @@ jobs:
 
           if gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Release v${VERSION} already exists"
-            exit 1
-          fi
-
-          # Confirm main is at or ahead of develop. If develop has commits not
-          # yet on main, the user forgot to FF main from develop before dispatch.
-          git fetch origin develop
-          if ! git merge-base --is-ancestor origin/develop HEAD; then
-            echo "::error::develop has commits not in main. Fast-forward main from develop, verify preprod, then re-run."
             exit 1
           fi
 

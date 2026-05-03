@@ -1,9 +1,9 @@
 name: Agent Release
 
-# Manually triggered. Enter the version (e.g. `0.0.3`).
+# Manually triggered from main. Enter the version (e.g. `0.0.3`).
 #
 # Steps:
-#   1. validate version > latest agent/v* tag, FF prerequisite
+#   1. validate dispatched from main + version > latest agent/v* tag
 #   2. cross-build linux/{amd64,arm64} + darwin/{amd64,arm64} binaries
 #   3. tag main HEAD as agent/vX.Y.Z, push tag
 #   4. create GitHub release with binaries + sha256s
@@ -49,6 +49,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::This workflow must be dispatched from main (got ${GITHUB_REF})"
+            exit 1
+          fi
+
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
 
@@ -73,12 +79,6 @@ jobs:
 
           if gh release view "agent/v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Release agent/v${VERSION} already exists"
-            exit 1
-          fi
-
-          git fetch origin develop
-          if ! git merge-base --is-ancestor origin/develop HEAD; then
-            echo "::error::develop has commits not in main. Fast-forward main from develop, then re-run."
             exit 1
           fi
 
