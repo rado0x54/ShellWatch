@@ -1,13 +1,13 @@
 # ShellWatch
 
-SSH session broker with a browser terminal UI and MCP interface.
+ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. It's passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that forwards signing requests end-to-end to a user's WebAuthn passkey. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
-ShellWatch lets you manage remote terminal sessions from two interfaces:
-
-- **Web UI** — connect to SSH endpoints and interact via an in-browser terminal (xterm.js)
-- **MCP** — AI agents (e.g., Claude) can programmatically create sessions, run commands, and read output
-
-Both interfaces share the same TerminalManager and are kept in sync in real time. Sessions created via MCP appear instantly in the UI (and vice versa).
+- **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH key approval; no passwords are stored or exchanged
+- **End-to-end SSH-agent proxy** — your local `ssh`/`scp`/`git` reach a WebAuthn passkey via ShellWatch, with explicit browser approval on every signature (OpenSSH 10.3+ on the client; `verify-required` on the server enforces UV)
+- **Human-in-the-loop for agents** — MCP agents request, humans approve; sensitive actions can require per-action consent before they hit the remote host
+- **Realtime notifications** — sign requests arrive as Web Push and in-UI toasts so an approver can react without watching a tab
+- **Tamper-evident audit log** — every signing request and session event persists to SQLite and is surfaced in the UI
+- **Two interfaces, one core** — browser terminal (xterm.js) and MCP (streamable HTTP) share the same TerminalManager and stay in sync in real time; sessions created via MCP appear instantly in the UI (and vice versa)
 
 For detailed architecture docs see [docs/architecture.md](./docs/architecture.md) and the [architecture diagram](./docs/architecture-diagram.md).
 
