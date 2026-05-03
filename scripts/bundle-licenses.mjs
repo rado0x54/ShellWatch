@@ -18,33 +18,22 @@ const repoRoot = resolve(scriptsDir, "..");
 const outFile = join(repoRoot, "THIRD_PARTY_LICENSES");
 const overridesDir = join(scriptsDir, "license-overrides");
 
-const LICENSE_FILE_CANDIDATES = [
-  "LICENSE",
-  "LICENSE.md",
-  "LICENSE.txt",
-  "LICENSE-MIT",
-  "LICENSE-MIT.txt",
-  "LICENSE.BSD",
-  "LICENSE.APACHE2",
-  "LICENCE",
-  "LICENCE.md",
-  "LICENCE.txt",
-  "COPYING",
-  "COPYING.md",
-  "COPYING.txt",
-];
+// Match LICENSE / LICENCE / COPYING / NOTICE and any common suffix variants
+// (e.g. LICENSE.md, LICENSE-MIT, COPYING.txt). Apache-2.0 §4(d) requires
+// NOTICE to be reproduced alongside LICENSE — so we capture *every* match
+// rather than stopping at the first hit.
+const LICENSE_FILE_RE = /^(licen[sc]e|copying|notice)/i;
 
-function findLicenseText(pkgPath) {
-  if (!pkgPath || !existsSync(pkgPath)) return null;
-  const entries = readdirSync(pkgPath);
-  // exact match first, then prefix match (e.g. LICENSE-MIT.foo)
-  for (const candidate of LICENSE_FILE_CANDIDATES) {
-    const hit = entries.find((e) => e.toLowerCase() === candidate.toLowerCase());
-    if (hit) return readFileSync(join(pkgPath, hit), "utf8").trim();
-  }
-  const prefixHit = entries.find((e) => /^(licen[sc]e|copying)/i.test(e));
-  if (prefixHit) return readFileSync(join(pkgPath, prefixHit), "utf8").trim();
-  return null;
+function findLicenseFiles(pkgPath) {
+  if (!pkgPath || !existsSync(pkgPath)) return [];
+  const matches = readdirSync(pkgPath).filter((e) => LICENSE_FILE_RE.test(e));
+  // Stable order: alphabetical, which conveniently puts LICENSE before NOTICE
+  // (the conventional reading order for Apache-2.0 modules).
+  matches.sort((a, b) => a.localeCompare(b));
+  return matches.map((filename) => ({
+    filename,
+    text: readFileSync(join(pkgPath, filename), "utf8").trim(),
+  }));
 }
 
 function loadOverride(pkgName) {
@@ -116,30 +105,39 @@ for (const pkg of sorted) {
   }
   lines.push("");
 
-  let text = findLicenseText(pkg.path);
+  let files = findLicenseFiles(pkg.path);
   let source = "package";
-  if (!text) {
-    text = loadOverride(pkg.name);
-    if (text) {
+  if (files.length === 0) {
+    const overrideText = loadOverride(pkg.name);
+    if (overrideText) {
+      files = [{ filename: "LICENSE", text: overrideText }];
       source = "override";
       overridden += 1;
     }
   }
 
-  if (text) {
+  if (files.length > 0) {
     if (source === "override") {
       lines.push(
         `> Source: \`scripts/license-overrides/${pkg.name.replace(/\//g, "+")}.txt\` (upstream tarball ships no LICENSE file).`,
       );
       lines.push("");
     }
-    lines.push("```");
-    lines.push(text);
-    lines.push("```");
+    // Sub-heading per file when multiple exist (e.g. LICENSE + NOTICE), so a
+    // reader can tell them apart. Skip when there's only one — most packages.
+    for (const file of files) {
+      if (files.length > 1) {
+        lines.push(`### ${file.filename}`);
+        lines.push("");
+      }
+      lines.push("```");
+      lines.push(file.text);
+      lines.push("```");
+      lines.push("");
+    }
   } else {
     missing.push({ name: pkg.name, version: pkg.version, license: pkg.license });
   }
-  lines.push("");
   lines.push("---");
   lines.push("");
 }

@@ -192,7 +192,7 @@ COMMANDS
 
 DAEMON FLAGS
   --server URL          ShellWatch server (default: $SHELLWATCH_SERVER or
-                        ` + config.DefaultServer + `)
+                        `+config.DefaultServer+`)
   --api-key KEY         Static API key. Skips the credstore lookup.
   --socket PATH         Listener path. On macOS/Linux, a Unix socket
                         ($XDG_RUNTIME_DIR/shellwatch-agent.sock or a

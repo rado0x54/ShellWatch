@@ -34,16 +34,28 @@ OUT="../AGENT_THIRD_PARTY_LICENSES"
     | sort \
     | while IFS=$'\t' read -r path version dir; do
         printf '## %s@%s\n\n' "$path" "$version"
-        lic=$(find "$dir" -maxdepth 1 -type f \( \
+        # Collect every license-ish file in the module root. Apache-2.0 §4(d)
+        # requires NOTICE to be reproduced alongside LICENSE — capture both
+        # rather than stopping at the first hit. Sort puts LICENSE before
+        # NOTICE alphabetically, which is the conventional reading order.
+        files=$(find "$dir" -maxdepth 1 -type f \( \
           -iname 'LICENSE*' -o -iname 'COPYING*' -o \
           -iname 'LICENCE*' -o -iname 'NOTICE*' \
-        \) -print -quit || true)
-        if [ -z "$lic" ]; then
+        \) | sort || true)
+        if [ -z "$files" ]; then
           printf '_(No LICENSE file shipped with this module — license declared in module metadata only)_\n\n'
         else
-          printf '```\n'
-          cat "$lic"
-          printf '\n```\n\n'
+          # When multiple files exist (e.g. LICENSE + NOTICE), label each so
+          # the reader can tell them apart in the bundled output.
+          count=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+          while IFS= read -r f; do
+            if [ "$count" -gt 1 ]; then
+              printf '### %s\n\n' "$(basename "$f")"
+            fi
+            printf '```\n'
+            cat "$f"
+            printf '\n```\n\n'
+          done <<< "$files"
         fi
         printf -- '---\n\n'
       done

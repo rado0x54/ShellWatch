@@ -159,4 +159,3 @@ func TestCanonicalizeServerURL_Rejects(t *testing.T) {
 		}
 	}
 }
-
