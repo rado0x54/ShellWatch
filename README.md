@@ -1,150 +1,113 @@
-# ShellWatch
+<p align="center">
+  <img src="./design/shellwatch_logo.svg" alt="" width="140">
+  <br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./design/shellwatch_wordmark-dark.svg">
+    <img src="./design/shellwatch_wordmark-light.svg" alt="ShellWatch" width="360">
+  </picture>
+</p>
 
-ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. It's passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that forwards signing requests end-to-end to a user's WebAuthn passkey. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
+<p align="center">
+  <strong>Passkey-Backed SSH for Humans and Agents</strong>
+</p>
 
-- **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH key approval; no passwords are stored or exchanged
-- **End-to-end SSH-agent proxy** — your local `ssh`/`scp`/`git` reach a WebAuthn passkey via ShellWatch, with explicit browser approval on every signature (OpenSSH 10.3+ on the client; `verify-required` on the server enforces UV)
-- **Human-in-the-loop for agents** — MCP agents request, humans approve; sensitive actions can require per-action consent before they hit the remote host
-- **Realtime notifications** — sign requests arrive as Web Push and in-UI toasts so an approver can react without watching a tab
-- **Tamper-evident audit log** — every signing request and session event persists to SQLite and is surfaced in the UI
-- **Two interfaces, one core** — browser terminal (xterm.js) and MCP (streamable HTTP) share the same TerminalManager and stay in sync in real time; sessions created via MCP appear instantly in the UI (and vice versa)
+<p align="center">
+  <a href="https://shellwatch.ai">Website</a> ·
+  <a href="https://app.shellwatch.ai">App</a> ·
+  <a href="https://docs.shellwatch.ai">Docs</a>
+</p>
 
-For detailed architecture docs see [docs/architecture.md](./docs/architecture.md) and the [architecture diagram](./docs/architecture-diagram.md).
+ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that delivers end-to-end secure SSH authentication to your local client. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
-## Prerequisites
+- **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
+- **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
+- **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into every ShellWatch session, so you can hop to additional hosts and enable SSH-agent-based PAM integration
+- **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
+- **Human-in-the-loop for agents** — MCP agents request, humans approve; sensitive actions can require per-action consent
+- **Realtime notifications** — sign requests arrive as Web Push and in-UI toasts
+- **Tamper-evident audit log** — every signing request and session event is recorded for later review
+- **Three ways in** — web UI for humans, MCP for AI agents, and native `ssh`/`scp`/`git` from your workstation (via the `shellwatch-agent` daemon)
 
-- Node.js 22+
-- pnpm
+## Requirements
 
-## Setup
+`webauthn-sk-ecdsa-sha2-nistp256@openssh.com` support requires:
+
+- **Server (`sshd`):** OpenSSH **8.4+**, with the algorithm explicitly enabled in `/etc/ssh/sshd_config`:
+
+  ```
+  PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
+  ```
+
+- **Client (`ssh`):** OpenSSH **10.3+** — only when using the [SSH agent proxy](#ssh-agent-proxy). The PAM-from-inside-a-session path uses our [PAM module](https://github.com/rado0x54/pam-ssh-agent-webauthn) talking to `$SSH_AUTH_SOCK` directly, and plain ShellWatch sessions opened from the UI or MCP have no client-side OpenSSH requirement.
+
+## Quick start
 
 ```bash
 git clone https://github.com/rado0x54/ShellWatch.git
 cd ShellWatch
 pnpm install
-```
-
-### Configuration
-
-```bash
 cp config.sample.yaml config.yaml
+pnpm dev
 ```
 
-Edit `config.yaml`. See `config.sample.yaml` for all options. Minimal example:
+`pnpm dev` runs Fastify on `:3000` (API, WebSocket, MCP, agent-proxy) and a Vite dev server on `:3001` for the SvelteKit UI with hot reload — open <http://localhost:3001> in dev. Vite proxies WS/API/MCP traffic to Fastify, so everything works on the one URL.
+
+See `config.sample.yaml` for all options. Endpoints, keys, and passkeys are managed in the web UI; the config file only handles initial seeding and security settings.
+
+Minimal `config.yaml` for local dev (UI at `:3001`):
 
 ```yaml
-keyDirectory: ./keys
-
 server:
-  externalUrl: http://localhost:3000
+  externalUrl: http://localhost:3001
 
 security:
   rpId: localhost
   trustedWebauthnOrigins:
+    - http://localhost:3001
     - http://localhost:3000
   allowedNetworks:
     - 127.0.0.1/32
     - "::1/128"
-
-# Optional: seed endpoints for the admin account on first run
-# seedAdminEndpoints:
-#   - label: Dev Box
-#     address: ubuntu@dev.example.com
-
-# Optional: seed a known API key for MCP / agent proxy
-# seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
 ```
 
-Endpoints, keys, and passkeys are managed dynamically via the web UI or REST API — changes are persisted in SQLite. The config file is only for initial seeding and security settings.
-
-### SSH key setup
-
-Place key files in the `keys/` directory. They are auto-discovered on startup and watched for changes.
+## Production
 
 ```bash
-ssh-keygen -t ed25519 -f ./keys/dev-box.pem -C "shellwatch"
-ssh-copy-id -i ./keys/dev-box.pem.pub ubuntu@dev.example.com
+pnpm build   # tsc + SvelteKit
+pnpm start   # serves the pre-built client from dist/client/
 ```
 
-- Keys are auto-discovered by scanning the key directory — no config needed
-- Keys are assigned to endpoints via the web UI after discovery
-- Key files must be readable by the current user (`chmod 600`)
-- The `keys/` directory is gitignored
+Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and serves the built UI off the same port as the API, WebSocket, MCP, and agent-proxy.
 
-## Running
+### Endpoints
 
-### Development
+| Path           | Interface                                 |
+| -------------- | ----------------------------------------- |
+| `/`            | Web UI                                    |
+| `/observer`    | Multi-session grid                        |
+| `/settings/*`  | Endpoints, keys, passkeys, API keys       |
+| `/api/*`       | REST API                                  |
+| `/ws`          | WebSocket (terminal I/O + events)         |
+| `/mcp`         | MCP (streamable HTTP)                     |
+| `/agent-proxy` | SSH agent proxy (WebSocket, API key auth) |
+| `/health`      | Health check                              |
 
-```bash
-pnpm dev
-```
+## Reverse proxy
 
-Builds the SvelteKit client and starts the server on `http://localhost:3000`.
-
-### Production
-
-```bash
-pnpm build   # compile server (tsc) + build client (SvelteKit)
-pnpm start   # run production server
-```
-
-The production server auto-detects the built client in `dist/client/` and serves it as static files. No Vite dependency at runtime.
-
-### All endpoints on a single port
-
-| Path           | Interface                                               |
-| -------------- | ------------------------------------------------------- |
-| `/`            | Web UI — Terminal view                                  |
-| `/observer`    | Web UI — Multi-session grid                             |
-| `/settings/*`  | Web UI — Settings (endpoints, keys, passkeys, API keys) |
-| `/login`       | Web UI — WebAuthn login                                 |
-| `/api/*`       | REST API                                                |
-| `/ws`          | WebSocket (terminal I/O + events)                       |
-| `/mcp`         | MCP (streamable HTTP)                                   |
-| `/agent-proxy` | SSH agent proxy (WebSocket, API key auth)               |
-| `/health`      | Health check                                            |
-
-### Deploying behind a reverse proxy
-
-When ShellWatch sits behind nginx, Caddy, an ALB, Cloudflare, etc., the TCP peer is the proxy — not the real client. Without configuration, every request looks like it came from the proxy, which breaks the sign-request "Source IP" display and the `security.allowedNetworks` allowlist.
-
-Configure `server.trustProxy` to the CIDR(s) of the proxy you control:
+When ShellWatch runs behind nginx/Caddy/an ALB/Cloudflare, set `server.trustProxy` to the CIDR(s) of the proxy you control so real client IPs reach the allowlist and audit log:
 
 ```yaml
 server:
   externalUrl: https://shellwatch.example.com
   trustProxy:
-    - 10.0.0.0/8 # internal proxy CIDR(s) only
-    - 172.16.0.0/12
-
-security:
-  # Real client IPs are now visible to the allowlist. Either narrow it to your
-  # known clients, or open it up explicitly:
-  allowedNetworks:
-    - 0.0.0.0/0 # all IPv4
-    - "::/0" # all IPv6
+    - 10.0.0.0/8
 ```
 
-> **Do not set `trustProxy: true` in production.** That trusts `X-Forwarded-For` from any source, letting clients spoof their own IP. Always pin to the CIDR(s) of the proxy you actually run. Make sure the proxy itself sets `X-Forwarded-For` (e.g. nginx `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
-
-`trustProxy` also accepts a number (hops to trust) or a single CIDR string. See [Fastify's docs](https://fastify.dev/docs/latest/Reference/Server/#trustproxy) for the full grammar.
-
-## Web UI
-
-Open `http://localhost:3000` in your browser.
-
-- **Sidebar** shows configured endpoints, SSH keys, and active sessions
-- Click **Connect** on an endpoint to open a terminal session
-- Click a session in the sidebar to switch between terminals
-- Sessions show their source — `(ui)` or `(mcp)`
-- Terminal auto-resizes with the browser window
-- Sessions created via MCP appear automatically — no refresh needed
-- **Observer mode** — grid view to monitor multiple sessions at once
-- **Sign-request approval** — when a sign is needed (passkey ceremony, SSH key approval), a toast and (optionally) a push notification link to a `/sign/:id` page where you approve or deny
+> **Do not set `trustProxy: true` in production.** That trusts `X-Forwarded-For` from any source, letting clients spoof their IP. Pin to the CIDR of the proxy you actually run. Make sure the proxy itself sets `X-Forwarded-For`. See [Fastify's docs](https://fastify.dev/docs/latest/Reference/Server/#trustproxy) for the full grammar.
 
 ## MCP
 
-ShellWatch exposes an MCP server over streamable HTTP at `/mcp`:
+ShellWatch exposes an MCP server over streamable HTTP at `/mcp`.
 
 | Tool                          | Description                                   |
 | ----------------------------- | --------------------------------------------- |
@@ -156,38 +119,21 @@ ShellWatch exposes an MCP server over streamable HTTP at `/mcp`:
 | `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints |
 | `shellwatch_manage_keys`      | List available SSH keys                       |
 
-Each MCP client gets an isolated `AgentSession` — agents can only see and control their own sessions. The web UI (admin view) sees all sessions regardless of source.
+Each MCP client gets an isolated `AgentSession` — agents only see their own sessions.
 
-**Notifications (server -> client):**
+### Connecting an MCP client
 
-- `output_available` — new output ready (debounced)
-- `session_status` — session state changed
+Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp` URL — the integrated OAuth flow handles credentials, no manual API key paste needed:
 
-### Claude Desktop / Claude Code configuration
-
-```json
-{
-  "mcpServers": {
-    "shellwatch": {
-      "type": "streamable-http",
-      "url": "http://localhost:3000/mcp",
-      "headers": {
-        "Authorization": "Bearer sw_your_api_key_here"
-      }
-    }
-  }
-}
+```
+https://your-shellwatch-host/mcp
 ```
 
-The API key must have `mcp` scope. Use `seedAdminApiKey` in config to seed a known key, or create one via the web UI under Settings → API Keys.
+OAuth mints an `mcp`-scoped API key after browser approval. For headless setups you can still seed a static key via `seedAdminApiKey` in `config.yaml`, or create one under **Settings → API Keys**.
 
-## Push Notifications (PWA)
+## Push notifications (PWA)
 
-ShellWatch is a Progressive Web App — it can be installed on mobile and desktop and supports Web Push notifications for sign requests (passkey signing, SSH key approval). This means users don't need the browser tab open to approve signing requests.
-
-### Setup
-
-Generate VAPID keys and add them to `config.yaml`:
+ShellWatch is an installable PWA with Web Push for sign requests, so approvers don't need the tab open. Generate VAPID keys and add them to `config.yaml`:
 
 ```bash
 npx web-push generate-vapid-keys
@@ -200,151 +146,25 @@ vapid:
   privateKey: "UGo..."
 ```
 
-Then enable push notifications in the web UI under Settings → Notifications. The browser will prompt for notification permission.
+Enable push under **Settings → Notifications**. When `vapid` is unset, the feature is hidden.
 
-When a sign request arrives (from an MCP agent, SSH agent proxy, or another UI session), a native push notification appears. Tapping it opens the sign request directly.
+## SSH agent proxy
 
-Push notifications are optional — when `vapid` is not configured, the feature is simply hidden.
-
-## SSH Agent Proxy
-
-ShellWatch can act as an SSH agent for system SSH clients (`ssh`, `scp`, `git`). This allows your local `ssh` command to authenticate using keys managed by ShellWatch — including WebAuthn passkeys — even when ShellWatch runs on a remote server.
-
-Enable in `config.yaml`:
+ShellWatch can act as an SSH agent for system clients (`ssh`, `scp`, `git`), so your local commands authenticate via passkeys managed by ShellWatch.
 
 ```yaml
 agentSocket:
   proxyEnabled: true
 ```
 
-Then run the [`shellwatch-agent`](./agent-client/) thin client on your workstation:
+Run [`shellwatch-agent`](./agent-client/) on your workstation:
 
 ```bash
-# Install (Homebrew tap):
 brew install rado0x54/tap/shellwatch-agent
-
-# Or build from source:
-cd agent-client && make build       # or: go build -o shellwatch-agent ./cmd/shellwatch-agent/
-
-# One-time browser-based login. Token persists in your OS keyring.
-shellwatch-agent login --server https://shellwatch.example.com
-
-# Run as a service via Homebrew, or use the manual launchd / systemd setup
-# in agent-client/README.md for self-hosted servers.
+# Defaults to app.shellwatch.ai; pass `--server https://your-host` to point at a self-hosted instance.
+shellwatch-agent login
 brew services start shellwatch-agent
-
-# In your shell profile, export the socket path:
 eval "$(shellwatch-agent --print-env)"
 ```
 
-`make build` injects the agent version via `-ldflags` (pulled from `git describe`) so it's surfaced to the approver on `/sign/:id`. Override with `make build VERSION=x.y.z`.
-
-`login` uses the OAuth shim at `/oauth/authorize` to mint an `agent`-scoped API key without you ever pasting one — see [agent-client/README.md](./agent-client/README.md) for the full flow, the static-key fallback for CI/headless setups, and the credential-store layout.
-
-Both WebAuthn passkeys and file-based SSH keys are supported for agent-proxy signing — both require browser approval (no silent auto-sign for the agent-proxy path). Passkeys require **OpenSSH 10.3+** on the client. Approval happens on the `/sign/:id` page, which also shows the agent client's self-reported hostname/OS/version when available. See the [agent-client README](./agent-client/README.md) for full usage, configuration, and troubleshooting.
-
-### Enforcing user verification on the OpenSSH server
-
-By default, ShellWatch performs the WebAuthn signing ceremony with `userVerification: "required"`, so every signature sent over the agent proxy carries the UV flag. (The setting is configurable per endpoint in Settings → Endpoints if you need to relax it for a specific host.) To make the UV guarantee load-bearing on the server side, configure the remote `sshd` to reject signatures whose UV flag is not set.
-
-OpenSSH enforces UV on `sk-ecdsa-sha2-nistp256@openssh.com` and `sk-ssh-ed25519@openssh.com` keys via `verify-required` (UV flag bit `0x04`), settable globally in `sshd_config` or per-key in `authorized_keys`.
-
-Per-key in `authorized_keys` (see `sshd(8)` AUTHORIZED_KEYS FILE FORMAT):
-
-```
-verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host
-```
-
-Global equivalent in `sshd_config`:
-
-```
-PubkeyAuthOptions verify-required
-```
-
-At authentication time, `sshd` ORs the global option with the per-key option — either source sets the requirement. With UV enforced, `sshd` parses `sk_flags` from the signature and rejects when `SSH_SK_USER_VERIFICATION_REQD` (`0x04` — the same bit as WebAuthn's UV flag) is not set, logging `user verification requirement not met`.
-
-For a hardened deployment, prefer global `PubkeyAuthOptions verify-required` so the policy is enforced uniformly and can't be bypassed by a stale `authorized_keys` entry.
-
-## Scripts
-
-| Script               | Description                                            |
-| -------------------- | ------------------------------------------------------ |
-| `pnpm dev`           | Build client + start server with hot reload            |
-| `pnpm build`         | Build server (tsc) + client (SvelteKit) for production |
-| `pnpm start`         | Run production server                                  |
-| `pnpm build:server`  | Compile server TypeScript only                         |
-| `pnpm build:client`  | Build SvelteKit client                                 |
-| `pnpm typecheck`     | Type check without emitting                            |
-| `pnpm lint`          | Lint with ESLint                                       |
-| `pnpm lint:fix`      | Auto-fix lint issues                                   |
-| `pnpm format`        | Format with Prettier                                   |
-| `pnpm test`          | Run all tests                                          |
-| `pnpm test:coverage` | Run tests with coverage report                         |
-
-## Testing
-
-Tests cover unit and integration scenarios. No external services needed — everything runs in-process with an embedded ssh2 server.
-
-```bash
-pnpm test           # run all tests
-pnpm test:coverage  # run with coverage report
-```
-
-## Tech stack
-
-- **Backend:** Fastify (API, WebSocket, MCP, SSH — all server logic), ssh2, @modelcontextprotocol/sdk
-- **Frontend:** SvelteKit (Svelte 5, adapter-static — client-side routing and build only, no SSR), xterm.js
-- **Database:** SQLite via Drizzle ORM
-- **Auth:** WebAuthn/passkeys (via @simplewebauthn)
-- **Testing:** Vitest, ssh2 Server (in-process)
-- **Config:** YAML + zod validation
-- **Linting:** ESLint (typescript-eslint + eslint-plugin-svelte)
-- **Formatting:** Prettier
-
-## Troubleshooting
-
-**"Private key not readable"** — Check file permissions: `chmod 600 ./keys/your-key.pem`
-
-**"Connection timed out"** — Verify the host is reachable and the port is correct. Connection timeout is 10 seconds.
-
-**"Auth failure"** — Ensure the private key matches the server's authorized keys and the username is correct.
-
-**Port already in use** — Kill the existing process: `lsof -ti:3000 | xargs kill`
-
-## License
-
-The ShellWatch server and client at the repository root are released under the
-[**Functional Source License, Version 1.1, Apache 2.0 Future License**](./LICENSE)
-(`FSL-1.1-Apache-2.0`, also published upstream as `FSL-1.1-ALv2`).
-
-In plain English:
-
-- **Self-hosting allowed** — run ShellWatch on your own infrastructure for any internal purpose.
-- **Modify it freely** — fork, patch, change anything you want for your own use.
-- **Use it in your business** — internal use is unrestricted, including by enterprises.
-- **No competing commercial use** — for two years, you may not offer ShellWatch (or anything substantially similar) as a hosted/commercial service to third parties.
-- **Becomes Apache 2.0 after 2 years** — every release auto-relicenses to permissive Apache 2.0 on its second anniversary.
-
-Sub-components ship under more permissive terms:
-
-| Path            | License                         | Why                                                                  |
-| --------------- | ------------------------------- | -------------------------------------------------------------------- |
-| repo root       | [FSL-1.1-Apache-2.0](./LICENSE) | The commercial product. Source-available now, Apache 2.0 in 2 years. |
-| `agent-client/` | [MIT](./agent-client/LICENSE)   | End-user-machine binary; keeping it MIT removes adoption friction.   |
-
-Third-party dependency license texts ship per release artifact:
-
-- **Node deps:** `/app/THIRD_PARTY_LICENSES` inside the Docker image — generated at image build by [`scripts/bundle-licenses.mjs`](./scripts/bundle-licenses.mjs). Run locally with `pnpm run licenses:bundle`.
-- **Go deps:** `AGENT_THIRD_PARTY_LICENSES` uploaded alongside each agent binary on the [`agent/v*` GitHub releases](https://github.com/rado0x54/ShellWatch/releases) — generated at release time by [`agent-client/scripts/bundle-licenses.sh`](./agent-client/scripts/bundle-licenses.sh). Run locally with `cd agent-client && make licenses`.
-
-> Note: GitHub's license sidebar will show "Other" — FSL is not yet in
-> [licensee](https://github.com/licensee/licensee), so the auto-detection
-> can't classify it. The LICENSE file is canonical.
-
-### Trademark
-
-"ShellWatch" and the ShellWatch logo are trademarks of Martin Riedel and are
-**not** licensed under FSL. The license grants you the right to use, modify,
-and redistribute the source code — it does **not** grant the right to use the
-ShellWatch name or logo to identify your fork or any derivative product or
-service. If you ship a fork, please pick a different name and logo.
+Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, OAuth/static-key flows, and troubleshooting in the [agent-client README](./agent-client/README.md).
