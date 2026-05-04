@@ -13,12 +13,20 @@ name: Agent Release
 #   2. cross-build linux/{amd64,arm64} + darwin/{amd64,arm64} binaries
 #   3. tag main HEAD as agent/vX.Y.Z, push tag
 #   4. create GitHub release with binaries + sha256s
-#   5. open agent-client/CHANGELOG.md PR to develop
+#   5. bump rado0x54/homebrew-tap formula (skipped if HOMEBREW_TAP_TOKEN unset)
+#   6. open agent-client/CHANGELOG.md PR to develop
 #
 # No source files are bumped. main.Version is injected via -ldflags at build
 # time. CHANGELOG.md updates flow through normal PR review, so main and
 # develop never receive bot-authored direct pushes — branch protection
 # rulesets stay active.
+#
+# Homebrew tap bump (step 5) writes directly to rado0x54/homebrew-tap's main.
+# That repo has no protection ruleset (it's a personal formula tap, not the
+# product), so a PR-and-merge round-trip would just be ceremony. Requires a
+# fine-grained PAT with `contents: write` on rado0x54/homebrew-tap, stored as
+# repo secret HOMEBREW_TAP_TOKEN. If the secret is unset the step is skipped
+# so a forked / detached clone of this repo can still cut releases.
 
 on:
   workflow_dispatch:
@@ -219,6 +227,69 @@ jobs:
             artifacts/shellwatch-agent-* \
             LICENSE-shellwatch-agent \
             AGENT_THIRD_PARTY_LICENSES
+
+      - name: Bump homebrew-tap formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_REPO: rado0x54/homebrew-tap
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping tap bump"
+            exit 0
+          fi
+
+          # `.sha256` files have format: "<hex>  <filename>". Pull the hex.
+          sha_for() {
+            awk '{print $1}' "artifacts/shellwatch-agent-$1.sha256"
+          }
+          DARWIN_ARM64=$(sha_for darwin-arm64)
+          DARWIN_AMD64=$(sha_for darwin-amd64)
+          LINUX_ARM64=$(sha_for linux-arm64)
+          LINUX_AMD64=$(sha_for linux-amd64)
+
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" \
+            tap
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Rewrite version + each per-arch sha256 with a verifying python pass.
+          # Using python (not sed) so a missed/duplicate match fails the job
+          # instead of silently shipping a stale formula.
+          python3 - "$VERSION" "$DARWIN_ARM64" "$DARWIN_AMD64" "$LINUX_ARM64" "$LINUX_AMD64" <<'PY'
+          import pathlib, re, sys
+
+          version, da_arm, da_amd, lx_arm, lx_amd = sys.argv[1:]
+          path = pathlib.Path("Formula/shellwatch-agent.rb")
+          text = path.read_text()
+
+          def sub_once(pattern, repl, label, body):
+              new, n = re.subn(pattern, repl, body)
+              if n != 1:
+                  raise SystemExit(f"expected 1 match for {label}, got {n}")
+              return new
+
+          text = sub_once(r'(  version ")[^"]+(")', rf'\g<1>{version}\g<2>',
+                          "version", text)
+          for arch, sha in [("darwin-arm64", da_arm), ("darwin-amd64", da_amd),
+                            ("linux-arm64", lx_arm), ("linux-amd64", lx_amd)]:
+              pat = rf'(shellwatch-agent-{arch}"\s*\n\s*sha256 ")[a-f0-9]{{64}}(")'
+              text = sub_once(pat, rf'\g<1>{sha}\g<2>', f"sha {arch}", text)
+
+          path.write_text(text)
+          PY
+
+          git add Formula/shellwatch-agent.rb
+          if git diff --cached --quiet; then
+            echo "Tap formula already at ${TAG} — nothing to push"
+            exit 0
+          fi
+          git commit -m "feat: bump shellwatch-agent to ${TAG}"
+          git push origin HEAD:main
 
       # main/develop are protected by rulesets — bot opens a PR. Admin pushes
       # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire
