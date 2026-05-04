@@ -1,25 +1,44 @@
 <p align="center">
-  <img src="./design/shellwatch_logo.svg" alt="ShellWatch" width="320">
+  <img src="./design/shellwatch_logo.svg" alt="" width="140">
+  <br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./design/shellwatch_wordmark-dark.svg">
+    <img src="./design/shellwatch_wordmark-light.svg" alt="ShellWatch" width="360">
+  </picture>
 </p>
 
 <p align="center">
-  <strong>Passkey-Authenticated SSH for Humans and Agents</strong>
+  <strong>Passkey-Backed SSH for Humans and Agents</strong>
 </p>
 
 <p align="center">
   <a href="https://shellwatch.ai">Website</a> ·
   <a href="https://app.shellwatch.ai">App</a> ·
-  <a href="./docs/architecture.md">Architecture</a>
+  <a href="https://docs.shellwatch.ai">Docs</a>
 </p>
 
-ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that forwards signing requests end-to-end to a user's WebAuthn passkey. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
+ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that delivers end-to-end secure SSH authentication to your local client. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
-- **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH key approval
-- **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature (OpenSSH 10.3+; `verify-required` enforces UV server-side)
+- **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
+- **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
+- **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into every ShellWatch session, so you can hop to additional hosts and enable SSH-agent-based PAM integration
+- **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
 - **Human-in-the-loop for agents** — MCP agents request, humans approve; sensitive actions can require per-action consent
 - **Realtime notifications** — sign requests arrive as Web Push and in-UI toasts
-- **Tamper-evident audit log** — every signing request and session event persists to SQLite
-- **Two interfaces, one core** — browser terminal (xterm.js) and MCP (streamable HTTP) share the same `TerminalManager`
+- **Tamper-evident audit log** — every signing request and session event is recorded for later review
+- **Three ways in** — web UI for humans, MCP for AI agents, and native `ssh`/`scp`/`git` from your workstation (via the `shellwatch-agent` daemon)
+
+## Requirements
+
+`webauthn-sk-ecdsa-sha2-nistp256@openssh.com` support requires:
+
+- **Server (`sshd`):** OpenSSH **8.4+**, with the algorithm explicitly enabled in `/etc/ssh/sshd_config`:
+
+  ```
+  PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
+  ```
+
+- **Client (`ssh`):** OpenSSH **10.3+** — only when using the [SSH agent proxy](#ssh-agent-proxy). The PAM-from-inside-a-session path uses our [PAM module](https://github.com/rado0x54/pam-ssh-agent-webauthn) talking to `$SSH_AUTH_SOCK` directly, and plain ShellWatch sessions opened from the UI or MCP have no client-side OpenSSH requirement.
 
 ## Quick start
 
@@ -31,19 +50,20 @@ cp config.sample.yaml config.yaml
 pnpm dev
 ```
 
-Open <http://localhost:3000>. See `config.sample.yaml` for all options. Endpoints, keys, and passkeys are managed in the web UI — the config file only handles initial seeding and security settings.
+`pnpm dev` runs Fastify on `:3000` (API, WebSocket, MCP, agent-proxy) and a Vite dev server on `:3001` for the SvelteKit UI with hot reload — open <http://localhost:3001> in dev. Vite proxies WS/API/MCP traffic to Fastify, so everything works on the one URL.
 
-Minimal `config.yaml`:
+See `config.sample.yaml` for all options. Endpoints, keys, and passkeys are managed in the web UI; the config file only handles initial seeding and security settings.
+
+Minimal `config.yaml` for local dev (UI at `:3001`):
 
 ```yaml
-keyDirectory: ./keys
-
 server:
-  externalUrl: http://localhost:3000
+  externalUrl: http://localhost:3001
 
 security:
   rpId: localhost
   trustedWebauthnOrigins:
+    - http://localhost:3001
     - http://localhost:3000
   allowedNetworks:
     - 127.0.0.1/32
@@ -56,6 +76,8 @@ security:
 pnpm build   # tsc + SvelteKit
 pnpm start   # serves the pre-built client from dist/client/
 ```
+
+Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and serves the built UI off the same port as the API, WebSocket, MCP, and agent-proxy.
 
 ### Endpoints
 
@@ -70,7 +92,7 @@ pnpm start   # serves the pre-built client from dist/client/
 | `/agent-proxy` | SSH agent proxy (WebSocket, API key auth) |
 | `/health`      | Health check                              |
 
-### Reverse proxy
+## Reverse proxy
 
 When ShellWatch runs behind nginx/Caddy/an ALB/Cloudflare, set `server.trustProxy` to the CIDR(s) of the proxy you control so real client IPs reach the allowlist and audit log:
 
@@ -128,7 +150,7 @@ Enable push under **Settings → Notifications**. When `vapid` is unset, the fea
 
 ## SSH agent proxy
 
-ShellWatch can act as an SSH agent for system clients (`ssh`, `scp`, `git`), so your local commands authenticate via passkeys managed by ShellWatch — even when ShellWatch runs remotely.
+ShellWatch can act as an SSH agent for system clients (`ssh`, `scp`, `git`), so your local commands authenticate via passkeys managed by ShellWatch.
 
 ```yaml
 agentSocket:
@@ -139,42 +161,10 @@ Run [`shellwatch-agent`](./agent-client/) on your workstation:
 
 ```bash
 brew install rado0x54/tap/shellwatch-agent
-shellwatch-agent login --server https://shellwatch.example.com
+# Defaults to app.shellwatch.ai; pass `--server https://your-host` to point at a self-hosted instance.
+shellwatch-agent login
 brew services start shellwatch-agent
 eval "$(shellwatch-agent --print-env)"
 ```
 
-Both WebAuthn passkeys and file-based SSH keys are supported, both require browser approval. Passkeys require **OpenSSH 10.3+** on the client. To make UV load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, OAuth/static-key flows, and troubleshooting in the [agent-client README](./agent-client/README.md).
-
-## Architecture
-
-```
-[Web UI]  [MCP Agent]  [SSH Agent]
-   |          |            |
-   |     [AgentSession][AgentSession]
-   |          |            |
-   └──────────┼────────────┘
-              |
-      [TerminalManager]
-              |
-       [SSH Transport]
-              |
-       [Remote host]
-```
-
-Detail: [docs/architecture.md](./docs/architecture.md) · [diagram](./docs/architecture-diagram.md).
-
-## Tech stack
-
-Fastify · ssh2 · `@modelcontextprotocol/sdk` · SvelteKit (Svelte 5, adapter-static) · xterm.js · SQLite + Drizzle · WebAuthn (`@simplewebauthn`) · Vitest · ESLint · Prettier.
-
-## Scripts
-
-`pnpm dev` · `pnpm build` · `pnpm start` · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm test:integration`. See `package.json` for the full list.
-
-## Troubleshooting
-
-- **"Private key not readable"** — `chmod 600 ./keys/your-key.pem`
-- **"Connection timed out"** — verify host and port; the connection timeout is 10 seconds
-- **"Auth failure"** — confirm the key matches the server's authorized keys and the username is correct
-- **Port already in use** — `lsof -ti:3000 | xargs kill`
+Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, OAuth/static-key flows, and troubleshooting in the [agent-client README](./agent-client/README.md).
