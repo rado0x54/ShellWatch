@@ -155,8 +155,34 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+// Non-npm bundled assets: fonts under client/static/fonts/ ship as woff2 in
+// the build output but their source packages are devDeps, so `pnpm licenses
+// list --prod` doesn't see them. Surface the OFL alongside so this file
+// remains the single attribution stop.
+const fontsLicense = join(repoRoot, "client", "static", "fonts", "OFL.txt");
+let bundledFonts = 0;
+if (existsSync(fontsLicense)) {
+  lines.push("## Bundled fonts — Geist & Geist Mono");
+  lines.push("");
+  lines.push("- **License:** OFL-1.1");
+  lines.push("- **Homepage:** https://github.com/vercel/geist-font");
+  lines.push("");
+  lines.push(
+    "> Source: `client/static/fonts/OFL.txt` (also shipped at runtime alongside the woff2 files at `/fonts/`).",
+  );
+  lines.push("");
+  lines.push("```");
+  lines.push(readFileSync(fontsLicense, "utf8").trim());
+  lines.push("```");
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  bundledFonts = 1;
+}
+
 writeFileSync(outFile, lines.join("\n"));
 
 console.log(`Wrote ${outFile}`);
 console.log(`  packages: ${sorted.length}`);
 if (overridden > 0) console.log(`  via license-overrides/: ${overridden}`);
+if (bundledFonts > 0) console.log(`  bundled fonts: ${bundledFonts}`);
