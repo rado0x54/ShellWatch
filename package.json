@@ -28,6 +28,7 @@
     "licenses:bundle": "node scripts/bundle-licenses.mjs",
     "spdx:check": "node scripts/spdx-headers.mjs",
     "spdx:write": "node scripts/spdx-headers.mjs --write",
+    "sync:fonts": "node scripts/sync-fonts.mjs",
     "prepare": "husky"
   },
   "engines": {
@@ -40,6 +41,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@fastify/middie": "^9.3.1",
+    "@fontsource-variable/geist": "5.2.8",
+    "@fontsource-variable/geist-mono": "5.2.7",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.55.0",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",

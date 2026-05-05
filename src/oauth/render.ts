@@ -58,10 +58,27 @@ export function renderAuthorizePage(p: RenderAuthorizePageParams): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ShellWatch — Authorize client</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
 <style>
+  /* Self-hosted Geist + Geist Mono. Latin-only is enough for this page —
+     OAuth content is English UI plus ASCII OAuth identifiers. The full
+     latin/latin-ext/cyrillic set lives in client/src/app.css for the rest
+     of the app, which renders arbitrary user content. */
+  @font-face {
+    font-family: "Geist";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Geist Mono";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url("/fonts/geist-mono-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
   :root {
     --surface-dim: #0e0e0e;
     --surface-container-low: #131313;
