@@ -1,3 +1,18 @@
+## v1.0.1 (2026-05-05)
+
+## What's Changed
+
+- ci: drop develop-FF gate from release dispatches; require main by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/200
+- Preprod Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/201
+- chore: update agent CHANGELOG.md for agent/v1.0.0 by @github-actions[bot] in https://github.com/rado0x54/ShellWatch/pull/202
+- docs: align README and docs/ with current code by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/203
+- docs: refactor README — logo, tagline, requirements, dev/prod flow by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/204
+- chore: self-host Geist fonts; drop Google Fonts dependency by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/206
+- ci: bump homebrew-tap formula on agent release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/205
+- Preprod Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/207
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v1.0.0...v1.0.1
+
 ## v1.0.0 (2026-05-03)
 
 ## What's Changed
