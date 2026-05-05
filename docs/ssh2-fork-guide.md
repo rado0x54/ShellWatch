@@ -1,5 +1,10 @@
 # ssh2 Fork: WebAuthn SK Key Support
 
+> **Status:** Implemented. ShellWatch consumes the fork at
+> [`github:rado0x54/ssh2#shellwatch`](https://github.com/rado0x54/ssh2/tree/shellwatch)
+> (see `package.json`). This document is a reference for what the fork adds
+> and why — not a forward-looking plan.
+
 ## Goal
 
 Add support for the custom `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` key algorithm to ssh2, enabling ShellWatch to authenticate to SSH servers using WebAuthn credentials via a custom agent that delegates signing to the browser.
@@ -26,7 +31,7 @@ PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
 
 ---
 
-## Changes Required (4 files)
+## Changes in the fork (4 files)
 
 ### 1. `lib/protocol/constants.js` — Add algorithm to supported list
 
@@ -278,14 +283,14 @@ The ECDSA signature (R, S) comes from the WebAuthn response's `signature` field,
 
 ## Testing the Fork
 
-1. Apply the changes above
-2. In ShellWatch, point to the fork: `pnpm add ../ssh2`
-3. Create a test that:
-   - Constructs a `WebAuthnSKECDSAKey` from a known EC point
-   - Calls `parseKey()` with the binary wire format
-   - Verifies `key.type` is correct
-   - Verifies `key.getPublicSSH()` produces the correct blob
-4. Integration test: connect to an SSH server with `PubkeyAcceptedAlgorithms` configured
+The fork ships with the algorithm wired in. Local validation, when iterating on the fork itself:
+
+1. In ShellWatch, point to a local checkout: `pnpm add ../ssh2`
+2. Cover the parser:
+   - Construct a `WebAuthnSKECDSAKey` from a known EC point
+   - Call `parseKey()` with the binary wire format
+   - Verify `key.type` is correct and `key.getPublicSSH()` produces the expected blob
+3. Integration: connect to an SSH server with `PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com` configured.
 
 ---
 

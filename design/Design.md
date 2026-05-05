@@ -214,11 +214,12 @@ All buttons use Geist with 0.02em positive tracking and weight 600.
 
 ### Signal chips (badges)
 
-A 6px colored dot + lowercase label, no background, no border, no pill. Three variants:
+A 6px colored dot + lowercase label, no background, no border, no pill. Four variants:
 
 - `.badge-observer` — amber dot, amber label
 - `.badge-available` — emerald dot, emerald label
 - `.badge-unavailable` — crimson dot, crimson label
+- `.badge-pending` — amber dot, amber label (e.g. "pending confirmation" on a key awaiting approval)
 
 Example usage: session list entries, settings rows ("required", "active", "admin").
 
@@ -226,9 +227,11 @@ Example usage: session list entries, settings rows ("required", "active", "admin
 
 6px colored square (not a circle — no radius). `.open` glows emerald (live signal), `.error` glows crimson, `.opening` flat amber, `.closed` faint grey.
 
-### Inputs — ghost underline
+### Inputs — filled fields
 
-Modals and forms use a single `1px` bottom edge of `--outline-variant`. Focus flips the underline to full `--primary` opacity with a subtle `2px` glow below. No background, no box, no focus ring.
+Text-like `<input>`, `<select>`, and `<textarea>` share one global rule (in `app.css`) so fields look identical in modals, settings forms, and standalone pages: filled `--surface-container`, 1px `--outline-variant` border, padded `0.5rem 0.625rem`. Focus flips the border to `--primary` and adds a 1px primary ring (`box-shadow: 0 0 0 1px var(--primary)`) — no underline, no glow halo. There are no scoped per-page or `.modal`-scoped input overrides; the global rule wins.
+
+`<select>` is forced to `appearance: none` for consistent rendering across browsers, then gets a custom caret drawn via two stacked `linear-gradient` backgrounds. Date / time inputs adopt `color-scheme: dark` so the native picker popup uses the dark palette, and the calendar-icon affordance is recolored with `filter: invert(0.7)` for visibility.
 
 ### Lists & rows — power rail
 
@@ -252,7 +255,7 @@ xterm.js theme matches: background `#0e0e0e`, foreground `#f2f2f2`, cursor + gre
 
 ### Modal
 
-Same frosted-obsidian surface as toasts (`rgba(44,44,44,0.6)` + 20px blur). No glow — it's a container, not a live signal. Inputs inside the modal adopt the ghost-underline style automatically via `.modal input[type=…]` rules in `app.css`.
+Opaque `--surface-bright` (`#2c2c2c`) panel with a 1px `--outline-variant` edge, sitting over a `rgba(0,0,0,0.6)` dimmed overlay. No backdrop blur, no glow — it's a container, not a live signal. (Toast still uses the frosted-obsidian recipe; modal does not, so the two surfaces feel deliberately distinct: toast floats over content, modal blocks it.) Inputs inside the modal pick up the global filled-field style — there are no modal-scoped input overrides.
 
 ### Settings rows — `SettingsList` + `SettingsRow`
 

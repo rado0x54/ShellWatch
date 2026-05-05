@@ -194,7 +194,7 @@ Actions expire after 60s if no response; denied/expired actions surface back to 
 Bearer token authentication for MCP and agent proxy endpoints.
 
 - Keys stored as SHA-256 hashes in the database
-- Scoped access: `mcp`, `agent`, `api`
+- Scoped access: `mcp`, `agent`
 - Key prefix stored for identification in logs
 - `seedAdminApiKey` config option for bootstrapping
 
@@ -216,6 +216,11 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 | `/settings/passkeys` | WebAuthn passkey management |
 | `/settings/api-keys` | API key management |
 | `/settings/notifications` | Web Push subscription management |
+| `/audit/sessions` | Session-lifecycle audit log |
+| `/audit/signings` | Signing-request audit log |
+| `/admin/accounts` | Admin: account management |
+| `/admin/general` | Admin: general settings |
+| `/passkey-invite/[token]` | Cross-device passkey enrollment (token-gated) |
 | `/login` | WebAuthn passkey login (supports `?redirect=` bounce-back) |
 | `/register` | WebAuthn passkey registration |
 
@@ -224,14 +229,16 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 - **REST API** (`/api/*`) — endpoint/session/key/WebAuthn CRUD, action resolve/deny (`/api/actions/:id/resolve` & `/deny`), session tail (`/api/sessions/:id/tail`)
 - **WebSocket** (`/ws`) — real-time terminal I/O and session events; also carries `sign:request` / `sign:resolved` notifications from the PendingAction system
 
-**WebSocket protocol:**
+**WebSocket protocol (`src/server/ws-protocol.ts`):**
 
 ```
 Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
                  terminal:take-control, terminal:release-control
 Server → Client: terminal:output, terminal:status, terminal:closed, terminal:mode,
-                 sessions:changed, sign:request, sign:resolved, error
+                 sessions:changed, error
 ```
+
+`sign:request` and `sign:resolved` also flow over the same WebSocket but are sent by `WebSocketChannel` in the PendingAction layer (`src/pending-action/ws-channel.ts`), not by the core terminal protocol — that's why they don't appear in `ws-protocol.ts`.
 
 Sign approval itself (resolve/deny with WebAuthn assertion payload) goes over REST, not the WebSocket — see the [PendingAction section](#pendingaction--sign-requests-srcpending-action).
 
@@ -336,14 +343,17 @@ Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM.
 
 **Schema (`src/db/schema.ts`):**
 
-| Table                  | Purpose                                                                            |
-| ---------------------- | ---------------------------------------------------------------------------------- |
-| `accounts`             | User/agent accounts (admin flag, session limits, last used)                        |
-| `webauthn_credentials` | Passkey credentials (COSE public key, OpenSSH public key, label)                   |
-| `ssh_keys`             | File-based SSH key metadata (fingerprint, public key — private keys on filesystem) |
-| `endpoints`            | SSH target configuration (host, port, username, key/passkey assignment)            |
-| `api_keys`             | API key hashes, scopes, labels                                                     |
-| `session_history`      | Session audit log (endpoint, account, source, timestamps)                          |
+| Table                     | Purpose                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `accounts`                | User/agent accounts (admin flag, session limits, last used)                        |
+| `admin_account`           | Single-row pointer table identifying the admin account                             |
+| `webauthn_credentials`    | Passkey credentials (COSE public key, OpenSSH public key, label)                   |
+| `ssh_keys`                | File-based SSH key metadata (fingerprint, public key — private keys on filesystem) |
+| `endpoints`               | SSH target configuration (host, port, username, key/passkey assignment)            |
+| `api_keys`                | API key hashes, scopes, labels                                                     |
+| `audit_session_lifecycle` | Tamper-evident session audit log (open/close events, source, timestamps)           |
+| `audit_signing_requests`  | Signing-request audit log (passkey signs, key approvals — outcomes + metadata)     |
+| `push_subscriptions`      | Web Push subscriptions per account (endpoint, auth/p256dh keys)                    |
 
 **Repositories (`src/db/repositories/`):**
 
@@ -356,6 +366,19 @@ Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM.
 | `credential-queries.ts` | WebAuthn credential lookup for signing                |
 
 **Migrations:** Auto-run at startup from `drizzle/` directory.
+
+## Audit Log (`src/audit/`)
+
+Tamper-evident, append-only audit of session lifecycle and signing-request outcomes. The audit module subscribes to `TerminalManager` events and `PendingActionStore` resolutions; it never joins to live tables at read time, so a passkey rename or endpoint relabel never rewrites history.
+
+| File                          | Purpose                                                                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-lifecycle-writer.ts` | Subscribes to TerminalManager open/close events, persists to `audit_session_lifecycle`                                                        |
+| `session-lifecycle-repo.ts`   | Keyset-paged read API powering `/audit/sessions`                                                                                              |
+| `signing-requests-writer.ts`  | Persists every PendingAction outcome (`approved` / `denied` / `expired` / `cancelled`) to `audit_signing_requests` with full trigger metadata |
+| `signing-requests-repo.ts`    | Read API powering `/audit/signings`                                                                                                           |
+
+All audit reads are account-scoped — admin is an admin role, not a global view across accounts.
 
 ## Security
 
@@ -371,7 +394,7 @@ Session-based authentication for the web UI. Protects REST API and WebSocket rou
 
 ### API Key Auth (`src/server/auth/api-key-auth.ts`)
 
-Bearer token authentication for MCP and agent proxy. Keys are stored as SHA-256 hashes. Each key has scopes (`mcp`, `agent`, `api`) that control which interfaces it can access.
+Bearer token authentication for MCP and agent proxy. Keys are stored as SHA-256 hashes. Each key has scopes (`mcp`, `agent`) that control which interfaces it can access.
 
 ## Configuration
 
@@ -506,6 +529,11 @@ src/
   agent-socket/
     agent-proxy-route.ts        # WebSocket endpoint for SSH agent proxy
     socket-agent-handler.ts     # AgentProtocol wiring to CompositeSshAgent
+  audit/
+    session-lifecycle-writer.ts # Subscribes to TerminalManager, persists open/close events
+    session-lifecycle-repo.ts   # Read API for /audit/sessions
+    signing-requests-writer.ts  # Persists PendingAction outcomes (approve/deny/expire/cancel)
+    signing-requests-repo.ts    # Read API for /audit/signings
   cli/
     keys.ts                     # CLI for API key management
   config/
@@ -571,6 +599,9 @@ client/                           # SvelteKit frontend (adapter-static)
       login/                    # WebAuthn login page (supports ?redirect= bounce-back)
       register/                 # WebAuthn passkey registration
       observer/                 # Multi-session grid view
+      audit/                    # Audit log views (sessions / signings)
+      admin/                    # Admin views (accounts, general settings)
+      passkey-invite/[token]/   # Cross-device passkey enrollment
       settings/                 # Settings with tab sub-routes (incl. notifications / Web Push)
   svelte.config.js              # SvelteKit config (adapter-static)
 agent-client/                     # Go thin client for SSH agent proxy
@@ -586,6 +617,5 @@ See individual tickets for details:
 
 - **Guardrails (#13)** — input filtering layer in TerminalManager, before `sendInput()`
 - **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
-- **Audit Log (#16)** — subscribes to TerminalManager events, persists to database
 - **Telegram notification channel** — new `NotificationChannel` implementation alongside WS/Push
-- **Agent client distribution (#35)** — Homebrew tap exists at [rado0x54/homebrew-tap](https://github.com/rado0x54/homebrew-tap) (blocked on upstream-public release per #147); still pending: install script, deb/rpm packaging, install-service CLI; Windows support in #175
+- **Agent client distribution (#35)** — Homebrew tap published at [rado0x54/homebrew-tap](https://github.com/rado0x54/homebrew-tap); still pending: install script, deb/rpm packaging, install-service CLI; Windows support in #175
