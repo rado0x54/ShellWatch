@@ -70,6 +70,7 @@
   let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
   const CLICK_AUTO_COLLAPSE_MS = 3000;
+  const HOVER_AUTO_COLLAPSE_MS = 1000;
 
   function clearCollapseTimer() {
     if (collapseTimer !== null) {
@@ -85,7 +86,9 @@
   }
 
   function expandAsHover() {
-    if (accountMenuOpen) return;
+    // Don't override a click-expanded row.
+    if (accountMenuOpen && expandSource === "click") return;
+    // Cancel any pending hover-collapse timer — covers re-entry during grace.
     clearCollapseTimer();
     accountMenuOpen = true;
     expandSource = "hover";
@@ -106,9 +109,18 @@
     }
   }
 
+  function handleFooterMouseEnter() {
+    // Re-entering the row during the hover-collapse grace period cancels it,
+    // even if cursor lands on the name or logout button rather than the icon.
+    if (accountMenuOpen && expandSource === "hover") {
+      clearCollapseTimer();
+    }
+  }
+
   function handleFooterMouseLeave() {
     if (accountMenuOpen && expandSource === "hover") {
-      collapseNow();
+      clearCollapseTimer();
+      collapseTimer = setTimeout(collapseNow, HOVER_AUTO_COLLAPSE_MS);
     }
   }
 
@@ -296,7 +308,11 @@
       </button>
     {/if}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="footer-row" onmouseleave={handleFooterMouseLeave}>
+    <div
+      class="footer-row"
+      onmouseenter={handleFooterMouseEnter}
+      onmouseleave={handleFooterMouseLeave}
+    >
       {#if $account}
         <button
           type="button"
