@@ -157,6 +157,16 @@
         <div class="observer-cell-terminal" use:openTerminalInCell={obs}></div>
       </div>
     {/each}
+    {#if $sessions.length === 0}
+      <div class="observer-empty">
+        <h2>No active sessions</h2>
+        <p>
+          Observer Mode shows a live read-only grid of every open session in your account &mdash;
+          UI, MCP agent, and SSH-agent proxy connections all appear here side by side.
+        </p>
+        <p>Open a session from the sidebar or have an agent start one, and it will show up here.</p>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -241,5 +251,32 @@
   .observer-cell-terminal :global(.xterm) {
     height: 100%;
     padding: 2px;
+  }
+
+  .observer-empty {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--on-surface-variant);
+  }
+
+  .observer-empty h2 {
+    font-family: var(--font-display);
+    font-size: var(--title-md);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--on-surface);
+  }
+
+  .observer-empty p {
+    max-width: 56ch;
+    line-height: 1.55;
+    font-size: var(--body-md);
   }
 </style>
