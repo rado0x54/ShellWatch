@@ -137,6 +137,7 @@
   // (additional algorithms, multi-line config), surface it through the
   // register response and consume it here instead.
   const SSHD_CONFIG_LINE = "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+  const SSHD_CONFIG_ONE_LINER = `echo '${SSHD_CONFIG_LINE}' | sudo tee -a /etc/ssh/sshd_config`;
 
   async function copyToClipboard(text: string, btn: HTMLButtonElement) {
     const original = btn.innerHTML;
@@ -356,11 +357,12 @@
           <span class="code-label"
             >1. Enable WebAuthn keys in <code>/etc/ssh/sshd_config</code> (reload sshd after)</span
           >
-          <code class="code-content">{SSHD_CONFIG_LINE}</code>
+          <code class="code-content">{SSHD_CONFIG_ONE_LINER}</code>
           <button
             type="button"
             class="btn-copy"
-            onclick={(e) => copyToClipboard(SSHD_CONFIG_LINE, e.currentTarget as HTMLButtonElement)}
+            onclick={(e) =>
+              copyToClipboard(SSHD_CONFIG_ONE_LINER, e.currentTarget as HTMLButtonElement)}
             >Copy</button
           >
         </div>
