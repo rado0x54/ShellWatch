@@ -204,14 +204,16 @@
         </div>
       </div>
     {/if}
-    <button
-      type="button"
-      class="btn-nav"
-      class:active={currentPath === "/observer"}
-      onclick={() => navTo("/observer")}
-    >
-      Observer Mode
-    </button>
+    {#if $account?.isAdmin}
+      <button
+        type="button"
+        class="btn-nav"
+        class:active={currentPath === "/observer"}
+        onclick={() => navTo("/observer")}
+      >
+        Observer Mode
+      </button>
+    {/if}
     <button
       type="button"
       class="btn-nav"
