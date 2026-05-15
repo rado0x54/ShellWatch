@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
@@ -62,25 +63,67 @@
   }
 
   let accountMenuOpen = $state(false);
+  // Tracks which input modality opened the account row. Hover-expanded rows
+  // collapse instantly on mouseleave; click-expanded rows linger for 3s so the
+  // user can move the cursor to the Sign-out button without it disappearing.
+  let expandSource: "click" | "hover" | null = $state(null);
+  let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function closeAccountMenu() {
-    accountMenuOpen = false;
+  const CLICK_AUTO_COLLAPSE_MS = 3000;
+
+  function clearCollapseTimer() {
+    if (collapseTimer !== null) {
+      clearTimeout(collapseTimer);
+      collapseTimer = null;
+    }
   }
 
-  function toggleAccountMenu() {
-    accountMenuOpen = !accountMenuOpen;
+  function collapseNow() {
+    clearCollapseTimer();
+    accountMenuOpen = false;
+    expandSource = null;
+  }
+
+  function expandAsHover() {
+    if (accountMenuOpen) return;
+    clearCollapseTimer();
+    accountMenuOpen = true;
+    expandSource = "hover";
+  }
+
+  function expandAsClick() {
+    clearCollapseTimer();
+    accountMenuOpen = true;
+    expandSource = "click";
+    collapseTimer = setTimeout(collapseNow, CLICK_AUTO_COLLAPSE_MS);
+  }
+
+  function handleAccountClick() {
+    if (accountMenuOpen && expandSource === "click") {
+      collapseNow();
+    } else {
+      expandAsClick();
+    }
+  }
+
+  function handleFooterMouseLeave() {
+    if (accountMenuOpen && expandSource === "hover") {
+      collapseNow();
+    }
   }
 
   function handleAccountKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && accountMenuOpen) {
-      closeAccountMenu();
+      collapseNow();
     }
   }
 
   async function handleLogout() {
-    closeAccountMenu();
+    collapseNow();
     await logout();
   }
+
+  onDestroy(clearCollapseTimer);
 </script>
 
 <svelte:window onkeydown={handleAccountKeydown} />
@@ -252,12 +295,14 @@
         Admin
       </button>
     {/if}
-    <div class="footer-row">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="footer-row" onmouseleave={handleFooterMouseLeave}>
       {#if $account}
         <button
           type="button"
           class="account-trigger"
-          onclick={toggleAccountMenu}
+          onclick={handleAccountClick}
+          onmouseenter={expandAsHover}
           aria-expanded={accountMenuOpen}
           aria-label={accountMenuOpen
             ? `Collapse account details for ${$account.name}`
