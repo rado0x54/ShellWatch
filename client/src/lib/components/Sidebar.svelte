@@ -60,7 +60,30 @@
     await goto(resolve(path));
     onMobileClose?.();
   }
+
+  let accountMenuOpen = $state(false);
+
+  function closeAccountMenu() {
+    accountMenuOpen = false;
+  }
+
+  function toggleAccountMenu() {
+    accountMenuOpen = !accountMenuOpen;
+  }
+
+  function handleAccountKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && accountMenuOpen) {
+      closeAccountMenu();
+    }
+  }
+
+  async function handleLogout() {
+    closeAccountMenu();
+    await logout();
+  }
 </script>
+
+<svelte:window onkeydown={handleAccountKeydown} />
 
 <nav class="sidebar">
   <div class="sidebar-brand">
@@ -193,17 +216,6 @@
   </div>
 
   <div class="sidebar-footer">
-    {#if $account}
-      <div class="account-info">
-        <Identicon uuid={$account.id} size={36} />
-        <div class="account-details">
-          <span class="account-name">{$account.name}</span>
-          {#if $account.isAdmin}
-            <span class="badge badge-admin">admin</span>
-          {/if}
-        </div>
-      </div>
-    {/if}
     {#if $account?.isAdmin}
       <button
         type="button"
@@ -240,79 +252,104 @@
         Admin
       </button>
     {/if}
-    <div class="sidebar-resources" role="group" aria-label="Resources">
-      <a
-        class="icon-btn"
-        href="https://docs.shellwatch.ai"
-        target="_blank"
-        rel="noopener noreferrer"
-        title="Documentation"
-        aria-label="Documentation"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+    <div class="footer-row">
+      {#if $account}
+        <button
+          type="button"
+          class="account-trigger"
+          onclick={toggleAccountMenu}
+          aria-expanded={accountMenuOpen}
+          aria-label={accountMenuOpen
+            ? `Collapse account details for ${$account.name}`
+            : `Expand account details for ${$account.name}`}
         >
-          <path
-            d="M12 7v14m4-9h2m-2-4h2M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4a4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3a3 3 0 0 0-3-3zm3-6h2M6 8h2"
-          />
-        </svg>
-      </a>
-      <a
-        class="icon-btn"
-        href="https://github.com/rado0x54/ShellWatch"
-        target="_blank"
-        rel="noopener noreferrer"
-        title="GitHub"
-        aria-label="GitHub"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5c.08-1.25-.27-2.48-1-3.5c.28-1.15.28-2.35 0-3.5c0 0-1 0-3 1.5c-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5c-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"
-          />
-          <path d="M9 18c-4.51 2-5-2-7-2" />
-        </svg>
-      </a>
-      <button
-        type="button"
-        class="icon-btn icon-btn-danger"
-        onclick={logout}
-        title="Sign out"
-        aria-label="Sign out"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <path d="m16 17 5-5-5-5" />
-          <path d="M21 12H9" />
-        </svg>
-      </button>
+          <Identicon uuid={$account.id} size={36} />
+        </button>
+
+        {#if accountMenuOpen}
+          <div class="account-details">
+            <span class="account-name">{$account.name}</span>
+            {#if $account.isAdmin}
+              <span class="badge badge-admin">admin</span>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="icon-btn icon-btn-danger"
+            onclick={handleLogout}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <path d="m16 17 5-5-5-5" />
+              <path d="M21 12H9" />
+            </svg>
+          </button>
+        {:else}
+          <div class="footer-resources" role="group" aria-label="Resources">
+            <a
+              class="icon-btn"
+              href="https://docs.shellwatch.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Documentation"
+              aria-label="Documentation"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M12 7v14m4-9h2m-2-4h2M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4a4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3a3 3 0 0 0-3-3zm3-6h2M6 8h2"
+                />
+              </svg>
+            </a>
+            <a
+              class="icon-btn"
+              href="https://github.com/rado0x54/ShellWatch"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="GitHub"
+              aria-label="GitHub"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5c.08-1.25-.27-2.48-1-3.5c.28-1.15.28-2.35 0-3.5c0 0-1 0-3 1.5c-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5c-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"
+                />
+                <path d="M9 18c-4.51 2-5-2-7-2" />
+              </svg>
+            </a>
+          </div>
+        {/if}
+      {/if}
     </div>
   </div>
 </nav>
@@ -539,21 +576,6 @@
     box-shadow: 0 0 12px rgba(105, 246, 184, 0.6);
   }
 
-  .account-info {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) 0;
-    margin-bottom: var(--space-2);
-  }
-
-  .account-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    min-width: 0;
-  }
-
   .account-name {
     font-size: var(--body-md);
     font-weight: 600;
@@ -573,6 +595,7 @@
     letter-spacing: 0.04em;
     color: var(--primary);
     font-weight: 500;
+    align-self: flex-start;
   }
 
   .badge-admin::before {
@@ -583,14 +606,49 @@
     display: inline-block;
   }
 
-  .sidebar-resources {
+  .footer-row {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
+    gap: var(--space-3);
     margin-top: var(--space-3);
     padding-top: var(--space-4);
     border-top: 1px solid var(--outline-variant);
+  }
+
+  .account-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: filter 0.15s;
+    flex-shrink: 0;
+  }
+
+  .account-trigger:hover {
+    filter: brightness(1.15);
+  }
+
+  .account-trigger:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .account-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .footer-resources {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-left: auto;
   }
 
   .icon-btn {
