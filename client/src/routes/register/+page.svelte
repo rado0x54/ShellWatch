@@ -137,7 +137,8 @@
   // (additional algorithms, multi-line config), surface it through the
   // register response and consume it here instead.
   const SSHD_CONFIG_LINE = "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
-  const SSHD_CONFIG_ONE_LINER = `echo '${SSHD_CONFIG_LINE}' | sudo tee -a /etc/ssh/sshd_config`;
+  // grep-guarded so re-running during re-registration doesn't duplicate the line.
+  const SSHD_CONFIG_ONE_LINER = `sudo grep -q 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com' /etc/ssh/sshd_config || echo '${SSHD_CONFIG_LINE}' | sudo tee -a /etc/ssh/sshd_config`;
 
   async function copyToClipboard(text: string, btn: HTMLButtonElement) {
     const original = btn.innerHTML;
