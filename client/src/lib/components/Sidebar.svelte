@@ -271,16 +271,14 @@
   </div>
 
   <div class="sidebar-footer">
-    {#if $account?.isAdmin}
-      <button
-        type="button"
-        class="btn-nav"
-        class:active={currentPath === "/observer"}
-        onclick={() => navTo("/observer")}
-      >
-        Observer Mode
-      </button>
-    {/if}
+    <button
+      type="button"
+      class="btn-nav"
+      class:active={currentPath === "/observer"}
+      onclick={() => navTo("/observer")}
+    >
+      Observer Mode
+    </button>
     <button
       type="button"
       class="btn-nav"
