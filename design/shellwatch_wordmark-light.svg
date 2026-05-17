@@ -1,12 +1,12 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 140" role="img" aria-label="ShellWatch">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 140" role="img" aria-label="ShellWatch">
   <title>ShellWatch</title>
-  <text x="0" y="108"
+  <text x="10" y="108"
         font-family="Geist, 'Inter', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
         font-weight="600"
         font-size="120"
         letter-spacing="-1.2"
-        textLength="720"
+        textLength="800"
         lengthAdjust="spacingAndGlyphs">
     <tspan fill="#12a26f">SHELL</tspan><tspan fill="#1f1f1f">WATCH</tspan>
   </text>

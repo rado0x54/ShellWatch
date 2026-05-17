@@ -38,6 +38,14 @@ ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first a
   PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
   ```
 
+  One-liner to append it and reload `sshd`:
+
+  ```bash
+  echo 'PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com' \
+    | sudo tee -a /etc/ssh/sshd_config
+  sudo systemctl reload ssh   # or: sudo systemctl reload sshd
+  ```
+
 - **Client (`ssh`):** OpenSSH **10.3+** — only when using the [SSH agent proxy](#ssh-agent-proxy). The PAM-from-inside-a-session path uses our [PAM module](https://github.com/rado0x54/pam-ssh-agent-webauthn) talking to `$SSH_AUTH_SOCK` directly, and plain ShellWatch sessions opened from the UI or MCP have no client-side OpenSSH requirement.
 
 ## Quick start
