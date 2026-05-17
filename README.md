@@ -38,12 +38,11 @@ ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first a
   PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
   ```
 
-  One-liner to append it and reload `sshd` (skip the append if it's already there):
+  One-liner to append it and reload `sshd`:
 
   ```bash
-  grep -q 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com' /etc/ssh/sshd_config \
-    || echo 'PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com' \
-       | sudo tee -a /etc/ssh/sshd_config
+  echo 'PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com' \
+    | sudo tee -a /etc/ssh/sshd_config
   sudo systemctl reload ssh   # or: sudo systemctl reload sshd
   ```
 
