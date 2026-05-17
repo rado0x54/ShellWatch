@@ -258,8 +258,7 @@
           <span class="toggle-label">{formAgentForward ? "Enabled" : "Disabled"}</span>
         </div>
         <span class="field-hint">
-          Forward SSH keys to this host so onward tools (ssh, git) can authenticate. Applies to new
-          sessions only.
+          Forward SSH keys to this host so onward tools (ssh, git) can authenticate.
         </span>
       </div>
 
