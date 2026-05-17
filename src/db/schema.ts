@@ -10,7 +10,6 @@ export const accounts = sqliteTable("accounts", {
 
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
-  agentForward: integer("agent_forward", { mode: "boolean" }).notNull().default(false),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -87,6 +86,13 @@ export const endpoints = sqliteTable("endpoints", {
    * host / authenticator can't provide UV.
    */
   userVerification: text("user_verification").notNull().default("required"),
+  /**
+   * Whether to enable SSH agent forwarding when opening a session to this
+   * endpoint. Defaults to enabled — some hosts disallow forwarding (e.g.
+   * AllowAgentForwarding no in sshd_config) and the user can disable it
+   * per-endpoint to avoid a forwarding-channel-rejected handshake.
+   */
+  agentForward: integer("agent_forward", { mode: "boolean" }).notNull().default(true),
   /**
    * Optional free-form description (max 1000 chars). Surfaced to MCP agents in
    * the per-endpoint instructions so they have context about what runs on the

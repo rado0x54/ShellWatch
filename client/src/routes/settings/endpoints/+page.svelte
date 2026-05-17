@@ -28,6 +28,7 @@
   let formLabel = $state("");
   let formAddress = $state("");
   let formUserVerification = $state<UserVerification>("required");
+  let formAgentForward = $state(true);
   let formDescription = $state("");
   let deleteTarget = $state<Endpoint | null>(null);
   let deleting = $state(false);
@@ -41,6 +42,7 @@
     formLabel = "";
     formAddress = "";
     formUserVerification = "required";
+    formAgentForward = true;
     formDescription = "";
   }
 
@@ -49,6 +51,7 @@
     formLabel = ep.label;
     formAddress = formatEndpointAddress(ep);
     formUserVerification = ep.userVerification;
+    formAgentForward = ep.agentForward;
     formDescription = ep.description ?? "";
   }
 
@@ -80,6 +83,7 @@
           port: parsed.port,
           username: parsed.username,
           userVerification: formUserVerification,
+          agentForward: formAgentForward,
           description,
         });
       } else {
@@ -89,6 +93,7 @@
           port: parsed.port,
           username: parsed.username,
           userVerification: formUserVerification,
+          agentForward: formAgentForward,
           description,
         });
       }
@@ -134,7 +139,10 @@
       <SettingsRow detail={ep.description ?? null} detailLabel="Description">
         {#snippet primary()}
           <span class="row-label">{ep.label}</span>
-          <span class="badge badge-available">{ep.userVerification}</span>
+          <span class="badge badge-available">UV: {ep.userVerification}</span>
+          <span class="badge" class:badge-available={ep.agentForward}>
+            forward: {ep.agentForward ? "on" : "off"}
+          </span>
         {/snippet}
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
@@ -232,6 +240,28 @@
         <div class="char-count">{formDescription.length} / {ENDPOINT_DESCRIPTION_MAX_LENGTH}</div>
       </div>
 
+      <div class="field">
+        <label for="ep-agent-forward">SSH Agent Forwarding</label>
+        <div class="toggle-row">
+          <button
+            type="button"
+            id="ep-agent-forward"
+            class="toggle"
+            class:active={formAgentForward}
+            onclick={() => (formAgentForward = !formAgentForward)}
+            aria-label="SSH Agent Forwarding"
+            role="switch"
+            aria-checked={formAgentForward}
+          >
+            <span class="toggle-knob"></span>
+          </button>
+          <span class="toggle-label">{formAgentForward ? "Enabled" : "Disabled"}</span>
+        </div>
+        <span class="field-help">
+          Forward SSH keys to this host so onward tools (ssh, git) can authenticate.
+        </span>
+      </div>
+
       {#snippet actions()}
         <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={saving}>
           Cancel
@@ -306,6 +336,60 @@
     text-transform: none;
     letter-spacing: 0;
     color: var(--text-muted);
+  }
+
+  .field-help {
+    display: block;
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.2s;
+  }
+
+  .toggle.active {
+    background: var(--green, #4ade80);
+    border-color: var(--green, #4ade80);
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition:
+      transform 0.2s,
+      background-color 0.2s;
+  }
+
+  .toggle.active .toggle-knob {
+    transform: translateX(18px);
+    background: white;
+  }
+
+  .toggle-label {
+    font-size: 0.85rem;
+    color: var(--text-primary);
   }
 
   .field textarea {

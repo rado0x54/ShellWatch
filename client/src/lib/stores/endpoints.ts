@@ -18,6 +18,7 @@ export interface Endpoint {
   port: number;
   username: string;
   userVerification: UserVerification;
+  agentForward: boolean;
   description: string | null;
 }
 
@@ -35,6 +36,7 @@ export async function createEndpoint(body: {
   port: number;
   username: string;
   userVerification?: UserVerification;
+  agentForward?: boolean;
   description?: string | null;
 }): Promise<void> {
   const res = await fetch("/api/endpoints", {

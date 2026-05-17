@@ -8,6 +8,11 @@ export const SeedEndpointSchema = z.object({
     .string()
     .min(1)
     .transform((addr) => parseEndpointAddress(addr)),
+  /**
+   * Whether to enable SSH agent forwarding on sessions to this endpoint.
+   * Defaults to true — opt out per endpoint when the host disallows forwarding.
+   */
+  agentForward: z.boolean().default(true),
 });
 
 /** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */

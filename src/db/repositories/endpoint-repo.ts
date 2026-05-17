@@ -27,6 +27,7 @@ export interface EndpointInfo {
   port: number;
   username: string;
   userVerification: UserVerification;
+  agentForward: boolean;
   description: string | null;
 }
 
@@ -45,6 +46,7 @@ export interface EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    agentForward?: boolean;
     description?: string | null;
   }): Promise<void>;
   update(
@@ -56,6 +58,7 @@ export interface EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      agentForward: boolean;
       description: string | null;
     }>,
   ): Promise<void>;
@@ -70,6 +73,7 @@ const ENDPOINT_COLUMNS = {
   port: endpoints.port,
   username: endpoints.username,
   userVerification: endpoints.userVerification,
+  agentForward: endpoints.agentForward,
   description: endpoints.description,
 } as const;
 
@@ -101,6 +105,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    agentForward?: boolean;
     description?: string | null;
   }): Promise<void> {
     const now = new Date().toISOString();
@@ -109,6 +114,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       .values({
         ...data,
         userVerification: data.userVerification ?? "required",
+        agentForward: data.agentForward ?? true,
         description: data.description ?? null,
         enabled: true,
         createdAt: now,
@@ -126,6 +132,7 @@ export class DrizzleEndpointRepository implements EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      agentForward: boolean;
       description: string | null;
     }>,
   ): Promise<void> {
@@ -150,9 +157,10 @@ export class InMemoryEndpointRepository implements EndpointRepository {
 
   constructor(
     initialEndpoints: Array<
-      Omit<EndpointInfo, "accountId" | "userVerification" | "description"> & {
+      Omit<EndpointInfo, "accountId" | "userVerification" | "agentForward" | "description"> & {
         accountId?: string;
         userVerification?: UserVerification;
+        agentForward?: boolean;
         description?: string | null;
       }
     > = [],
@@ -162,6 +170,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       ...e,
       accountId: e.accountId ?? this.defaultAccountId,
       userVerification: e.userVerification ?? "required",
+      agentForward: e.agentForward ?? true,
       description: e.description ?? null,
     }));
   }
@@ -182,11 +191,13 @@ export class InMemoryEndpointRepository implements EndpointRepository {
     port: number;
     username: string;
     userVerification?: UserVerification;
+    agentForward?: boolean;
     description?: string | null;
   }): Promise<void> {
     this.store.push({
       ...data,
       userVerification: data.userVerification ?? "required",
+      agentForward: data.agentForward ?? true,
       description: data.description ?? null,
     });
   }
@@ -200,6 +211,7 @@ export class InMemoryEndpointRepository implements EndpointRepository {
       port: number;
       username: string;
       userVerification: UserVerification;
+      agentForward: boolean;
       description: string | null;
     }>,
   ): Promise<void> {

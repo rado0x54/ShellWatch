@@ -43,8 +43,6 @@ export interface SshTransportFactoryOptions {
   createAgent: AgentFactory;
   findCredentialsForAccount?: CredentialsForAccountLookup;
   isAdmin?: AdminCheck;
-  /** Look up whether agent forwarding is enabled for a given account */
-  getAgentForward?: (accountId: string) => Promise<boolean>;
 }
 
 /**
@@ -63,7 +61,7 @@ export class SshTransportFactory {
   async create(params: TransportFactoryParams): Promise<TerminalTransport> {
     const { endpoint, sessionId, trigger } = params;
 
-    const agentForward = (await this.options.getAgentForward?.(endpoint.accountId)) ?? false;
+    const agentForward = endpoint.agentForward;
     const isAdmin = this.options.isAdmin?.(endpoint.accountId) ?? false;
 
     // Gather file keys (admin only)

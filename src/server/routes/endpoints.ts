@@ -31,15 +31,18 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
   app.get("/api/endpoints", async (request) => {
     const all = await endpointRepo.findAllForAccount(request.accountId);
     return {
-      endpoints: all.map(({ id, label, host, port, username, userVerification, description }) => ({
-        id,
-        label,
-        host,
-        port,
-        username,
-        userVerification,
-        description,
-      })),
+      endpoints: all.map(
+        ({ id, label, host, port, username, userVerification, agentForward, description }) => ({
+          id,
+          label,
+          host,
+          port,
+          username,
+          userVerification,
+          agentForward,
+          description,
+        }),
+      ),
     };
   });
 
@@ -50,6 +53,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      agentForward?: boolean;
       description?: string | null;
     };
   }>("/api/endpoints", async (request, reply) => {
@@ -60,6 +64,13 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         return {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
+      }
+      if (
+        request.body.agentForward !== undefined &&
+        typeof request.body.agentForward !== "boolean"
+      ) {
+        reply.status(400);
+        return { error: "agentForward must be a boolean" };
       }
       const desc = normalizeDescription(request.body.description);
       if (!desc.ok) {
@@ -77,6 +88,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
         userVerification: uv as UserVerification | undefined,
+        agentForward: request.body.agentForward,
         description: desc.value,
       });
       return { status: "created", id };
@@ -95,6 +107,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      agentForward?: boolean;
       description?: string | null;
     };
   }>("/api/endpoints/:id", async (request, reply) => {
@@ -105,6 +118,10 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         return {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
+      }
+      if (body.agentForward !== undefined && typeof body.agentForward !== "boolean") {
+        reply.status(400);
+        return { error: "agentForward must be a boolean" };
       }
       const descriptionPatch: Partial<{ description: string | null }> = {};
       if (body.description !== undefined) {

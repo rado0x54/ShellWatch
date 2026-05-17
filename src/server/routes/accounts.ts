@@ -34,33 +34,26 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       id: account.id,
       name: account.name,
       isAdmin: account.isAdmin,
-      agentForward: account.agentForward,
     };
   });
 
-  app.put<{ Body: { name?: string; agentForward?: boolean } }>(
-    "/api/auth/me",
-    async (request, reply) => {
-      const accountId = request.accountId;
-      const { name, agentForward } = request.body;
-      const updates: Partial<{ name: string; agentForward: boolean }> = {};
-      if (name !== undefined) {
-        const trimmed = name.trim();
-        if (!trimmed) {
-          reply.status(400);
-          return { error: "Name cannot be empty" };
-        }
-        updates.name = trimmed;
+  app.put<{ Body: { name?: string } }>("/api/auth/me", async (request, reply) => {
+    const accountId = request.accountId;
+    const { name } = request.body;
+    const updates: Partial<{ name: string }> = {};
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        reply.status(400);
+        return { error: "Name cannot be empty" };
       }
-      if (agentForward !== undefined) {
-        updates.agentForward = agentForward;
-      }
-      if (Object.keys(updates).length > 0) {
-        await accountRepo.update(accountId, updates);
-      }
-      return { status: "updated" };
-    },
-  );
+      updates.name = trimmed;
+    }
+    if (Object.keys(updates).length > 0) {
+      await accountRepo.update(accountId, updates);
+    }
+    return { status: "updated" };
+  });
 
   // --- Account Management (admin only) ---
 
@@ -77,7 +70,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         isAdmin: a.isAdmin,
         enabled: a.enabled,
         maxSessions: a.maxSessions,
-        agentForward: a.agentForward,
         lastUsedAt: a.lastUsedAt,
         createdAt: a.createdAt,
       })),
@@ -162,6 +154,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         host: endpointsTable.host,
         port: endpointsTable.port,
         username: endpointsTable.username,
+        agentForward: endpointsTable.agentForward,
       })
       .from(endpointsTable)
       .where(eq(endpointsTable.accountId, adminId))
@@ -192,6 +185,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         host: ep.host,
         port: ep.port,
       }),
+      agentForward: ep.agentForward,
     }));
 
     return { passkeys: seedPasskeys, endpoints: seedEndpoints };

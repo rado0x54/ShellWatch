@@ -60,6 +60,7 @@ describe("SSH Agent Forwarding", () => {
         host: sshServer.host,
         port: sshServer.port,
         username: "testuser",
+        agentForward,
       },
     ]);
     const keyRepo = new InMemorySshKeyRepository([
@@ -69,7 +70,6 @@ describe("SSH Agent Forwarding", () => {
 
     const factory = new SshTransportFactory(keyRepo, keyProvider, {
       rpId: "localhost",
-      getAgentForward: async () => agentForward,
       isAdmin: () => true,
       createAgent: ({ fileKeys, agentForward: fwd }) => {
         const fileKeyEntries = fileKeys
