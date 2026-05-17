@@ -15,6 +15,12 @@ export const SeedEndpointSchema = z.object({
   agentForward: z.boolean().default(true),
 });
 
+// demoEndpoints uses the same shape as seedAdminEndpoints — they're virtual,
+// global endpoints merged into every account's endpoint list (toggle on the
+// account row). See src/demo-endpoints/. Key delivery is a separate concern,
+// not modeled per-endpoint.
+export const DemoEndpointSchema = SeedEndpointSchema;
+
 /** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */
 export const rateLimitDefaults = {
   selfRegister: { max: 5, windowMinutes: 15 },
@@ -161,6 +167,12 @@ export const ConfigSchema = z.object({
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
+  /**
+   * Virtual demo endpoints merged into every account's endpoint list when the
+   * account's showDemoEndpoints toggle is on. Same shape as seedAdminEndpoints
+   * but never copied into the endpoints table — config is the source of truth.
+   */
+  demoEndpoints: z.array(DemoEndpointSchema).default([]),
   server: ServerSchema,
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
@@ -169,4 +181,5 @@ export const ConfigSchema = z.object({
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;
+export type DemoEndpoint = z.infer<typeof DemoEndpointSchema>;
 export type Config = z.infer<typeof ConfigSchema>;

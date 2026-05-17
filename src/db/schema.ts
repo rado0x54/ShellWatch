@@ -10,6 +10,11 @@ export const accounts = sqliteTable("accounts", {
 
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   maxSessions: integer("max_sessions").notNull().default(5),
+  // Whether the operator-configured demoEndpoints are merged into this
+  // account's endpoint list. Default true; user can hide them from the
+  // Endpoints page. Demo endpoints are never copied into the `endpoints`
+  // table — config is the source of truth. See src/demo-endpoints/.
+  showDemoEndpoints: integer("show_demo_endpoints", { mode: "boolean" }).notNull().default(true),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

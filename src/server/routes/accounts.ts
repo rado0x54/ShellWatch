@@ -34,26 +34,37 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       id: account.id,
       name: account.name,
       isAdmin: account.isAdmin,
+      showDemoEndpoints: account.showDemoEndpoints,
     };
   });
 
-  app.put<{ Body: { name?: string } }>("/api/auth/me", async (request, reply) => {
-    const accountId = request.accountId;
-    const { name } = request.body;
-    const updates: Partial<{ name: string }> = {};
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        reply.status(400);
-        return { error: "Name cannot be empty" };
+  app.put<{ Body: { name?: string; showDemoEndpoints?: boolean } }>(
+    "/api/auth/me",
+    async (request, reply) => {
+      const accountId = request.accountId;
+      const { name, showDemoEndpoints } = request.body;
+      const updates: Partial<{ name: string; showDemoEndpoints: boolean }> = {};
+      if (name !== undefined) {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          reply.status(400);
+          return { error: "Name cannot be empty" };
+        }
+        updates.name = trimmed;
       }
-      updates.name = trimmed;
-    }
-    if (Object.keys(updates).length > 0) {
-      await accountRepo.update(accountId, updates);
-    }
-    return { status: "updated" };
-  });
+      if (showDemoEndpoints !== undefined) {
+        if (typeof showDemoEndpoints !== "boolean") {
+          reply.status(400);
+          return { error: "showDemoEndpoints must be a boolean" };
+        }
+        updates.showDemoEndpoints = showDemoEndpoints;
+      }
+      if (Object.keys(updates).length > 0) {
+        await accountRepo.update(accountId, updates);
+      }
+      return { status: "updated" };
+    },
+  );
 
   // --- Account Management (admin only) ---
 

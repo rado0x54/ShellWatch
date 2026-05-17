@@ -5,6 +5,7 @@ const defaults: Config = {
   keyDirectory: "/tmp",
   seedAdminEndpoints: [],
   seedAdminPasskeys: [],
+  demoEndpoints: [],
   server: { ...serverDefaults, externalUrl: "http://localhost:3000" },
   security: {
     ...securityFieldDefaults,

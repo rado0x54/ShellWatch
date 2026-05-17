@@ -14,6 +14,7 @@
     type Endpoint,
     type UserVerification,
   } from "$lib/stores/endpoints.js";
+  import { account, fetchAccount, updateShowDemoEndpoints } from "$lib/stores/account.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
@@ -32,10 +33,25 @@
   let formDescription = $state("");
   let deleteTarget = $state<Endpoint | null>(null);
   let deleting = $state(false);
+  let togglingDemo = $state(false);
 
   onMount(() => {
     fetchEndpoints();
+    fetchAccount();
   });
+
+  async function handleToggleDemo() {
+    if (togglingDemo || !$account) return;
+    togglingDemo = true;
+    try {
+      await updateShowDemoEndpoints(!$account.showDemoEndpoints);
+      await fetchEndpoints();
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      togglingDemo = false;
+    }
+  }
 
   function openCreate() {
     modal = { kind: "create" };
@@ -134,11 +150,32 @@
     <button type="button" class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
   </div>
 
+  {#if $account}
+    <div class="demo-toggle">
+      <button
+        type="button"
+        class="toggle"
+        class:active={$account.showDemoEndpoints}
+        onclick={handleToggleDemo}
+        disabled={togglingDemo}
+        aria-label="Show demo endpoints"
+        role="switch"
+        aria-checked={$account.showDemoEndpoints}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+      <span class="toggle-label">Show demo endpoints</span>
+    </div>
+  {/if}
+
   <SettingsList empty={$endpoints.length === 0} emptyText="No endpoints configured">
     {#each $endpoints as ep (ep.id)}
       <SettingsRow detail={ep.description ?? null} detailLabel="Description">
         {#snippet primary()}
           <span class="row-label">{ep.label}</span>
+          {#if ep.isDemo}
+            <span class="badge badge-demo">demo</span>
+          {/if}
           <span class="badge badge-available">UV: {ep.userVerification}</span>
           <span class="badge" class:badge-available={ep.agentForward}>
             forward: {ep.agentForward ? "on" : "off"}
@@ -146,10 +183,14 @@
         {/snippet}
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
-          <button type="button" class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
-          <button type="button" class="btn btn-secondary" onclick={() => openDelete(ep)}
-            >Delete</button
-          >
+          {#if !ep.isDemo}
+            <button type="button" class="btn btn-secondary" onclick={() => openEdit(ep)}
+              >Edit</button
+            >
+            <button type="button" class="btn btn-secondary" onclick={() => openDelete(ep)}
+              >Delete</button
+            >
+          {/if}
         {/snippet}
       </SettingsRow>
     {/each}
@@ -288,6 +329,24 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 0.75rem;
+  }
+
+  .demo-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .badge-demo {
+    background: color-mix(in srgb, var(--primary, #6366f1) 18%, transparent);
+    color: var(--primary, #6366f1);
+    border-color: color-mix(in srgb, var(--primary, #6366f1) 40%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.65rem;
   }
 
   .row-label {

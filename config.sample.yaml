@@ -49,6 +49,21 @@ keyDirectory: ./keys
 #     address: deploy@staging.example.com:2222
 #     agentForward: false
 
+# Optional: virtual demo endpoints merged into every account's endpoint list.
+# Same shape as seedAdminEndpoints. Never copied into the database — config is
+# the source of truth. Each account has a "Show demo endpoints" toggle on the
+# Endpoints page (default on); set demoEndpoints to [] or omit to disable.
+# Pairs with the rado0x54/shellwatch-demo-server container — see issue #211.
+# demoEndpoints:
+#   - label: "Demo: Sudoku"
+#     address: sw-sudoku@ssh.shellwatch.ai
+#   - label: "Demo: 2048"
+#     address: sw-2048@ssh.shellwatch.ai
+#   - label: "Demo: Snake"
+#     address: sw-snake@ssh.shellwatch.ai
+#   - label: "Demo: Matrix"
+#     address: sw-matrix@ssh.shellwatch.ai
+
 # Security settings
 security:
   # WebAuthn Relying Party ID — must match the domain passkeys are registered on.
