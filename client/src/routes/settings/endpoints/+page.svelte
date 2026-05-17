@@ -227,6 +227,20 @@
       </div>
 
       <div class="field">
+        <label for="ep-desc">
+          Description <span class="field-hint">(optional, shown to MCP agents)</span>
+        </label>
+        <textarea
+          id="ep-desc"
+          rows="4"
+          maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
+          placeholder="e.g., production DB host, runs Postgres 15, /srv/data holds nightly dumps"
+          bind:value={formDescription}
+        ></textarea>
+        <div class="char-count">{formDescription.length} / {ENDPOINT_DESCRIPTION_MAX_LENGTH}</div>
+      </div>
+
+      <div class="field">
         <label for="ep-agent-forward">SSH Agent Forwarding</label>
         <div class="toggle-row">
           <button
@@ -244,24 +258,9 @@
           <span class="toggle-label">{formAgentForward ? "Enabled" : "Disabled"}</span>
         </div>
         <span class="field-hint">
-          Forward SSH keys to this host so onward tools (ssh, git) can authenticate. Disable when
-          <code>sshd_config</code> has <code>AllowAgentForwarding no</code>. Applies to new sessions
-          only — existing sessions keep their forwarding setting.
+          Forward SSH keys to this host so onward tools (ssh, git) can authenticate. Applies to new
+          sessions only.
         </span>
-      </div>
-
-      <div class="field">
-        <label for="ep-desc">
-          Description <span class="field-hint">(optional, shown to MCP agents)</span>
-        </label>
-        <textarea
-          id="ep-desc"
-          rows="4"
-          maxlength={ENDPOINT_DESCRIPTION_MAX_LENGTH}
-          placeholder="e.g., production DB host, runs Postgres 15, /srv/data holds nightly dumps"
-          bind:value={formDescription}
-        ></textarea>
-        <div class="char-count">{formDescription.length} / {ENDPOINT_DESCRIPTION_MAX_LENGTH}</div>
       </div>
 
       {#snippet actions()}
