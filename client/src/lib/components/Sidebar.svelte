@@ -70,7 +70,7 @@
   let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
   const CLICK_AUTO_COLLAPSE_MS = 3000;
-  const HOVER_AUTO_COLLAPSE_MS = 1000;
+  const HOVER_AUTO_COLLAPSE_MS = 500;
 
   function clearCollapseTimer() {
     if (collapseTimer !== null) {
