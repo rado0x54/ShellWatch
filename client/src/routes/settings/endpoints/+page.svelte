@@ -257,7 +257,7 @@
           </button>
           <span class="toggle-label">{formAgentForward ? "Enabled" : "Disabled"}</span>
         </div>
-        <span class="field-hint">
+        <span class="field-help">
           Forward SSH keys to this host so onward tools (ssh, git) can authenticate.
         </span>
       </div>
@@ -332,20 +332,18 @@
   }
 
   .field-hint {
-    display: block;
-    margin-top: 0.4rem;
-    font-size: 0.75rem;
     font-weight: 400;
     text-transform: none;
     letter-spacing: 0;
     color: var(--text-muted);
-    line-height: 1.5;
   }
 
-  .field-hint code {
-    font-family: var(--font-mono);
-    font-size: 0.85em;
-    color: var(--primary);
+  .field-help {
+    display: block;
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
   }
 
   .toggle-row {
