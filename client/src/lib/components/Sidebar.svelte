@@ -138,7 +138,11 @@
   onDestroy(clearCollapseTimer);
 </script>
 
-<svelte:window onkeydown={handleAccountKeydown} />
+<!--
+  Keydown handler is only wired while the menu is open, so Escape pressed
+  inside an xterm session (or anywhere else) can't surprise-close it.
+-->
+<svelte:window onkeydown={accountMenuOpen ? handleAccountKeydown : null} />
 
 <nav class="sidebar">
   <div class="sidebar-brand">
