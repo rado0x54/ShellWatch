@@ -16,7 +16,6 @@ function stubAccount(id: string, isAdmin: boolean): AccountInfo {
     isAdmin,
     enabled: true,
     maxSessions: 5,
-    agentForward: false,
     lastUsedAt: null,
     createdAt: now,
     updatedAt: now,

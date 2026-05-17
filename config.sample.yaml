@@ -40,12 +40,14 @@ keyDirectory: ./keys
 
 # Optional: seed endpoints for the admin account on first run (keys are assigned via UI)
 # Format: [user@]host[:port] — defaults: user=shellwatch, port=22
+# agentForward defaults to true; set to false for hosts that disallow forwarding.
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222
+#     agentForward: false
 
 # Security settings
 security:

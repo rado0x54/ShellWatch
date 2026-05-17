@@ -129,6 +129,7 @@ describe("Error Scenarios", () => {
           {
             label: "No Key",
             address: { username: "test", host: "localhost", port: 22 },
+            agentForward: true,
           },
         ],
         security: { cookieSecret: testSecret },

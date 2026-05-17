@@ -43,11 +43,6 @@ export function createSshTransportFactoryFromConfig(
     findCredentialsForAccount: (accountId) => findCredentialsForAccount(db, accountId),
     isAdmin: (accountId) => accountRepo.isAdmin(accountId),
 
-    getAgentForward: async (accountId) => {
-      const account = await accountRepo.findById(accountId);
-      return account?.agentForward ?? false;
-    },
-
     createAgent: ({
       endpoint,
       fileKeys,

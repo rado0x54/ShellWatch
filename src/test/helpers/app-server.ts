@@ -104,6 +104,7 @@ export async function startTestApp(
       {
         label: "Test Server",
         address: { username: "testuser", host: sshServer.host, port: sshServer.port },
+        agentForward: true,
       },
     ],
     security: { cookieSecret: testCookieSecret },

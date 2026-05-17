@@ -22,6 +22,7 @@ const testEndpoint: EndpointInfo = {
   port: 22,
   username: "testuser",
   userVerification: "required",
+  agentForward: true,
   description: null,
 };
 
