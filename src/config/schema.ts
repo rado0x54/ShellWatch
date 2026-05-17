@@ -162,6 +162,43 @@ export const AgentSocketSchema = z.object({
 
 export const agentSocketDefaults = { proxyEnabled: false };
 
+// /demo/authorized-keys lookup endpoint. Pairs with shellwatch-demo-server's
+// AuthorizedKeysCommand. Disabled by default; expose only on a network the
+// demo container can reach — typically a Docker internal network. See #211.
+export const demoAuthorizedKeysDefaults = {
+  enabled: false,
+  allowedNetworks: ["127.0.0.1/32", "::1/128"],
+  cacheTtlSeconds: 30,
+};
+
+export const DemoAuthorizedKeysSchema = z.object({
+  /** Master switch — registers the route only when true. */
+  enabled: z.boolean().default(demoAuthorizedKeysDefaults.enabled),
+  /**
+   * Networks permitted to call /demo/authorized-keys. Should be only the
+   * demo container's bridge subnet in production. Defaults to loopback for
+   * local dev.
+   */
+  allowedNetworks: z.array(z.string()).default(demoAuthorizedKeysDefaults.allowedNetworks),
+  /**
+   * Optional shared-secret bearer the demo container must send in the
+   * `Authorization: Bearer …` header. Defense-in-depth on top of the network
+   * allowlist; omit to rely on the network control alone.
+   */
+  sharedSecret: z.string().min(16).optional(),
+  /**
+   * In-process cache TTL for the `(type, fingerprint) → credentials` index.
+   * SSH pubkey auth invokes AuthorizedKeysCommand K+1 times per connect when
+   * the client offers K keys; without caching that's K+1 DB scans.
+   */
+  cacheTtlSeconds: z
+    .number()
+    .int()
+    .min(1)
+    .max(3600)
+    .default(demoAuthorizedKeysDefaults.cacheTtlSeconds),
+});
+
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
@@ -177,6 +214,7 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  demoAuthorizedKeys: DemoAuthorizedKeysSchema.default(demoAuthorizedKeysDefaults),
   vapid: VapidSchema.optional(),
 });
 

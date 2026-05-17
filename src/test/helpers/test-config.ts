@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { type Config, securityFieldDefaults, serverDefaults } from "../../config/index.js";
+import { demoAuthorizedKeysDefaults } from "../../config/schema.js";
 
 const defaults: Config = {
   keyDirectory: "/tmp",
@@ -15,6 +16,7 @@ const defaults: Config = {
   },
   notifications: { mcp: { debounceMs: 50 } },
   agentSocket: { proxyEnabled: false },
+  demoAuthorizedKeys: demoAuthorizedKeysDefaults,
 };
 
 export function makeTestConfig(

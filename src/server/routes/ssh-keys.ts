@@ -27,11 +27,11 @@ export function registerSshKeyRoutes(params: SshKeyRoutesParams) {
           id: k.id,
           label: k.label,
           type: k.type,
-          algorithm: k.publicKey.split(" ")[0] ?? "unknown",
+          algorithm: k.publicKeyOpenSsh.split(" ")[0] ?? "unknown",
           fingerprint: k.fingerprint,
           revoked: !k.enabled,
           available: k.enabled && available,
-          authorizedKeysEntry: k.publicKey ? `${k.publicKey}` : null,
+          authorizedKeysEntry: k.publicKeyOpenSsh ? `${k.publicKeyOpenSsh}` : null,
           createdAt: k.createdAt,
           lastUsedAt: k.lastUsedAt,
         };

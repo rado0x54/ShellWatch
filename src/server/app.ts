@@ -19,6 +19,11 @@ import type {
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import type { SessionLifecycleRepository, SigningRequestsRepository } from "../audit/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
+import {
+  DEMO_AUTHORIZED_KEYS_PATH,
+  createDemoAuthorizedKeysService,
+  registerDemoAuthorizedKeysRoute,
+} from "../demo-authorized-keys/index.js";
 import { createDemoEndpointsService } from "../demo-endpoints/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { PendingActionStore } from "../pending-action/index.js";
@@ -128,6 +133,14 @@ export async function buildApp(params: BuildAppParams) {
 
   // IP allowlist + bearer-gate (covers /mcp and, when enabled, /agent-proxy) + OAuth shim.
   registerIpAllowlist(app, config.security.allowedNetworks, [BEARER_PATHS.mcp]);
+  // Separate allowlist scope for the demo-authorized-keys lookup — operators
+  // typically want it open to the demo container's Docker subnet only, which
+  // is a different policy from the MCP gate. Skipped when the feature is off.
+  if (config.demoAuthorizedKeys.enabled) {
+    registerIpAllowlist(app, config.demoAuthorizedKeys.allowedNetworks, [
+      DEMO_AUTHORIZED_KEYS_PATH,
+    ]);
+  }
   // Only gate /agent-proxy when the proxy is actually enabled — otherwise the
   // path 401s at the bearer gate while no route is mounted, which is misleading
   // and lets clients mint agent-scoped keys that are useless.
@@ -213,6 +226,30 @@ export async function buildApp(params: BuildAppParams) {
       app,
       pushSubRepo: params.pushSubRepo,
     });
+  }
+
+  // /demo/authorized-keys — pubkey lookup endpoint for the companion demo
+  // SSH container's AuthorizedKeysCommand. Network access is gated by the
+  // demoAuthorizedKeys.allowedNetworks allowlist registered above; an
+  // optional shared secret adds defense-in-depth. Needs `db` because the
+  // lookup queries webauthnCredentials directly.
+  if (config.demoAuthorizedKeys.enabled && db) {
+    const demoAuthService = createDemoAuthorizedKeysService({
+      db,
+      cacheTtlMs: config.demoAuthorizedKeys.cacheTtlSeconds * 1000,
+    });
+    registerDemoAuthorizedKeysRoute({
+      app,
+      service: demoAuthService,
+      sharedSecret: config.demoAuthorizedKeys.sharedSecret,
+    });
+    app.log.info(
+      {
+        path: DEMO_AUTHORIZED_KEYS_PATH,
+        cacheTtlSeconds: config.demoAuthorizedKeys.cacheTtlSeconds,
+      },
+      "Demo authorized-keys endpoint enabled",
+    );
   }
 
   // MCP server over streamable HTTP at /mcp

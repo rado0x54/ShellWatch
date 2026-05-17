@@ -32,7 +32,7 @@ const testFileKey = {
   id: "key-1",
   label: "Test Key",
   type: "file",
-  publicKey: "ssh-ed25519 AAAA...",
+  publicKeyOpenSsh: "ssh-ed25519 AAAA...",
   fingerprint: "SHA256:abc123",
 };
 
@@ -133,7 +133,7 @@ describe("SshTransportFactory", () => {
       expect.objectContaining({
         fileKeys: [
           expect.objectContaining({
-            publicKey: testFileKey.publicKey,
+            publicKey: testFileKey.publicKeyOpenSsh,
             privateKey: testScannedKey.privateKeyContent,
             label: testFileKey.label,
             fingerprint: testFileKey.fingerprint,

@@ -80,7 +80,7 @@ describe("agent-proxy WebSocket endpoint", () => {
         id: "test-key",
         label: "Test Key",
         type: "file",
-        publicKey: testPublicKeyOpenSsh,
+        publicKeyOpenSsh: testPublicKeyOpenSsh,
         fingerprint: testFingerprint,
       },
     ]);

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "51088beb-e89a-4425-a71a-9509a1c5483a",
+  "id": "c1d942b0-b85a-40d6-89ee-6acfcf58ab3a",
   "prevId": "833d8ef2-d304-4fca-a662-6c996f63b68d",
   "tables": {
     "accounts": {
@@ -798,8 +798,8 @@
           "autoincrement": false,
           "default": "'file'"
         },
-        "public_key": {
-          "name": "public_key",
+        "public_key_openssh": {
+          "name": "public_key_openssh",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -909,6 +909,13 @@
         },
         "public_key_openssh": {
           "name": "public_key_openssh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

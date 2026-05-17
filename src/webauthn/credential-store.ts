@@ -10,6 +10,7 @@ import {
 import { webauthnCredentials } from "../db/schema.js";
 import { lookupAAGUID } from "./aaguid-lookup.js";
 import { type ChallengePurpose, consumeChallenge } from "./challenge-store.js";
+import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import { coseToAuthorizedKeys } from "./ssh-key-format.js";
 
 export interface VerifyAndDecodeParams {
@@ -119,10 +120,14 @@ export function insertCredentialRow(
   accountId: string,
   decoded: DecodedRegistration,
   options: InsertCredentialOptions = {},
-): { id: string; label: string } {
+): { id: string; label: string; fingerprint: string | null } {
   const id = randomUUID();
   const label = deduplicateLabel(dbOrTx, accountId, decoded.baseLabel);
   const now = new Date().toISOString();
+  // Persist the SHA256 fingerprint alongside the SSH key string so hot read
+  // paths (credentials list, /demo/authorized-keys) don't rehash on every
+  // request. Null iff the COSE→OpenSSH conversion above didn't yield a key.
+  const fingerprint = fingerprintFromAuthorizedKeys(decoded.authorizedKeysEntry);
 
   dbOrTx
     .insert(webauthnCredentials)
@@ -135,10 +140,11 @@ export function insertCredentialRow(
       transports: JSON.stringify(decoded.transports),
       label,
       publicKeyOpenSsh: decoded.authorizedKeysEntry,
+      fingerprint,
       state: options.state ?? CREDENTIAL_STATE.active,
       createdAt: now,
     })
     .run();
 
-  return { id, label };
+  return { id, label, fingerprint };
 }

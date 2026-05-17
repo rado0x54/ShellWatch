@@ -5,7 +5,6 @@ import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
 import { detectAlgorithm } from "./credential-utils.js";
-import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
 import { requireStepUp } from "./stepup-gate.js";
 import { STEPUP_ACTION } from "./stepup-store.js";
@@ -26,6 +25,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         credentialId: webauthnCredentials.credentialId,
         publicKey: webauthnCredentials.publicKey,
         publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
+        fingerprint: webauthnCredentials.fingerprint,
         label: webauthnCredentials.label,
         revoked: webauthnCredentials.revoked,
         state: webauthnCredentials.state,
@@ -50,7 +50,7 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
           credentialId: c.credentialId,
           label: c.label,
           algorithm: detectAlgorithm(c.publicKey),
-          fingerprint: fingerprintFromAuthorizedKeys(c.publicKeyOpenSsh),
+          fingerprint: c.fingerprint,
           authorizedKeysEntry: isActive ? (c.publicKeyOpenSsh ?? null) : null,
           revoked: c.revoked,
           state: c.state,

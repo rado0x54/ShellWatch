@@ -45,6 +45,11 @@ export function registerAuthGate({ app, secret, accountRepo }: AuthGateParams): 
     "/register",
     "/mcp",
     "/agent-proxy",
+    // /demo/authorized-keys is called by the companion demo SSH container's
+    // AuthorizedKeysCommand. Not a user-facing route; gated by its own IP
+    // allowlist + optional shared secret. Always exempt from cookie auth —
+    // the route itself is registered only when demoAuthorizedKeys.enabled.
+    "/demo/authorized-keys",
     "/config.js",
     "/manifest.json",
     // OAuth endpoints reached by the MCP client directly (no human, no session):

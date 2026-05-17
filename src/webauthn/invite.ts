@@ -7,7 +7,6 @@ import { CREDENTIAL_STATE } from "../db/repositories/index.js";
 import { accounts, webauthnCredentials } from "../db/schema.js";
 import { CHALLENGE_PURPOSE, storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
-import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import {
   consumeInviteSlotIfTokenMatches,
   createInviteSlot,
@@ -293,7 +292,7 @@ export function registerPasskeyInviteRoutes(params: PasskeyInviteRoutesParams) {
       return {
         status: "registered",
         label: inserted.label,
-        fingerprint: fingerprintFromAuthorizedKeys(result.decoded.authorizedKeysEntry),
+        fingerprint: inserted.fingerprint,
       };
     },
   );
