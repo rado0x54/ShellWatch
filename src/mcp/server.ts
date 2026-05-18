@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentSession } from "../agent/index.js";
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
 import type { SshKeyRepository } from "../db/repositories/key-repo.js";
+import type { DemoEndpointsService } from "../demo-endpoints/index.js";
 import { buildInfo } from "../server/buildInfo.js";
 import { registerEndpointTools } from "./tools/endpoints.js";
 import { registerKeyTools } from "./tools/keys.js";
 import { registerSessionTools } from "./tools/sessions.js";
 
-export async function createMcpServer(
-  agentSession: AgentSession,
-  endpointRepo: EndpointRepository,
-  keyRepo: SshKeyRepository,
-  accountId: string,
-): Promise<McpServer> {
+export interface CreateMcpServerParams {
+  agentSession: AgentSession;
+  endpointRepo: EndpointRepository;
+  demoEndpoints: DemoEndpointsService;
+  accountRepo: AccountRepository;
+  keyRepo: SshKeyRepository;
+  accountId: string;
+}
+
+export async function createMcpServer(params: CreateMcpServerParams): Promise<McpServer> {
+  const { agentSession, endpointRepo, demoEndpoints, accountRepo, keyRepo, accountId } = params;
   const endpoints = await agentSession.listEndpoints();
   const endpointList = endpoints
     .map((s) => {
@@ -82,7 +89,7 @@ export async function createMcpServer(
   };
 
   registerSessionTools(mcpServer, agentSession);
-  registerEndpointTools(mcpServer, endpointRepo, accountId);
+  registerEndpointTools(mcpServer, { endpointRepo, demoEndpoints, accountRepo, accountId });
   registerKeyTools(mcpServer, keyRepo);
 
   return mcpServer;

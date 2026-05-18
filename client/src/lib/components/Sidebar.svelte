@@ -158,6 +158,9 @@
           <div class="endpoint-item">
             <div class="endpoint-info">
               <span class="endpoint-label" title={formatEndpointAddress(ep)}>{ep.label}</span>
+              {#if ep.isDemo}
+                <span class="badge badge-demo" title="Operator-curated demo endpoint">demo</span>
+              {/if}
             </div>
             <button type="button" class="btn btn-primary" onclick={() => handleConnect(ep.id)}
               >Connect</button
@@ -503,6 +506,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Reuse the global signal-chip convention (.badge + .badge-demo) below the
+     label rather than inline, so a long label still fits the full sidebar
+     width before ellipsizing. align-self pins the chip to the left edge of
+     the column; margin-left/0 drops the global .badge inline-spacing default. */
+  .endpoint-info :global(.badge) {
+    margin-left: 0;
+    align-self: flex-start;
   }
 
   .endpoint-item > :global(.btn) {

@@ -10,18 +10,20 @@ import {
   endpoints as endpointsTable,
   webauthnCredentials,
 } from "../../db/schema.js";
+import type { DemoEndpointsService } from "../../demo-endpoints/index.js";
 import { formatEndpointAddress } from "../../utils/endpoint-address.js";
 import type { AccountLifecycle } from "../account-lifecycle.js";
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
   accountRepo: AccountRepository;
+  demoEndpoints: DemoEndpointsService;
   db?: ShellWatchDB | null;
   accountLifecycle: AccountLifecycle;
 }
 
 export function registerAccountRoutes(params: AccountRoutesParams) {
-  const { app, accountRepo, db = null, accountLifecycle } = params;
+  const { app, accountRepo, demoEndpoints, db = null, accountLifecycle } = params;
 
   // --- Auth: current account ---
   app.get("/api/auth/me", async (request, reply) => {
@@ -34,26 +36,48 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       id: account.id,
       name: account.name,
       isAdmin: account.isAdmin,
+      // showDemoEndpoints is a per-account *visibility* preference, not an
+      // authorization gate. The `demo:*` virtual ids stay resolvable on the
+      // connect path regardless of this flag — operator-curated demo entries
+      // aren't sensitive, the demo container's ForceCommand pinning is the
+      // load-bearing control. Toggling this off only hides demos from
+      // /api/endpoints listings (UI + MCP).
+      showDemoEndpoints: account.showDemoEndpoints,
+      // Whether the *operator* configured any demoEndpoints at all. The UI
+      // hides the entire Demo Endpoints section + toggle when this is false,
+      // so vanilla deployments don't show an inert control.
+      demoEndpointsAvailable: !demoEndpoints.isEmpty(),
     };
   });
 
-  app.put<{ Body: { name?: string } }>("/api/auth/me", async (request, reply) => {
-    const accountId = request.accountId;
-    const { name } = request.body;
-    const updates: Partial<{ name: string }> = {};
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        reply.status(400);
-        return { error: "Name cannot be empty" };
+  app.put<{ Body: { name?: string; showDemoEndpoints?: boolean } }>(
+    "/api/auth/me",
+    async (request, reply) => {
+      const accountId = request.accountId;
+      const { name, showDemoEndpoints } = request.body;
+      const updates: Partial<{ name: string; showDemoEndpoints: boolean }> = {};
+      if (name !== undefined) {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          reply.status(400);
+          return { error: "Name cannot be empty" };
+        }
+        updates.name = trimmed;
       }
-      updates.name = trimmed;
-    }
-    if (Object.keys(updates).length > 0) {
-      await accountRepo.update(accountId, updates);
-    }
-    return { status: "updated" };
-  });
+      if (showDemoEndpoints !== undefined) {
+        if (typeof showDemoEndpoints !== "boolean") {
+          reply.status(400);
+          return { error: "showDemoEndpoints must be a boolean" };
+        }
+        // Visibility flag only; see the GET handler for the auth-gate caveat.
+        updates.showDemoEndpoints = showDemoEndpoints;
+      }
+      if (Object.keys(updates).length > 0) {
+        await accountRepo.update(accountId, updates);
+      }
+      return { status: "updated" };
+    },
+  );
 
   // --- Account Management (admin only) ---
 
@@ -178,6 +202,12 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       };
     });
 
+    // formatEndpointAddress always emits a `user@` prefix, even when the user
+    // is the default `shellwatch` — surfaces the wire-level identity to the
+    // operator. Round-trips identically through parseEndpointAddress, so an
+    // exported config re-imports cleanly. Side effect worth noting: re-exports
+    // of configs that previously omitted the default user will diff against
+    // their old form (now explicit `shellwatch@…`).
     const seedEndpoints = eps.map((ep) => ({
       label: ep.label,
       address: formatEndpointAddress({

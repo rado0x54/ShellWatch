@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { account } from "$lib/stores/account.js";
-  import { fetchSshKeys, sshKeys } from "$lib/stores/keys.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
@@ -24,11 +23,7 @@
   let registering = $state(false);
   let inviting = $state(false);
   let showAddModal = $state(false);
-  let revokeTarget = $state<
-    | { kind: "passkey"; id: string; label: string }
-    | { kind: "file"; id: string; label: string }
-    | null
-  >(null);
+  let revokeTarget = $state<{ id: string; label: string } | null>(null);
   // Single source of truth for the active invite slot for this account. Used
   // both for the on-page indicator (with live countdown) and as the prefilled
   // value when the user opens the Add-Passkey modal.
@@ -43,7 +38,6 @@
 
   onMount(async () => {
     fetchCredentials();
-    fetchSshKeys();
     try {
       activeInvite = await fetchActiveInvite();
     } catch (err) {
@@ -203,11 +197,7 @@
         return;
       }
     }
-    revokeTarget = { kind: "passkey", id, label: target.label };
-  }
-
-  function openRevokeFileKey(id: string, label: string) {
-    revokeTarget = { kind: "file", id, label };
+    revokeTarget = { id, label: target.label };
   }
 
   function closeRevokeDialog() {
@@ -251,31 +241,9 @@
     }
   }
 
-  async function handleRevokeFileKey(id: string): Promise<boolean> {
-    revoking = true;
-    try {
-      const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
-      const res = await fetch(`${base}/api/keys/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json();
-        toastError(err.error || "Failed to revoke");
-        return false;
-      }
-      await fetchSshKeys();
-      return true;
-    } catch (err) {
-      toastError(errorMessage(err));
-      return false;
-    } finally {
-      revoking = false;
-    }
-  }
-
   async function handleRevokeConfirm() {
     if (!revokeTarget) return;
-    const t = revokeTarget;
-    const ok =
-      t.kind === "passkey" ? await handleRevokePasskey(t.id) : await handleRevokeFileKey(t.id);
+    const ok = await handleRevokePasskey(revokeTarget.id);
     if (ok) revokeTarget = null;
   }
 
@@ -329,9 +297,6 @@
     if (!iso) return "Never";
     return iso.slice(0, 10);
   }
-
-  const hasAuthorizedKeys = $derived($credentials.some((pk) => pk.authorizedKeysEntry));
-  const fileKeys = $derived($sshKeys.filter((k) => k.type === "file"));
 </script>
 
 <section>
@@ -515,78 +480,18 @@
   {/if}
 
   {#if revokeTarget}
-    {@const target = revokeTarget}
     <ConfirmDialog
-      title={target.kind === "passkey" ? "Revoke passkey?" : "Revoke SSH key?"}
+      title="Revoke passkey?"
       confirmLabel="Revoke"
       onConfirm={handleRevokeConfirm}
       onCancel={closeRevokeDialog}
       processing={revoking}
     >
       <p class="modal-desc">
-        Revoke <strong>{target.label}</strong>? This is permanent and cannot be undone.
-        {#if target.kind === "passkey"}
-          You'll be asked to verify with another passkey first.
-        {/if}
+        Revoke <strong>{revokeTarget.label}</strong>? This is permanent and cannot be undone. You'll
+        be asked to verify with another passkey first.
       </p>
     </ConfirmDialog>
-  {/if}
-
-  {#if hasAuthorizedKeys}
-    <div class="settings-info">
-      <h3>SSH Server Setup</h3>
-      <p>Add this line to <code>/etc/ssh/sshd_config</code> on your remote server:</p>
-      <pre
-        class="code-block">PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com</pre>
-      <p>Then add the passkey's SSH public key to <code>~/.ssh/authorized_keys</code>.</p>
-    </div>
-  {/if}
-
-  <!-- File-based SSH Keys (admin only) -->
-  {#if $account?.isAdmin && fileKeys.length > 0}
-    <h2 class="section-divider">File-Based SSH Keys</h2>
-    <SettingsList>
-      {#each fileKeys as k (k.id)}
-        <SettingsRow>
-          {#snippet primary()}
-            <span class="row-label" class:revoked={k.revoked}>{k.label}</span>
-            {#if k.revoked}
-              <span class="badge badge-unavailable">revoked</span>
-            {:else if !k.available}
-              <span class="badge badge-unavailable">unavailable</span>
-            {:else}
-              <span class="badge badge-available">available</span>
-            {/if}
-            <span class="meta-mono">{k.algorithm}</span>
-          {/snippet}
-          {#snippet secondary()}
-            <span title={k.fingerprint ?? ""}>{shortFingerprint(k.fingerprint)}</span>
-            <span class="row-dot">·</span>created {formatDate(k.createdAt)}
-            <span class="row-dot">·</span>last used {formatDate(k.lastUsedAt)}
-          {/snippet}
-          {#snippet actions()}
-            {#if k.authorizedKeysEntry && !k.revoked}
-              <button
-                type="button"
-                class="btn btn-secondary"
-                title="Copy SSH public key"
-                onclick={(e) =>
-                  copyKey(k.authorizedKeysEntry!, e.currentTarget as HTMLButtonElement)}
-                >Copy SSH PubKey</button
-              >
-            {/if}
-            {#if !k.revoked}
-              <button
-                type="button"
-                class="btn btn-secondary"
-                disabled={revoking}
-                onclick={() => openRevokeFileKey(k.id, k.label)}>Revoke</button
-              >
-            {/if}
-          {/snippet}
-        </SettingsRow>
-      {/each}
-    </SettingsList>
   {/if}
 </section>
 
@@ -598,10 +503,6 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-  }
-
-  .section-divider {
-    margin-top: 2rem;
   }
 
   .row-label {

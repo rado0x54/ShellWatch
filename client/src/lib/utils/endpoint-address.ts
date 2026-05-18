@@ -58,10 +58,13 @@ function parsePort(s: string): number {
 }
 
 /**
- * Format an endpoint address, omitting defaults.
+ * Format an endpoint address. The username is always rendered so the display
+ * is unambiguous when the endpoint was created without a `user@` prefix and
+ * picked up the `shellwatch` default — surfacing the default explicitly
+ * matches what sshd actually sees on the wire. The port is still omitted
+ * when it's the SSH default (22).
  */
 export function formatEndpointAddress(ep: EndpointAddress): string {
-  const userPart = ep.username !== DEFAULT_USERNAME ? `${ep.username}@` : "";
   const portPart = ep.port !== DEFAULT_PORT ? `:${ep.port}` : "";
-  return `${userPart}${ep.host}${portPart}`;
+  return `${ep.username}@${ep.host}${portPart}`;
 }

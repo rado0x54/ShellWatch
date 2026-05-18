@@ -8,6 +8,8 @@ import {
   USER_VERIFICATION_VALUES,
   type UserVerification,
 } from "../../db/repositories/endpoint-repo.js";
+import type { DemoEndpointsService } from "../../demo-endpoints/index.js";
+import { isDemoEndpointId } from "../../demo-endpoints/index.js";
 import type { TerminalManager } from "../../terminal/index.js";
 
 function normalizeDescription(value: unknown): { ok: true; value: string | null } | { ok: false } {
@@ -22,17 +24,25 @@ export interface EndpointRoutesParams {
   app: FastifyInstance;
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
+  demoEndpoints: DemoEndpointsService;
   terminalManager: TerminalManager;
 }
 
 export function registerEndpointRoutes(params: EndpointRoutesParams) {
-  const { app, endpointRepo, terminalManager } = params;
+  const { app, endpointRepo, accountRepo, demoEndpoints, terminalManager } = params;
 
   app.get("/api/endpoints", async (request) => {
-    const all = await endpointRepo.findAllForAccount(request.accountId);
+    const own = await endpointRepo.findAllForAccount(request.accountId);
+    const account = await accountRepo.findById(request.accountId);
+    const merged = [
+      ...own.map((e) => ({ ...e, isDemo: false as const })),
+      ...(account?.showDemoEndpoints
+        ? demoEndpoints.list(request.accountId).map((e) => ({ ...e, isDemo: true as const }))
+        : []),
+    ];
     return {
-      endpoints: all.map(
-        ({ id, label, host, port, username, userVerification, agentForward, description }) => ({
+      endpoints: merged.map(
+        ({
           id,
           label,
           host,
@@ -41,6 +51,17 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
           userVerification,
           agentForward,
           description,
+          isDemo,
+        }) => ({
+          id,
+          label,
+          host,
+          port,
+          username,
+          userVerification,
+          agentForward,
+          description,
+          isDemo,
         }),
       ),
     };
@@ -112,6 +133,10 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     };
   }>("/api/endpoints/:id", async (request, reply) => {
     try {
+      if (isDemoEndpointId(request.params.id)) {
+        reply.status(400);
+        return { error: "Demo endpoints are read-only — toggle visibility instead" };
+      }
       const body = request.body;
       if (body.userVerification !== undefined && !isUserVerification(body.userVerification)) {
         reply.status(400);
@@ -149,6 +174,10 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
 
   app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
     try {
+      if (isDemoEndpointId(request.params.id)) {
+        reply.status(400);
+        return { error: "Demo endpoints are read-only — toggle visibility instead" };
+      }
       const activeSessions = terminalManager
         .listSessions()
         .filter((s) => s.endpointId === request.params.id);

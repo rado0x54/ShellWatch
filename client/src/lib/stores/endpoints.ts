@@ -20,6 +20,8 @@ export interface Endpoint {
   userVerification: UserVerification;
   agentForward: boolean;
   description: string | null;
+  /** True if this is a virtual demo endpoint (read-only, from operator config). */
+  isDemo: boolean;
 }
 
 export const endpoints = writable<Endpoint[]>([]);

@@ -2,6 +2,8 @@
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import type { AccountInfo, AccountRepository } from "../../db/index.js";
+import type { DemoEndpoint } from "../../config/schema.js";
+import { createDemoEndpointsService } from "../../demo-endpoints/index.js";
 import { AccountLifecycle } from "../account-lifecycle.js";
 import { registerAccountRoutes } from "./accounts.js";
 
@@ -16,6 +18,7 @@ function stubAccount(id: string, isAdmin: boolean): AccountInfo {
     isAdmin,
     enabled: true,
     maxSessions: 5,
+    showDemoEndpoints: true,
     lastUsedAt: null,
     createdAt: now,
     updatedAt: now,
@@ -45,7 +48,10 @@ function fakeRepo(opts: { adminId: string }): AccountRepository {
   };
 }
 
-async function buildApp(callerAccountId: string) {
+async function buildApp(
+  callerAccountId: string,
+  opts: { demoEndpoints?: readonly DemoEndpoint[] } = {},
+) {
   const app = Fastify({ logger: false });
   const accountRepo = fakeRepo({ adminId: ADMIN_ID });
   const accountLifecycle = new AccountLifecycle();
@@ -53,7 +59,13 @@ async function buildApp(callerAccountId: string) {
   app.addHook("onRequest", async (request) => {
     request.accountId = callerAccountId;
   });
-  registerAccountRoutes({ app, accountRepo, accountLifecycle, db: null });
+  registerAccountRoutes({
+    app,
+    accountRepo,
+    demoEndpoints: createDemoEndpointsService(opts.demoEndpoints ?? []),
+    accountLifecycle,
+    db: null,
+  });
   return { app, accountLifecycle };
 }
 
@@ -92,6 +104,38 @@ describe("DELETE /api/accounts/:id lifecycle emit", () => {
 
     expect(res.statusCode).toBe(400);
     expect(handler).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe("GET /api/auth/me — demoEndpointsAvailable", () => {
+  it("returns false when no demoEndpoints are configured", async () => {
+    const { app } = await buildApp(ADMIN_ID, { demoEndpoints: [] });
+
+    const res = await app.inject({ method: "GET", url: "/api/auth/me" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { demoEndpointsAvailable: boolean };
+    expect(body.demoEndpointsAvailable).toBe(false);
+    await app.close();
+  });
+
+  it("returns true when at least one demoEndpoint is configured", async () => {
+    const { app } = await buildApp(ADMIN_ID, {
+      demoEndpoints: [
+        {
+          label: "Demo: 2048",
+          address: { host: "ssh.example.com", port: 22, username: "sw-2048" },
+          agentForward: false,
+        },
+      ],
+    });
+
+    const res = await app.inject({ method: "GET", url: "/api/auth/me" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { demoEndpointsAvailable: boolean };
+    expect(body.demoEndpointsAvailable).toBe(true);
     await app.close();
   });
 });

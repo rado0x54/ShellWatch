@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import Modal from "$lib/components/Modal.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import ServerSetupGuide from "$lib/components/ServerSetupGuide.svelte";
   import {
     createEndpoint,
     deleteEndpoint,
@@ -14,14 +15,22 @@
     type Endpoint,
     type UserVerification,
   } from "$lib/stores/endpoints.js";
+  import { account, fetchAccount, updateShowDemoEndpoints } from "$lib/stores/account.js";
+  import { credentials, fetchCredentials } from "$lib/stores/webauthn.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
-  import Wordmark from "$lib/components/Wordmark.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
 
-  type ModalMode = { kind: "create" } | { kind: "edit"; id: string };
+  // The wizard kinds prefix the form with a Server-Setup primer. Triggered
+  // automatically when the user clicks Add Endpoint while they have no own
+  // endpoints yet — the button label itself is static.
+  type ModalMode =
+    | { kind: "create" }
+    | { kind: "edit"; id: string }
+    | { kind: "wizard-server" }
+    | { kind: "wizard-form" };
 
   let modal = $state<ModalMode | null>(null);
   let saving = $state(false);
@@ -32,18 +41,94 @@
   let formDescription = $state("");
   let deleteTarget = $state<Endpoint | null>(null);
   let deleting = $state(false);
+  let togglingDemo = $state(false);
+  // Tracks whether the Address field has been blurred. Used to surface the
+  // "user defaults to shellwatch" hint only after the user finishes editing —
+  // we don't want it nagging mid-typing.
+  let addressBlurred = $state(false);
+
+  // The default-user affordance fires when the user blurred away from a
+  // non-empty address that has no `user@` prefix. The actual prefix is shown
+  // as a gray adornment next to the input; the value in the input stays as
+  // whatever the user typed (parseEndpointAddress applies the default).
+  const showDefaultUserHint = $derived(
+    addressBlurred && formAddress.length > 0 && !formAddress.includes("@"),
+  );
+
+  // Split the merged endpoint list so we can render demos in their own
+  // section below the user's own endpoints. The server only returns demo
+  // entries when account.showDemoEndpoints is on, so this filter is empty
+  // when the toggle is off.
+  const regularEndpoints = $derived($endpoints.filter((ep) => !ep.isDemo));
+  const demoEndpoints = $derived($endpoints.filter((ep) => ep.isDemo));
+
+  // First active passkey that's convertible to SSH — used by the wizard's
+  // Server-Setup step so the authorized_keys command is fully copy-pastable.
+  const wizardPasskey = $derived(
+    $credentials.find((c) => c.state === "active" && c.authorizedKeysEntry !== null) ?? null,
+  );
+
+  // The form modal is the same shape for create / wizard-form / edit. Only the
+  // Back button (wizard) vs Cancel (everywhere else) and the submit handler's
+  // create-vs-update branch differ.
+  const isFormModal = $derived(
+    modal?.kind === "create" || modal?.kind === "edit" || modal?.kind === "wizard-form",
+  );
+
+  function modalTitle(m: ModalMode): string {
+    switch (m.kind) {
+      case "create":
+      case "wizard-form":
+        return "Add Endpoint";
+      case "edit":
+        return "Edit Endpoint";
+      case "wizard-server":
+        return "Set up your SSH server";
+    }
+  }
 
   onMount(() => {
     fetchEndpoints();
+    fetchAccount();
+    fetchCredentials();
   });
 
-  function openCreate() {
-    modal = { kind: "create" };
+  async function handleToggleDemo() {
+    if (togglingDemo || !$account) return;
+    togglingDemo = true;
+    try {
+      await updateShowDemoEndpoints(!$account.showDemoEndpoints);
+      await fetchEndpoints();
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      togglingDemo = false;
+    }
+  }
+
+  function resetForm() {
     formLabel = "";
     formAddress = "";
     formUserVerification = "required";
     formAgentForward = true;
     formDescription = "";
+    addressBlurred = false;
+  }
+
+  // Single entry point from the Add Endpoint button. When the user has no own
+  // endpoints yet we lead with the SSH-server setup primer; otherwise we drop
+  // straight into the form — the button label stays the same either way.
+  function openAdd() {
+    resetForm();
+    modal = regularEndpoints.length === 0 ? { kind: "wizard-server" } : { kind: "create" };
+  }
+
+  function continueWizard() {
+    modal = { kind: "wizard-form" };
+  }
+
+  function wizardBack() {
+    modal = { kind: "wizard-server" };
   }
 
   function openEdit(ep: Endpoint) {
@@ -53,6 +138,7 @@
     formUserVerification = ep.userVerification;
     formAgentForward = ep.agentForward;
     formDescription = ep.description ?? "";
+    addressBlurred = false;
   }
 
   function closeModal() {
@@ -76,8 +162,8 @@
     const description = formDescription.trim() ? formDescription.trim() : null;
     saving = true;
     try {
-      if (modal.kind === "create") {
-        await createEndpoint({
+      if (modal.kind === "edit") {
+        await updateEndpoint(modal.id, {
           label: formLabel.trim(),
           host: parsed.host,
           port: parsed.port,
@@ -87,7 +173,8 @@
           description,
         });
       } else {
-        await updateEndpoint(modal.id, {
+        // create or wizard-form — both POST a new endpoint
+        await createEndpoint({
           label: formLabel.trim(),
           host: parsed.host,
           port: parsed.port,
@@ -129,13 +216,10 @@
 </script>
 
 <section>
-  <div class="header">
-    <h2>SSH Endpoints</h2>
-    <button type="button" class="btn btn-primary" onclick={openCreate}>Add Endpoint</button>
-  </div>
+  <h2>SSH Endpoints</h2>
 
-  <SettingsList empty={$endpoints.length === 0} emptyText="No endpoints configured">
-    {#each $endpoints as ep (ep.id)}
+  <SettingsList empty={regularEndpoints.length === 0} emptyText="No endpoints configured">
+    {#each regularEndpoints as ep (ep.id)}
       <SettingsRow detail={ep.description ?? null} detailLabel="Description">
         {#snippet primary()}
           <span class="row-label">{ep.label}</span>
@@ -155,35 +239,48 @@
     {/each}
   </SettingsList>
 
-  <div class="hint-block">
-    <p class="hint">
-      <strong>User Verification</strong> controls the WebAuthn <code>userVerification</code> option
-      used for passkey sign ceremonies to this endpoint. Defaults to <code>required</code> (PIN / biometric
-      always enforced). Relax only if a specific authenticator can't provide UV.
-    </p>
-    <p class="hint">
-      This is a <em>client-side</em> setting — <Wordmark /> requests UV from the authenticator and rejects
-      responses without it when set to <code>required</code>, but the authoritative gate is the
-      <strong>OpenSSH server</strong>. To make UV load-bearing, configure the target host to require
-      it:
-    </p>
-    <ul class="hint">
-      <li>
-        <strong>Globally</strong> in <code>sshd_config</code>:
-        <code>PubkeyAuthOptions verify-required</code>
-      </li>
-      <li>
-        <strong>Per-key</strong> in <code>~/.ssh/authorized_keys</code> on the server:
-        <code>verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host</code>
-      </li>
-    </ul>
-    <p class="hint">
-      Either source enables enforcement; <code>sshd</code> rejects signatures without the UV bit (<code
-        >SSH_SK_USER_VERIFICATION_REQD</code
-      >, <code>0x04</code>) set, logging
-      <code>user verification requirement not met</code>. See the project README for details.
-    </p>
+  <div class="register-section">
+    <button type="button" class="btn btn-primary" onclick={openAdd}>Add Endpoint</button>
   </div>
+
+  {#if $account?.demoEndpointsAvailable}
+    <div class="demo-section-header">
+      <h3 class="demo-section-label">Demo Endpoints</h3>
+      <button
+        type="button"
+        class="toggle"
+        class:active={$account.showDemoEndpoints}
+        onclick={handleToggleDemo}
+        disabled={togglingDemo}
+        aria-label="Show demo endpoints"
+        role="switch"
+        aria-checked={$account.showDemoEndpoints}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+      <span class="toggle-label">Show</span>
+    </div>
+
+    {#if $account.showDemoEndpoints}
+      <SettingsList
+        empty={demoEndpoints.length === 0}
+        emptyText="No demo endpoints configured by the operator"
+      >
+        {#each demoEndpoints as ep (ep.id)}
+          <SettingsRow detail={ep.description ?? null} detailLabel="Description">
+            {#snippet primary()}
+              <span class="row-label">{ep.label}</span>
+              <span class="badge badge-available">UV: {ep.userVerification}</span>
+              <span class="badge" class:badge-available={ep.agentForward}>
+                forward: {ep.agentForward ? "on" : "off"}
+              </span>
+            {/snippet}
+            {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
+          </SettingsRow>
+        {/each}
+      </SettingsList>
+    {/if}
+  {/if}
 
   {#if deleteTarget}
     <ConfirmDialog
@@ -200,13 +297,29 @@
     </ConfirmDialog>
   {/if}
 
-  {#if modal}
-    <Modal
-      title={modal.kind === "create" ? "Add Endpoint" : "Edit Endpoint"}
-      onClose={closeModal}
-      onSubmit={handleSave}
-      width="520px"
-    >
+  {#if modal && modal.kind === "wizard-server"}
+    <Modal title={modalTitle(modal)} onClose={closeModal} width="520px">
+      <p class="wizard-step-hint">Step 1 of 2 · Server setup</p>
+      <p class="modal-desc">
+        Before adding your first endpoint, set up the remote server to accept your <strong
+          >ShellWatch</strong
+        > passkey credential.
+      </p>
+      <ServerSetupGuide passkey={wizardPasskey} accountName={$account?.name} />
+
+      {#snippet actions()}
+        <button type="button" class="btn btn-secondary" onclick={closeModal}>Cancel</button>
+        <button type="button" class="btn btn-primary" onclick={continueWizard}>Continue</button>
+      {/snippet}
+    </Modal>
+  {/if}
+
+  {#if modal && isFormModal}
+    <Modal title={modalTitle(modal)} onClose={closeModal} onSubmit={handleSave} width="520px">
+      {#if modal.kind === "wizard-form"}
+        <p class="wizard-step-hint">Step 2 of 2 · Endpoint details</p>
+      {/if}
+
       <div class="field">
         <label for="ep-label">Label</label>
         <input id="ep-label" type="text" placeholder="My server" bind:value={formLabel} />
@@ -214,7 +327,24 @@
 
       <div class="field">
         <label for="ep-address">Address</label>
-        <input id="ep-address" type="text" placeholder="user@host:port" bind:value={formAddress} />
+        <div class="address-input-wrap" class:has-default-user={showDefaultUserHint}>
+          {#if showDefaultUserHint}
+            <span class="default-user-prefix">shellwatch@</span>
+          {/if}
+          <input
+            id="ep-address"
+            type="text"
+            placeholder="user@host:port"
+            bind:value={formAddress}
+            onfocus={() => (addressBlurred = false)}
+            onblur={() => (addressBlurred = true)}
+          />
+        </div>
+        {#if showDefaultUserHint}
+          <span class="address-warning"
+            >User defaults to <code>shellwatch</code> if not specified.</span
+          >
+        {/if}
       </div>
 
       <div class="field">
@@ -263,11 +393,17 @@
       </div>
 
       {#snippet actions()}
-        <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={saving}>
-          Cancel
-        </button>
+        {#if modal?.kind === "wizard-form"}
+          <button type="button" class="btn btn-secondary" onclick={wizardBack} disabled={saving}>
+            Back
+          </button>
+        {:else}
+          <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={saving}>
+            Cancel
+          </button>
+        {/if}
         <button type="submit" class="btn btn-primary" disabled={saving}>
-          {saving ? "Saving…" : modal?.kind === "create" ? "Add" : "Save"}
+          {saving ? "Saving…" : modal?.kind === "edit" ? "Save" : "Add"}
         </button>
       {/snippet}
     </Modal>
@@ -283,11 +419,33 @@
     letter-spacing: 0.05em;
   }
 
-  .header {
+  .register-section {
+    margin-top: var(--space-5);
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  /* Demo Endpoints section: headline + toggle clustered on the left so it
+     matches the rest of the settings pages where actions live left-aligned. */
+  .demo-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: var(--space-6);
     margin-bottom: 0.75rem;
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+
+  .demo-section-label {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .row-label {
@@ -300,20 +458,58 @@
     max-width: 100%;
   }
 
-  .hint-block {
-    margin-top: var(--space-6);
-  }
-
-  .hint {
-    font-size: 0.8rem;
+  .wizard-step-hint {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     color: var(--text-muted);
-    line-height: 1.5;
+    margin: 0 0 0.75rem;
   }
 
-  .hint code {
+  /* Address input with an optional gray "shellwatch@" prefix adornment shown
+     after blur when the user didn't supply a custom username. The wrapper
+     mimics the input's chrome so the prefix + input look like one field. */
+  .address-input-wrap {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .address-input-wrap.has-default-user {
+    border: 1px solid var(--outline-variant);
+    border-radius: 6px;
+    background-color: var(--surface-container);
+    overflow: hidden;
+  }
+
+  .address-input-wrap.has-default-user input {
+    border: none;
+    background: transparent;
+    padding-left: 0;
+  }
+
+  .default-user-prefix {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 0 0.5rem 0.625rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--body-md);
+    user-select: none;
+    pointer-events: none;
+  }
+
+  .address-warning {
+    display: block;
+    margin-top: 0.35rem;
+    font-size: 0.75rem;
+    color: var(--warning, var(--secondary, #f59e0b));
+    line-height: 1.4;
+  }
+
+  .address-warning code {
     font-family: var(--font-mono);
     font-size: 0.85em;
-    color: var(--primary);
   }
 
   .field {
