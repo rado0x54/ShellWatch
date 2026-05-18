@@ -1,3 +1,14 @@
+## v1.0.2 (2026-05-18)
+
+## What's Changed
+
+- chore: misc UX polish across sidebar, observer and onboarding by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/212
+- feat: per-endpoint SSH agent forwarding toggle by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/213
+- feat: virtual demo endpoints + Settings UX overhaul (closes #211) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/214
+- Preprod Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/215
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v1.0.1...v1.0.2
+
 ## v1.0.1 (2026-05-05)
 
 ## What's Changed
