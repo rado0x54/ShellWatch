@@ -77,25 +77,25 @@ describe("parseEndpointAddress", () => {
 });
 
 describe("formatEndpointAddress", () => {
-  it("omits defaults", () => {
+  it("always renders the username, even when it's the default", () => {
     expect(formatEndpointAddress({ username: "shellwatch", host: "example.com", port: 22 })).toBe(
-      "example.com",
+      "shellwatch@example.com",
     );
   });
 
-  it("includes non-default username", () => {
+  it("renders a non-default username", () => {
     expect(formatEndpointAddress({ username: "deploy", host: "example.com", port: 22 })).toBe(
       "deploy@example.com",
     );
   });
 
-  it("includes non-default port", () => {
+  it("omits the default port (22)", () => {
     expect(formatEndpointAddress({ username: "shellwatch", host: "example.com", port: 2222 })).toBe(
-      "example.com:2222",
+      "shellwatch@example.com:2222",
     );
   });
 
-  it("includes both non-defaults", () => {
+  it("renders user + non-default port", () => {
     expect(
       formatEndpointAddress({ username: "deploy", host: "dev.example.com", port: 62222 }),
     ).toBe("deploy@dev.example.com:62222");
