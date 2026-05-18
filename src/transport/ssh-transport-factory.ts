@@ -78,7 +78,7 @@ export class SshTransportFactory {
         const privateKey = this.keyProvider.getPrivateKey(key.fingerprint);
         if (privateKey) {
           fileKeys.push({
-            publicKey: key.publicKeyOpenSsh,
+            publicKey: key.publicKey,
             privateKey,
             label: key.label,
             fingerprint: key.fingerprint,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ShellWatchDB } from "../connection.js";
-import { accounts, webauthnCredentials } from "../schema.js";
+import { webauthnCredentials } from "../schema.js";
 
 /**
  * Credential lifecycle states. Stored as text in webauthn_credentials.state.
@@ -83,56 +83,6 @@ export function deduplicateLabel(db: ShellWatchDB, accountId: string, baseLabel:
   let suffix = 2;
   while (existing.has(`${baseLabel} (${suffix})`)) suffix++;
   return `${baseLabel} (${suffix})`;
-}
-
-export interface ActiveCredentialWithAccount {
-  accountId: string;
-  accountName: string;
-  credentialId: string;
-  credentialLabel: string;
-  /** Guaranteed non-null — the query filters out rows where this is missing. */
-  publicKeyOpenSsh: string;
-  /** Guaranteed non-null — the query filters out rows where this is missing. */
-  fingerprint: string;
-}
-
-/**
- * All credentials usable for SSH authentication across every account: active,
- * non-revoked, account enabled, and convertible to OpenSSH (`publicKeyOpenSsh`
- * and `fingerprint` both present — the latter is persisted at insert time
- * and via the backfill, so any row with a public-key string should have one).
- * Backs the /demo/authorized-keys lookup; not used for any in-account code
- * path. See src/demo-authorized-keys/.
- */
-export function findAllActiveCredentialsWithSshKey(
-  db: ShellWatchDB,
-): ActiveCredentialWithAccount[] {
-  const rows = db
-    .select({
-      accountId: webauthnCredentials.accountId,
-      accountName: accounts.name,
-      credentialId: webauthnCredentials.credentialId,
-      credentialLabel: webauthnCredentials.label,
-      publicKeyOpenSsh: webauthnCredentials.publicKeyOpenSsh,
-      fingerprint: webauthnCredentials.fingerprint,
-    })
-    .from(webauthnCredentials)
-    .innerJoin(accounts, eq(accounts.id, webauthnCredentials.accountId))
-    .where(
-      and(
-        eq(webauthnCredentials.revoked, false),
-        eq(webauthnCredentials.state, CREDENTIAL_STATE.active),
-        eq(accounts.enabled, true),
-        isNotNull(webauthnCredentials.publicKeyOpenSsh),
-        isNotNull(webauthnCredentials.fingerprint),
-      ),
-    )
-    .all();
-  // SQL `IS NOT NULL` filters the rows, but both columns' types are still
-  // `string | null` until we narrow. Drop any that somehow slipped through.
-  return rows.filter(
-    (r): r is ActiveCredentialWithAccount => r.publicKeyOpenSsh !== null && r.fingerprint !== null,
-  );
 }
 
 /**

@@ -64,25 +64,6 @@ keyDirectory: ./keys
 #   - label: "Demo: Matrix"
 #     address: sw-matrix@ssh.shellwatch.ai
 
-# Optional: /demo/authorized-keys HTTP lookup consumed by the companion
-# shellwatch-demo-server's `AuthorizedKeysCommand` (SHELLWATCH_KEYS_URL).
-# Disabled by default. When enabled, the route is auth-gate exempt but is
-# protected by its own IP allowlist. Do NOT expose this path on the public
-# internet — see issue #211 for the threat model.
-# demoAuthorizedKeys:
-#   enabled: true
-#   # Restrict to the demo container's Docker bridge subnet. Default is
-#   # loopback only (useful for local dev).
-#   allowedNetworks:
-#     - 172.28.0.0/16
-#   # Optional shared-secret bearer (Authorization: Bearer …). Defense in
-#   # depth on top of the network allowlist. Min 16 characters.
-#   # sharedSecret: "<random 32+ char secret>"
-#   # In-process cache TTL for (type, fingerprint) → credentials. Pubkey
-#   # auth invokes the command up to K+1 times per connection; the cache
-#   # avoids hammering the credentials table on every key offered.
-#   cacheTtlSeconds: 30
-
 # Security settings
 security:
   # WebAuthn Relying Party ID — must match the domain passkeys are registered on.

@@ -7,8 +7,7 @@ export interface SshKeyInfo {
   id: string;
   label: string;
   type: string;
-  /** OpenSSH authorized_keys format — matches webauthn_credentials.publicKeyOpenSsh. */
-  publicKeyOpenSsh: string;
+  publicKey: string;
   fingerprint: string;
   enabled: boolean;
   lastUsedAt: string | null;
@@ -29,7 +28,7 @@ export interface SshKeyRepository {
     id: string;
     label: string;
     type?: string;
-    publicKeyOpenSsh: string;
+    publicKey: string;
     fingerprint: string;
   }): Promise<void>;
   delete(id: string): Promise<void>;
@@ -44,7 +43,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         id: sshKeys.id,
         label: sshKeys.label,
         type: sshKeys.type,
-        publicKeyOpenSsh: sshKeys.publicKeyOpenSsh,
+        publicKey: sshKeys.publicKey,
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
         lastUsedAt: sshKeys.lastUsedAt,
@@ -61,7 +60,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         id: sshKeys.id,
         label: sshKeys.label,
         type: sshKeys.type,
-        publicKeyOpenSsh: sshKeys.publicKeyOpenSsh,
+        publicKey: sshKeys.publicKey,
         fingerprint: sshKeys.fingerprint,
         enabled: sshKeys.enabled,
         lastUsedAt: sshKeys.lastUsedAt,
@@ -78,7 +77,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
     id: string;
     label: string;
     type?: string;
-    publicKeyOpenSsh: string;
+    publicKey: string;
     fingerprint: string;
   }): Promise<void> {
     const now = new Date().toISOString();
@@ -88,7 +87,7 @@ export class DrizzleSshKeyRepository implements SshKeyRepository {
         id: data.id,
         label: data.label,
         type: data.type ?? "file",
-        publicKeyOpenSsh: data.publicKeyOpenSsh,
+        publicKey: data.publicKey,
         fingerprint: data.fingerprint,
         enabled: true,
         createdAt: now,
@@ -141,7 +140,7 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
     id: string;
     label: string;
     type?: string;
-    publicKeyOpenSsh: string;
+    publicKey: string;
     fingerprint: string;
   }): Promise<void> {
     const now = new Date().toISOString();
@@ -149,7 +148,7 @@ export class InMemorySshKeyRepository implements SshKeyRepository {
       id: data.id,
       label: data.label,
       type: data.type ?? "file",
-      publicKeyOpenSsh: data.publicKeyOpenSsh,
+      publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       enabled: true,
       lastUsedAt: null,

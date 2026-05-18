@@ -132,7 +132,7 @@ export async function startTestApp(
     },
   ]);
   const keyRepo = new InMemorySshKeyRepository([
-    { id: "test-key", label: "Test Key", type: "file", publicKeyOpenSsh, fingerprint },
+    { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
   ]);
   const keyProvider = new InMemoryKeyProvider([scannedKey]);
 

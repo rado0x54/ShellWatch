@@ -46,14 +46,6 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   transports: text("transports"), // JSON array: ["usb", "nfc", "ble", "internal"]
   label: text("label").notNull(), // User-friendly name (e.g., "YubiKey 5 NFC")
   publicKeyOpenSsh: text("public_key_openssh"), // OpenSSH authorized_keys format (if convertible)
-  /**
-   * OpenSSH-style SHA256 fingerprint of the public key (e.g. `SHA256:abc…`).
-   * Computed once at registration and persisted so hot paths (the
-   * /demo/authorized-keys lookup, the credentials list response) read it as
-   * a single column instead of recomputing the SHA on every request.
-   * Null iff publicKeyOpenSsh is null (no SSH-usable form).
-   */
-  fingerprint: text("fingerprint"),
   revoked: integer("revoked", { mode: "boolean" }).notNull().default(false),
   /**
    * Lifecycle state. `active` = usable for login, SSH signing, listed as SSH key.
@@ -72,10 +64,7 @@ export const sshKeys = sqliteTable("ssh_keys", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
   type: text("type").notNull().default("file"), // kept for backward compat; always "file" going forward
-  // OpenSSH authorized_keys format (e.g., "ssh-ed25519 AAAA..."). Column name
-  // mirrors webauthn_credentials.public_key_openssh so the same data shape
-  // lives under the same name in both tables.
-  publicKeyOpenSsh: text("public_key_openssh").notNull(),
+  publicKey: text("public_key").notNull(), // OpenSSH format (e.g., "ssh-ed25519 AAAA...")
   fingerprint: text("fingerprint").notNull().unique(), // SHA256:... — used to match runtime key files
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   lastUsedAt: text("last_used_at"),

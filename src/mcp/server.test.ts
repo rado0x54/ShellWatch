@@ -28,7 +28,7 @@ const testKeys = [
     id: "key-1",
     label: "Test Key",
     type: "file",
-    publicKeyOpenSsh: "ssh-ed25519 AAAA...",
+    publicKey: "ssh-ed25519 AAAA...",
     fingerprint: "SHA256:test123",
   },
 ];

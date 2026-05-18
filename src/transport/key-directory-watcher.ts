@@ -88,7 +88,7 @@ export class KeyDirectoryWatcher implements PrivateKeyProvider, KeyAvailability 
           id: key.filename.replace(/\.pem$/, ""),
           label: key.filename,
           type: "file",
-          publicKeyOpenSsh: key.publicKeyOpenSsh,
+          publicKey: key.publicKeyOpenSsh,
           fingerprint: key.fingerprint,
         });
       }

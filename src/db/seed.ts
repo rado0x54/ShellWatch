@@ -2,7 +2,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import type { Config } from "../config/index.js";
-import { fingerprintFromAuthorizedKeys } from "../webauthn/fingerprint.js";
 import { coseToAuthorizedKeys } from "../webauthn/ssh-key-format.js";
 import type { ShellWatchDB } from "./connection.js";
 import { accounts, adminAccount, apiKeys, endpoints, webauthnCredentials } from "./schema.js";
@@ -85,7 +84,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           transports: JSON.stringify(pk.transports),
           label: pk.label,
           publicKeyOpenSsh,
-          fingerprint: fingerprintFromAuthorizedKeys(publicKeyOpenSsh),
           createdAt: now,
         })
         .run();

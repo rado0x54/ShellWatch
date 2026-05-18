@@ -39,7 +39,7 @@ export function registerKeyTools(mcpServer: McpServer, keyRepo: SshKeyRepository
                       label: key.label,
                       type: key.type,
                       fingerprint: key.fingerprint,
-                      publicKey: key.publicKeyOpenSsh,
+                      publicKey: key.publicKey,
                     },
                     null,
                     2,

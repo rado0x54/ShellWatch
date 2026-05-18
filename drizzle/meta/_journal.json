@@ -61,8 +61,8 @@
     {
       "idx": 8,
       "version": "6",
-      "when": 1779057195134,
-      "tag": "0008_demo_endpoints_support",
+      "when": 1779052745016,
+      "tag": "0008_account_show_demo_endpoints",
       "breakpoints": true
     }
   ]
