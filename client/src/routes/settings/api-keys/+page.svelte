@@ -12,6 +12,10 @@
   let label = $state("");
   let scopeMcp = $state(true);
   let scopeAgent = $state(false);
+  let generating = $state(false);
+  // Two-stage flow: open the form modal, fill in label + scopes + Generate,
+  // then the key-display modal opens with the freshly-minted key (shown once).
+  let formModalOpen = $state(false);
   let showKeyModal = $state(false);
   let generatedKey = $state("");
   let revokeTarget = $state<{ id: string; label: string } | null>(null);
@@ -21,8 +25,24 @@
     fetchApiKeys();
   });
 
+  function openGenerateModal() {
+    label = "";
+    scopeMcp = true;
+    scopeAgent = false;
+    formModalOpen = true;
+  }
+
+  function closeGenerateModal() {
+    if (generating) return;
+    formModalOpen = false;
+  }
+
   async function handleGenerate() {
-    if (!label.trim()) return;
+    if (generating) return;
+    if (!label.trim()) {
+      toastError("Label is required");
+      return;
+    }
     const scopes: string[] = [];
     if (scopeMcp) scopes.push("mcp");
     if (scopeAgent) scopes.push("agent");
@@ -30,14 +50,15 @@
       toastError("Select at least one scope");
       return;
     }
+    generating = true;
     try {
       generatedKey = await generateApiKey(label.trim(), scopes);
+      formModalOpen = false;
       showKeyModal = true;
-      label = "";
-      scopeMcp = true;
-      scopeAgent = false;
     } catch (err) {
       toastError(errorMessage(err));
+    } finally {
+      generating = false;
     }
   }
 
@@ -68,7 +89,7 @@
     btn.textContent = "Copied!";
   }
 
-  function handleCloseModal() {
+  function handleCloseKeyModal() {
     showKeyModal = false;
     generatedKey = "";
   }
@@ -104,30 +125,10 @@
     {/each}
   </SettingsList>
 
-  <div class="settings-form">
-    <h3>Generate API Key</h3>
-    <div class="form-row">
-      <input
-        type="text"
-        placeholder="Label (e.g., Claude Agent)"
-        bind:value={label}
-        style="flex: 1"
-      />
-      <button type="button" class="btn btn-primary" onclick={handleGenerate}>Generate</button>
-    </div>
-    <h4 class="scope-heading">Scopes</h4>
-    <div class="scope-row">
-      <label class="scope-option">
-        <input type="checkbox" bind:checked={scopeMcp} />
-        <span>mcp</span>
-        <span class="scope-hint">— MCP server access</span>
-      </label>
-      <label class="scope-option">
-        <input type="checkbox" bind:checked={scopeAgent} />
-        <span>agent</span>
-        <span class="scope-hint">— SSH agent socket forwarding</span>
-      </label>
-    </div>
+  <div class="register-section">
+    <button type="button" class="btn btn-primary" onclick={openGenerateModal}>
+      Generate API Key
+    </button>
   </div>
 
   {#if revokeTarget}
@@ -145,8 +146,56 @@
     </ConfirmDialog>
   {/if}
 
+  {#if formModalOpen}
+    <Modal
+      title="Generate API Key"
+      onClose={closeGenerateModal}
+      onSubmit={handleGenerate}
+      width="480px"
+    >
+      <div class="field">
+        <label for="apikey-label">Label</label>
+        <input
+          id="apikey-label"
+          type="text"
+          placeholder="e.g. Claude Agent"
+          bind:value={label}
+          disabled={generating}
+        />
+      </div>
+
+      <div class="field">
+        <span class="field-label">Scopes</span>
+        <label class="scope-option">
+          <input type="checkbox" bind:checked={scopeMcp} disabled={generating} />
+          <span>mcp</span>
+          <span class="scope-hint">— MCP server access</span>
+        </label>
+        <label class="scope-option">
+          <input type="checkbox" bind:checked={scopeAgent} disabled={generating} />
+          <span>agent</span>
+          <span class="scope-hint">— SSH agent socket forwarding</span>
+        </label>
+      </div>
+
+      {#snippet actions()}
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={closeGenerateModal}
+          disabled={generating}
+        >
+          Cancel
+        </button>
+        <button type="submit" class="btn btn-primary" disabled={generating}>
+          {generating ? "Generating…" : "Generate"}
+        </button>
+      {/snippet}
+    </Modal>
+  {/if}
+
   {#if showKeyModal}
-    <Modal title="API Key Created" onClose={handleCloseModal}>
+    <Modal title="API Key Created" onClose={handleCloseKeyModal}>
       <p class="modal-desc">Copy this key now — it will not be shown again.</p>
       <pre class="code-block key-value">{generatedKey}</pre>
       {#snippet actions()}
@@ -155,7 +204,7 @@
           class="btn btn-primary"
           onclick={(e) => handleCopy(e.currentTarget as HTMLButtonElement)}>Copy</button
         >
-        <button type="button" class="btn btn-secondary" onclick={handleCloseModal}>Done</button>
+        <button type="button" class="btn btn-secondary" onclick={handleCloseKeyModal}>Done</button>
       {/snippet}
     </Modal>
   {/if}
@@ -194,6 +243,14 @@
     margin: 0 var(--space-2);
   }
 
+  .register-section {
+    margin-top: var(--space-5);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
   .modal-desc {
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -205,18 +262,20 @@
     cursor: text;
   }
 
-  .scope-heading {
-    margin: 0.75rem 0 0.25rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-muted);
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.85rem;
   }
 
-  .scope-row {
-    display: flex;
-    gap: 1.5rem;
-    margin-top: 0.5rem;
-    font-size: 0.85rem;
+  .field label,
+  .field .field-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .scope-option {
@@ -224,6 +283,12 @@
     align-items: center;
     gap: 0.4rem;
     cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--on-surface);
+    text-transform: none;
+    letter-spacing: 0;
+    margin-top: 0.35rem;
   }
 
   .scope-hint {

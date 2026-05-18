@@ -216,10 +216,7 @@
 </script>
 
 <section>
-  <div class="header">
-    <h2>SSH Endpoints</h2>
-    <button type="button" class="btn btn-primary" onclick={openAdd}>Add Endpoint</button>
-  </div>
+  <h2>SSH Endpoints</h2>
 
   <SettingsList empty={regularEndpoints.length === 0} emptyText="No endpoints configured">
     {#each regularEndpoints as ep (ep.id)}
@@ -242,24 +239,26 @@
     {/each}
   </SettingsList>
 
+  <div class="register-section">
+    <button type="button" class="btn btn-primary" onclick={openAdd}>Add Endpoint</button>
+  </div>
+
   {#if $account}
     <div class="demo-section-header">
       <h3 class="demo-section-label">Demo Endpoints</h3>
-      <div class="demo-toggle-inline">
-        <span class="toggle-label">Show</span>
-        <button
-          type="button"
-          class="toggle"
-          class:active={$account.showDemoEndpoints}
-          onclick={handleToggleDemo}
-          disabled={togglingDemo}
-          aria-label="Show demo endpoints"
-          role="switch"
-          aria-checked={$account.showDemoEndpoints}
-        >
-          <span class="toggle-knob"></span>
-        </button>
-      </div>
+      <button
+        type="button"
+        class="toggle"
+        class:active={$account.showDemoEndpoints}
+        onclick={handleToggleDemo}
+        disabled={togglingDemo}
+        aria-label="Show demo endpoints"
+        role="switch"
+        aria-checked={$account.showDemoEndpoints}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+      <span class="toggle-label">Show</span>
     </div>
 
     {#if $account.showDemoEndpoints}
@@ -420,17 +419,20 @@
     letter-spacing: 0.05em;
   }
 
-  .header {
+  .register-section {
+    margin-top: var(--space-5);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
+    gap: var(--space-3);
+    flex-wrap: wrap;
   }
 
+  /* Demo Endpoints section: headline + toggle clustered on the left so it
+     matches the rest of the settings pages where actions live left-aligned. */
   .demo-section-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 0.6rem;
     margin-top: var(--space-6);
     margin-bottom: 0.75rem;
     padding-top: var(--space-4);
@@ -444,12 +446,6 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-  }
-
-  .demo-toggle-inline {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
   }
 
   .row-label {
