@@ -13,6 +13,13 @@ export const SeedEndpointSchema = z.object({
    * Defaults to true — opt out per endpoint when the host disallows forwarding.
    */
   agentForward: z.boolean().default(true),
+  /**
+   * Optional free-form context. Surfaced to MCP agents via the
+   * `shellwatch_manage_endpoints` list/read tool — the canonical place to
+   * tell an agent what a given host is for. Bounded to the same 1000-char
+   * cap the REST API enforces on user-created endpoints.
+   */
+  description: z.string().max(1000).optional(),
 });
 
 // demoEndpoints uses the same shape as seedAdminEndpoints — they're virtual,

@@ -4,8 +4,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../agent/index.js";
+import { StubAccountRepository } from "../db/repositories/account-repo.js";
 import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../db/repositories/key-repo.js";
+import { createDemoEndpointsService } from "../demo-endpoints/index.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/types.js";
 import { createMcpServer } from "./server.js";
@@ -58,16 +60,31 @@ const mockSession: TerminalSession = {
   source: "mcp",
 };
 
+// Demo-aware MCP wiring is exercised in dedicated tests — for the general
+// MCP-server tool suite we hand it empty demos + a stub account repo so the
+// merge logic is effectively a no-op (showDemoEndpoints is unset).
+const EMPTY_DEMO = createDemoEndpointsService([]);
+const NO_OP_ACCOUNT = new StubAccountRepository();
+
 async function setupClient(terminalManager: TerminalManager) {
   const endpointRepo = new InMemoryEndpointRepository(testEndpoints);
   const keyRepo = new InMemorySshKeyRepository(testKeys);
   const agentSession = new AgentSession({
     endpointRepo,
+    demoEndpoints: EMPTY_DEMO,
+    accountRepo: NO_OP_ACCOUNT,
     terminalManager,
     source: "mcp",
     accountId: testAccountId,
   });
-  const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
+  const mcpServer = await createMcpServer({
+    agentSession,
+    endpointRepo,
+    demoEndpoints: EMPTY_DEMO,
+    accountRepo: NO_OP_ACCOUNT,
+    keyRepo,
+    accountId: testAccountId,
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "1.0.0" });
@@ -152,11 +169,20 @@ describe("MCP Server Tools", () => {
       const keyRepo = new InMemorySshKeyRepository(testKeys);
       const agentSession = new AgentSession({
         endpointRepo,
+        demoEndpoints: EMPTY_DEMO,
+        accountRepo: NO_OP_ACCOUNT,
         terminalManager: mockManager,
         source: "mcp",
         accountId: testAccountId,
       });
-      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, testAccountId);
+      const mcpServer = await createMcpServer({
+        agentSession,
+        endpointRepo,
+        demoEndpoints: EMPTY_DEMO,
+        accountRepo: NO_OP_ACCOUNT,
+        keyRepo,
+        accountId: testAccountId,
+      });
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       await mcpServer.connect(serverTransport);
       const client = new Client({ name: "evil\nclient\x00", version: "9.9.9" });

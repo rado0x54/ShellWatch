@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
 import { InMemorySshKeyRepository } from "../db/repositories/key-repo.js";
 import { StubAccountRepository } from "../db/repositories/account-repo.js";
+import { createDemoEndpointsService } from "../demo-endpoints/index.js";
 import { AccountLifecycle } from "../server/account-lifecycle.js";
 import { makeTestConfig } from "../test/helpers/test-config.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -50,6 +51,7 @@ async function buildTestApp(opts: { stubAuth?: boolean } = {}) {
     config: makeTestConfig(),
     terminalManager: createMockTerminalManager(),
     endpointRepo: new InMemoryEndpointRepository([]),
+    demoEndpoints: createDemoEndpointsService([]),
     keyRepo: new InMemorySshKeyRepository([]),
     accountRepo: new StubAccountRepository(),
     accountLifecycle,

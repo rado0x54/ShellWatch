@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { EndpointRepository } from "../db/repositories/endpoint-repo.js";
+import type { DemoEndpointsService } from "../demo-endpoints/index.js";
+import { isDemoEndpointId } from "../demo-endpoints/index.js";
 import type { EndpointAuthTrigger } from "../pending-action/types.js";
 import type { OutputReadResult, TerminalManager, TerminalSession } from "../terminal/index.js";
 import { resolveKeys } from "../terminal/keys.js";
@@ -9,6 +12,16 @@ export type AgentSource = "mcp" | "ssh";
 
 export interface AgentSessionOptions {
   endpointRepo: EndpointRepository;
+  /**
+   * Service that materializes the operator-configured demo endpoints. Merged
+   * into the agent's endpoint listing when the account's showDemoEndpoints
+   * toggle is on; opens are accepted on `demo:*` ids regardless of the toggle
+   * (matches the UI flow — visibility hides them, but the connect path stays
+   * usable for callers that already know the id).
+   */
+  demoEndpoints: DemoEndpointsService;
+  /** Used to read the account's `showDemoEndpoints` toggle at list time. */
+  accountRepo: AccountRepository;
   terminalManager: TerminalManager;
   source: AgentSource;
   /**
@@ -38,6 +51,8 @@ export class AgentSession {
   private mcpClientVersion?: string;
 
   private readonly endpointRepo: EndpointRepository;
+  private readonly demoEndpoints: DemoEndpointsService;
+  private readonly accountRepo: AccountRepository;
   private readonly terminalManager: TerminalManager;
   private readonly source: AgentSource;
   private readonly accountId: string;
@@ -48,6 +63,8 @@ export class AgentSession {
 
   constructor(opts: AgentSessionOptions) {
     this.endpointRepo = opts.endpointRepo;
+    this.demoEndpoints = opts.demoEndpoints;
+    this.accountRepo = opts.accountRepo;
     this.terminalManager = opts.terminalManager;
     this.source = opts.source;
     this.accountId = opts.accountId;
@@ -83,8 +100,12 @@ export class AgentSession {
       description: string | null;
     }[]
   > {
-    const endpoints = await this.endpointRepo.findAllForAccount(this.accountId);
-    return endpoints.map(({ id, label, host, port, username, description }) => ({
+    const own = await this.endpointRepo.findAllForAccount(this.accountId);
+    const account = await this.accountRepo.findById(this.accountId);
+    const merged = account?.showDemoEndpoints
+      ? [...own, ...this.demoEndpoints.list(this.accountId)]
+      : own;
+    return merged.map(({ id, label, host, port, username, description }) => ({
       id,
       label,
       host,
@@ -101,7 +122,12 @@ export class AgentSession {
     // could pass any endpoint UUID and trigger a WebAuthn approval prompt on
     // the owning account with attacker-chosen reason text — and, if approved,
     // drive the resulting session via send_keys / read_output.
-    const endpoint = await this.endpointRepo.findByIdForAccount(endpointId, this.accountId);
+    //
+    // Demo endpoints aren't account-scoped (they're a global config set), so
+    // route them through the synthesizer instead of the per-account repo.
+    const endpoint = isDemoEndpointId(endpointId)
+      ? this.demoEndpoints.findById(endpointId, this.accountId)
+      : await this.endpointRepo.findByIdForAccount(endpointId, this.accountId);
     if (!endpoint) {
       throw new Error(`Unknown endpoint: ${endpointId}`);
     }

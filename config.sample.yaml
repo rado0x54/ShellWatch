@@ -41,24 +41,30 @@ keyDirectory: ./keys
 # Optional: seed endpoints for the admin account on first run (keys are assigned via UI)
 # Format: [user@]host[:port] — defaults: user=shellwatch, port=22
 # agentForward defaults to true; set to false for hosts that disallow forwarding.
+# description is optional free-form context (max 1000 chars) surfaced to MCP
+# agents via the shellwatch_manage_endpoints list/read tool.
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
+#     description: "Personal dev sandbox. /srv/app holds the staging copy."
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222
 #     agentForward: false
 
 # Optional: virtual demo endpoints merged into every account's endpoint list.
-# Same shape as seedAdminEndpoints. Never copied into the database — config is
-# the source of truth. Each account has a "Show demo endpoints" toggle on the
-# Endpoints page (default on); set demoEndpoints to [] or omit to disable.
-# Pairs with the rado0x54/shellwatch-demo-server container — see issue #211.
+# Same shape as seedAdminEndpoints (including description). Never copied into
+# the database — config is the source of truth. Each account has a "Show demo
+# endpoints" toggle on the Endpoints page (default on); set demoEndpoints to
+# [] or omit to disable. Pairs with the rado0x54/shellwatch-demo-server
+# container — see issue #211.
 # demoEndpoints:
 #   - label: "Demo: Sudoku"
 #     address: sw-sudoku@ssh.shellwatch.ai
+#     description: "Terminal sudoku (nudoku). ForceCommand-pinned; no shell."
 #   - label: "Demo: 2048"
 #     address: sw-2048@ssh.shellwatch.ai
+#     description: "Terminal 2048. ForceCommand-pinned; no shell."
 #   - label: "Demo: Snake"
 #     address: sw-snake@ssh.shellwatch.ai
 #   - label: "Demo: Matrix"

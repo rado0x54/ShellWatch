@@ -221,6 +221,7 @@ export async function buildApp(params: BuildAppParams) {
     config,
     terminalManager,
     endpointRepo,
+    demoEndpoints,
     keyRepo,
     accountRepo,
     accountLifecycle,
