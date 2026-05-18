@@ -243,7 +243,7 @@
     <button type="button" class="btn btn-primary" onclick={openAdd}>Add Endpoint</button>
   </div>
 
-  {#if $account}
+  {#if $account?.demoEndpointsAvailable}
     <div class="demo-section-header">
       <h3 class="demo-section-label">Demo Endpoints</h3>
       <button
@@ -305,7 +305,7 @@
           >ShellWatch</strong
         > passkey credential.
       </p>
-      <ServerSetupGuide passkey={wizardPasskey} />
+      <ServerSetupGuide passkey={wizardPasskey} accountName={$account?.name} />
 
       {#snippet actions()}
         <button type="button" class="btn btn-secondary" onclick={closeModal}>Cancel</button>

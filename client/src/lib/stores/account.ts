@@ -6,6 +6,8 @@ export interface AccountData {
   name: string;
   isAdmin: boolean;
   showDemoEndpoints: boolean;
+  /** True when the operator has at least one demoEndpoints entry in config. */
+  demoEndpointsAvailable: boolean;
 }
 
 export const account = writable<AccountData | null>(null);

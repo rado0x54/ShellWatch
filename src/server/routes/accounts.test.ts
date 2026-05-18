@@ -2,6 +2,7 @@
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import type { AccountInfo, AccountRepository } from "../../db/index.js";
+import { createDemoEndpointsService } from "../../demo-endpoints/index.js";
 import { AccountLifecycle } from "../account-lifecycle.js";
 import { registerAccountRoutes } from "./accounts.js";
 
@@ -54,7 +55,13 @@ async function buildApp(callerAccountId: string) {
   app.addHook("onRequest", async (request) => {
     request.accountId = callerAccountId;
   });
-  registerAccountRoutes({ app, accountRepo, accountLifecycle, db: null });
+  registerAccountRoutes({
+    app,
+    accountRepo,
+    demoEndpoints: createDemoEndpointsService([]),
+    accountLifecycle,
+    db: null,
+  });
   return { app, accountLifecycle };
 }
 

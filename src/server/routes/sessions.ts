@@ -33,10 +33,13 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       }
 
       const { endpointId } = request.body;
-      // Demo endpoints are virtual (config-only). Connect bypasses the toggle:
-      // visibility hides them in the list, but the id is still resolvable if a
-      // caller knows it. Lifetime/auth is identical to a real endpoint once
-      // resolved.
+      // Demo endpoints are virtual (config-only). Connect deliberately
+      // bypasses the per-account `showDemoEndpoints` toggle — the toggle is a
+      // *visibility* preference, not an authorization gate. Demo entries are
+      // global, operator-curated, and not sensitive; the demo container's
+      // ForceCommand pinning is the real control. Hiding them from the list
+      // shouldn't break a session a caller has already chosen to open (e.g.
+      // when re-using a bookmarked URL with the demo id).
       const endpoint = isDemoEndpointId(endpointId)
         ? demoEndpoints.findById(endpointId, request.accountId)
         : await endpointRepo.findByIdForAccount(endpointId, request.accountId);

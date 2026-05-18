@@ -175,7 +175,7 @@ export async function buildApp(params: BuildAppParams) {
   const demoEndpoints = createDemoEndpointsService(config.demoEndpoints);
 
   // --- REST API routes ---
-  registerAccountRoutes({ app, accountRepo, db, accountLifecycle });
+  registerAccountRoutes({ app, accountRepo, demoEndpoints, db, accountLifecycle });
   registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
   registerEndpointRoutes({ app, endpointRepo, accountRepo, demoEndpoints, terminalManager });
 
