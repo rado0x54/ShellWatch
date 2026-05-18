@@ -24,6 +24,7 @@ const testEndpoint: EndpointInfo = {
   username: "user",
   accountId: "account-1",
   userVerification: "required",
+  agentForward: false,
   description: null,
 };
 
@@ -211,7 +212,7 @@ describe("SshTransportFactory", () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it("passes agentForward=true when account has it enabled", async () => {
+  it("passes agentForward=true when the endpoint has it enabled", async () => {
     const mockTransport = createMockTransport();
     const mockAgent = { sign: vi.fn() } as never;
     mockConnectSshWithAgent.mockResolvedValue(mockTransport);
@@ -226,12 +227,11 @@ describe("SshTransportFactory", () => {
         createAgent,
         findCredentialsForAccount: () => [testCredential],
         isAdmin: () => false,
-        getAgentForward: async () => true,
       },
     );
 
     await factory.create({
-      endpoint: testEndpoint,
+      endpoint: { ...testEndpoint, agentForward: true },
       sessionId: "sess_test",
       trigger: { kind: "ui", sourceIp: "127.0.0.1" },
     });

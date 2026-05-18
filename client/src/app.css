@@ -326,6 +326,13 @@ pre,
   background: var(--warning, var(--secondary));
 }
 
+.badge-demo {
+  color: var(--accent);
+}
+.badge-demo::before {
+  background: var(--accent);
+}
+
 /* ------------------------------------------------------------------
  * Status dots — small 6px squares, colored, glow when live
  * ------------------------------------------------------------------ */

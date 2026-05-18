@@ -19,6 +19,7 @@ import type {
 import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import type { SessionLifecycleRepository, SigningRequestsRepository } from "../audit/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
+import { createDemoEndpointsService } from "../demo-endpoints/index.js";
 import { registerMcpHttpTransport } from "../mcp/http-transport.js";
 import type { PendingActionStore } from "../pending-action/index.js";
 import type { WebSocketChannel } from "../pending-action/index.js";
@@ -168,10 +169,15 @@ export async function buildApp(params: BuildAppParams) {
     }
   });
 
+  // Virtual demo-endpoints: synthesized from config.demoEndpoints, merged into
+  // each account's endpoint list when accounts.show_demo_endpoints is true.
+  // Never copied into the endpoints table — config is the source of truth.
+  const demoEndpoints = createDemoEndpointsService(config.demoEndpoints);
+
   // --- REST API routes ---
-  registerAccountRoutes({ app, accountRepo, db, accountLifecycle });
+  registerAccountRoutes({ app, accountRepo, demoEndpoints, db, accountLifecycle });
   registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
-  registerEndpointRoutes({ app, endpointRepo, accountRepo, terminalManager });
+  registerEndpointRoutes({ app, endpointRepo, accountRepo, demoEndpoints, terminalManager });
 
   const wsHandler = registerWebSocket({ app, terminalManager });
   for (const ext of wsExtensions) wsHandler.addExtension(ext);
@@ -180,6 +186,7 @@ export async function buildApp(params: BuildAppParams) {
     app,
     endpointRepo,
     accountRepo,
+    demoEndpoints,
     terminalManager,
   });
 
@@ -214,6 +221,7 @@ export async function buildApp(params: BuildAppParams) {
     config,
     terminalManager,
     endpointRepo,
+    demoEndpoints,
     keyRepo,
     accountRepo,
     accountLifecycle,

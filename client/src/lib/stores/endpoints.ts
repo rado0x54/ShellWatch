@@ -18,7 +18,10 @@ export interface Endpoint {
   port: number;
   username: string;
   userVerification: UserVerification;
+  agentForward: boolean;
   description: string | null;
+  /** True if this is a virtual demo endpoint (read-only, from operator config). */
+  isDemo: boolean;
 }
 
 export const endpoints = writable<Endpoint[]>([]);
@@ -35,6 +38,7 @@ export async function createEndpoint(body: {
   port: number;
   username: string;
   userVerification?: UserVerification;
+  agentForward?: boolean;
   description?: string | null;
 }): Promise<void> {
   const res = await fetch("/api/endpoints", {

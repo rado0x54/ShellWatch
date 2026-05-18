@@ -8,7 +8,25 @@ export const SeedEndpointSchema = z.object({
     .string()
     .min(1)
     .transform((addr) => parseEndpointAddress(addr)),
+  /**
+   * Whether to enable SSH agent forwarding on sessions to this endpoint.
+   * Defaults to true — opt out per endpoint when the host disallows forwarding.
+   */
+  agentForward: z.boolean().default(true),
+  /**
+   * Optional free-form context. Surfaced to MCP agents via the
+   * `shellwatch_manage_endpoints` list/read tool — the canonical place to
+   * tell an agent what a given host is for. Bounded to the same 1000-char
+   * cap the REST API enforces on user-created endpoints.
+   */
+  description: z.string().max(1000).optional(),
 });
+
+// demoEndpoints uses the same shape as seedAdminEndpoints — they're virtual,
+// global endpoints merged into every account's endpoint list (toggle on the
+// account row). See src/demo-endpoints/. Key delivery is a separate concern,
+// not modeled per-endpoint.
+export const DemoEndpointSchema = SeedEndpointSchema;
 
 /** Field-level defaults for optional security settings (rpId and trustedWebauthnOrigins are required) */
 export const rateLimitDefaults = {
@@ -156,6 +174,12 @@ export const ConfigSchema = z.object({
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
   seedAdminApiKey: z.string().optional(),
   seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
+  /**
+   * Virtual demo endpoints merged into every account's endpoint list when the
+   * account's showDemoEndpoints toggle is on. Same shape as seedAdminEndpoints
+   * but never copied into the endpoints table — config is the source of truth.
+   */
+  demoEndpoints: z.array(DemoEndpointSchema).default([]),
   server: ServerSchema,
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
@@ -164,4 +188,5 @@ export const ConfigSchema = z.object({
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;
+export type DemoEndpoint = z.infer<typeof DemoEndpointSchema>;
 export type Config = z.infer<typeof ConfigSchema>;

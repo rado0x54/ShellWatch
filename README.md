@@ -21,7 +21,7 @@ ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first a
 
 - **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
 - **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
-- **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into every ShellWatch session, so you can hop to additional hosts and enable SSH-agent-based PAM integration
+- **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into ShellWatch sessions (per-endpoint toggle), so you can hop to additional hosts and enable SSH-agent-based PAM integration
 - **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
 - **Human-in-the-loop for agents** — MCP agents request, humans approve; sensitive actions can require per-action consent
 - **Realtime notifications** — sign requests arrive as Web Push and in-UI toasts
@@ -36,6 +36,14 @@ ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first a
 
   ```
   PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com
+  ```
+
+  One-liner to append it and reload `sshd`:
+
+  ```bash
+  echo 'PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com' \
+    | sudo tee -a /etc/ssh/sshd_config
+  sudo systemctl reload ssh   # or: sudo systemctl reload sshd
   ```
 
 - **Client (`ssh`):** OpenSSH **10.3+** — only when using the [SSH agent proxy](#ssh-agent-proxy). The PAM-from-inside-a-session path uses our [PAM module](https://github.com/rado0x54/pam-ssh-agent-webauthn) talking to `$SSH_AUTH_SOCK` directly, and plain ShellWatch sessions opened from the UI or MCP have no client-side OpenSSH requirement.

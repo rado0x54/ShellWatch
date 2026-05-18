@@ -13,6 +13,7 @@
   interface SeedEndpoint {
     label: string;
     address: string;
+    agentForward: boolean;
     passkeyCredentialRef?: string;
   }
 
@@ -53,6 +54,10 @@
       for (const ep of endpoints) {
         lines.push(`  - label: ${yamlStr(ep.label)}`);
         lines.push(`    address: ${yamlStr(ep.address)}`);
+        // Only emit when off — default is true, keep YAML clean.
+        if (!ep.agentForward) {
+          lines.push("    agentForward: false");
+        }
         if (ep.passkeyCredentialRef) {
           lines.push(`    passkeyCredentialRef: ${yamlStr(ep.passkeyCredentialRef)}`);
         }

@@ -105,6 +105,8 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           host: ep.address.host,
           port: ep.address.port,
           username: ep.address.username,
+          agentForward: ep.agentForward,
+          description: ep.description ?? null,
           enabled: true,
           createdAt: now,
           updatedAt: now,

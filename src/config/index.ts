@@ -3,6 +3,8 @@ export { loadConfig } from "./loader.js";
 export {
   type Config,
   ConfigSchema,
+  type DemoEndpoint,
+  DemoEndpointSchema,
   type SeedEndpoint,
   SeedEndpointSchema,
   securityFieldDefaults,

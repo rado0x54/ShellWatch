@@ -128,6 +128,31 @@ seedAdminEndpoints:
     expect(() => loadConfig(configPath)).toThrow("Invalid config");
   });
 
+  it("defaults agentForward to true on seed endpoints", () => {
+    const dir = createTempDir();
+    const configPath = writeConfig(
+      dir,
+      `
+server:
+  externalUrl: http://localhost:3000
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost
+seedAdminEndpoints:
+  - label: Default
+    address: host.example.com
+  - label: NoForward
+    address: locked.example.com
+    agentForward: false
+`,
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.seedAdminEndpoints[0].agentForward).toBe(true);
+    expect(config.seedAdminEndpoints[1].agentForward).toBe(false);
+  });
+
   it("loads multiple endpoints with different address formats", () => {
     const dir = createTempDir();
     const configPath = writeConfig(

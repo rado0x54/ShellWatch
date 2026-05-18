@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { AgentSession } from "../agent/index.js";
 import type { Config } from "../config/index.js";
 import type { AccountRepository, EndpointRepository, SshKeyRepository } from "../db/index.js";
+import type { DemoEndpointsService } from "../demo-endpoints/index.js";
 import type { TerminalManager } from "../terminal/index.js";
 import type { AccountLifecycle } from "../server/account-lifecycle.js";
 import { attachMcpNotifications } from "./notifications.js";
@@ -15,14 +16,23 @@ export interface McpHttpTransportOptions {
   config: Config;
   terminalManager: TerminalManager;
   endpointRepo: EndpointRepository;
+  demoEndpoints: DemoEndpointsService;
   keyRepo: SshKeyRepository;
   accountRepo: AccountRepository;
   accountLifecycle: AccountLifecycle;
 }
 
 export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
-  const { app, config, terminalManager, endpointRepo, keyRepo, accountRepo, accountLifecycle } =
-    opts;
+  const {
+    app,
+    config,
+    terminalManager,
+    endpointRepo,
+    demoEndpoints,
+    keyRepo,
+    accountRepo,
+    accountLifecycle,
+  } = opts;
   interface ManagedTransport {
     transport: StreamableHTTPServerTransport;
     agentSession: AgentSession;
@@ -106,6 +116,8 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
 
       const agentSession = new AgentSession({
         endpointRepo,
+        demoEndpoints,
+        accountRepo,
         terminalManager,
         source: "mcp",
         accountId,
@@ -114,7 +126,14 @@ export async function registerMcpHttpTransport(opts: McpHttpTransportOptions) {
         apiKeyLabel: request.apiKey?.label,
         apiKeyPrefix: request.apiKey?.keyPrefix,
       });
-      const mcpServer = await createMcpServer(agentSession, endpointRepo, keyRepo, accountId);
+      const mcpServer = await createMcpServer({
+        agentSession,
+        endpointRepo,
+        demoEndpoints,
+        accountRepo,
+        keyRepo,
+        accountId,
+      });
 
       await mcpServer.connect(transport);
 

@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance } from "fastify";
 import type { AccountRepository, EndpointRepository } from "../../db/index.js";
+import type { DemoEndpointsService } from "../../demo-endpoints/index.js";
+import { isDemoEndpointId } from "../../demo-endpoints/index.js";
 import type { TerminalManager } from "../../terminal/index.js";
 
 export interface SessionRoutesParams {
   app: FastifyInstance;
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
+  demoEndpoints: DemoEndpointsService;
   terminalManager: TerminalManager;
 }
 
 export function registerSessionRoutes(params: SessionRoutesParams) {
-  const { app, endpointRepo, accountRepo, terminalManager } = params;
+  const { app, endpointRepo, accountRepo, demoEndpoints, terminalManager } = params;
 
   app.post<{ Body: { endpointId: string } }>("/api/sessions", async (request, reply) => {
     try {
@@ -30,7 +33,16 @@ export function registerSessionRoutes(params: SessionRoutesParams) {
       }
 
       const { endpointId } = request.body;
-      const endpoint = await endpointRepo.findByIdForAccount(endpointId, request.accountId);
+      // Demo endpoints are virtual (config-only). Connect deliberately
+      // bypasses the per-account `showDemoEndpoints` toggle — the toggle is a
+      // *visibility* preference, not an authorization gate. Demo entries are
+      // global, operator-curated, and not sensitive; the demo container's
+      // ForceCommand pinning is the real control. Hiding them from the list
+      // shouldn't break a session a caller has already chosen to open (e.g.
+      // when re-using a bookmarked URL with the demo id).
+      const endpoint = isDemoEndpointId(endpointId)
+        ? demoEndpoints.findById(endpointId, request.accountId)
+        : await endpointRepo.findByIdForAccount(endpointId, request.accountId);
       if (!endpoint) {
         reply.status(404);
         return { error: "Endpoint not found" };

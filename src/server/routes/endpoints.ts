@@ -8,6 +8,8 @@ import {
   USER_VERIFICATION_VALUES,
   type UserVerification,
 } from "../../db/repositories/endpoint-repo.js";
+import type { DemoEndpointsService } from "../../demo-endpoints/index.js";
+import { isDemoEndpointId } from "../../demo-endpoints/index.js";
 import type { TerminalManager } from "../../terminal/index.js";
 
 function normalizeDescription(value: unknown): { ok: true; value: string | null } | { ok: false } {
@@ -22,24 +24,46 @@ export interface EndpointRoutesParams {
   app: FastifyInstance;
   endpointRepo: EndpointRepository;
   accountRepo: AccountRepository;
+  demoEndpoints: DemoEndpointsService;
   terminalManager: TerminalManager;
 }
 
 export function registerEndpointRoutes(params: EndpointRoutesParams) {
-  const { app, endpointRepo, terminalManager } = params;
+  const { app, endpointRepo, accountRepo, demoEndpoints, terminalManager } = params;
 
   app.get("/api/endpoints", async (request) => {
-    const all = await endpointRepo.findAllForAccount(request.accountId);
+    const own = await endpointRepo.findAllForAccount(request.accountId);
+    const account = await accountRepo.findById(request.accountId);
+    const merged = [
+      ...own.map((e) => ({ ...e, isDemo: false as const })),
+      ...(account?.showDemoEndpoints
+        ? demoEndpoints.list(request.accountId).map((e) => ({ ...e, isDemo: true as const }))
+        : []),
+    ];
     return {
-      endpoints: all.map(({ id, label, host, port, username, userVerification, description }) => ({
-        id,
-        label,
-        host,
-        port,
-        username,
-        userVerification,
-        description,
-      })),
+      endpoints: merged.map(
+        ({
+          id,
+          label,
+          host,
+          port,
+          username,
+          userVerification,
+          agentForward,
+          description,
+          isDemo,
+        }) => ({
+          id,
+          label,
+          host,
+          port,
+          username,
+          userVerification,
+          agentForward,
+          description,
+          isDemo,
+        }),
+      ),
     };
   });
 
@@ -50,6 +74,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      agentForward?: boolean;
       description?: string | null;
     };
   }>("/api/endpoints", async (request, reply) => {
@@ -60,6 +85,13 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         return {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
+      }
+      if (
+        request.body.agentForward !== undefined &&
+        typeof request.body.agentForward !== "boolean"
+      ) {
+        reply.status(400);
+        return { error: "agentForward must be a boolean" };
       }
       const desc = normalizeDescription(request.body.description);
       if (!desc.ok) {
@@ -77,6 +109,7 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
         userVerification: uv as UserVerification | undefined,
+        agentForward: request.body.agentForward,
         description: desc.value,
       });
       return { status: "created", id };
@@ -95,16 +128,25 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       port?: number;
       username?: string;
       userVerification?: string;
+      agentForward?: boolean;
       description?: string | null;
     };
   }>("/api/endpoints/:id", async (request, reply) => {
     try {
+      if (isDemoEndpointId(request.params.id)) {
+        reply.status(400);
+        return { error: "Demo endpoints are read-only — toggle visibility instead" };
+      }
       const body = request.body;
       if (body.userVerification !== undefined && !isUserVerification(body.userVerification)) {
         reply.status(400);
         return {
           error: `userVerification must be one of: ${USER_VERIFICATION_VALUES.join(", ")}`,
         };
+      }
+      if (body.agentForward !== undefined && typeof body.agentForward !== "boolean") {
+        reply.status(400);
+        return { error: "agentForward must be a boolean" };
       }
       const descriptionPatch: Partial<{ description: string | null }> = {};
       if (body.description !== undefined) {
@@ -132,6 +174,10 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
 
   app.delete<{ Params: { id: string } }>("/api/endpoints/:id", async (request, reply) => {
     try {
+      if (isDemoEndpointId(request.params.id)) {
+        reply.status(400);
+        return { error: "Demo endpoints are read-only — toggle visibility instead" };
+      }
       const activeSessions = terminalManager
         .listSessions()
         .filter((s) => s.endpointId === request.params.id);

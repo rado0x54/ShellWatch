@@ -50,6 +50,20 @@
       "when": 1777783781140,
       "tag": "0006_audit_signing_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779047498048,
+      "tag": "0007_endpoint_agent_forward",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779052745016,
+      "tag": "0008_account_show_demo_endpoints",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { StubAccountRepository } from "../db/repositories/account-repo.js";
 import { InMemoryEndpointRepository } from "../db/repositories/endpoint-repo.js";
+import { createDemoEndpointsService } from "../demo-endpoints/index.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { AgentSession } from "./agent-session.js";
+
+// Demo-aware deps that mirror the production wiring but with empty demo
+// config / a no-op account repo. Tests that need the merged list with
+// actual demos should pass their own service instead.
+const EMPTY_DEMO = createDemoEndpointsService([]);
+const NO_OP_ACCOUNT = new StubAccountRepository();
 
 function createMockTerminalManager() {
   const emitter = new EventEmitter();
@@ -45,6 +53,8 @@ describe("AgentSession.listEndpoints", () => {
     ]);
     const session = new AgentSession({
       endpointRepo,
+      demoEndpoints: EMPTY_DEMO,
+      accountRepo: NO_OP_ACCOUNT,
       terminalManager: createMockTerminalManager(),
       source: "mcp",
       accountId: "account-alice",
@@ -75,6 +85,8 @@ describe("AgentSession.createSession", () => {
     const terminalManager = createMockTerminalManager();
     const session = new AgentSession({
       endpointRepo,
+      demoEndpoints: EMPTY_DEMO,
+      accountRepo: NO_OP_ACCOUNT,
       terminalManager,
       source: "mcp",
       accountId: "account-bob",
@@ -109,6 +121,8 @@ describe("AgentSession.createSession", () => {
     });
     const session = new AgentSession({
       endpointRepo,
+      demoEndpoints: EMPTY_DEMO,
+      accountRepo: NO_OP_ACCOUNT,
       terminalManager,
       source: "mcp",
       accountId: "account-alice",

@@ -10,18 +10,20 @@ import {
   endpoints as endpointsTable,
   webauthnCredentials,
 } from "../../db/schema.js";
+import type { DemoEndpointsService } from "../../demo-endpoints/index.js";
 import { formatEndpointAddress } from "../../utils/endpoint-address.js";
 import type { AccountLifecycle } from "../account-lifecycle.js";
 
 export interface AccountRoutesParams {
   app: FastifyInstance;
   accountRepo: AccountRepository;
+  demoEndpoints: DemoEndpointsService;
   db?: ShellWatchDB | null;
   accountLifecycle: AccountLifecycle;
 }
 
 export function registerAccountRoutes(params: AccountRoutesParams) {
-  const { app, accountRepo, db = null, accountLifecycle } = params;
+  const { app, accountRepo, demoEndpoints, db = null, accountLifecycle } = params;
 
   // --- Auth: current account ---
   app.get("/api/auth/me", async (request, reply) => {
@@ -34,16 +36,26 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       id: account.id,
       name: account.name,
       isAdmin: account.isAdmin,
-      agentForward: account.agentForward,
+      // showDemoEndpoints is a per-account *visibility* preference, not an
+      // authorization gate. The `demo:*` virtual ids stay resolvable on the
+      // connect path regardless of this flag — operator-curated demo entries
+      // aren't sensitive, the demo container's ForceCommand pinning is the
+      // load-bearing control. Toggling this off only hides demos from
+      // /api/endpoints listings (UI + MCP).
+      showDemoEndpoints: account.showDemoEndpoints,
+      // Whether the *operator* configured any demoEndpoints at all. The UI
+      // hides the entire Demo Endpoints section + toggle when this is false,
+      // so vanilla deployments don't show an inert control.
+      demoEndpointsAvailable: !demoEndpoints.isEmpty(),
     };
   });
 
-  app.put<{ Body: { name?: string; agentForward?: boolean } }>(
+  app.put<{ Body: { name?: string; showDemoEndpoints?: boolean } }>(
     "/api/auth/me",
     async (request, reply) => {
       const accountId = request.accountId;
-      const { name, agentForward } = request.body;
-      const updates: Partial<{ name: string; agentForward: boolean }> = {};
+      const { name, showDemoEndpoints } = request.body;
+      const updates: Partial<{ name: string; showDemoEndpoints: boolean }> = {};
       if (name !== undefined) {
         const trimmed = name.trim();
         if (!trimmed) {
@@ -52,8 +64,13 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         }
         updates.name = trimmed;
       }
-      if (agentForward !== undefined) {
-        updates.agentForward = agentForward;
+      if (showDemoEndpoints !== undefined) {
+        if (typeof showDemoEndpoints !== "boolean") {
+          reply.status(400);
+          return { error: "showDemoEndpoints must be a boolean" };
+        }
+        // Visibility flag only; see the GET handler for the auth-gate caveat.
+        updates.showDemoEndpoints = showDemoEndpoints;
       }
       if (Object.keys(updates).length > 0) {
         await accountRepo.update(accountId, updates);
@@ -77,7 +94,6 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         isAdmin: a.isAdmin,
         enabled: a.enabled,
         maxSessions: a.maxSessions,
-        agentForward: a.agentForward,
         lastUsedAt: a.lastUsedAt,
         createdAt: a.createdAt,
       })),
@@ -162,6 +178,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         host: endpointsTable.host,
         port: endpointsTable.port,
         username: endpointsTable.username,
+        agentForward: endpointsTable.agentForward,
       })
       .from(endpointsTable)
       .where(eq(endpointsTable.accountId, adminId))
@@ -185,6 +202,12 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
       };
     });
 
+    // formatEndpointAddress always emits a `user@` prefix, even when the user
+    // is the default `shellwatch` — surfaces the wire-level identity to the
+    // operator. Round-trips identically through parseEndpointAddress, so an
+    // exported config re-imports cleanly. Side effect worth noting: re-exports
+    // of configs that previously omitted the default user will diff against
+    // their old form (now explicit `shellwatch@…`).
     const seedEndpoints = eps.map((ep) => ({
       label: ep.label,
       address: formatEndpointAddress({
@@ -192,6 +215,7 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
         host: ep.host,
         port: ep.port,
       }),
+      agentForward: ep.agentForward,
     }));
 
     return { passkeys: seedPasskeys, endpoints: seedEndpoints };
