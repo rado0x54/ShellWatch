@@ -104,14 +104,17 @@
   </p>
 {:else}
   <div class="code-block">
-    <span class="code-label">2. Add a passkey to <code>~/.ssh/authorized_keys</code></span>
+    <span class="code-label">2. Add a passkey to <code>~/.ssh/authorized_keys</code> (example)</span
+    >
     <code class="code-content placeholder">
-      &lt;webauthn-sk-...&gt; &lt;host&gt;-&lt;account&gt;-&lt;passkey&gt;
+      echo 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com
+      AAAAK3dlYmF1dGhuLXNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBExample…=
+      example_com-alice-yubikey5' &gt;&gt; ~/.ssh/authorized_keys
     </code>
   </div>
   <p class="hint">
-    Grab the full <code>authorized_keys</code> entry for a specific passkey from
-    <strong>Settings → Passkeys</strong>.
+    Replace the key body and comment with your own — copy the exact one-liner for a specific passkey
+    from <strong>Settings → Passkeys</strong>.
   </p>
 {/if}
 
