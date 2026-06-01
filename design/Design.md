@@ -178,6 +178,7 @@ The mark is a nautilus-in-shield in two colors (`#F0EFEA` shield outline, `#12A2
 
 - **In-app**: always reference the transparent SVG (`/logo.svg`) so any future background change flows through without re-rasterization.
 - **Favicon + PWA icons**: `client/static/{favicon.png, icon-{32,64,128,180,192,512}.png}` — generated via ImageMagick from the SVG with `#131313` (surface-container-low) baked in as the background.
+- **Logo + wordmark PNG exports**: `design/shellwatch_logo-wordmark-dark-bg.png` and `design/shellwatch_logo-wordmark-light-bg.png` — 1280 × 360 horizontal assets for contexts that need a baked background. `design/shellwatch_logo-wordmark-stacked-dark-bg.png` and `design/shellwatch_logo-wordmark-stacked-light-bg.png` — 718 × 501 stacked assets matching the README lockup with symmetric padding. The dark exports use `#131313`; the light exports use `#f0efea` and swap the shield outline to `#1f1f1f` for contrast.
 - **Monochrome silhouette**: on the empty "no session" page the mark is rendered as a CSS `mask` filled with `currentColor` (`--on-surface-faint`), giving a one-tone silhouette.
 
 ### Wordmark — SHELL + WATCH
