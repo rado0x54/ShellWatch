@@ -479,4 +479,28 @@ describe("passkey invite — HTTP integration", () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  // ---- Consent provider input validation: unauth 400, never 500 (#217) ----
+
+  it("/api/hydra/consent/options returns 400 (not 500) for a missing challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/options",
+      headers: { "content-type": "application/json" },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("/api/hydra/consent/options returns 400 (not 500) for a bogus challenge", async () => {
+    // The fake Hydra admin rejects getConsentRequest → the handler must catch
+    // and return 400, not let a HydraApiError bubble to a 500.
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/options",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "does-not-exist" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });

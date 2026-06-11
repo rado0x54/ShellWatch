@@ -44,6 +44,15 @@ const pendingChallenges = new Map<
 >();
 
 /**
+ * Hard cap on live challenges. Expired entries are swept on every insert, but
+ * within the 5-minute window an unauthenticated flood (e.g. /api/hydra/login/
+ * options) could otherwise grow this map without bound — a memory-DoS vector.
+ * Beyond the cap we evict the oldest entry (Map preserves insertion order).
+ * 10k generous-headroom; a legit deployment never approaches it.
+ */
+const MAX_PENDING_CHALLENGES = 10_000;
+
+/**
  * Store a challenge bound to a purpose and return its ID. The same purpose
  * string must be passed to `consumeChallenge` or the lookup fails.
  */
@@ -58,6 +67,14 @@ export function storeChallenge(challenge: string, purpose: ChallengePurpose): st
   // Clean up expired challenges
   for (const [id, { expires }] of pendingChallenges) {
     if (expires < Date.now()) pendingChallenges.delete(id);
+  }
+
+  // Hard cap: under sustained flooding all live entries may be unexpired, so
+  // sweeping isn't enough — evict the oldest (first-inserted) until under cap.
+  while (pendingChallenges.size > MAX_PENDING_CHALLENGES) {
+    const oldest = pendingChallenges.keys().next().value;
+    if (oldest === undefined) break;
+    pendingChallenges.delete(oldest);
   }
 
   return challengeId;

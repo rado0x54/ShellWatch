@@ -48,6 +48,18 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
   const hydraPub = config.hydra.publicUrl.replace(/\/+$/, "");
   const spaClient = config.hydra.spa;
 
+  // Per-route rate limits for the UNAUTHENTICATED passkey provider endpoints.
+  // /options enumerate credential ids + mint challenges (and consent/options
+  // hits Hydra admin); /verify run WebAuthn crypto. Reuses the same knobs the
+  // old login routes had (security.rateLimit.{loginOptions,loginVerify}).
+  const rl = config.security.rateLimit;
+  const optionsLimit = {
+    rateLimit: { max: rl.loginOptions.max, timeWindow: `${rl.loginOptions.windowMinutes} minutes` },
+  };
+  const verifyLimit = {
+    rateLimit: { max: rl.loginVerify.max, timeWindow: `${rl.loginVerify.windowMinutes} minutes` },
+  };
+
   // --- Discovery: RFC 9728 protected-resource + blended AS metadata ---
   // The AS metadata points authorization/token at Hydra (the real issuer) but
   // advertises ShellWatch's *mediated* registration_endpoint — Hydra's own DCR
@@ -195,7 +207,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
       },
     );
 
-    app.post("/api/hydra/login/options", async () => {
+    app.post("/api/hydra/login/options", { config: optionsLimit }, async () => {
       const result = await generatePasskeyAssertionOptions({ db, rpId });
       if (!result) return { error: "no_passkeys" };
       return { ...result.options, challengeId: result.challengeId };
@@ -203,6 +215,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
 
     app.post<{ Body: { login_challenge: string; challengeId: string; credential: unknown } }>(
       "/api/hydra/login/verify",
+      { config: verifyLimit },
       async (request, reply) => {
         const { login_challenge: challenge, challengeId, credential } = request.body;
         if (!challenge) {
@@ -271,8 +284,22 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
 
     app.post<{ Body: { consent_challenge: string } }>(
       "/api/hydra/consent/options",
-      async (request) => {
-        const consentReq = await admin.getConsentRequest(request.body.consent_challenge);
+      { config: optionsLimit },
+      async (request, reply) => {
+        const challenge = request.body?.consent_challenge;
+        if (typeof challenge !== "string" || !challenge) {
+          reply.status(400);
+          return { error: "missing consent_challenge" };
+        }
+        // A bogus/expired challenge makes Hydra's admin API throw — return a
+        // clean 400 instead of an unhandled 500 on this unauthenticated route.
+        let consentReq: Awaited<ReturnType<typeof admin.getConsentRequest>>;
+        try {
+          consentReq = await admin.getConsentRequest(challenge);
+        } catch {
+          reply.status(400);
+          return { error: "invalid consent_challenge" };
+        }
         const result = await generatePasskeyAssertionOptions({
           db,
           rpId,
@@ -285,9 +312,20 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
 
     app.post<{ Body: { consent_challenge: string; challengeId: string; credential: unknown } }>(
       "/api/hydra/consent/verify",
+      { config: verifyLimit },
       async (request, reply) => {
         const { consent_challenge: challenge, challengeId, credential } = request.body;
-        const consentReq = await admin.getConsentRequest(challenge);
+        if (typeof challenge !== "string" || !challenge) {
+          reply.status(400);
+          return { error: "missing consent_challenge" };
+        }
+        let consentReq: Awaited<ReturnType<typeof admin.getConsentRequest>>;
+        try {
+          consentReq = await admin.getConsentRequest(challenge);
+        } catch {
+          reply.status(400);
+          return { error: "invalid consent_challenge" };
+        }
         const verified = await verifyPasskeyAssertion({
           db,
           accountRepo,
