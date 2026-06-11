@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
@@ -81,7 +82,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch(`/api/actions/${actionId}`);
+      const res = await apiFetch(`/api/actions/${actionId}`);
       if (res.status === 401) {
         await goto(resolve(`/login?redirect=/sign/${actionId}`));
         return;
@@ -98,7 +99,9 @@
       // just hide the preview rather than blocking approval.
       if (action && action.context.source === "agent-forwarding") {
         try {
-          const tailRes = await fetch(`/api/sessions/${action.context.sessionId}/tail?limit=2000`);
+          const tailRes = await apiFetch(
+            `/api/sessions/${action.context.sessionId}/tail?limit=2000`,
+          );
           if (tailRes.ok) {
             const body = (await tailRes.json()) as { data?: string };
             parentSessionTail = body.data ?? "";
@@ -155,7 +158,7 @@
   async function handleDeny() {
     if (!action) return;
     try {
-      const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
+      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (res.ok) {
         resultStatus = "denied";
         clearAction(actionId);

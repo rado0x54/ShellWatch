@@ -11,7 +11,7 @@
   import { initBuildInfoFromWindow } from "$lib/stores/build-info.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
-  import { checkAuth } from "$lib/stores/webauthn.js";
+  import { isAuthenticated } from "$lib/oauth.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
 
   let { children } = $props();
@@ -25,7 +25,10 @@
   // auth-gated bootstrap below, same as /login and /register.
   function isUnauthPath(path: string): boolean {
     return (
-      path.endsWith("/login") || path.endsWith("/register") || path.includes("/passkey-invite/")
+      path.endsWith("/login") ||
+      path.endsWith("/register") ||
+      path.includes("/passkey-invite/") ||
+      path.includes("/auth/callback")
     );
   }
 
@@ -43,8 +46,9 @@
     const isUnauthPage = isUnauthPath(currentPath);
 
     if (!isUnauthPage) {
-      const { authenticated } = await checkAuth();
-      if (!authenticated) {
+      // Auth is now a browser-held OAuth token (#217). isAuthenticated() tries a
+      // silent refresh; if there's no usable token, bounce to /login.
+      if (!(await isAuthenticated())) {
         const redirect = window.location.pathname + window.location.search;
         const target =
           redirect && redirect !== "/"
@@ -59,7 +63,7 @@
     }
 
     if (!isUnauthPage) {
-      connectWs();
+      await connectWs();
       await fetchEndpoints();
       fetchAccount();
 

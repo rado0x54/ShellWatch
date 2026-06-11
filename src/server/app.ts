@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
@@ -14,9 +13,6 @@ import type {
   PushSubscriptionRepository,
   SshKeyRepository,
 } from "../db/index.js";
-// Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
-// the wider handle the bearer gate + OAuth callback need (findByHash). See #136.
-import type { ApiKeyAuthRepository } from "../db/repositories/api-key-repo.js";
 import type { SessionLifecycleRepository, SigningRequestsRepository } from "../audit/index.js";
 import { registerAgentProxyRoute } from "../agent-socket/index.js";
 import { createDemoEndpointsService } from "../demo-endpoints/index.js";
@@ -27,15 +23,15 @@ import type { TerminalManager } from "../terminal/index.js";
 import type { KeyAvailability, PrivateKeyProvider } from "../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../transport/key-scanner.js";
 import { registerWebAuthnRoutes } from "../webauthn/index.js";
-import { registerOAuth } from "../oauth/index.js";
+import type { HydraAdminClient } from "../hydra/admin-client.js";
+import { createBearerResolver } from "../hydra/bearer-resolver.js";
+import { registerHydraRoutes } from "../hydra/routes.js";
 import type { AccountLifecycle } from "./account-lifecycle.js";
 import { buildInfo } from "./buildInfo.js";
-import { registerAuthGate } from "./auth/auth-gate.js";
-import { BEARER_PATHS, registerBearerGate } from "./auth/bearer-gate.js";
+import { BEARER_PATHS, UI_SCOPE, registerBearerGate } from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
-import { registerApiKeyRoutes } from "./routes/api-keys.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerEndpointRoutes } from "./routes/endpoints.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
@@ -59,7 +55,8 @@ export interface BuildAppParams {
   db?: ShellWatchDB | null;
   wsExtensions?: WsExtension[];
   keyAvailability?: KeyAvailability | null;
-  apiKeyRepo: ApiKeyAuthRepository;
+  /** Hydra admin client (#217). Tests inject a fake; production wires the HTTP client. */
+  hydraAdmin: HydraAdminClient;
   /** Session-lifecycle audit repo (#184). When omitted, /api/audit/sessions is not registered. */
   sessionLifecycleRepo?: SessionLifecycleRepository;
   /** Signing-request audit repo (#186). When omitted, /api/audit/signings is not registered. */
@@ -92,7 +89,7 @@ export async function buildApp(params: BuildAppParams) {
     db = null,
     wsExtensions = [],
     keyAvailability = null,
-    apiKeyRepo,
+    hydraAdmin,
     options = {},
   } = params;
 
@@ -101,49 +98,42 @@ export async function buildApp(params: BuildAppParams) {
     trustProxy: config.server.trustProxy,
   });
 
-  // Cookie secret for session signing
-  const cookieSecret = config.security.cookieSecret ?? randomBytes(32).toString("hex");
-  if (!config.security.cookieSecret) {
-    app.log.warn("No cookieSecret in config — sessions will not survive server restarts");
-  }
-
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyWebsocket);
 
   // Decorate request with accountId + apiKey. accountId defaults to "" — the
-  // cookie auth-gate and the bearer gate both overwrite it with a real account
-  // id before any protected handler runs; exempt routes never read it. apiKey
-  // is null on cookie-authed and exempt routes; the bearer gate populates it
-  // for /mcp and /agent-proxy.
+  // bearer gate overwrites it with a real account id before any protected
+  // handler runs; exempt/static routes never read it. apiKey holds the
+  // introspected OAuth principal (null on exempt routes).
   app.decorateRequest("accountId", "");
   app.decorateRequest("apiKey", null);
 
-  // Auth gate: session-cookie enforcement
-  registerAuthGate({
-    app,
-    secret: cookieSecret,
-    accountRepo,
-  });
-
-  // IP allowlist + bearer-gate (covers /mcp and, when enabled, /agent-proxy) + OAuth shim.
+  // Single auth gate (#217): every authenticated surface presents a Hydra
+  // opaque access token, validated via introspection (sub → account, scope per
+  // path: ui for /api+/ws, mcp for /mcp, agent for /agent-proxy). IP allowlist
+  // still fronts /mcp.
   registerIpAllowlist(app, config.security.allowedNetworks, [BEARER_PATHS.mcp]);
-  // Only gate /agent-proxy when the proxy is actually enabled — otherwise the
-  // path 401s at the bearer gate while no route is mounted, which is misleading
-  // and lets clients mint agent-scoped keys that are useless.
   const agentProxyEnabled = config.agentSocket.proxyEnabled;
-  registerBearerGate({
-    app,
-    apiKeyRepo,
-    accountRepo,
-    config,
-    paths: {
-      [BEARER_PATHS.mcp]: { requiredScope: "mcp" },
-      ...(agentProxyEnabled ? { [BEARER_PATHS.agent]: { requiredScope: "agent" } } : {}),
-    },
+  const resolveBearer = createBearerResolver({
+    admin: hydraAdmin,
+    cacheTtlMs: config.hydra.introspectionCacheTtlMs,
   });
-  const oauth = registerOAuth({ app, apiKeyRepo, config, agentProxyEnabled });
-  app.addHook("onClose", async () => oauth.destroy());
+  registerBearerGate({ app, resolveBearer, accountRepo, config, agentProxyEnabled });
+
+  // Hydra integration: mediated DCR + discovery (always), plus the passkey
+  // login + consent providers (only when the WebAuthn-capable db is present —
+  // the bearer-only test harness runs without one).
+  registerHydraRoutes({
+    app,
+    config,
+    db,
+    accountRepo,
+    admin: hydraAdmin,
+    rpId: config.security.rpId,
+    trustedOrigins: config.security.trustedWebauthnOrigins,
+    agentProxyEnabled,
+  });
 
   app.get("/health", async () => ({ status: "ok" }));
 
@@ -167,6 +157,22 @@ export async function buildApp(params: BuildAppParams) {
     } catch (err) {
       app.log.error(err, `Failed to close terminals for deleted account ${accountId}`);
     }
+    // Revoke the subject's Hydra login + consent sessions so any live grant
+    // (web UI, MCP, agent) for this account dies too (#217). Tokens are keyed
+    // to sub = accountId, so revoking the subject's sessions covers them all.
+    void Promise.allSettled([
+      hydraAdmin.revokeLoginSessions(accountId),
+      hydraAdmin.revokeConsentSessions(accountId),
+    ]).then((results) => {
+      for (const r of results) {
+        if (r.status === "rejected") {
+          app.log.warn(
+            r.reason,
+            `Failed to revoke Hydra sessions for deleted account ${accountId}`,
+          );
+        }
+      }
+    });
   });
 
   // Virtual demo-endpoints: synthesized from config.demoEndpoints, merged into
@@ -197,8 +203,6 @@ export async function buildApp(params: BuildAppParams) {
       wsChannel: params.wsChannel,
     });
   }
-
-  registerApiKeyRoutes({ app, apiKeyRepo });
 
   if (params.sessionLifecycleRepo || params.signingRequestsRepo) {
     registerAuditRoutes({
@@ -235,7 +239,6 @@ export async function buildApp(params: BuildAppParams) {
       accountRepo,
       rpId: config.security.rpId,
       trustedOrigins: config.security.trustedWebauthnOrigins,
-      sessionConfig: { secret: cookieSecret, ttlSeconds: config.security.sessionTtlSeconds },
       selfRegistrationEnabled: config.security.selfRegistrationEnabled,
       rateLimitConfig: config.security.rateLimit,
     });
@@ -257,10 +260,21 @@ export async function buildApp(params: BuildAppParams) {
   app.get("/config.js", async (_request, reply) => {
     reply.type("application/javascript");
     const vapidPublicKey = config.vapid?.publicKey ?? null;
+    // OAuth bootstrap for the browser PKCE client (#217): the issuer, the
+    // first-party public client id, its redirect URI, and the scope to request.
+    const oauth = {
+      issuer: config.hydra.publicUrl.replace(/\/+$/, ""),
+      clientId: config.hydra.spa.clientId,
+      redirectUri:
+        config.hydra.spa.redirectUri ??
+        `${config.server.externalUrl.replace(/\/+$/, "")}/auth/callback`,
+      scope: `openid offline ${UI_SCOPE}`,
+    };
     return [
       `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`,
       `window.__VAPID_PUBLIC_KEY__=${JSON.stringify(vapidPublicKey)};`,
       `window.__BUILD_INFO__=${JSON.stringify(buildInfo)};`,
+      `window.__OAUTH__=${JSON.stringify(oauth)};`,
     ].join("");
   });
 

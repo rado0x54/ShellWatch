@@ -1,0 +1,74 @@
+# Local Ory Hydra + Postgres stack for ShellWatch (issue #217).
+#
+# This brings up the OAuth2/OIDC authority (Hydra) and its Postgres backing
+# store so you can exercise the full OAuth flows locally while running
+# ShellWatch itself on the host via `pnpm dev`.
+#
+#   docker compose -f docker-compose.hydra.yml up -d
+#   cp deploy/hydra/.env.sample .env.hydra   # then `--env-file .env.hydra`
+#
+# Ports exposed on the host:
+#   4444  Hydra PUBLIC  — discovery, /oauth2/auth, /oauth2/token, MCP clients
+#   4445  Hydra ADMIN   — login/consent accept, client CRUD, introspection.
+#                         Bound to 127.0.0.1 only; never expose this publicly.
+#   5433  Postgres      — handy for psql/inspection (maps container 5432)
+#
+# ShellWatch (host) talks to Hydra at http://localhost:4444 (public) and
+# http://localhost:4445 (admin); the browser is redirected to ShellWatch's
+# login/consent providers at http://localhost:3000 (see deploy/hydra/hydra.yml).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${HYDRA_PG_USER:-hydra}
+      POSTGRES_PASSWORD: ${HYDRA_PG_PASSWORD:-hydra-dev-secret}
+      POSTGRES_DB: ${HYDRA_PG_DB:-hydra}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - hydra-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HYDRA_PG_USER:-hydra} -d ${HYDRA_PG_DB:-hydra}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: create/upgrade Hydra's schema in Postgres, then exit.
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DSN: postgres://${HYDRA_PG_USER:-hydra}:${HYDRA_PG_PASSWORD:-hydra-dev-secret}@postgres:5432/${HYDRA_PG_DB:-hydra}?sslmode=disable
+    command: migrate sql -e --yes
+    restart: on-failure
+
+  hydra:
+    image: oryd/hydra:v2.2.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "4444:4444"
+      - "127.0.0.1:4445:4445"
+    environment:
+      DSN: postgres://${HYDRA_PG_USER:-hydra}:${HYDRA_PG_PASSWORD:-hydra-dev-secret}@postgres:5432/${HYDRA_PG_DB:-hydra}?sslmode=disable
+      SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:-this-is-a-dev-only-system-secret-change-me}
+      # `--dev` accepts the http:// issuer without TLS; only for local dev.
+    command: serve all --dev --config /etc/config/hydra.yml
+    volumes:
+      - ./deploy/hydra/hydra.yml:/etc/config/hydra.yml:ro
+    healthcheck:
+      test: ["CMD", "hydra", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  hydra-postgres:

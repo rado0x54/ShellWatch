@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
+import { getAccessToken } from "../oauth.js";
 import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
 
 export type SessionMode = "control" | "observer";
@@ -77,9 +78,13 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
   };
 }
 
-export function connectWs(): void {
+export async function connectWs(): Promise<void> {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/ws`;
+  // Browsers can't set an Authorization header on a WS handshake, so the OAuth
+  // access token rides in a query param (the bearer gate reads it there) (#217).
+  const token = await getAccessToken();
+  const qs = token ? `?access_token=${encodeURIComponent(token)}` : "";
+  const url = `${proto}//${location.host}/ws${qs}`;
 
   ws = new WebSocket(url);
 
@@ -129,7 +134,9 @@ export function connectWs(): void {
   };
 
   ws.onclose = () => {
-    setTimeout(() => connectWs(), 2000);
+    setTimeout(() => {
+      void connectWs();
+    }, 2000);
   };
 }
 

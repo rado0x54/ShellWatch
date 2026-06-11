@@ -3,22 +3,24 @@
 // protocol requests from a local Unix socket to a remote ShellWatch
 // server over WebSocket.
 //
-// First-time setup (recommended): run `shellwatch-agent login` once to
-// obtain an `agent`-scoped API key via the browser-based OAuth flow.
-// The token is stored in the OS keyring (or a 0600 file fallback) and
-// the agent daemon picks it up automatically on subsequent runs.
+// First-time setup: run `shellwatch-agent login` once. It opens the browser
+// for a passkey login (loopback authorization_code + PKCE, the same flow an
+// MCP client uses) and stores the resulting refresh token in the OS keyring
+// (or a 0600 file fallback). The daemon picks it up automatically.
 //
 // Usage:
 //
-//	# One-time browser-based login. Token persists per server URL.
+//	# Browser login (passkey). Registers a loopback client via DCR, then stores
+//	# the refresh token. Persisted per server URL.
 //	shellwatch-agent login [--server URL] [--insecure]
 //
-//	# Remove the locally-stored token. Does not revoke the API key
-//	# server-side — for that, delete it in Settings → API Keys.
+//	# Remove the locally-stored credentials. Does not revoke the grant
+//	# server-side — sign out / delete the device's sessions in ShellWatch.
 //	shellwatch-agent logout [--server URL]
 //
-//	# Default daemon mode (no subcommand). Picks up the token from
-//	# --api-key, SHELLWATCH_API_KEY, or the credstore (in that order).
+//	# Default daemon mode (no subcommand). Resolves credentials from
+//	# --api-key, SHELLWATCH_API_KEY, or the credstore (in that order) and
+//	# mints + refreshes short-lived access tokens from the refresh token.
 //	shellwatch-agent [--server URL] [--socket PATH] [--insecure]
 //
 //	# Print export line for shell rc files.
@@ -93,7 +95,7 @@ func runDaemon() error {
 	return proxy.Run(proxy.ProxyConfig{
 		SocketPath: cfg.SocketPath,
 		ServerURL:  cfg.Server,
-		ApiKey:     cfg.ApiKey,
+		Token:      cfg.Token,
 		Insecure:   cfg.Insecure,
 		Version:    Version,
 	})
@@ -123,16 +125,20 @@ func runLogin(args []string) error {
 		return err
 	}
 
+	blob, err := oauth.StoredCreds{ClientID: result.ClientID, RefreshToken: result.RefreshToken}.Encode()
+	if err != nil {
+		return fmt.Errorf("encode credentials: %w", err)
+	}
 	store, err := credstore.New()
 	if err != nil {
 		return fmt.Errorf("open credential store: %w", err)
 	}
-	if err := store.Set(result.ServerURL, result.AccessToken); err != nil {
+	if err := store.Set(result.ServerURL, blob); err != nil {
 		return fmt.Errorf("save credential: %w", err)
 	}
 
 	fmt.Fprintf(os.Stdout, "\nOK: authorized for %s\n", result.ServerURL)
-	fmt.Fprintf(os.Stdout, "  Token saved. The agent daemon will pick it up automatically.\n")
+	fmt.Fprintf(os.Stdout, "  Credentials saved. The daemon mints + refreshes access tokens automatically.\n")
 	return nil
 }
 
@@ -158,9 +164,9 @@ func runLogout(args []string) error {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "OK: removed local token for %s.\n", serverURL)
-	fmt.Fprintf(os.Stdout, "  Note: the API key still exists server-side. To revoke it entirely,\n")
-	fmt.Fprintf(os.Stdout, "  delete it in Settings → API Keys at %s.\n", serverURL)
+	fmt.Fprintf(os.Stdout, "OK: removed local credentials for %s.\n", serverURL)
+	fmt.Fprintf(os.Stdout, "  Note: the OAuth client still exists server-side. To revoke it entirely,\n")
+	fmt.Fprintf(os.Stdout, "  delete it in Settings → OAuth Clients at %s.\n", serverURL)
 	return nil
 }
 
@@ -183,17 +189,18 @@ USAGE
   shellwatch-agent [flags]                    # daemon mode
 
 COMMANDS
-  login     Authorize this device via the browser. Stores an agent-scoped
-            API key in the OS keyring (or a 0600 file fallback).
-  logout    Remove the locally-stored token. Does not revoke the API key
-            server-side — see Settings → API Keys for that.
+  login     Authorize this device via the browser (passkey login). Stores the
+            resulting refresh token in the OS keyring (or a 0600 file fallback).
+  logout    Remove the locally-stored credentials. Does not revoke the grant
+            server-side — sign out / revoke the device in ShellWatch for that.
   version   Print build version.
   help      Print this help.
 
 DAEMON FLAGS
   --server URL          ShellWatch server (default: $SHELLWATCH_SERVER or
                         `+config.DefaultServer+`)
-  --api-key KEY         Static API key. Skips the credstore lookup.
+  --api-key KEY         Static bearer token (e.g. an access token minted
+                        out-of-band). Skips the credstore lookup.
   --socket PATH         Listener path. On macOS/Linux, a Unix socket
                         ($XDG_RUNTIME_DIR/shellwatch-agent.sock or a
                         per-user path under $TMPDIR by default).
@@ -209,9 +216,9 @@ LOGIN FLAGS
   --insecure            Allow http://. Local dev only.
 
 ENVIRONMENT
-  SHELLWATCH_SERVER     Default --server value.
-  SHELLWATCH_API_KEY    Default --api-key value.
-  SHELLWATCH_AGENT_SOCK Default --socket value.
+  SHELLWATCH_SERVER         Default --server value.
+  SHELLWATCH_API_KEY        Static bearer token (skips credstore).
+  SHELLWATCH_AGENT_SOCK     Default --socket value.
 `)
 }
 

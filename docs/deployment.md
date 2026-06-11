@@ -7,6 +7,96 @@ ShellWatch requires:
 - A `config.yaml` file (copy `config.sample.yaml` and edit to match your environment)
 - An SSH key directory with private keys for your endpoints
 - A persistent directory for the SQLite database
+- **Ory Hydra + Postgres** (the OAuth2/OIDC authority — see below). This is a
+  hard runtime dependency as of #217.
+
+## Ory Hydra (OAuth authority)
+
+ShellWatch delegates all OAuth2/OIDC to [Ory Hydra](https://www.ory.sh/hydra/).
+Every client — the **web UI**, **MCP clients**, and the **`shellwatch-agent`**
+binary — uses the _same_ flow: mediated Dynamic Client Registration +
+`authorization_code` + PKCE, where the user logs in with a passkey and consents.
+The access token carries the identity (`sub` = account); the OAuth client is
+never bound to an account. ShellWatch is Hydra's **passkey-gated login + consent
+provider** — Hydra never sees a credential, it just redirects challenges back.
+
+### Topology
+
+```
+                       passkey login/consent (ShellWatch :3000)
+   [Web UI SPA] ──DCR + authcode/PKCE (tokens in browser)──────────────┐
+   [MCP client] ──mediated DCR + authcode/PKCE──────────────────────────┤
+   [agent-client] ──mediated DCR + authcode/PKCE (loopback browser)──────┤
+                                                                          ▼
+                                                                    [Ory Hydra]
+                                                                  (:4444 public)
+                                                                  (:4445 admin)
+                                                                          │
+   /api, /ws, /mcp, /agent-proxy ── Bearer ── introspect(:4445) ─────────┘
+                                       sub = accountId, scope = ui|mcp|agent
+                                  [Postgres]
+```
+
+- **`:4444` (public)** — discovery, `/oauth2/auth`, `/oauth2/token`,
+  `/oauth2/revoke`. Reached by the browser SPA, MCP clients, and the
+  agent-client. CORS must allow the web-UI origin (configured in
+  `deploy/hydra/hydra.yml`).
+- **`:4445` (admin)** — login/consent acceptance, client CRUD, introspection.
+  **Never expose this to the internet.** ShellWatch reaches it over the trusted
+  internal network only.
+
+### Local dev (Hydra + Postgres in compose, app via `pnpm dev`)
+
+```bash
+cp deploy/hydra/.env.sample .env.hydra      # dev-only secrets
+docker compose --env-file .env.hydra -f docker-compose.hydra.yml up -d
+# Then run ShellWatch on the host:
+pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
+```
+
+The compose stack runs `postgres`, a one-shot `hydra-migrate`, and `hydra`. The
+passkey **login + consent providers** are server-rendered by ShellWatch at
+`http://localhost:3000/api/hydra/*`; the web UI's OAuth flow (and its
+`/auth/callback`) run in the browser. Point your browser at
+`http://localhost:3000` for the full flow.
+
+> Note: under `pnpm dev` the Vite dev server (`:3001`) is for SPA hot-reload
+> only — the OAuth redirect flow + the login/consent providers are served by
+> Fastify on `:3000`.
+
+### Config
+
+Add a `hydra:` section to `config.yaml` (see `config.sample.yaml`):
+
+```yaml
+hydra:
+  publicUrl: http://localhost:4444 # must equal Hydra urls.self.issuer
+  adminUrl: http://localhost:4445 # trusted-network only
+  spa:
+    clientId: shellwatch-web # first-party public PKCE client (no secret)
+```
+
+ShellWatch provisions the public SPA client in Hydra automatically on boot
+(idempotent). Hydra must be configured with
+`oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
+login/consent URLs pointed at ShellWatch — see `deploy/hydra/hydra.yml`.
+
+### Manual verification
+
+1. **Web UI:** sign in via passkey through the redirect flow; confirm the PWA
+   survives past the old fixed TTL (browser refresh-token rotation); logout
+   revokes the refresh token at Hydra.
+2. **MCP:** connect an MCP client (DCR → passkey consent → tools work).
+3. **Agent:** run `shellwatch-agent login` (browser passkey login → `agent`
+   token); confirm `/agent-proxy` works.
+4. **Revocation:** revoke a subject's Hydra sessions / log out and confirm
+   access dies within the introspection cache TTL (default 60s).
+5. **Scope isolation:** an `mcp`/`agent` token cannot call `/api/*` (needs `ui`).
+6. Confirm the admin port (`:4445`) is not reachable from outside the host.
+
+> Headless/CI agents: there is **no non-interactive auth path** — every agent
+> does an interactive browser login. A Device Authorization Grant (RFC 8628) is
+> a planned follow-up.
 
 ## Docker (recommended)
 

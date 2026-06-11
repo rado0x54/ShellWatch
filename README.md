@@ -93,11 +93,11 @@ Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and se
 | -------------- | ----------------------------------------- |
 | `/`            | Web UI                                    |
 | `/observer`    | Multi-session grid                        |
-| `/settings/*`  | Endpoints, keys, passkeys, API keys       |
+| `/settings/*`  | Endpoints, keys, passkeys, notifications  |
 | `/api/*`       | REST API                                  |
 | `/ws`          | WebSocket (terminal I/O + events)         |
-| `/mcp`         | MCP (streamable HTTP)                     |
-| `/agent-proxy` | SSH agent proxy (WebSocket, API key auth) |
+| `/mcp`         | MCP (streamable HTTP, OAuth bearer)       |
+| `/agent-proxy` | SSH agent proxy (WebSocket, OAuth bearer) |
 | `/health`      | Health check                              |
 
 ## Reverse proxy
@@ -131,13 +131,13 @@ Each MCP client gets an isolated `AgentSession` — agents only see their own se
 
 ### Connecting an MCP client
 
-Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp` URL — the integrated OAuth flow handles credentials, no manual API key paste needed:
+Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp` URL — the OAuth flow (backed by Ory Hydra) handles credentials end-to-end:
 
 ```
 https://your-shellwatch-host/mcp
 ```
 
-OAuth mints an `mcp`-scoped API key after browser approval. For headless setups you can still seed a static key via `seedAdminApiKey` in `config.yaml`, or create one under **Settings → API Keys**.
+The client registers via mediated Dynamic Client Registration and you approve it with a **passkey** on the consent screen; Hydra issues an `mcp`-scoped token. Programmatic SSH-agent access works the same way — `shellwatch-agent login` runs a browser passkey login and obtains an `agent`-scoped token. See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the Hydra setup.
 
 ## Push notifications (PWA)
 

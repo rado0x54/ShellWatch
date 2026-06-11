@@ -269,18 +269,9 @@ export const pushSubscriptions = sqliteTable("push_subscriptions", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- API Keys ---
-
-export const apiKeys = sqliteTable("api_keys", {
-  id: text("id").primaryKey(),
-  accountId: text("account_id")
-    .notNull()
-    .references(() => accounts.id),
-  label: text("label").notNull(),
-  keyHash: text("key_hash").notNull().unique(),
-  keyPrefix: text("key_prefix").notNull(),
-  scopes: text("scopes").notNull(),
-  endpoints: text("endpoints"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  createdAt: text("created_at").notNull(),
-});
+// --- OAuth (#217) ---
+// No OAuth-related tables. Ory Hydra is the single store for OAuth clients and
+// tokens; ShellWatch keeps no server-side session and no local client index.
+// Every token carries the account in its `sub` (the human who logged in), so
+// there is nothing to map or persist locally — the bearer gate reads `sub` from
+// introspection. The legacy `api_keys` table is dropped (migration 0009).

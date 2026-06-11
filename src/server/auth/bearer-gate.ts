@@ -1,81 +1,96 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Config } from "../../config/index.js";
+import { type Config, UI_SCOPE } from "../../config/index.js";
 import type { AccountRepository } from "../../db/index.js";
-// Deep import: ApiKeyAuthRepository is not part of the public DB barrel — it's
-// reached for here because bearer auth needs the cross-tenant findByHash. See #136.
-import type { ApiKeyAuthRepository } from "../../db/repositories/api-key-repo.js";
-import { hashApiKey } from "./api-key-auth.js";
+import type { BearerResolver } from "../../hydra/bearer-resolver.js";
 
 export type BearerScope = "mcp" | "agent";
 
+export { UI_SCOPE };
+
 /**
- * Single source of truth for the set of bearer scopes ShellWatch supports.
- * The OAuth shim validates pasted / minted keys against this list and exposes
- * it via `scopes_supported` in the discovery doc. Sorted alphabetically so
- * the rendered "Issued scopes" line and the discovery doc agree on order.
- * Adding a new scope requires updating this array, the `BearerScope` union,
- * and the `BEARER_PATHS` map below.
+ * Bearer scopes that guard a protected resource with RFC 9728 discovery
+ * (`/mcp`, `/agent-proxy`). The web UI uses a separate `ui` scope (below) that
+ * isn't an externally-discoverable resource, so it's kept out of this list.
+ * Sorted alphabetically so rendered scope lines + discovery docs agree.
  */
 export const BEARER_SCOPES = ["agent", "mcp"] as const satisfies readonly BearerScope[];
 
 /**
  * Single source of truth for the protected-resource paths each scope guards.
- * Mirrored by:
- *   - `registerBearerGate`'s `paths` config in `src/server/app.ts` (which
- *     scope is required at each path),
- *   - the OAuth shim's `resolveScopes` (which path each `resource` indicator
- *     maps to), and
- *   - the per-resource discovery docs in `routes.ts`.
+ * Mirrored by the per-resource RFC 9728 discovery docs (src/hydra/routes.ts).
  */
 export const BEARER_PATHS: Record<BearerScope, string> = {
   mcp: "/mcp",
   agent: "/agent-proxy",
 };
 
-/**
- * Per-scope RFC 9728 protected-resource metadata path (relative to externalUrl).
- * Per spec §3.1, the well-known URI appends the resource path to
- * `${WELL_KNOWN_PROTECTED_RESOURCE}`. Derived rather than hand-written so a
- * future rename of `BEARER_PATHS.agent` propagates here automatically. The
- * legacy unsuffixed `/.well-known/oauth-protected-resource` still exists as a
- * back-compat alias for `/mcp` (see `routes.ts`).
- */
 export const WELL_KNOWN_PROTECTED_RESOURCE = "/.well-known/oauth-protected-resource";
 export const RESOURCE_METADATA_PATHS: Record<BearerScope, string> = Object.fromEntries(
   BEARER_SCOPES.map((s) => [s, `${WELL_KNOWN_PROTECTED_RESOURCE}${BEARER_PATHS[s]}`]),
 ) as Record<BearerScope, string>;
 
-export interface BearerPathConfig {
-  /** Required scope on the API key. Requests with a key lacking this scope get 403. */
-  requiredScope: BearerScope;
-}
-
 export interface RegisterBearerGateParams {
   app: FastifyInstance;
-  apiKeyRepo: ApiKeyAuthRepository;
+  /**
+   * Resolves an opaque bearer token to a principal via Hydra introspection
+   * (#217). Injected so tests can stub it without a live Hydra.
+   */
+  resolveBearer: BearerResolver;
   accountRepo: AccountRepository;
   config: Config;
-  /** Map of URL prefixes → required scope. */
-  paths: Record<string, BearerPathConfig>;
+  /** Whether /agent-proxy is mounted (gates the agent path + its discovery doc). */
+  agentProxyEnabled: boolean;
 }
 
+// Exact paths that never require a token.
+const EXEMPT_EXACT = new Set([
+  "/health",
+  "/api/version",
+  "/config.js",
+  "/manifest.json",
+  // Anonymous onboarding / bootstrap (passkey registration has no token yet).
+  "/api/auth/register",
+  "/api/auth/register/options",
+  "/api/auth/passkey-status",
+  // Mediated DCR — reached by clients before they have a token.
+  "/oauth/register",
+]);
+
+// Path prefixes that never require a token.
+//   /api/hydra/        — the passkey login + consent providers (establish auth).
+//   /api/passkey-invite/ + /passkey-invite/ — anonymous invite registration.
+//   /.well-known/      — OAuth discovery.
+//   /_app/             — SvelteKit static assets.
+const EXEMPT_PREFIXES = [
+  "/api/hydra/",
+  "/api/passkey-invite/",
+  "/passkey-invite/",
+  "/.well-known/",
+  "/_app/",
+];
+
+const PUBLIC_ASSET_EXT = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
+
 /**
- * Single onRequest hook that authenticates bearer-token routes (/mcp,
- * /agent-proxy). Sets `request.accountId` and `request.apiKey` on success;
- * returns RFC 6750 401/403 with `WWW-Authenticate: Bearer ...` on failure,
- * pointing the client at the matching RFC 9728 protected-resource metadata
- * URL so OAuth-aware clients can discover the issuer. WS upgrades are
- * rejected pre-handshake (the client sees an HTTP 401 from the upgrade
- * request, not a WS close code).
+ * The one auth gate (#217). Every authenticated surface presents a Hydra
+ * opaque access token; the gate introspects it (`sub` → account, scope per
+ * path) and 401s otherwise:
  *
- * Companion to the cookie-session auth-gate. Together the two gates cover all
- * authenticated routes; nothing reaches a handler without one of them
- * populating `request.accountId`.
+ *   - `/mcp`          → scope `mcp`     (Authorization: Bearer)
+ *   - `/agent-proxy`  → scope `agent`   (Authorization: Bearer)
+ *   - `/api/*`        → scope `ui`      (Authorization: Bearer)
+ *   - `/ws`           → scope `ui`      (token via `?access_token=` — browsers
+ *                                        can't set headers on a WS handshake)
+ *
+ * Everything else (SPA HTML routes, static assets, exempt endpoints) passes
+ * through — the SPA gates itself client-side and runs the OAuth redirect when
+ * it has no token. For `/mcp` + `/agent-proxy`, failures carry the RFC 6750
+ * `WWW-Authenticate` + RFC 9728 `resource_metadata` hint so OAuth-aware clients
+ * can discover the Hydra issuer.
  */
 export function registerBearerGate(params: RegisterBearerGateParams): void {
-  const { app, apiKeyRepo, accountRepo, config, paths } = params;
-  const pathEntries = Object.entries(paths);
+  const { app, resolveBearer, accountRepo, config, agentProxyEnabled } = params;
 
   // Read at request time — test helpers patch externalUrl after listen().
   const resourceMetadataUrl = (scope: BearerScope): string =>
@@ -83,54 +98,72 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
 
   function send401(
     reply: FastifyReply,
-    scope: BearerScope,
+    required: BearerScope | typeof UI_SCOPE,
     message: string,
     kind: "missing" | "invalid" | "scope",
   ): void {
     const status = kind === "scope" ? 403 : 401;
-    // RFC 6750 §3 leaves the realm value to the resource server; we use a
-    // single generic identifier across both protected paths.
-    const parts = [
-      `Bearer realm="shellwatch"`,
-      `resource_metadata="${resourceMetadataUrl(scope)}"`,
-    ];
+    const parts = [`Bearer realm="shellwatch"`];
+    // RFC 9728 discovery hint only for the externally-discoverable resources.
+    if (required === "mcp" || required === "agent") {
+      parts.push(`resource_metadata="${resourceMetadataUrl(required)}"`);
+    }
     if (kind === "invalid") parts.push(`error="invalid_token"`);
     if (kind === "scope") parts.push(`error="insufficient_scope"`);
     reply.status(status).header("WWW-Authenticate", parts.join(", ")).send({ error: message });
   }
 
-  function matchPath(url: string): BearerPathConfig | undefined {
-    const path = url.split("?")[0];
-    for (const [prefix, cfg] of pathEntries) {
-      if (path === prefix || path.startsWith(`${prefix}/`)) return cfg;
-    }
-    return undefined;
+  function isExempt(path: string): boolean {
+    if (EXEMPT_EXACT.has(path)) return true;
+    if (EXEMPT_PREFIXES.some((p) => path.startsWith(p))) return true;
+    if (PUBLIC_ASSET_EXT.some((ext) => path.endsWith(ext))) return true;
+    return false;
+  }
+
+  /** Which scope (if any) guards this path. null → not a protected route. */
+  function requiredScope(path: string): BearerScope | typeof UI_SCOPE | null {
+    if (path === "/mcp" || path.startsWith("/mcp/")) return "mcp";
+    if (agentProxyEnabled && (path === "/agent-proxy" || path.startsWith("/agent-proxy/")))
+      return "agent";
+    if (path === "/ws") return UI_SCOPE;
+    if (path.startsWith("/api/")) return UI_SCOPE;
+    return null;
   }
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    const cfg = matchPath(request.url);
-    if (!cfg) return;
+    const path = request.url.split("?")[0];
+    if (isExempt(path)) return;
 
+    const scope = requiredScope(path);
+    if (!scope) return; // SPA HTML routes / static — pass through.
+
+    // Browsers can't set Authorization on a WebSocket handshake, so /ws carries
+    // the access token in a query param. Everything else uses the header.
+    let token: string | undefined;
     const auth = request.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      send401(reply, cfg.requiredScope, "API key required", "missing");
+    if (auth?.startsWith("Bearer ")) {
+      token = auth.slice(7);
+    } else if (path === "/ws") {
+      const q = request.query as { access_token?: string };
+      token = typeof q.access_token === "string" ? q.access_token : undefined;
+    }
+    if (!token) {
+      send401(reply, scope, "Access token required", "missing");
       return;
     }
 
-    const token = auth.slice(7);
-    const key = await apiKeyRepo.findByHash(hashApiKey(token));
-    if (!key) {
-      send401(reply, cfg.requiredScope, "Invalid API key", "invalid");
+    const principal = await resolveBearer(token);
+    if (!principal) {
+      send401(reply, scope, "Invalid or expired access token", "invalid");
+      return;
+    }
+    if (!principal.scopes.includes(scope)) {
+      send401(reply, scope, `Token lacks '${scope}' scope`, "scope");
       return;
     }
 
-    if (!key.scopes.includes(cfg.requiredScope)) {
-      send401(reply, cfg.requiredScope, `API key lacks '${cfg.requiredScope}' scope`, "scope");
-      return;
-    }
-
-    request.accountId = key.accountId;
-    request.apiKey = key;
-    accountRepo.touchLastUsed(key.accountId);
+    request.accountId = principal.accountId;
+    request.apiKey = principal;
+    accountRepo.touchLastUsed(principal.accountId);
   });
 }

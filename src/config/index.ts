@@ -5,8 +5,11 @@ export {
   ConfigSchema,
   type DemoEndpoint,
   DemoEndpointSchema,
+  type HydraConfig,
+  HydraSchema,
   type SeedEndpoint,
   SeedEndpointSchema,
   securityFieldDefaults,
   serverDefaults,
+  UI_SCOPE,
 } from "./schema.js";

@@ -57,14 +57,14 @@ describe("ws store", () => {
     vi.restoreAllMocks();
   });
 
-  it("connectWs creates a WebSocket connection", () => {
-    connectWs();
+  it("connectWs creates a WebSocket connection", async () => {
+    await connectWs();
     expect(MockWebSocket.instances).toHaveLength(1);
     expect(MockWebSocket.instances[0].url).toBe("ws://localhost:3000/ws");
   });
 
-  it("sessions:changed updates the sessions store", () => {
-    connectWs();
+  it("sessions:changed updates the sessions store", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const mockSessions: SessionListEntry[] = [
@@ -83,8 +83,8 @@ describe("ws store", () => {
     expect(get(sessions)).toEqual(mockSessions);
   });
 
-  it("onWsMessage registers a handler and returns unsubscribe", () => {
-    connectWs();
+  it("onWsMessage registers a handler and returns unsubscribe", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const received: unknown[] = [];
@@ -99,8 +99,8 @@ describe("ws store", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("onWsMessage delivers to multiple handlers", () => {
-    connectWs();
+  it("onWsMessage delivers to multiple handlers", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     let count1 = 0;
@@ -117,8 +117,8 @@ describe("ws store", () => {
     unsub2();
   });
 
-  it("wsSend sends JSON when connection is open", () => {
-    connectWs();
+  it("wsSend sends JSON when connection is open", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSend({ type: "test", data: "hello" });
@@ -127,8 +127,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "test", data: "hello" });
   });
 
-  it("wsSend does not send when connection is not open", () => {
-    connectWs();
+  it("wsSend does not send when connection is not open", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
     ws.readyState = 3; // CLOSED
 
@@ -137,8 +137,8 @@ describe("ws store", () => {
     expect(ws.sent).toHaveLength(0);
   });
 
-  it("wsAttach sends terminal:attach message", () => {
-    connectWs();
+  it("wsAttach sends terminal:attach message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsAttach("sess-1");
@@ -146,8 +146,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:attach", sessionId: "sess-1" });
   });
 
-  it("wsSendInput sends terminal:input message", () => {
-    connectWs();
+  it("wsSendInput sends terminal:input message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSendInput("sess-1", "ls\n");
@@ -159,8 +159,8 @@ describe("ws store", () => {
     });
   });
 
-  it("wsSendResize sends terminal:resize message", () => {
-    connectWs();
+  it("wsSendResize sends terminal:resize message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSendResize("sess-1", 120, 40);
@@ -173,8 +173,8 @@ describe("ws store", () => {
     });
   });
 
-  it("wsTakeControl sends terminal:take-control message", () => {
-    connectWs();
+  it("wsTakeControl sends terminal:take-control message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsTakeControl("sess-1");
@@ -182,8 +182,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:take-control", sessionId: "sess-1" });
   });
 
-  it("wsReleaseControl sends terminal:release-control message", () => {
-    connectWs();
+  it("wsReleaseControl sends terminal:release-control message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsReleaseControl("sess-1");
@@ -194,8 +194,8 @@ describe("ws store", () => {
     });
   });
 
-  it("ignores invalid JSON messages", () => {
-    connectWs();
+  it("ignores invalid JSON messages", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -169,10 +169,82 @@ export const AgentSocketSchema = z.object({
 
 export const agentSocketDefaults = { proxyEnabled: false };
 
+// --- Ory Hydra (issue #217) ---
+// Hydra is the single OAuth2/OIDC authority for all delegated access. Every
+// client — the web UI (a public PKCE SPA client), MCP clients, and the
+// agent-client — uses the same DCR + authorization_code + PKCE flow with a
+// passkey login + consent; the token's `sub` carries the account. ShellWatch is
+// Hydra's login + consent provider. See docs/architecture.md.
+
+/** The OAuth scope the web UI presents to call ShellWatch's own /api + /ws. */
+export const UI_SCOPE = "ui";
+
+export const hydraDcrDefaults = {
+  // Scopes a mediated-DCR client may request. `mcp` for MCP clients, `agent`
+  // for the agent-client (filtered out when the agent proxy is disabled).
+  allowedScopes: ["mcp", "agent"],
+  // Loopback + Claude redirect URIs allowed by default so local MCP clients,
+  // Claude.ai, and the loopback agent-client can register. RegExp source
+  // strings, anchored at match time.
+  redirectUriPatterns: [
+    "^https://claude\\.ai/api/mcp/auth_callback$",
+    "^https://claude\\.com/api/mcp/auth_callback$",
+    "^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$",
+    "^http://\\[::1\\](:\\d+)?(/.*)?$",
+  ],
+};
+
+export const HydraDcrSchema = z.object({
+  /** Scopes a mediated-DCR client may request. Granted scope ⊆ this set. */
+  allowedScopes: z.array(z.string().min(1)).default(hydraDcrDefaults.allowedScopes),
+  /** RegExp source strings; a client's redirect_uri must match at least one. */
+  redirectUriPatterns: z.array(z.string().min(1)).default(hydraDcrDefaults.redirectUriPatterns),
+});
+
+export const hydraDefaults = {
+  // 60s — at self-hosted scale the introspection load is trivial, so the cache
+  // mostly amortizes bursts. The trade is revocation latency: a revoked /
+  // logged-out token keeps working for up to this long. Lower it for tighter
+  // revocation; 0 disables the cache (introspect every request).
+  introspectionCacheTtlMs: 60_000,
+};
+
+export const HydraSchema = z.object({
+  /**
+   * Hydra PUBLIC issuer URL (e.g. "http://localhost:4444"). Advertised in
+   * discovery, embedded in tokens, and used by the browser SPA + agent-client
+   * for the authorization-code/refresh exchange. Must match Hydra's configured
+   * `urls.self.issuer`.
+   */
+  publicUrl: z.string().url("hydra.publicUrl must be a valid URL (e.g. 'http://localhost:4444')"),
+  /**
+   * Hydra ADMIN API URL (e.g. "http://localhost:4445"). Used for login/consent
+   * acceptance, client CRUD, and token introspection. MUST be reachable only
+   * over a trusted network — never internet-exposed.
+   */
+  adminUrl: z.string().url("hydra.adminUrl must be a valid URL (e.g. 'http://localhost:4445')"),
+  /** The first-party PUBLIC client the web UI (SPA) uses for its PKCE flow. No secret. */
+  spa: z.object({
+    clientId: z.string().min(1).default("shellwatch-web"),
+    /**
+     * Redirect URI registered for the SPA's authorization-code flow. Defaults
+     * to `${server.externalUrl}/auth/callback` (filled in by the loader).
+     */
+    redirectUri: z.string().url().optional(),
+  }),
+  /** Bearer-introspection result cache TTL (ms). Caps revocation latency; default 60s. */
+  introspectionCacheTtlMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(300_000)
+    .default(hydraDefaults.introspectionCacheTtlMs),
+  dcr: HydraDcrSchema.default(hydraDcrDefaults),
+});
+
 export const ConfigSchema = z.object({
   keyDirectory: z.string().default("./keys"),
   seedAdminEndpoints: z.array(SeedEndpointSchema).default([]),
-  seedAdminApiKey: z.string().optional(),
   seedAdminPasskeys: z.array(SeedAdminPasskeySchema).default([]),
   /**
    * Virtual demo endpoints merged into every account's endpoint list when the
@@ -184,9 +256,16 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  /**
+   * Ory Hydra is a hard runtime dependency (#217) — the OAuth2/OIDC authority
+   * for the web UI, MCP clients, and the agent-client, all via mediated DCR +
+   * authorization_code + PKCE with a passkey login. There is no fallback shim.
+   */
+  hydra: HydraSchema,
   vapid: VapidSchema.optional(),
 });
 
 export type SeedEndpoint = z.infer<typeof SeedEndpointSchema>;
 export type DemoEndpoint = z.infer<typeof DemoEndpointSchema>;
+export type HydraConfig = z.infer<typeof HydraSchema>;
 export type Config = z.infer<typeof ConfigSchema>;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 import { writable } from "svelte/store";
 
 export type UserVerification = "required" | "preferred" | "discouraged";
@@ -27,7 +28,7 @@ export interface Endpoint {
 export const endpoints = writable<Endpoint[]>([]);
 
 export async function fetchEndpoints(): Promise<void> {
-  const res = await fetch("/api/endpoints");
+  const res = await apiFetch("/api/endpoints");
   const data = await res.json();
   endpoints.set(data.endpoints);
 }
@@ -41,7 +42,7 @@ export async function createEndpoint(body: {
   agentForward?: boolean;
   description?: string | null;
 }): Promise<void> {
-  const res = await fetch("/api/endpoints", {
+  const res = await apiFetch("/api/endpoints", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -57,7 +58,7 @@ export async function updateEndpoint(
   id: string,
   body: Partial<Omit<Endpoint, "id">>,
 ): Promise<void> {
-  const res = await fetch(`/api/endpoints/${id}`, {
+  const res = await apiFetch(`/api/endpoints/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -70,7 +71,7 @@ export async function updateEndpoint(
 }
 
 export async function deleteEndpoint(id: string): Promise<void> {
-  const res = await fetch(`/api/endpoints/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`/api/endpoints/${id}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || "Failed to delete endpoint");

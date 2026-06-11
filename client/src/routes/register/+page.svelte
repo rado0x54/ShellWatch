@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
@@ -53,9 +54,10 @@
   // Detect mode on mount
   onMount(async () => {
     try {
-      const res = await fetch("/api/auth/login/options", { method: "POST" });
+      const res = await apiFetch("/api/auth/passkey-status");
       const data = await res.json();
-      if (data.error === "no_passkeys") {
+      if (!data.hasPasskeys) {
+        // First-run admin bootstrap — no passkeys exist yet.
         isAdminSetup = true;
         accountName = "admin";
       } else {

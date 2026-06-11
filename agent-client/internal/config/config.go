@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/rado0x54/shellwatch-agent/internal/credstore"
+	"github.com/rado0x54/shellwatch-agent/internal/oauth"
 )
 
 // DefaultServer is the hosted ShellWatch instance, used when neither
@@ -25,9 +26,13 @@ var newCredStore = credstore.New
 
 type Config struct {
 	Server     string
-	ApiKey     string
 	SocketPath string
 	Insecure   bool
+	// Token yields the bearer for /agent-proxy. Either a StaticToken (from
+	// --api-key / SHELLWATCH_API_KEY, or a legacy credstore value) or a
+	// ClientCredentialsSource that mints + refreshes short-lived access tokens
+	// from a stored OAuth client (#217). Nil when no credential is configured.
+	Token oauth.Tokener
 }
 
 // flagValues holds the parsed flag inputs along with which flags the user
@@ -86,16 +91,18 @@ func parseFlags() flagValues {
 func resolve(fv flagValues, ev envValues) *Config {
 	cfg := &Config{
 		Server:     ev.server,
-		ApiKey:     ev.apiKey,
 		SocketPath: ev.socketPath,
 		Insecure:   fv.insecure,
 	}
+
+	// A bare static bearer passed directly (an access token minted out-of-band).
+	staticToken := ev.apiKey
 
 	if fv.explicit["server"] {
 		cfg.Server = fv.server
 	}
 	if fv.explicit["api-key"] {
-		cfg.ApiKey = fv.apiKey
+		staticToken = fv.apiKey
 	}
 	if fv.explicit["socket"] {
 		cfg.SocketPath = fv.socketPath
@@ -108,36 +115,54 @@ func resolve(fv flagValues, ev envValues) *Config {
 		cfg.SocketPath = defaultSocketPath()
 	}
 
-	// Final fallback for ApiKey: consult the credstore. Lets users run
-	// `shellwatch-agent login` once and have the daemon pick up the token
-	// automatically — no env var, no flag, no plaintext config file.
-	// Lookup-misses (no token saved yet) fall through silently so
-	// Validate() can surface a friendlier "no API key for X" message;
-	// open/read failures (broken HOME, unreadable file) get a one-line
-	// warning to stderr so the user has a hint when "no API key" is
-	// hiding a real problem.
-	if cfg.ApiKey == "" {
-		store, err := newCredStore()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not open credstore: %v\n", err)
-		} else {
-			token, err := store.Get(cfg.Server)
-			if err == nil {
-				cfg.ApiKey = token
-			} else if !errors.Is(err, credstore.ErrNotFound) {
-				fmt.Fprintf(os.Stderr, "warning: credstore lookup for %s failed: %v\n", cfg.Server, err)
-			}
-		}
+	// A static token from --api-key / SHELLWATCH_API_KEY wins — used as a fixed
+	// bearer (e.g. an access token you minted with curl for a quick test).
+	if staticToken != "" {
+		cfg.Token = oauth.StaticToken(staticToken)
+		return cfg
 	}
 
+	// Otherwise consult the credstore. `shellwatch-agent login` stores the DCR
+	// client id + refresh token there; the daemon mints + refreshes access
+	// tokens from them and persists each rotated refresh token. A legacy raw
+	// value is treated as a static bearer. Lookup-misses fall through (Validate
+	// surfaces a friendly message); open/read failures get a one-line warning.
+	store, err := newCredStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not open credstore: %v\n", err)
+		return cfg
+	}
+	val, err := store.Get(cfg.Server)
+	if err != nil {
+		if !errors.Is(err, credstore.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "warning: credstore lookup for %s failed: %v\n", cfg.Server, err)
+		}
+		return cfg
+	}
+	if creds, ok := oauth.DecodeCreds(val); ok {
+		server := cfg.Server
+		clientID := creds.ClientID
+		onRotate := func(refreshToken string) {
+			updated, encErr := oauth.StoredCreds{ClientID: clientID, RefreshToken: refreshToken}.Encode()
+			if encErr != nil {
+				return
+			}
+			if setErr := store.Set(server, updated); setErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not persist rotated refresh token: %v\n", setErr)
+			}
+		}
+		cfg.Token = oauth.NewRefreshTokenSource(server, clientID, creds.RefreshToken, cfg.Insecure, onRotate)
+	} else {
+		cfg.Token = oauth.StaticToken(val)
+	}
 	return cfg
 }
 
 func (c *Config) Validate() error {
-	if c.ApiKey == "" {
+	if c.Token == nil {
 		return fmt.Errorf(
-			"no API key for %s — run `shellwatch-agent login --server %s` to authorize, "+
-				"or set SHELLWATCH_API_KEY / pass --api-key",
+			"no credentials for %s — run `shellwatch-agent login --server %s --client-id ID --client-secret SECRET` "+
+				"(create the client in Settings → OAuth Clients), or pass a token via SHELLWATCH_API_KEY / --api-key",
 			c.Server, c.Server,
 		)
 	}

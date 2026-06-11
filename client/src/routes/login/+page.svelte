@@ -1,11 +1,10 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import Wordmark from "$lib/components/Wordmark.svelte";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
-  import { login, NoPasskeysError } from "$lib/stores/webauthn.js";
+  import { beginLogin } from "$lib/oauth.js";
 
   let loading = $state(false);
   let error = $state("");
@@ -21,19 +20,16 @@
     return raw;
   }
 
+  // Sign-in starts the browser PKCE flow: redirect to Hydra, which bounces back
+  // to ShellWatch's passkey login + consent providers, then to /auth/callback
+  // where the SPA exchanges the code for tokens (#217).
   async function handleLogin() {
     loading = true;
     error = "";
-    status = "Waiting for passkey...";
-
+    status = "Redirecting to sign-in…";
     try {
-      await login();
-      window.location.href = safeRedirect();
+      await beginLogin(safeRedirect());
     } catch (err) {
-      if (err instanceof NoPasskeysError) {
-        await goto(resolve("/register"));
-        return;
-      }
       error = (err as Error).message;
       status = "";
       loading = false;

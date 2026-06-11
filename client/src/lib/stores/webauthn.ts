@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { writable } from "svelte/store";
 
@@ -16,7 +17,7 @@ export type StepUpAction = "register_passkey" | "revoke_passkey" | "confirm_pass
  * Throws on cancellation (the caller should treat that as "user aborted").
  */
 export async function performStepUp(action: StepUpAction): Promise<string> {
-  const optionsRes = await fetch("/api/webauthn/stepup/options", {
+  const optionsRes = await apiFetch("/api/webauthn/stepup/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
@@ -32,7 +33,7 @@ export async function performStepUp(action: StepUpAction): Promise<string> {
   // surface.
   const credential = await startAuthentication({ optionsJSON: assertionOptions });
 
-  const verifyRes = await fetch("/api/webauthn/stepup/verify", {
+  const verifyRes = await apiFetch("/api/webauthn/stepup/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challengeId, credential, action }),
@@ -69,7 +70,7 @@ export interface PasskeyInvite {
 export const credentials = writable<WebAuthnCredential[]>([]);
 
 export async function fetchCredentials(): Promise<void> {
-  const res = await fetch("/api/webauthn/credentials");
+  const res = await apiFetch("/api/webauthn/credentials");
   const data = await res.json();
   credentials.set(data.credentials);
 }
@@ -89,7 +90,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
   // sees two browser prompts: step-up assertion, then new-passkey ceremony.
   const stepUpToken = await performStepUp("register_passkey");
 
-  const optionsRes = await fetch("/api/webauthn/register/options", {
+  const optionsRes = await apiFetch("/api/webauthn/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label: "pending", name }),
@@ -103,7 +104,7 @@ export async function startPasskeyRegistration(name?: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const verifyRes = await fetch("/api/webauthn/register", {
+  const verifyRes = await apiFetch("/api/webauthn/register", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Shellwatch-Stepup-Token": stepUpToken },
     body: JSON.stringify({ challengeId, credential }),
@@ -127,7 +128,7 @@ export async function confirmPasskey(credentialId: string): Promise<void> {
   // passkey from their own device via the invite flow and then confirm it
   // here; the gate forces fresh proof of an existing authenticator.
   const stepUpToken = await performStepUp("confirm_passkey");
-  const res = await fetch(`/api/webauthn/credentials/${credentialId}/confirm`, {
+  const res = await apiFetch(`/api/webauthn/credentials/${credentialId}/confirm`, {
     method: "POST",
     headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
   });
@@ -145,7 +146,7 @@ export async function confirmPasskey(credentialId: string): Promise<void> {
  * the slot is empty — that's a 404 from the server, not an error.
  */
 export async function fetchActiveInvite(): Promise<PasskeyInvite | null> {
-  const res = await fetch("/api/webauthn/invite");
+  const res = await apiFetch("/api/webauthn/invite");
   if (res.status === 404) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -160,7 +161,7 @@ export async function createPasskeyInvite(label?: string): Promise<PasskeyInvite
   // No step-up here: minting an invite produces a `pending_confirmation`
   // credential that's unusable until the in-account confirm step, which IS
   // step-up gated. Asking for an assertion twice in one chain is overkill.
-  const res = await fetch("/api/webauthn/invite", {
+  const res = await apiFetch("/api/webauthn/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -178,7 +179,7 @@ export async function fetchInviteByToken(token: string): Promise<{
   accountName: string | null;
   expiresAt: string;
 }> {
-  const res = await fetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
+  const res = await apiFetch(`/api/passkey-invite/${encodeURIComponent(token)}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Failed to fetch invite");
@@ -197,7 +198,7 @@ export async function registerWithInviteToken(params: { token: string }): Promis
   label: string;
   fingerprint: string | null;
 }> {
-  const optionsRes = await fetch("/api/passkey-invite/register/options", {
+  const optionsRes = await apiFetch("/api/passkey-invite/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: params.token }),
@@ -211,7 +212,7 @@ export async function registerWithInviteToken(params: { token: string }): Promis
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const verifyRes = await fetch("/api/passkey-invite/register", {
+  const verifyRes = await apiFetch("/api/passkey-invite/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: params.token, challengeId, credential }),
@@ -227,7 +228,7 @@ export async function registerWithInviteToken(params: { token: string }): Promis
  * Update a credential's label after registration.
  */
 export async function renamePasskey(credentialId: string, label: string): Promise<void> {
-  const res = await fetch(`/api/webauthn/credentials/${credentialId}/label`, {
+  const res = await apiFetch(`/api/webauthn/credentials/${credentialId}/label`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
@@ -247,7 +248,7 @@ export async function registerAccount(accountName: string): Promise<{
   credentialId: string;
   label: string;
 }> {
-  const optionsRes = await fetch("/api/auth/register/options", {
+  const optionsRes = await apiFetch("/api/auth/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: accountName }),
@@ -261,7 +262,7 @@ export async function registerAccount(accountName: string): Promise<{
 
   const credential = await startRegistration({ optionsJSON: registrationOptions });
 
-  const res = await fetch("/api/auth/register", {
+  const res = await apiFetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: accountName, challengeId, credential }),
@@ -277,52 +278,7 @@ export async function registerAccount(accountName: string): Promise<{
   };
 }
 
-export class NoPasskeysError extends Error {
-  constructor() {
-    super("No passkeys registered");
-    this.name = "NoPasskeysError";
-  }
-}
-
-export async function login(): Promise<void> {
-  const optionsRes = await fetch("/api/auth/login/options", { method: "POST" });
-  if (!optionsRes.ok) {
-    const err = await optionsRes.json();
-    throw new Error(err.error || "Failed to get login options");
-  }
-  const data = await optionsRes.json();
-  if (data.error === "no_passkeys") {
-    throw new NoPasskeysError();
-  }
-  const { challengeId, ...options } = data;
-
-  const credential = await startAuthentication({ optionsJSON: options });
-
-  const verifyRes = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ challengeId, credential }),
-  });
-  if (!verifyRes.ok) {
-    const err = await verifyRes.json();
-    throw new Error(err.error || "Verification failed");
-  }
-}
-
-export async function logout(): Promise<void> {
-  await fetch("/api/auth/logout", { method: "POST" });
-  window.location.href = "/login";
-}
-
-/**
- * Check auth state by probing a protected endpoint.
- * Returns whether the user has a valid session.
- */
-export async function checkAuth(): Promise<{ authenticated: boolean }> {
-  try {
-    const res = await fetch("/api/auth/me");
-    return { authenticated: res.ok };
-  } catch {
-    return { authenticated: false };
-  }
-}
+// Web login + logout + the auth check live in $lib/oauth.ts now — the web UI is
+// a browser PKCE client against Hydra (#217). This store keeps registration and
+// step-up (the passkey ceremonies that aren't the OAuth login itself).
+export { logout } from "../oauth.js";

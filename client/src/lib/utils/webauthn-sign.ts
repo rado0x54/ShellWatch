@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 /** Encode an ArrayBuffer as a base64url string (no padding). */
 export function bufferToBase64url(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -76,7 +77,7 @@ export async function resolveAction(
   actionId: string,
   result: SignCeremonyResult,
 ): Promise<ResolveResponse> {
-  const res = await fetch(`/api/actions/${actionId}/resolve`, {
+  const res = await apiFetch(`/api/actions/${actionId}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(result),
@@ -90,7 +91,7 @@ export async function resolveAction(
 
 /** Approve a key-approve PendingAction (no WebAuthn ceremony needed). */
 export async function approveAction(actionId: string): Promise<ResolveResponse> {
-  const res = await fetch(`/api/actions/${actionId}/resolve`, {
+  const res = await apiFetch(`/api/actions/${actionId}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

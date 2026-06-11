@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { onMount } from "svelte";
   import Identicon from "$lib/components/Identicon.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
@@ -24,7 +25,7 @@
   let typedName = $state("");
 
   async function fetchAccounts() {
-    const res = await fetch("/api/accounts");
+    const res = await apiFetch("/api/accounts");
     if (res.ok) {
       const data = await res.json();
       accounts = data.accounts;
@@ -48,7 +49,7 @@
     if (!deleteTarget || typedName !== deleteTarget.name) return;
     deleting = true;
     try {
-      const res = await fetch(`/api/accounts/${deleteTarget.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/accounts/${deleteTarget.id}`, { method: "DELETE" });
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to delete account");

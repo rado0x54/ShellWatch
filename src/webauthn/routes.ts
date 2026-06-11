@@ -5,15 +5,9 @@ import type { ShellWatchDB } from "../db/connection.js";
 import type { Config } from "../config/index.js";
 import { registerCredentialRoutes } from "./credentials.js";
 import { registerPasskeyInviteRoutes } from "./invite.js";
-import { registerLoginRoutes } from "./login.js";
 import { registerRegistrationRoutes } from "./registration.js";
 import { registerSelfRegisterRoutes } from "./self-register.js";
 import { registerStepUpRoutes } from "./stepup.js";
-
-export interface SessionConfig {
-  secret: string;
-  ttlSeconds: number;
-}
 
 export type RateLimitConfig = Config["security"]["rateLimit"];
 
@@ -24,23 +18,13 @@ export interface WebAuthnRoutesParams {
   rpId: string;
   trustedOrigins: string[];
 
-  sessionConfig?: SessionConfig;
   selfRegistrationEnabled: boolean;
   rateLimitConfig: RateLimitConfig;
 }
 
 export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
-  const {
-    app,
-    db,
-    accountRepo,
-    rpId,
-    trustedOrigins,
-
-    sessionConfig,
-    selfRegistrationEnabled,
-    rateLimitConfig,
-  } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, selfRegistrationEnabled, rateLimitConfig } =
+    params;
 
   registerRegistrationRoutes({
     app,
@@ -64,22 +48,15 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     trustedOrigins,
     rateLimitConfig,
   });
-  registerLoginRoutes({
-    app,
-    db,
-    accountRepo,
-    rpId,
-    trustedOrigins,
-    sessionConfig,
-    rateLimitConfig,
-  });
+  // Web login is no longer a JSON endpoint here — it's the Hydra passkey login
+  // provider (src/hydra/routes.ts) reached via the BFF flow (#217). Only the
+  // anonymous self-registration / bootstrap routes remain in this module.
   registerSelfRegisterRoutes({
     app,
     db,
     accountRepo,
     rpId,
     trustedOrigins,
-    sessionConfig,
     selfRegistrationEnabled,
     rateLimitConfig,
   });

@@ -25,14 +25,17 @@ import { randomUUID } from "node:crypto";
 import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { rateLimitDefaults, securityFieldDefaults } from "../../config/schema.js";
+import { rateLimitDefaults } from "../../config/schema.js";
 import { createDatabase, type DatabaseConnection } from "../../db/connection.js";
 import { runMigrations } from "../../db/migrate.js";
 import { CREDENTIAL_STATE } from "../../db/repositories/index.js";
 import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { accounts, webauthnCredentials } from "../../db/schema.js";
-import { registerAuthGate } from "../../server/auth/auth-gate.js";
-import { createSessionCookie } from "../../server/auth/session-cookie.js";
+import { registerBearerGate } from "../../server/auth/bearer-gate.js";
+import { createBearerResolver } from "../../hydra/bearer-resolver.js";
+import { makeTestBearer } from "../helpers/test-bearer.js";
+import { makeTestConfig } from "../helpers/test-config.js";
+import { registerHydraRoutes } from "../../hydra/routes.js";
 import { _resetInviteStore } from "../../webauthn/invite-store.js";
 import { registerWebAuthnRoutes } from "../../webauthn/routes.js";
 import {
@@ -43,12 +46,11 @@ import {
 } from "../../webauthn/stepup-store.js";
 
 const ACCOUNT_ID = "00000000-0000-0000-0000-00000000000a";
-const COOKIE_SECRET = "test-cookie-secret-passkey-invite";
 
 interface TestApp {
   app: FastifyInstance;
   conn: DatabaseConnection;
-  cookie: string;
+  auth: string;
 }
 
 async function makeTestApp(): Promise<TestApp> {
@@ -67,22 +69,40 @@ async function makeTestApp(): Promise<TestApp> {
   await app.register(fastifyRateLimit, { global: false });
 
   const accountRepo = new StubAccountRepository();
-  registerAuthGate({ app, secret: COOKIE_SECRET, accountRepo });
+  const config = makeTestConfig();
+  const { admin, bearerFor } = makeTestBearer();
+  registerBearerGate({
+    app,
+    resolveBearer: createBearerResolver({ admin, cacheTtlMs: 0 }),
+    accountRepo,
+    config,
+    agentProxyEnabled: false,
+  });
   registerWebAuthnRoutes({
     app,
     db: conn.db,
     accountRepo,
     rpId: "localhost",
     trustedOrigins: ["http://localhost"],
-    sessionConfig: { secret: COOKIE_SECRET, ttlSeconds: securityFieldDefaults.sessionTtlSeconds },
     selfRegistrationEnabled: false,
     rateLimitConfig: rateLimitDefaults,
+  });
+  // Mount the Hydra login provider so login-options/verify behavior (active-only
+  // credentials, reject pending/revoked) is covered against the real endpoints.
+  registerHydraRoutes({
+    app,
+    config,
+    db: conn.db,
+    accountRepo,
+    admin,
+    rpId: "localhost",
+    trustedOrigins: ["http://localhost"],
+    agentProxyEnabled: false,
   });
 
   await app.ready();
 
-  const cookie = `sw_session=${createSessionCookie(COOKIE_SECRET, 86_400, ACCOUNT_ID)}`;
-  return { app, conn, cookie };
+  return { app, conn, auth: bearerFor(ACCOUNT_ID) };
 }
 
 /**
@@ -148,7 +168,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     expect(created.statusCode).toBe(200);
@@ -169,7 +189,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const token = (created.json() as { invite: { token: string } }).invite.token;
@@ -190,7 +210,7 @@ describe("passkey invite — HTTP integration", () => {
     const first = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const firstToken = (first.json() as { invite: { token: string } }).invite.token;
@@ -198,7 +218,7 @@ describe("passkey invite — HTTP integration", () => {
     const second = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const secondToken = (second.json() as { invite: { token: string } }).invite.token;
@@ -221,21 +241,21 @@ describe("passkey invite — HTTP integration", () => {
     const empty = await testApp.app.inject({
       method: "GET",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie },
+      headers: { authorization: testApp.auth },
     });
     expect(empty.statusCode).toBe(404);
 
     await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
 
     const present = await testApp.app.inject({
       method: "GET",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie },
+      headers: { authorization: testApp.auth },
     });
     expect(present.statusCode).toBe(200);
   });
@@ -264,7 +284,7 @@ describe("passkey invite — HTTP integration", () => {
     expect(register.statusCode).toBe(404);
   });
 
-  it("invite create requires a session cookie", async () => {
+  it("invite create requires authentication (ui bearer token)", async () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
@@ -285,7 +305,7 @@ describe("passkey invite — HTTP integration", () => {
 
     const res = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { allowCredentials?: { id: string }[] };
@@ -302,7 +322,7 @@ describe("passkey invite — HTTP integration", () => {
     insertCredential(testApp.conn, { label: "active-decoy" });
     const optionsRes = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     const { challengeId } = optionsRes.json() as { challengeId: string };
     expect(challengeId).toBeTruthy();
@@ -314,9 +334,10 @@ describe("passkey invite — HTTP integration", () => {
 
     const verify = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login",
+      url: "/api/hydra/login/verify",
       headers: { "content-type": "application/json" },
       payload: {
+        login_challenge: "dummy-challenge",
         challengeId,
         credential: {
           id: pending.credentialId,
@@ -335,7 +356,7 @@ describe("passkey invite — HTTP integration", () => {
     insertCredential(testApp.conn, { label: "active-decoy" });
     const optionsRes = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     const { challengeId } = optionsRes.json() as { challengeId: string };
 
@@ -343,9 +364,10 @@ describe("passkey invite — HTTP integration", () => {
 
     const verify = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login",
+      url: "/api/hydra/login/verify",
       headers: { "content-type": "application/json" },
       payload: {
+        login_challenge: "dummy-challenge",
         challengeId,
         credential: {
           id: revoked.credentialId,
@@ -370,7 +392,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -389,7 +411,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: "/api/webauthn/credentials/does-not-exist/confirm",
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -402,7 +424,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -419,7 +441,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -451,7 +473,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });

@@ -21,12 +21,15 @@ interface ParsedMessage {
 export function connectTestWsClient(
   appUrl: string,
   log: TestLog,
-  cookie?: string,
+  accessToken?: string,
 ): Promise<TestWsClient> {
-  const wsUrl = `${appUrl.replace("http://", "ws://")}/ws`;
+  // Browsers can't set an Authorization header on a WS handshake, so the bearer
+  // gate reads the access token from a query param (#217). Mirror that here.
+  const base = `${appUrl.replace("http://", "ws://")}/ws`;
+  const wsUrl = accessToken ? `${base}?access_token=${encodeURIComponent(accessToken)}` : base;
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, cookie ? { headers: { cookie } } : undefined);
+    const ws = new WebSocket(wsUrl);
 
     // Buffer messages from the start — before "open" fires
     const buffered: ParsedMessage[] = [];

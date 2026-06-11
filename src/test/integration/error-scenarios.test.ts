@@ -93,7 +93,6 @@ describe("Error Scenarios", () => {
     it("MCP: create session with missing key file returns error", async () => {
       // Endpoint references a key that exists in DB but has no matching file
       const { StubAccountRepository } = await import("../../db/repositories/account-repo.js");
-      const { InMemoryApiKeyRepository } = await import("../../db/repositories/api-key-repo.js");
       const { InMemoryEndpointRepository } = await import("../../db/repositories/endpoint-repo.js");
       const { InMemorySshKeyRepository } = await import("../../db/repositories/key-repo.js");
       const { InMemoryKeyProvider } = await import("../../transport/key-directory-watcher.js");
@@ -101,8 +100,7 @@ describe("Error Scenarios", () => {
       const { TerminalManager } = await import("../../terminal/index.js");
       const { buildApp } = await import("../../server/app.js");
       const { AccountLifecycle } = await import("../../server/account-lifecycle.js");
-      const { hashApiKey } = await import("../../server/auth/api-key-auth.js");
-      const { createSessionCookie } = await import("../../server/auth/session-cookie.js");
+      const { createFakeHydraAdmin } = await import("../helpers/fake-hydra.js");
 
       const endpointRepo = new InMemoryEndpointRepository([
         {
@@ -123,7 +121,6 @@ describe("Error Scenarios", () => {
       });
       const tm = new TerminalManager((params) => factory.create(params));
 
-      const testSecret = "test-secret";
       const config = makeTestConfig({
         seedAdminEndpoints: [
           {
@@ -132,17 +129,19 @@ describe("Error Scenarios", () => {
             agentForward: true,
           },
         ],
-        security: { cookieSecret: testSecret },
       });
       const testApiKey = "sw_test_error_scenario_key";
-      const errorApiKeyRepo = new InMemoryApiKeyRepository();
-      await errorApiKeyRepo.create({
-        id: "err-api-key",
-        accountId: "test-account",
-        label: "Test",
-        keyHash: hashApiKey(testApiKey),
-        keyPrefix: testApiKey.slice(0, 10),
-        scopes: ["mcp"],
+      const testUiToken = "sw_test_error_scenario_ui";
+      const hydraAdmin = createFakeHydraAdmin();
+      hydraAdmin.registerToken(testApiKey, {
+        sub: "test-account",
+        scope: "mcp",
+        client_id: "error-test-client",
+      });
+      hydraAdmin.registerToken(testUiToken, {
+        sub: "test-account",
+        scope: "ui",
+        client_id: "shellwatch-web",
       });
       const app = await buildApp({
         config,
@@ -151,19 +150,21 @@ describe("Error Scenarios", () => {
         keyRepo,
         accountRepo: new StubAccountRepository(),
         accountLifecycle: new AccountLifecycle(),
-        apiKeyRepo: errorApiKeyRepo,
+        hydraAdmin,
         options: { logger: false, skipStaticFiles: true },
       });
-      const cookie = `sw_session=${createSessionCookie(testSecret, 86400, "test-account")}`;
       await app.listen({ port: 0, host: "127.0.0.1" });
       const addr = app.server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
 
       try {
-        // Test via REST API
+        // Test via REST API (web UI auth path → ui-scoped bearer).
         const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", cookie },
+          headers: {
+            "Content-Type": "application/json",
+            authorization: `Bearer ${testUiToken}`,
+          },
           body: JSON.stringify({ endpointId: "no-key-ep" }),
         });
         expect(res.status).toBe(400);
@@ -215,7 +216,7 @@ describe("Error Scenarios", () => {
 
   describe("WebSocket errors", () => {
     it("attach to nonexistent session returns error message", async () => {
-      const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+      const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
       try {
         await ws.waitForMessage("sessions:changed");
         ws.send({ type: "terminal:attach", sessionId: "sess_nonexistent" });
