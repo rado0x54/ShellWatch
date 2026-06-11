@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { apiFetch } from "$lib/api.js";
   import { account } from "$lib/stores/account.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
@@ -222,7 +223,7 @@
       }
 
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
-      const res = await fetch(`${base}/api/webauthn/credentials/${id}/revoke`, {
+      const res = await apiFetch(`${base}/api/webauthn/credentials/${id}/revoke`, {
         method: "POST",
         headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
       });

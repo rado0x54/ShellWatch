@@ -224,14 +224,16 @@ export const HydraSchema = z.object({
    */
   adminUrl: z.string().url("hydra.adminUrl must be a valid URL (e.g. 'http://localhost:4445')"),
   /** The first-party PUBLIC client the web UI (SPA) uses for its PKCE flow. No secret. */
-  spa: z.object({
-    clientId: z.string().min(1).default("shellwatch-web"),
-    /**
-     * Redirect URI registered for the SPA's authorization-code flow. Defaults
-     * to `${server.externalUrl}/auth/callback` (filled in by the loader).
-     */
-    redirectUri: z.string().url().optional(),
-  }),
+  spa: z
+    .object({
+      clientId: z.string().min(1).default("shellwatch-web"),
+      /**
+       * Redirect URI registered for the SPA's authorization-code flow. Defaults
+       * to `${server.externalUrl}/auth/callback` (filled in by the loader).
+       */
+      redirectUri: z.string().url().optional(),
+    })
+    .default({ clientId: "shellwatch-web" }),
   /** Bearer-introspection result cache TTL (ms). Caps revocation latency; default 60s. */
   introspectionCacheTtlMs: z
     .number()

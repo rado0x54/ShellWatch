@@ -161,8 +161,8 @@ func resolve(fv flagValues, ev envValues) *Config {
 func (c *Config) Validate() error {
 	if c.Token == nil {
 		return fmt.Errorf(
-			"no credentials for %s — run `shellwatch-agent login --server %s --client-id ID --client-secret SECRET` "+
-				"(create the client in Settings → OAuth Clients), or pass a token via SHELLWATCH_API_KEY / --api-key",
+			"no credentials for %s — run `shellwatch-agent login --server %s` (browser passkey login), "+
+				"or pass a token via SHELLWATCH_API_KEY / --api-key",
 			c.Server, c.Server,
 		)
 	}

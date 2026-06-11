@@ -70,8 +70,6 @@ const EXEMPT_PREFIXES = [
   "/_app/",
 ];
 
-const PUBLIC_ASSET_EXT = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
-
 /**
  * The one auth gate (#217). Every authenticated surface presents a Hydra
  * opaque access token; the gate introspects it (`sub` → account, scope per
@@ -88,6 +86,11 @@ const PUBLIC_ASSET_EXT = [".svg", ".png", ".ico", ".webp", ".woff", ".woff2"];
  * it has no token. For `/mcp` + `/agent-proxy`, failures carry the RFC 6750
  * `WWW-Authenticate` + RFC 9728 `resource_metadata` hint so OAuth-aware clients
  * can discover the Hydra issuer.
+ *
+ * Protection is decided by path, NOT by file extension: a protected path is
+ * always gated even if it ends in `.png` etc. (no asset carve-out for `/api/*`,
+ * `/ws`, `/mcp`, `/agent-proxy`), so a handler never sees `accountId === ""`.
+ * Real static assets live outside those prefixes and fall through naturally.
  */
 export function registerBearerGate(params: RegisterBearerGateParams): void {
   const { app, resolveBearer, accountRepo, config, agentProxyEnabled } = params;
@@ -116,7 +119,6 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
   function isExempt(path: string): boolean {
     if (EXEMPT_EXACT.has(path)) return true;
     if (EXEMPT_PREFIXES.some((p) => path.startsWith(p))) return true;
-    if (PUBLIC_ASSET_EXT.some((ext) => path.endsWith(ext))) return true;
     return false;
   }
 
