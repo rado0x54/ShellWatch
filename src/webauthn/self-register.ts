@@ -28,8 +28,8 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
   // --- Passkey status (anonymous) ---
   // The register page uses this to tell first-run admin bootstrap (no passkeys
   // yet) apart from ordinary self-registration. Replaces the old probe against
-  // /api/auth/login/options, which is gone now that web login is a BFF redirect
-  // to the Hydra passkey login provider (#217).
+  // /api/auth/login/options, which is gone now that web login is the SPA's
+  // PKCE flow to the Hydra passkey login provider (#217).
   app.get("/api/auth/passkey-status", async () => ({ hasPasskeys: hasPasskeys(db) }));
 
   // --- Self-Registration: Generate WebAuthn options (anonymous) ---
@@ -172,9 +172,10 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           return { error: "Self-registration is disabled" };
         }
 
-        // No auto-login: the web session is a BFF/Hydra grant (#217), which the
-        // client establishes by navigating to /api/auth/bff/login after the
-        // passkey is registered. Registration itself sets no session cookie.
+        // No auto-login: the web UI obtains its token via the OAuth PKCE flow
+        // (#217), which the SPA starts after the passkey is registered (the
+        // just-created passkey then satisfies the Hydra login provider).
+        // Registration itself issues no token/session.
         return {
           verified: true,
           accountId: account.id,

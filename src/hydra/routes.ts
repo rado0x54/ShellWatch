@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Hydra integration routes (#217): the login + consent providers (passkey-
- * gated), the mediated DCR endpoint, the BFF authorization-code flow
- * (start + callback), Hydra logout/error landing pages, and the OAuth
- * discovery documents. This is the surface that replaces the old src/oauth/
- * shim — but here ShellWatch is Hydra's identity provider, not a fake AS.
+ * gated), the mediated DCR endpoint, the Hydra logout/error landing pages, and
+ * the OAuth discovery documents. This is the surface that replaces the old
+ * src/oauth/ shim — but here ShellWatch is Hydra's identity provider, not a
+ * fake AS. The web UI runs its own authorization-code + PKCE flow in the
+ * browser (no server-side callback); see the note at the bottom of this file.
  */
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../config/index.js";
@@ -229,7 +230,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
       },
     );
 
-    // --- Consent provider (passkey step-up; first-party BFF auto-accepts) ---
+    // --- Consent provider (passkey step-up; the first-party SPA auto-accepts) ---
     app.get<{ Querystring: { consent_challenge?: string } }>(
       "/api/hydra/consent",
       async (request, reply) => {
@@ -332,9 +333,9 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     },
   );
 
-  // No BFF login/callback routes: the web UI (SPA) runs the authorization-code
-  // + PKCE flow itself, in the browser, against Hydra's public endpoints
-  // (`${hydraPub}/oauth2/{auth,token}`) using the first-party public client
-  // `${spaClient.clientId}`. The SPA's bootstrap config exposes those values
-  // (see /config.js).
+  // No server-side login/callback routes for the web UI: the SPA runs the
+  // authorization-code + PKCE flow itself, in the browser, against Hydra's
+  // public endpoints (`${hydraPub}/oauth2/{auth,token}`) using the first-party
+  // public client `${spaClient.clientId}`. The SPA's bootstrap config exposes
+  // those values (see /config.js).
 }

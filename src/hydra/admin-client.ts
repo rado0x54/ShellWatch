@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
- * Thin typed client over the Ory Hydra ADMIN API (:4445) plus the few PUBLIC
- * endpoints (:4444) the BFF needs for confidential-client token exchange. This
- * is the single chokepoint through which ShellWatch drives Hydra (#217):
+ * Thin typed client over the Ory Hydra ADMIN API (:4445). This is the single
+ * chokepoint through which ShellWatch drives Hydra (#217):
  *
  *   - login/consent providers accept or reject challenges,
- *   - mediated DCR + Settings → OAuth Clients create/delete clients,
+ *   - mediated DCR + the SPA-client bootstrap create/update clients,
  *   - the bearer gate introspects opaque access tokens,
- *   - logout revokes tokens + clears Hydra sessions.
+ *   - account deletion clears the subject's Hydra login/consent sessions.
+ *
+ * Token exchange / refresh / revoke happen in the browser (the web UI is a
+ * public PKCE client) and in the Go agent-client — never here.
  *
  * The admin API is unauthenticated by design and MUST live on a trusted
  * network only — never internet-exposed (see docs/deployment.md).

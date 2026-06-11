@@ -49,8 +49,9 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     rateLimitConfig,
   });
   // Web login is no longer a JSON endpoint here — it's the Hydra passkey login
-  // provider (src/hydra/routes.ts) reached via the BFF flow (#217). Only the
-  // anonymous self-registration / bootstrap routes remain in this module.
+  // provider (src/hydra/routes.ts), reached via the SPA's authorization-code +
+  // PKCE flow (#217). Only the anonymous self-registration / bootstrap routes
+  // remain in this module.
   registerSelfRegisterRoutes({
     app,
     db,

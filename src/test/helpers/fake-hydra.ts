@@ -2,7 +2,7 @@
 /**
  * In-memory fake of the Hydra admin/token client for tests (#217). Lets the
  * integration harness exercise the bearer gate, mediated DCR, OAuth-clients
- * route, and BFF wiring without a live Hydra. Introspection results are driven
+ * route, and bearer-gate wiring without a live Hydra. Introspection is driven
  * by a registerable token map; client CRUD is a real in-memory store so the
  * oauth-clients route round-trips.
  */
