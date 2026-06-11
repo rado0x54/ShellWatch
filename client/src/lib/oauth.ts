@@ -18,6 +18,7 @@ interface OAuthBootstrap {
 }
 
 const REFRESH_TOKEN_KEY = "sw_refresh_token";
+const ID_TOKEN_KEY = "sw_id_token";
 const PKCE_VERIFIER_KEY = "sw_pkce_verifier";
 const OAUTH_STATE_KEY = "sw_oauth_state";
 const RETURN_TO_KEY = "sw_oauth_return_to";
@@ -44,6 +45,18 @@ function getRefreshToken(): string | null {
   if (typeof localStorage === "undefined") return null;
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
+// The id_token is kept only to use as `id_token_hint` on RP-initiated logout
+// (it identifies the session to Hydra so logout doesn't need a confirmation UI).
+// It's not a bearer for our API and is never sent to ShellWatch.
+function setIdToken(token: string | null): void {
+  if (typeof localStorage === "undefined") return;
+  if (token) localStorage.setItem(ID_TOKEN_KEY, token);
+  else localStorage.removeItem(ID_TOKEN_KEY);
+}
+function getIdToken(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage.getItem(ID_TOKEN_KEY);
+}
 
 // --- PKCE helpers ---
 function b64url(bytes: Uint8Array): string {
@@ -64,11 +77,13 @@ async function s256(verifier: string): Promise<string> {
 function storeTokens(res: {
   access_token: string;
   refresh_token?: string;
+  id_token?: string;
   expires_in?: number;
 }): void {
   accessToken = res.access_token;
   accessTokenExpiresAt = Date.now() + (res.expires_in ?? 0) * 1000;
   if (res.refresh_token) setRefreshToken(res.refresh_token);
+  if (res.id_token) setIdToken(res.id_token);
 }
 
 /** Begin the login redirect to Hydra (→ ShellWatch passkey login/consent → callback). */
@@ -174,12 +189,25 @@ function clearTokens(): void {
   accessToken = null;
   accessTokenExpiresAt = 0;
   setRefreshToken(null);
+  setIdToken(null);
 }
 
-/** Revoke the refresh token at Hydra, clear local state, and go to /login. */
+/**
+ * Log out: revoke the refresh token, clear local state, then end the Hydra
+ * session via OIDC RP-initiated logout (#217). The end-session navigation is
+ * what actually terminates Hydra's *remembered* login session — without it,
+ * the next "Sign in" would silently skip the passkey (Hydra still remembers
+ * the subject). `id_token_hint` lets Hydra identify the session without a
+ * confirmation UI; Hydra then redirects through ShellWatch's logout provider
+ * (/api/hydra/logout) and on to the configured post_logout URL (/login).
+ *
+ * This ends only *this browser's* Hydra session (correct for logout); revoking
+ * every device is a separate action (passkey revoke).
+ */
 export async function logout(): Promise<void> {
   const cfg = bootstrap();
   const rt = getRefreshToken();
+  const idToken = getIdToken();
   clearTokens();
   if (rt) {
     try {
@@ -192,5 +220,9 @@ export async function logout(): Promise<void> {
       // Best-effort — local tokens are already cleared.
     }
   }
-  window.location.href = "/login";
+  // Front-channel logout (top-level navigation, no CORS). Hydra clears its
+  // session cookie and redirects to post_logout (configured to /login).
+  const url = new URL(`${cfg.issuer}/oauth2/sessions/logout`);
+  if (idToken) url.searchParams.set("id_token_hint", idToken);
+  window.location.href = url.toString();
 }
