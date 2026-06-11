@@ -197,7 +197,6 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         return reply.type("text/html; charset=utf-8").send(
           renderPasskeyPage({
             title: "Sign in · ShellWatch",
-            heading: "Sign in to ShellWatch",
             description: "Authenticate with your passkey to continue.",
             optionsUrl: "/api/hydra/login/options",
             verifyUrl: "/api/hydra/login/verify",
@@ -269,7 +268,6 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         return reply.type("text/html; charset=utf-8").send(
           renderPasskeyPage({
             title: "Authorize · ShellWatch",
-            heading: "Authorize access",
             description: "Approve this request with your passkey.",
             optionsUrl: "/api/hydra/consent/options",
             verifyUrl: "/api/hydra/consent/verify",

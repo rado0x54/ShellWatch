@@ -16,26 +16,72 @@ function esc(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Styles mirror the SvelteKit /login page (client/src/routes/login/+page.svelte
+ * + Wordmark.svelte) so the passkey login/consent providers are visually
+ * indistinguishable from the SPA. The design tokens and @font-face rules are
+ * inlined (rather than referenced from the SPA's hashed app.css) to keep these
+ * pages self-contained; the Geist woff2 files are served statically from
+ * /fonts/ by the built client. Keep these values in sync with app.css :root.
+ */
 const STYLE = `
-:root { color-scheme: dark; }
+@font-face { font-family: "Geist"; font-style: normal; font-display: swap;
+  font-weight: 100 900; src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-display: swap;
+  font-weight: 100 900; src: url("/fonts/geist-mono-latin-wght-normal.woff2") format("woff2-variations"); }
+:root {
+  color-scheme: dark;
+  --surface-dim: #0e0e0e;
+  --surface-container-low: #131313;
+  --surface-container: #1a1a1a;
+  --surface-container-high: #1f1f1f;
+  --primary: #69f6b8;
+  --on-primary-container: #002919;
+  --on-surface: #f2f2f2;
+  --on-surface-variant: #adaaaa;
+  --on-surface-faint: #6a6866;
+  --outline-variant: rgba(73, 72, 71, 0.15);
+  --error: #ff5a5a;
+  --grad-primary: linear-gradient(135deg, #69f6b8 0%, #06b77f 100%);
+  --glow-primary: 0 0 24px rgba(105, 246, 184, 0.1);
+  --glow-primary-strong: 0 0 32px rgba(105, 246, 184, 0.22);
+  --font-ui: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --body-md: 0.875rem;
+  --label-sm: 0.65rem;
+  --space-2: 0.4rem; --space-4: 0.9rem; --space-5: 1.2rem; --space-7: 2.4rem;
+}
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: #0b0d12; color: #e6e8ee; }
-.card { width: min(420px, 92vw); background: #141821; border: 1px solid #232a36;
-  border-radius: 14px; padding: 28px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
-h1 { font-size: 20px; margin: 0 0 6px; }
-p { color: #9aa3b2; font-size: 14px; line-height: 1.5; margin: 0 0 16px; }
-.scopes { list-style: none; padding: 0; margin: 0 0 18px; }
-.scopes li { background: #0f1320; border: 1px solid #232a36; border-radius: 8px;
-  padding: 8px 12px; margin-bottom: 6px; font-size: 13px; font-family: ui-monospace, monospace; }
-.client { font-weight: 600; color: #e6e8ee; }
-button { width: 100%; padding: 12px 16px; border: 0; border-radius: 10px; cursor: pointer;
-  background: #4f8cff; color: white; font-size: 15px; font-weight: 600; }
-button:disabled { opacity: .6; cursor: default; }
-.status { margin-top: 14px; font-size: 13px; min-height: 18px; }
-.status.err { color: #ff6b6b; }
-.muted { color: #6b7280; font-size: 12px; margin-top: 16px; }
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-ui); background: var(--surface-dim); color: var(--on-surface); }
+.card { background: var(--surface-container-low); padding: var(--space-7);
+  text-align: center; max-width: 380px; width: 90%; }
+.logo { width: 176px; height: 176px; display: block; margin: 0 auto var(--space-2); }
+h1 { font-size: 2rem; line-height: 1; margin: 0 0 var(--space-7);
+  font-weight: 600; letter-spacing: -0.01em; text-transform: uppercase; white-space: nowrap; }
+.wordmark-shell { color: #12a26f; }
+.wordmark-watch { color: #f0efea; }
+p { color: var(--on-surface-variant); font-size: var(--body-md); line-height: 1.5;
+  margin: 0 0 var(--space-5); }
+.lead { text-align: left; }
+.scopes { list-style: none; padding: 0; margin: 0 0 var(--space-5); text-align: left; }
+.scopes li { background: var(--surface-container); border: 1px solid var(--outline-variant);
+  padding: 8px 12px; margin-bottom: 6px; font-size: 13px; font-family: var(--font-mono);
+  color: var(--on-surface-variant); }
+.client { font-weight: 600; color: var(--primary); }
+button { width: 100%; padding: 0.75rem 2rem; border: 0; cursor: pointer;
+  background: var(--grad-primary); color: var(--on-primary-container);
+  font-family: var(--font-ui); font-size: var(--body-md); font-weight: 600;
+  letter-spacing: 0.02em; box-shadow: var(--glow-primary); transition: box-shadow 0.2s; }
+button:hover { box-shadow: var(--glow-primary-strong); }
+button:disabled { background: var(--surface-container-high); color: var(--on-surface-faint);
+  box-shadow: none; cursor: default; }
+.status { font-family: var(--font-mono); color: var(--on-surface-variant); font-size: var(--label-sm);
+  text-transform: uppercase; letter-spacing: 0.14em; margin-top: var(--space-4); min-height: 1em; }
+.status.err { color: var(--error); text-transform: none; letter-spacing: normal;
+  font-family: var(--font-ui); font-size: var(--body-md); }
+.muted { color: var(--on-surface-faint); font-size: var(--label-sm); margin-top: var(--space-5);
+  text-transform: uppercase; letter-spacing: 0.14em; }
 `;
 
 function ceremonyScript(
@@ -77,8 +123,8 @@ run();
 
 export interface CeremonyPageParams {
   title: string;
-  heading: string;
-  description: string;
+  /** Optional explanatory line under the wordmark; omit to show only the logo + wordmark. */
+  description?: string;
   optionsUrl: string;
   verifyUrl: string;
   /** Hidden flow params echoed into every POST (login_challenge / consent_challenge). */
@@ -95,18 +141,19 @@ export function renderPasskeyPage(p: CeremonyPageParams): string {
       ? `<ul class="scopes">${p.scopes.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`
       : "";
   const clientLine = p.clientName
-    ? `<p><span class="client">${esc(p.clientName)}</span> is requesting access to your ShellWatch account with these scopes:</p>`
+    ? `<p class="lead"><span class="client">${esc(p.clientName)}</span> is requesting access to your ShellWatch account with these scopes:</p>`
     : "";
+  const description = p.description ? `<p>${esc(p.description)}</p>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(p.title)}</title><style>${STYLE}</style></head>
 <body><div class="card">
-<h1>${esc(p.heading)}</h1>
-<p>${esc(p.description)}</p>
-${clientLine}${scopeList}
+<img class="logo" src="/logo.svg" alt="">
+<h1><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></h1>
+${description}${clientLine}${scopeList}
 <button id="go">${esc(p.buttonLabel ?? "Continue with passkey")}</button>
 <div id="status" class="status"></div>
-<div class="muted">ShellWatch · passkey-only authentication</div>
+<div class="muted">Passkey-only authentication</div>
 </div>
 <script>${ceremonyScript(p.optionsUrl, p.verifyUrl, p.extra)}</script>
 </body></html>`;
@@ -117,8 +164,9 @@ export function renderErrorPage(error: string, description?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Authentication error</title><style>${STYLE}</style></head>
 <body><div class="card">
-<h1>Authentication error</h1>
+<img class="logo" src="/logo.svg" alt="">
+<h1><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></h1>
 <p>${esc(description || error || "Something went wrong during authentication.")}</p>
-<a href="/"><button id="go">Back to ShellWatch</button></a>
+<a href="/" style="text-decoration:none"><button id="go">Back to ShellWatch</button></a>
 </div></body></html>`;
 }
