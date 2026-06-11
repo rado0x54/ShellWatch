@@ -175,8 +175,17 @@ async function refresh(): Promise<string | null> {
 }
 
 /** Return a usable access token, refreshing if missing/near expiry. null if not logged in. */
-export async function getAccessToken(): Promise<string | null> {
-  if (accessToken && Date.now() < accessTokenExpiresAt - REFRESH_SKEW_MS) return accessToken;
+/**
+ * Return a usable access token, refreshing if missing/near expiry. Pass
+ * `{ force: true }` to bypass the client-side expiry check and re-mint from the
+ * refresh token — used by the 401 retry path, where the server rejected a token
+ * the client still considered valid (e.g. another tab rotated the grant, or a
+ * transient introspection failure). Concurrent calls coalesce via `refresh()`.
+ */
+export async function getAccessToken(opts?: { force?: boolean }): Promise<string | null> {
+  if (!opts?.force && accessToken && Date.now() < accessTokenExpiresAt - REFRESH_SKEW_MS) {
+    return accessToken;
+  }
   return refresh();
 }
 

@@ -12,9 +12,11 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const res = await doFetch(path, init, token);
   if (res.status !== 401) return res;
 
-  // One forced refresh + retry — covers an access token that expired between
-  // getAccessToken()'s skew check and the server's clock.
-  const fresh = await getAccessToken();
+  // Force a real refresh + retry — covers a token the server rejected that the
+  // client still considered valid (another tab rotated the grant, or a
+  // transient introspection failure). Without `force`, getAccessToken() would
+  // just hand back the same cached token and the retry would be a no-op.
+  const fresh = await getAccessToken({ force: true });
   if (fresh && fresh !== token) {
     const retry = await doFetch(path, init, fresh);
     if (retry.status !== 401) return retry;
