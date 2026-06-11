@@ -23,13 +23,13 @@ export function connectTestWsClient(
   log: TestLog,
   accessToken?: string,
 ): Promise<TestWsClient> {
-  // Browsers can't set an Authorization header on a WS handshake, so the bearer
-  // gate reads the access token from a query param (#217). Mirror that here.
-  const base = `${appUrl.replace("http://", "ws://")}/ws`;
-  const wsUrl = accessToken ? `${base}?access_token=${encodeURIComponent(accessToken)}` : base;
+  // Mirror the browser: carry the bearer token in the Sec-WebSocket-Protocol
+  // subprotocol alongside the sentinel (#217). The bearer gate reads it there.
+  const wsUrl = `${appUrl.replace("http://", "ws://")}/ws`;
+  const protocols = accessToken ? ["shellwatch.bearer", accessToken] : undefined;
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, protocols);
 
     // Buffer messages from the start — before "open" fires
     const buffered: ParsedMessage[] = [];

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// connectWs() needs a token (else it redirects to /login); stub the OAuth layer.
+vi.mock("../oauth.js", () => ({ getAccessToken: vi.fn(async () => "ui-test-token") }));
+
 import {
   connectWs,
   onWsMessage,

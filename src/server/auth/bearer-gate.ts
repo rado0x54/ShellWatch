@@ -9,6 +9,14 @@ export type BearerScope = "mcp" | "agent";
 export { UI_SCOPE };
 
 /**
+ * Sentinel WebSocket subprotocol the browser SPA offers alongside the access
+ * token (`["shellwatch.bearer", <token>]`) since it can't set an Authorization
+ * header on a WS handshake. The server selects this sentinel as the negotiated
+ * subprotocol (never the token). Mirrored client-side in ws.ts / ws-client.ts.
+ */
+export const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
+
+/**
  * Bearer scopes that guard a protected resource with RFC 9728 discovery
  * (`/mcp`, `/agent-proxy`). The web UI uses a separate `ui` scope (below) that
  * isn't an externally-discoverable resource, so it's kept out of this list.
@@ -78,7 +86,8 @@ const EXEMPT_PREFIXES = [
  *   - `/mcp`          → scope `mcp`     (Authorization: Bearer)
  *   - `/agent-proxy`  → scope `agent`   (Authorization: Bearer)
  *   - `/api/*`        → scope `ui`      (Authorization: Bearer)
- *   - `/ws`           → scope `ui`      (token via `?access_token=` — browsers
+ *   - `/ws`           → scope `ui`      (token via `Sec-WebSocket-Protocol:
+ *                                        shellwatch.bearer, <token>` — browsers
  *                                        can't set headers on a WS handshake)
  *
  * Everything else (SPA HTML routes, static assets, exempt endpoints) passes
@@ -139,15 +148,20 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
     const scope = requiredScope(path);
     if (!scope) return; // SPA HTML routes / static — pass through.
 
-    // Browsers can't set Authorization on a WebSocket handshake, so /ws carries
-    // the access token in a query param. Everything else uses the header.
+    // Authorization: Bearer for normal requests + non-browser WS clients
+    // (Go agent, MCP). Browsers can't set headers on a WS handshake, so the
+    // SPA carries the token in `Sec-WebSocket-Protocol: shellwatch.bearer, <token>`
+    // (a request header — unlike a query param, it's not in default access logs).
     let token: string | undefined;
     const auth = request.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
       token = auth.slice(7);
-    } else if (path === "/ws") {
-      const q = request.query as { access_token?: string };
-      token = typeof q.access_token === "string" ? q.access_token : undefined;
+    } else {
+      const proto = request.headers["sec-websocket-protocol"];
+      if (typeof proto === "string") {
+        const parts = proto.split(",").map((s) => s.trim());
+        if (parts[0] === WS_BEARER_SUBPROTOCOL && parts[1]) token = parts[1];
+      }
     }
     if (!token) {
       send401(reply, scope, "Access token required", "missing");

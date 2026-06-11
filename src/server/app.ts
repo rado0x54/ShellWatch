@@ -28,7 +28,12 @@ import { createBearerResolver } from "../hydra/bearer-resolver.js";
 import { registerHydraRoutes } from "../hydra/routes.js";
 import type { AccountLifecycle } from "./account-lifecycle.js";
 import { buildInfo } from "./buildInfo.js";
-import { BEARER_PATHS, UI_SCOPE, registerBearerGate } from "./auth/bearer-gate.js";
+import {
+  BEARER_PATHS,
+  UI_SCOPE,
+  WS_BEARER_SUBPROTOCOL,
+  registerBearerGate,
+} from "./auth/bearer-gate.js";
 import { registerIpAllowlist } from "./auth/ip-allowlist.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
@@ -100,7 +105,16 @@ export async function buildApp(params: BuildAppParams) {
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyRateLimit, { global: false });
-  await app.register(fastifyWebsocket);
+  // The browser SPA authenticates /ws by offering ["shellwatch.bearer", token]
+  // as subprotocols (it can't set an Authorization header on a WS handshake).
+  // Select the sentinel as the negotiated subprotocol so it's echoed back —
+  // never the token. Non-browser WS clients (Go agent) offer none → no-op.
+  await app.register(fastifyWebsocket, {
+    options: {
+      handleProtocols: (protocols: Set<string>) =>
+        protocols.has(WS_BEARER_SUBPROTOCOL) ? WS_BEARER_SUBPROTOCOL : false,
+    },
+  });
 
   // Decorate request with accountId + apiKey. accountId defaults to "" — the
   // bearer gate overwrites it with a real account id before any protected

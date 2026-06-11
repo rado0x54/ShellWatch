@@ -3,6 +3,9 @@ import { writable } from "svelte/store";
 import { getAccessToken } from "../oauth.js";
 import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
 
+/** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
+const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
+
 export type SessionMode = "control" | "observer";
 
 export interface SessionListEntry {
@@ -79,14 +82,22 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
 }
 
 export async function connectWs(): Promise<void> {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  // Browsers can't set an Authorization header on a WS handshake, so the OAuth
-  // access token rides in a query param (the bearer gate reads it there) (#217).
+  // Re-checked on every (re)connect: if the session is truly gone (refresh
+  // failed → no token), stop reconnecting and send the user to sign in rather
+  // than hammering 401 handshakes forever (#217). Transient network blips keep
+  // the still-valid cached token, so those still retry.
   const token = await getAccessToken();
-  const qs = token ? `?access_token=${encodeURIComponent(token)}` : "";
-  const url = `${proto}//${location.host}/ws${qs}`;
+  if (!token) {
+    window.location.href = "/login";
+    return;
+  }
 
-  ws = new WebSocket(url);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/ws`;
+  // Browsers can't set an Authorization header on a WS handshake, so the token
+  // rides in Sec-WebSocket-Protocol alongside the sentinel — keeps it out of
+  // access logs (vs a query param). The bearer gate reads it from the header.
+  ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
   ws.onmessage = (event) => {
     try {
