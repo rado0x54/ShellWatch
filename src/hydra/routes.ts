@@ -20,7 +20,7 @@ import {
 } from "../server/auth/bearer-gate.js";
 import { generatePasskeyAssertionOptions, verifyPasskeyAssertion } from "../webauthn/assertion.js";
 import { type HydraAdminClient, HydraApiError } from "./admin-client.js";
-import { renderErrorPage, renderPasskeyPage } from "./render.js";
+import { renderApprovePage, renderErrorPage, renderPasskeyPage } from "./render.js";
 
 /** Hydra "remember" durations (seconds). */
 const REMEMBER_FOR = 60 * 60 * 24 * 30;
@@ -253,8 +253,13 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         if (!challenge) throw new FlowError("missing_login_challenge");
         const loginReq = await hydra(admin.getLoginRequest(challenge), "invalid_login_challenge");
         if (loginReq.skip) {
+          // Remembered session — no passkey performed, so mark the login NOT
+          // fresh. The consent step reads this to decide passkey vs. approve.
           const { redirect_to } = await hydra(
-            admin.acceptLoginRequest(challenge, { subject: loginReq.subject }),
+            admin.acceptLoginRequest(challenge, {
+              subject: loginReq.subject,
+              context: { freshLogin: false },
+            }),
             "login_flow_expired",
           );
           return reply.redirect(redirect_to);
@@ -307,6 +312,9 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
               subject: verified.accountId,
               remember: true,
               remember_for: REMEMBER_FOR,
+              // Passkey just performed in this flow — lets the consent step skip
+              // a redundant second passkey (option-1).
+              context: { freshLogin: true },
             }),
             "login_flow_expired",
           );
@@ -340,6 +348,24 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
           return reply.redirect(redirect_to);
         }
         const clientName = consentReq.client.client_name || consentReq.client.client_id;
+        // Option-1: a passkey performed at login moments ago (same flow) is
+        // enough presence proof — authorizing the client is an explicit Approve
+        // click, not a second passkey. A remembered login (freshLogin !== true)
+        // still requires the passkey here: it's the only human gate in that flow.
+        const freshLogin = consentReq.context?.freshLogin === true;
+        if (freshLogin) {
+          return reply.type("text/html; charset=utf-8").send(
+            renderApprovePage({
+              title: "Authorize · ShellWatch",
+              description: "Approve this request to continue.",
+              approveUrl: "/api/hydra/consent/approve",
+              extra: { consent_challenge: challenge },
+              clientName,
+              scopes: consentReq.requested_scope,
+              buttonLabel: "Approve",
+            }),
+          );
+        }
         return reply.type("text/html; charset=utf-8").send(
           renderPasskeyPage({
             title: "Authorize · ShellWatch",
@@ -405,6 +431,40 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         if (!verified.ok) {
           reply.status(verified.status);
           return { error: verified.error };
+        }
+        const { redirect_to } = await hydra(
+          admin.acceptConsentRequest(challenge, {
+            grant_scope: consentReq.requested_scope,
+            grant_access_token_audience: consentReq.requested_access_token_audience,
+            remember: true,
+            remember_for: REMEMBER_FOR,
+          }),
+          "consent_flow_expired",
+        );
+        return { redirectTo: redirect_to };
+      }),
+    );
+
+    // No-passkey consent grant (option-1). Only valid when the login in this
+    // very flow was a fresh passkey ceremony — re-checked server-side against
+    // Hydra's record below, so a remembered-login flow can't take this path
+    // (it must use /consent/verify with a passkey). The client can't forge
+    // `freshLogin`; we stamped it into the login context.
+    app.post(
+      "/api/hydra/consent/approve",
+      { config: optionsLimit },
+      jsonFlow<{ Body: { consent_challenge?: string } }>(async (request) => {
+        const challenge = request.body?.consent_challenge;
+        if (typeof challenge !== "string" || !challenge) {
+          throw new FlowError("missing consent_challenge");
+        }
+        const consentReq = await hydra(
+          admin.getConsentRequest(challenge),
+          "invalid consent_challenge",
+        );
+        if (consentReq.context?.freshLogin !== true) {
+          // Login wasn't fresh (remembered session) — the passkey gate applies.
+          throw new FlowError("passkey_required");
         }
         const { redirect_to } = await hydra(
           admin.acceptConsentRequest(challenge, {

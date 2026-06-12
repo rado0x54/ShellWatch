@@ -7,7 +7,11 @@
  * oauth-clients route round-trips.
  */
 import { type HydraAdminClient, HydraApiError } from "../../hydra/admin-client.js";
-import type { HydraIntrospection, HydraOAuth2Client } from "../../hydra/types.js";
+import type {
+  HydraConsentRequest,
+  HydraIntrospection,
+  HydraOAuth2Client,
+} from "../../hydra/types.js";
 
 export interface FakeHydraAdmin extends HydraAdminClient {
   /** Register/replace what `introspect(token)` returns for a token. */
@@ -16,23 +20,33 @@ export interface FakeHydraAdmin extends HydraAdminClient {
   revokeRegisteredToken(token: string): void;
   /** Snapshot of created clients (by client_id). */
   clients: Map<string, HydraOAuth2Client>;
+  /** Seed a consent request returned by getConsentRequest (option-1 tests).
+   * Once seeded, acceptConsentRequest for that challenge resolves too. */
+  setConsentRequest(challenge: string, req: HydraConsentRequest): void;
 }
 
 export function createFakeHydraAdmin(): FakeHydraAdmin {
   const tokens = new Map<string, HydraIntrospection>();
   const clients = new Map<string, HydraOAuth2Client>();
+  const consentRequests = new Map<string, HydraConsentRequest>();
   let counter = 0;
 
-  // Login/consent/logout challenge flows need a real Hydra redirect, so the
-  // in-memory harness never drives them with a valid challenge. Model the way
-  // real Hydra answers an unknown/expired challenge — a non-2xx admin response,
-  // i.e. a HydraApiError — so the provider routes' guarded-admin wrapper maps it
-  // to a clean 4xx instead of a 500. The 400-not-500 guard tests rely on this.
+  // Login + logout challenge flows still need a real Hydra redirect to drive
+  // end-to-end, so the harness never seeds a valid challenge for them — they
+  // reject the way Hydra answers an unknown/expired challenge (a non-2xx →
+  // HydraApiError), which the provider routes' guarded-admin wrapper maps to a
+  // clean 4xx instead of a 500 (the 400-not-500 guard tests rely on this).
+  // Consent is the exception: it's seedable via setConsentRequest() so the
+  // option-1 fresh-login decision is testable without a live Hydra; an unseeded
+  // consent challenge still rejects the same way.
   const rejectsUnknownChallenge = (name: string) => () =>
     Promise.reject(new HydraApiError(404, "", `fake-hydra: ${name} — unknown challenge`));
 
   return {
     clients,
+    setConsentRequest(challenge, req) {
+      consentRequests.set(challenge, req);
+    },
     registerToken(token, claims) {
       tokens.set(token, { active: true, ...claims });
     },
@@ -75,8 +89,19 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
     getLoginRequest: rejectsUnknownChallenge("getLoginRequest"),
     acceptLoginRequest: rejectsUnknownChallenge("acceptLoginRequest"),
     rejectLoginRequest: rejectsUnknownChallenge("rejectLoginRequest"),
-    getConsentRequest: rejectsUnknownChallenge("getConsentRequest"),
-    acceptConsentRequest: rejectsUnknownChallenge("acceptConsentRequest"),
+    // Consent: resolve seeded challenges (option-1 tests), reject others as
+    // Hydra would for an unknown challenge.
+    async getConsentRequest(challenge) {
+      const req = consentRequests.get(challenge);
+      if (!req) throw new HydraApiError(404, "", "fake-hydra: unknown consent challenge");
+      return req;
+    },
+    async acceptConsentRequest(challenge) {
+      if (!consentRequests.has(challenge)) {
+        throw new HydraApiError(404, "", "fake-hydra: unknown consent challenge");
+      }
+      return { redirect_to: `https://hydra.test/consent-callback?c=${challenge}` };
+    },
     rejectConsentRequest: rejectsUnknownChallenge("rejectConsentRequest"),
     acceptLogoutRequest: rejectsUnknownChallenge("acceptLogoutRequest"),
   };

@@ -121,6 +121,59 @@ run();
 `;
 }
 
+/**
+ * Client script for the no-passkey consent *approve* page (option-1): the user
+ * already proved presence at the login step moments ago, so authorizing the
+ * client is an explicit informed click (not a second passkey). POSTs `extra`
+ * (the consent_challenge) and follows the returned redirect.
+ */
+function approveScript(approveUrl: string, extra: Record<string, string>): string {
+  return `
+const APPROVE_URL=${JSON.stringify(approveUrl)};
+const EXTRA=${JSON.stringify(extra)};
+const statusEl=document.getElementById('status');
+const btn=document.getElementById('go');
+function setStatus(m){statusEl.className='status';statusEl.textContent=m;}
+function setError(m){statusEl.className='status err';statusEl.textContent=m;btn.disabled=false;}
+btn.addEventListener('click',async()=>{
+  btn.disabled=true;setStatus('Authorizing…');
+  let res;
+  try{const r=await fetch(APPROVE_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(EXTRA)});res=await r.json();if(!r.ok||!res.redirectTo)throw new Error(res.error||'Authorization failed');}
+  catch(e){setError(e.message||'Authorization failed');return;}
+  setStatus('Success — redirecting…');
+  window.location.href=res.redirectTo;
+});
+`;
+}
+
+/** Full HTML document wrapped in the shared card shell (logo + wordmark).
+ * `inner` is the card body; `script`, if given, is inlined after the card. */
+function page(title: string, inner: string, script?: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title><style>${STYLE}</style></head>
+<body><div class="card">
+<img class="logo" src="/logo.svg" alt="">
+<h1><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></h1>
+${inner}
+</div>${script ? `\n<script>${script}</script>` : ""}
+</body></html>`;
+}
+
+/** Disclosure block shared by the passkey + approve consent pages: an optional
+ * description line, the requesting client, and the requested scopes. */
+function consentBody(p: { description?: string; clientName?: string; scopes?: string[] }): string {
+  const description = p.description ? `<p>${esc(p.description)}</p>` : "";
+  const clientLine = p.clientName
+    ? `<p class="lead"><span class="client">${esc(p.clientName)}</span> is requesting access to your ShellWatch account with these scopes:</p>`
+    : "";
+  const scopeList =
+    p.scopes && p.scopes.length
+      ? `<ul class="scopes">${p.scopes.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`
+      : "";
+  return `${description}${clientLine}${scopeList}`;
+}
+
 export interface CeremonyPageParams {
   title: string;
   /** Optional explanatory line under the wordmark; omit to show only the logo + wordmark. */
@@ -136,37 +189,41 @@ export interface CeremonyPageParams {
 }
 
 export function renderPasskeyPage(p: CeremonyPageParams): string {
-  const scopeList =
-    p.scopes && p.scopes.length
-      ? `<ul class="scopes">${p.scopes.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`
-      : "";
-  const clientLine = p.clientName
-    ? `<p class="lead"><span class="client">${esc(p.clientName)}</span> is requesting access to your ShellWatch account with these scopes:</p>`
-    : "";
-  const description = p.description ? `<p>${esc(p.description)}</p>` : "";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(p.title)}</title><style>${STYLE}</style></head>
-<body><div class="card">
-<img class="logo" src="/logo.svg" alt="">
-<h1><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></h1>
-${description}${clientLine}${scopeList}
+  const inner = `${consentBody(p)}
 <button id="go">${esc(p.buttonLabel ?? "Continue with passkey")}</button>
 <div id="status" class="status"></div>
-<div class="muted">Passkey-only authentication</div>
-</div>
-<script>${ceremonyScript(p.optionsUrl, p.verifyUrl, p.extra)}</script>
-</body></html>`;
+<div class="muted">Passkey-only authentication</div>`;
+  return page(p.title, inner, ceremonyScript(p.optionsUrl, p.verifyUrl, p.extra));
+}
+
+export interface ApprovePageParams {
+  title: string;
+  description?: string;
+  /** Endpoint the Approve button POSTs `extra` to; expects `{ redirectTo }`. */
+  approveUrl: string;
+  /** Hidden flow params echoed into the POST (consent_challenge). */
+  extra: Record<string, string>;
+  clientName: string;
+  scopes: string[];
+  buttonLabel?: string;
+}
+
+/**
+ * Consent page WITHOUT a passkey ceremony (option-1). Shown when the user
+ * authenticated with a passkey moments earlier in the same flow, so granting
+ * the client is an explicit Approve click rather than a redundant second
+ * passkey. Still shows the client + scopes — informed consent is the point.
+ */
+export function renderApprovePage(p: ApprovePageParams): string {
+  const inner = `${consentBody(p)}
+<button id="go">${esc(p.buttonLabel ?? "Approve")}</button>
+<div id="status" class="status"></div>
+<div class="muted">You're signed in — approve to continue.</div>`;
+  return page(p.title, inner, approveScript(p.approveUrl, p.extra));
 }
 
 export function renderErrorPage(error: string, description?: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authentication error</title><style>${STYLE}</style></head>
-<body><div class="card">
-<img class="logo" src="/logo.svg" alt="">
-<h1><span class="wordmark-shell">SHELL</span><span class="wordmark-watch">WATCH</span></h1>
-<p>${esc(description || error || "Something went wrong during authentication.")}</p>
-<a href="/" style="text-decoration:none"><button id="go">Back to ShellWatch</button></a>
-</div></body></html>`;
+  const inner = `<p>${esc(description || error || "Something went wrong during authentication.")}</p>
+<a href="/" style="text-decoration:none"><button id="go">Back to ShellWatch</button></a>`;
+  return page("Authentication error", inner);
 }

@@ -33,6 +33,7 @@ import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { accounts, webauthnCredentials } from "../../db/schema.js";
 import { registerBearerGate } from "../../server/auth/bearer-gate.js";
 import { createBearerResolver } from "../../hydra/bearer-resolver.js";
+import type { FakeHydraAdmin } from "../helpers/fake-hydra.js";
 import { makeTestBearer } from "../helpers/test-bearer.js";
 import { makeTestConfig } from "../helpers/test-config.js";
 import { registerHydraRoutes } from "../../hydra/routes.js";
@@ -51,6 +52,7 @@ interface TestApp {
   app: FastifyInstance;
   conn: DatabaseConnection;
   auth: string;
+  hydraAdmin: FakeHydraAdmin;
 }
 
 async function makeTestApp(): Promise<TestApp> {
@@ -102,7 +104,7 @@ async function makeTestApp(): Promise<TestApp> {
 
   await app.ready();
 
-  return { app, conn, auth: bearerFor(ACCOUNT_ID) };
+  return { app, conn, auth: bearerFor(ACCOUNT_ID), hydraAdmin: admin };
 }
 
 /**
@@ -541,6 +543,78 @@ describe("passkey invite — HTTP integration", () => {
 
   it("POST /api/hydra/consent/verify returns 400 (not 500) for a bodyless request", async () => {
     const res = await testApp.app.inject({ method: "POST", url: "/api/hydra/consent/verify" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // ---- Option-1: one passkey, not two, on a fresh-login consent ----
+
+  const seedConsent = (challenge: string, freshLogin: boolean) =>
+    testApp.hydraAdmin.setConsentRequest(challenge, {
+      challenge,
+      skip: false,
+      subject: ACCOUNT_ID,
+      client: { client_id: "mcp-test-client", client_name: "Test MCP" },
+      requested_scope: ["mcp", "offline"],
+      requested_access_token_audience: [],
+      context: { freshLogin },
+    });
+
+  it("GET /api/hydra/consent shows the no-passkey Approve page after a fresh login", async () => {
+    seedConsent("consent-fresh-ui", true);
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=consent-fresh-ui",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain("/api/hydra/consent/approve");
+    // No passkey ceremony on the fresh-login path.
+    expect(res.payload).not.toContain("navigator.credentials");
+  });
+
+  it("GET /api/hydra/consent still requires a passkey when login was remembered", async () => {
+    seedConsent("consent-stale-ui", false);
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=consent-stale-ui",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain("/api/hydra/consent/verify");
+    expect(res.payload).toContain("navigator.credentials");
+  });
+
+  it("POST /api/hydra/consent/approve grants when login was fresh", async () => {
+    seedConsent("consent-fresh-ok", true);
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "consent-fresh-ok" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { redirectTo?: string }).redirectTo).toContain("consent-fresh-ok");
+  });
+
+  it("POST /api/hydra/consent/approve refuses (no passkey) when login was NOT fresh", async () => {
+    // Security-critical: the no-passkey path must re-check freshness against
+    // Hydra's own record, so a remembered-login flow can't skip the passkey.
+    seedConsent("consent-stale-deny", false);
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "consent-stale-deny" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toBe("passkey_required");
+  });
+
+  it("POST /api/hydra/consent/approve returns 400 for a missing challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: {},
+    });
     expect(res.statusCode).toBe(400);
   });
 });

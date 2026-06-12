@@ -29,6 +29,11 @@ export interface HydraConsentRequest {
   client: HydraOAuth2Client;
   requested_scope: string[];
   requested_access_token_audience: string[];
+  /** Carried verbatim from the login step's `acceptLoginRequest({ context })`.
+   * We stamp `{ freshLogin }` there so the consent provider can tell a just-
+   * passkeyed login from a remembered one (option-1). Set by us, round-tripped
+   * by Hydra — the browser can't forge it. */
+  context?: Record<string, unknown>;
 }
 
 /** Body for accepting a login challenge. */
