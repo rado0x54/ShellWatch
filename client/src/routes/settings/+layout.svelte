@@ -28,6 +28,7 @@
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Passkeys" },
+    { path: "/settings/sessions", label: "Sessions" },
     ...(showSshKeysTab
       ? [{ path: "/settings/ssh-keys" as Pathname, label: "Other SSH Keys" }]
       : []),

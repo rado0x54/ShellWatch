@@ -9,6 +9,7 @@
 import { type HydraAdminClient, HydraApiError } from "../../hydra/admin-client.js";
 import type {
   HydraConsentRequest,
+  HydraConsentSession,
   HydraIntrospection,
   HydraOAuth2Client,
 } from "../../hydra/types.js";
@@ -23,12 +24,20 @@ export interface FakeHydraAdmin extends HydraAdminClient {
   /** Seed a consent request returned by getConsentRequest (option-1 tests).
    * Once seeded, acceptConsentRequest for that challenge resolves too. */
   setConsentRequest(challenge: string, req: HydraConsentRequest): void;
+  /** Seed the consent-session list returned by listConsentSessions(subject). */
+  setConsentSessions(subject: string, sessions: HydraConsentSession[]): void;
+  /** Records of revoke calls, for assertions. */
+  revokedConsent: { subject: string; clientId?: string }[];
+  revokedLogin: string[];
 }
 
 export function createFakeHydraAdmin(): FakeHydraAdmin {
   const tokens = new Map<string, HydraIntrospection>();
   const clients = new Map<string, HydraOAuth2Client>();
   const consentRequests = new Map<string, HydraConsentRequest>();
+  const consentSessions = new Map<string, HydraConsentSession[]>();
+  const revokedConsent: { subject: string; clientId?: string }[] = [];
+  const revokedLogin: string[] = [];
   let counter = 0;
 
   // Login + logout challenge flows still need a real Hydra redirect to drive
@@ -44,8 +53,13 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
 
   return {
     clients,
+    revokedConsent,
+    revokedLogin,
     setConsentRequest(challenge, req) {
       consentRequests.set(challenge, req);
+    },
+    setConsentSessions(subject, sessions) {
+      consentSessions.set(subject, sessions);
     },
     registerToken(token, claims) {
       tokens.set(token, { active: true, ...claims });
@@ -81,8 +95,15 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
       clients.delete(clientId);
     },
 
-    async revokeLoginSessions() {},
-    async revokeConsentSessions() {},
+    async revokeLoginSessions(subject) {
+      revokedLogin.push(subject);
+    },
+    async revokeConsentSessions(subject, clientId) {
+      revokedConsent.push({ subject, clientId });
+    },
+    async listConsentSessions(subject) {
+      return consentSessions.get(subject) ?? [];
+    },
 
     // See rejectsUnknownChallenge above — these reject as Hydra would for a
     // challenge it doesn't recognize.

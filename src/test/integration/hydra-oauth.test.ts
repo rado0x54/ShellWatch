@@ -13,6 +13,7 @@
  * Hydra and is covered by the manual verification steps in docs/deployment.md.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mintStepUpToken, STEPUP_ACTION } from "../../webauthn/stepup-store.js";
 import {
   createTestLog,
   startTestApp,
@@ -141,6 +142,97 @@ describe("Hydra OAuth surfaces", () => {
         scope: "mcp",
         client_id: "test-mcp-client",
       });
+    });
+  });
+
+  describe("auth session management (/api/auth/sessions, #219)", () => {
+    const ui = () => ({ authorization: `Bearer ${appServer.uiToken}` });
+    const stepUp = (action: (typeof STEPUP_ACTION)[keyof typeof STEPUP_ACTION]) => ({
+      "x-shellwatch-stepup-token": mintStepUpToken({ accountId: appServer.accountId, action })
+        .token,
+    });
+
+    it("lists consent sessions including the web UI client, flagged current", async () => {
+      const spaId = appServer.config.hydra.spa.clientId;
+      appServer.hydraAdmin.setConsentSessions(appServer.accountId, [
+        {
+          consent_request: { client: { client_id: spaId, client_name: "ShellWatch Web" } },
+          grant_scope: ["ui", "offline"],
+          handled_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          consent_request: {
+            client: { client_id: "mcp-abc", client_name: "Claude MCP", created_at: "2026-01-30Z" },
+          },
+          grant_scope: ["mcp", "offline"],
+          handled_at: "2026-02-01T00:00:00Z",
+        },
+      ]);
+      const res = await fetch(`${appServer.url}/api/auth/sessions`, { headers: ui() });
+      expect(res.status).toBe(200);
+      const { sessions } = (await res.json()) as {
+        sessions: { clientId: string; current: boolean; scopes: string[] }[];
+      };
+      expect(sessions).toHaveLength(2);
+      // The first-party web UI client is included, flagged current, and sorted
+      // first — even though the MCP grant was authorized more recently.
+      expect(sessions[0]!.clientId).toBe(spaId);
+      expect(sessions.find((s) => s.clientId === spaId)?.current).toBe(true);
+      expect(sessions.find((s) => s.clientId === "mcp-abc")?.current).toBe(false);
+    });
+
+    it("rejects listing without a ui token", async () => {
+      const res = await fetch(`${appServer.url}/api/auth/sessions`);
+      expect(res.status).toBe(401);
+    });
+
+    it("revoking a single session requires a step-up token", async () => {
+      const res = await fetch(`${appServer.url}/api/auth/sessions/mcp-abc`, {
+        method: "DELETE",
+        headers: ui(),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("revokes a single client's consent with a step-up token", async () => {
+      const before = appServer.hydraAdmin.revokedConsent.length;
+      const res = await fetch(`${appServer.url}/api/auth/sessions/mcp-abc`, {
+        method: "DELETE",
+        headers: { ...ui(), ...stepUp(STEPUP_ACTION.revokeSession) },
+      });
+      expect(res.status).toBe(200);
+      const recorded = appServer.hydraAdmin.revokedConsent.slice(before);
+      expect(recorded).toContainEqual({ subject: appServer.accountId, clientId: "mcp-abc" });
+    });
+
+    it("revoke-all requires a step-up token", async () => {
+      const res = await fetch(`${appServer.url}/api/auth/sessions/revoke-all`, {
+        method: "POST",
+        headers: ui(),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("revoke-all clears consent + login sessions with a step-up token", async () => {
+      const res = await fetch(`${appServer.url}/api/auth/sessions/revoke-all`, {
+        method: "POST",
+        headers: { ...ui(), ...stepUp(STEPUP_ACTION.revokeAllSessions) },
+      });
+      expect(res.status).toBe(200);
+      // All-clients consent revoke (no clientId) + login-session revoke.
+      expect(appServer.hydraAdmin.revokedConsent).toContainEqual({
+        subject: appServer.accountId,
+        clientId: undefined,
+      });
+      expect(appServer.hydraAdmin.revokedLogin).toContain(appServer.accountId);
+    });
+
+    it("a single-revoke step-up token can't be replayed against revoke-all", async () => {
+      const res = await fetch(`${appServer.url}/api/auth/sessions/revoke-all`, {
+        method: "POST",
+        headers: { ...ui(), ...stepUp(STEPUP_ACTION.revokeSession) },
+      });
+      expect(res.status).toBe(401);
     });
   });
 

@@ -36,6 +36,21 @@ export interface HydraConsentRequest {
   context?: Record<string, unknown>;
 }
 
+/**
+ * Hydra consent session (GET /admin/oauth2/auth/sessions/consent?subject=…).
+ * One per OAuth client the subject has an active grant for. Intentionally
+ * partial — we surface the client, granted scopes, and when it was authorized.
+ */
+export interface HydraConsentSession {
+  consent_request?: {
+    client?: HydraOAuth2Client;
+    context?: Record<string, unknown>;
+  };
+  grant_scope?: string[];
+  handled_at?: string;
+  remember?: boolean;
+}
+
 /** Body for accepting a login challenge. */
 export interface HydraAcceptLogin {
   subject: string;
@@ -77,6 +92,8 @@ export interface HydraOAuth2Client {
   token_endpoint_auth_method?: string;
   metadata?: Record<string, unknown>;
   client_secret_expires_at?: number;
+  /** When the client was registered (DCR), ISO-8601. Surfaced in the client list. */
+  created_at?: string;
 }
 
 /** RFC 7662 introspection response (subset). */

@@ -39,6 +39,7 @@ import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerActionRoutes } from "./routes/actions.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerEndpointRoutes } from "./routes/endpoints.js";
+import { registerAuthSessionRoutes } from "./routes/auth-sessions.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerPushRoutes } from "./routes/push.js";
 import { registerSshKeyRoutes } from "./routes/ssh-keys.js";
@@ -198,6 +199,7 @@ export async function buildApp(params: BuildAppParams) {
   registerAccountRoutes({ app, accountRepo, demoEndpoints, db, accountLifecycle });
   registerSshKeyRoutes({ app, keyRepo, accountRepo, keyAvailability });
   registerEndpointRoutes({ app, endpointRepo, accountRepo, demoEndpoints, terminalManager });
+  registerAuthSessionRoutes({ app, admin: hydraAdmin, spaClientId: config.hydra.spa.clientId });
 
   const wsHandler = registerWebSocket({ app, terminalManager });
   for (const ext of wsExtensions) wsHandler.addExtension(ext);

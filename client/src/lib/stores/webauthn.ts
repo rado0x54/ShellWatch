@@ -7,7 +7,12 @@ import { writable } from "svelte/store";
  * Step-up actions recognised by the server. Mirrors STEPUP_ACTION on the
  * backend; kept inline here to avoid importing server code into the client.
  */
-export type StepUpAction = "register_passkey" | "revoke_passkey" | "confirm_passkey";
+export type StepUpAction =
+  | "register_passkey"
+  | "revoke_passkey"
+  | "confirm_passkey"
+  | "revoke_session"
+  | "revoke_all_sessions";
 
 /**
  * Run the WebAuthn step-up assertion for an action and return the resulting

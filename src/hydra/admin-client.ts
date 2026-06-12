@@ -22,6 +22,7 @@ import type {
   HydraAcceptConsent,
   HydraAcceptLogin,
   HydraConsentRequest,
+  HydraConsentSession,
   HydraIntrospection,
   HydraLoginRequest,
   HydraOAuth2Client,
@@ -40,6 +41,8 @@ export interface HydraAdminClient {
 
   // --- Consent provider ---
   getConsentRequest(challenge: string): Promise<HydraConsentRequest>;
+  /** List a subject's active consent sessions — one per authorized client. */
+  listConsentSessions(subject: string): Promise<HydraConsentSession[]>;
   acceptConsentRequest(challenge: string, body: HydraAcceptConsent): Promise<HydraRedirect>;
   rejectConsentRequest(
     challenge: string,
@@ -130,6 +133,11 @@ export function createHydraAdminClient(params: CreateHydraAdminClientParams): Hy
       adminJson(
         "GET",
         `/admin/oauth2/auth/requests/consent?consent_challenge=${encodeURIComponent(challenge)}`,
+      ),
+    listConsentSessions: (subject) =>
+      adminJson(
+        "GET",
+        `/admin/oauth2/auth/sessions/consent?subject=${encodeURIComponent(subject)}`,
       ),
     acceptConsentRequest: (challenge, body) =>
       adminJson(

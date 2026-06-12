@@ -36,6 +36,8 @@ const ACTION_TO_PURPOSE: Record<StepUpAction, ChallengePurpose> = {
   [STEPUP_ACTION.registerPasskey]: CHALLENGE_PURPOSE.stepupRegisterPasskey,
   [STEPUP_ACTION.revokePasskey]: CHALLENGE_PURPOSE.stepupRevokePasskey,
   [STEPUP_ACTION.confirmPasskey]: CHALLENGE_PURPOSE.stepupConfirmPasskey,
+  [STEPUP_ACTION.revokeSession]: CHALLENGE_PURPOSE.stepupRevokeSession,
+  [STEPUP_ACTION.revokeAllSessions]: CHALLENGE_PURPOSE.stepupRevokeAllSessions,
 };
 
 function isStepUpAction(value: unknown): value is StepUpAction {
