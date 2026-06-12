@@ -2,8 +2,6 @@
 <script lang="ts">
   import { apiFetch } from "$lib/api.js";
   import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  import { resolve } from "$app/paths";
   import { get } from "svelte/store";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { registerAccount } from "$lib/stores/webauthn.js";
@@ -55,7 +53,9 @@
         accountName = "admin";
       } else {
         if (!get(selfRegistrationEnabled)) {
-          await goto(resolve("/login"));
+          // Registration closed and an admin already exists — bounce back into
+          // the sign-in flow (Hydra owns the login UI).
+          await beginLogin("/");
           return;
         }
       }

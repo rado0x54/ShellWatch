@@ -36,7 +36,9 @@ urls:
   logout: http://localhost:3000/api/hydra/logout
   error: http://localhost:3000/api/hydra/error
   # Where Hydra sends the browser after a successful logout with no redirect.
-  post_logout_redirect: http://localhost:3000/login
+  # The SPA root: the auth guard sees no token and (re)starts the OAuth flow —
+  # Hydra has no session post-logout, so it lands on the passkey login page.
+  post_logout_redirect: http://localhost:3000/
 
 oidc:
   subject_identifiers:

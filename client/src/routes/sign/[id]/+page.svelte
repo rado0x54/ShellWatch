@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { apiFetch } from "$lib/api.js";
+  import { beginLogin } from "$lib/oauth.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
@@ -84,7 +85,7 @@
     try {
       const res = await apiFetch(`/api/actions/${actionId}`);
       if (res.status === 401) {
-        await goto(resolve(`/login?redirect=/sign/${actionId}`));
+        await beginLogin(`/sign/${actionId}`);
         return;
       }
       if (!res.ok) {

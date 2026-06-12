@@ -82,6 +82,9 @@ button:disabled { background: var(--surface-container-high); color: var(--on-sur
   font-family: var(--font-ui); font-size: var(--body-md); }
 .muted { color: var(--on-surface-faint); font-size: var(--label-sm); margin-top: var(--space-5);
   text-transform: uppercase; letter-spacing: 0.14em; }
+.register-link { margin-top: var(--space-5); font-size: var(--body-md); color: var(--on-surface-variant); }
+.register-link a { color: var(--primary); text-decoration: none; }
+.register-link a:hover { text-decoration: underline; }
 `;
 
 function ceremonyScript(
@@ -117,7 +120,6 @@ async function run(){
   window.location.href=ver.redirectTo;
 }
 btn.addEventListener('click',run);
-run();
 `;
 }
 
@@ -186,14 +188,33 @@ export interface CeremonyPageParams {
   clientName?: string;
   scopes?: string[];
   buttonLabel?: string;
+  /** Login only: omit the passkey button (+ ceremony) when no passkeys exist
+   * yet, leaving only the create-account link. Defaults to true. */
+  showButton?: boolean;
+  /** Login only: when set, render a "Create new account" link to this path. */
+  registerUrl?: string;
 }
 
 export function renderPasskeyPage(p: CeremonyPageParams): string {
+  const showButton = p.showButton ?? true;
+  const button = showButton
+    ? `<button id="go">${esc(p.buttonLabel ?? "Continue with passkey")}</button>
+<div id="status" class="status"></div>`
+    : "";
+  const registerLink = p.registerUrl
+    ? `<p class="register-link"><a href="${esc(p.registerUrl)}">Create new account</a></p>`
+    : "";
   const inner = `${consentBody(p)}
-<button id="go">${esc(p.buttonLabel ?? "Continue with passkey")}</button>
-<div id="status" class="status"></div>
+${button}${registerLink}
 <div class="muted">Passkey-only authentication</div>`;
-  return page(p.title, inner, ceremonyScript(p.optionsUrl, p.verifyUrl, p.extra));
+  // The ceremony is button-initiated (the script only wires the click handler,
+  // it no longer auto-runs) — WebAuthn wants a user gesture, and the page is now
+  // a real login landing, not an auto-popping prompt. No button → no script.
+  return page(
+    p.title,
+    inner,
+    showButton ? ceremonyScript(p.optionsUrl, p.verifyUrl, p.extra) : undefined,
+  );
 }
 
 export interface ApprovePageParams {

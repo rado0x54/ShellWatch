@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, RouteGenericInterfa
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
+import { hasPasskeys } from "../db/repositories/index.js";
 import {
   BEARER_PATHS,
   BEARER_SCOPES,
@@ -264,13 +265,24 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
           );
           return reply.redirect(redirect_to);
         }
+        // This page is now the sole login landing (the SPA no longer ships a
+        // /login mask). Show a create-account link under the same rule the
+        // /register flow uses — first-run bootstrap (no passkeys) or self-
+        // registration — and drop the passkey button entirely when there's
+        // nothing to sign in with yet.
+        const passkeysExist = hasPasskeys(db);
+        const canRegister = !passkeysExist || config.security.selfRegistrationEnabled;
         return reply.type("text/html; charset=utf-8").send(
           renderPasskeyPage({
             title: "Sign in · ShellWatch",
-            description: "Authenticate with your passkey to continue.",
+            description: passkeysExist
+              ? "Authenticate with your passkey to continue."
+              : "No passkeys yet — create an account to get started.",
             optionsUrl: "/api/hydra/login/options",
             verifyUrl: "/api/hydra/login/verify",
             extra: { login_challenge: challenge },
+            showButton: passkeysExist,
+            registerUrl: canRegister ? "/register" : undefined,
           }),
         );
       }),

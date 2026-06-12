@@ -2,8 +2,11 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// connectWs() needs a token (else it redirects to /login); stub the OAuth layer.
-vi.mock("../oauth.js", () => ({ getAccessToken: vi.fn(async () => "ui-test-token") }));
+// connectWs() needs a token (else it starts the OAuth flow); stub the OAuth layer.
+vi.mock("../oauth.js", () => ({
+  getAccessToken: vi.fn(async () => "ui-test-token"),
+  beginLogin: vi.fn(),
+}));
 
 import {
   connectWs,

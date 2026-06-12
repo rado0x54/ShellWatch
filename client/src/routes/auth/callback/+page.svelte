@@ -22,7 +22,7 @@
     <div class="card">
       <h1>Sign-in failed</h1>
       <p class="error">{error}</p>
-      <a href={resolve("/login")}>Back to sign in</a>
+      <a href={resolve("/")}>Back to sign in</a>
     </div>
   {:else}
     <p class="status">Completing sign-in…</p>

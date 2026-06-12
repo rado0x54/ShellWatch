@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Central fetch wrapper for ShellWatch's own API (#217). Attaches the OAuth
- * access token as a Bearer, transparently refreshes once on a 401, and bounces
- * to /login if the session is truly gone. Public/anonymous endpoints
- * (registration, passkey-status) should use bare `fetch` instead.
+ * access token as a Bearer, transparently refreshes once on a 401, and starts
+ * the OAuth flow (beginLogin) if the session is truly gone. Public/anonymous
+ * endpoints (registration, passkey-status) should use bare `fetch` instead.
  */
 import { getAccessToken, beginLogin } from "./oauth.js";
 

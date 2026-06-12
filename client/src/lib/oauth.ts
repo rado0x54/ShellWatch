@@ -208,7 +208,8 @@ function clearTokens(): void {
  * the next "Sign in" would silently skip the passkey (Hydra still remembers
  * the subject). `id_token_hint` lets Hydra identify the session without a
  * confirmation UI; Hydra then redirects through ShellWatch's logout provider
- * (/api/hydra/logout) and on to the configured post_logout URL (/login).
+ * (/api/hydra/logout) and on to the configured post_logout URL (the SPA root,
+ * whose auth guard restarts the OAuth flow → Hydra's passkey login page).
  *
  * This ends only *this browser's* Hydra session (correct for logout); revoking
  * every device is a separate action (passkey revoke).
@@ -230,7 +231,7 @@ export async function logout(): Promise<void> {
     }
   }
   // Front-channel logout (top-level navigation, no CORS). Hydra clears its
-  // session cookie and redirects to post_logout (configured to /login).
+  // session cookie and redirects to post_logout (configured to the SPA root).
   const url = new URL(`${cfg.issuer}/oauth2/sessions/logout`);
   if (idToken) url.searchParams.set("id_token_hint", idToken);
   window.location.href = url.toString();

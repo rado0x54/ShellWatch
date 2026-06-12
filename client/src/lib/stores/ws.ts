@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
-import { getAccessToken } from "../oauth.js";
+import { beginLogin, getAccessToken } from "../oauth.js";
 import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
@@ -88,7 +88,7 @@ export async function connectWs(): Promise<void> {
   // the still-valid cached token, so those still retry.
   const token = await getAccessToken();
   if (!token) {
-    window.location.href = "/login";
+    await beginLogin(window.location.pathname + window.location.search);
     return;
   }
 
