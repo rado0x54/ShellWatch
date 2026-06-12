@@ -6,7 +6,7 @@
  * by a registerable token map; client CRUD is a real in-memory store so the
  * oauth-clients route round-trips.
  */
-import type { HydraAdminClient } from "../../hydra/admin-client.js";
+import { type HydraAdminClient, HydraApiError } from "../../hydra/admin-client.js";
 import type { HydraIntrospection, HydraOAuth2Client } from "../../hydra/types.js";
 
 export interface FakeHydraAdmin extends HydraAdminClient {
@@ -23,8 +23,13 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
   const clients = new Map<string, HydraOAuth2Client>();
   let counter = 0;
 
-  const notImpl = (name: string) => () =>
-    Promise.reject(new Error(`fake-hydra: ${name} not implemented`));
+  // Login/consent/logout challenge flows need a real Hydra redirect, so the
+  // in-memory harness never drives them with a valid challenge. Model the way
+  // real Hydra answers an unknown/expired challenge — a non-2xx admin response,
+  // i.e. a HydraApiError — so the provider routes' guarded-admin wrapper maps it
+  // to a clean 4xx instead of a 500. The 400-not-500 guard tests rely on this.
+  const rejectsUnknownChallenge = (name: string) => () =>
+    Promise.reject(new HydraApiError(404, "", `fake-hydra: ${name} — unknown challenge`));
 
   return {
     clients,
@@ -65,14 +70,14 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
     async revokeLoginSessions() {},
     async revokeConsentSessions() {},
 
-    // Login/consent provider challenge flows aren't exercised by the in-memory
-    // harness (they need a real Hydra redirect); stub them.
-    getLoginRequest: notImpl("getLoginRequest"),
-    acceptLoginRequest: notImpl("acceptLoginRequest"),
-    rejectLoginRequest: notImpl("rejectLoginRequest"),
-    getConsentRequest: notImpl("getConsentRequest"),
-    acceptConsentRequest: notImpl("acceptConsentRequest"),
-    rejectConsentRequest: notImpl("rejectConsentRequest"),
-    acceptLogoutRequest: notImpl("acceptLogoutRequest"),
+    // See rejectsUnknownChallenge above — these reject as Hydra would for a
+    // challenge it doesn't recognize.
+    getLoginRequest: rejectsUnknownChallenge("getLoginRequest"),
+    acceptLoginRequest: rejectsUnknownChallenge("acceptLoginRequest"),
+    rejectLoginRequest: rejectsUnknownChallenge("rejectLoginRequest"),
+    getConsentRequest: rejectsUnknownChallenge("getConsentRequest"),
+    acceptConsentRequest: rejectsUnknownChallenge("acceptConsentRequest"),
+    rejectConsentRequest: rejectsUnknownChallenge("rejectConsentRequest"),
+    acceptLogoutRequest: rejectsUnknownChallenge("acceptLogoutRequest"),
   };
 }

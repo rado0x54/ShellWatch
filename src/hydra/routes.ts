@@ -7,7 +7,7 @@
  * fake AS. The web UI runs its own authorization-code + PKCE flow in the
  * browser (no server-side callback); see the note at the bottom of this file.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest, RouteGenericInterface } from "fastify";
 import type { Config } from "../config/index.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
@@ -19,11 +19,78 @@ import {
   type BearerScope,
 } from "../server/auth/bearer-gate.js";
 import { generatePasskeyAssertionOptions, verifyPasskeyAssertion } from "../webauthn/assertion.js";
-import type { HydraAdminClient } from "./admin-client.js";
+import { type HydraAdminClient, HydraApiError } from "./admin-client.js";
 import { renderErrorPage, renderPasskeyPage } from "./render.js";
 
 /** Hydra "remember" durations (seconds). */
 const REMEMBER_FOR = 60 * 60 * 24 * 30;
+
+/**
+ * Raised inside a provider flow when a Hydra admin call fails on bad input — a
+ * bogus, expired, replayed, or forged challenge. The route wrappers below turn
+ * it into a clean 4xx instead of letting it bubble up as an unhandled 500.
+ * Genuinely unexpected failures (network down, our bug) are NOT wrapped, so
+ * those still surface as 500s and get logged.
+ */
+class FlowError extends Error {
+  constructor(public reason: string) {
+    super(reason);
+    this.name = "FlowError";
+  }
+}
+
+/**
+ * Run a Hydra admin call inside a provider flow. A `HydraApiError` (Hydra
+ * rejected the challenge) becomes a `FlowError(reason)` the wrapper renders as
+ * 400; anything else propagates untouched. This is the single chokepoint that
+ * stops a junk/expired challenge from 500-ing the unauthenticated provider
+ * routes (and amplifying unthrottled admin round-trips).
+ */
+async function hydra<T>(p: Promise<T>, reason: string): Promise<T> {
+  try {
+    return await p;
+  } catch (err) {
+    if (err instanceof HydraApiError) throw new FlowError(reason);
+    throw err;
+  }
+}
+
+/**
+ * Wrap an HTML provider-page handler: a `FlowError` renders the styled error
+ * page with a 400 instead of surfacing a 500. The route generic is threaded
+ * through so `request.query`/`request.params` stay typed.
+ */
+function htmlFlow<R extends RouteGenericInterface>(
+  handler: (request: FastifyRequest<R>, reply: FastifyReply) => Promise<unknown>,
+) {
+  return async (request: FastifyRequest<R>, reply: FastifyReply): Promise<unknown> => {
+    try {
+      return await handler(request, reply);
+    } catch (err) {
+      if (err instanceof FlowError) {
+        return reply.status(400).type("text/html; charset=utf-8").send(renderErrorPage(err.reason));
+      }
+      throw err;
+    }
+  };
+}
+
+/** Wrap a JSON provider endpoint: a `FlowError` becomes `{ error }` with 400. */
+function jsonFlow<R extends RouteGenericInterface>(
+  handler: (request: FastifyRequest<R>, reply: FastifyReply) => Promise<unknown>,
+) {
+  return async (request: FastifyRequest<R>, reply: FastifyReply): Promise<unknown> => {
+    try {
+      return await handler(request, reply);
+    } catch (err) {
+      if (err instanceof FlowError) {
+        reply.status(400);
+        return { error: err.reason };
+      }
+      throw err;
+    }
+  };
+}
 
 export interface RegisterHydraRoutesParams {
   app: FastifyInstance;
@@ -178,20 +245,18 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
 
   // --- Login + consent providers (passkey-gated) — require the WebAuthn DB ---
   if (db) {
-    app.get<{ Querystring: { login_challenge?: string } }>(
+    app.get(
       "/api/hydra/login",
-      async (request, reply) => {
+      { config: optionsLimit },
+      htmlFlow<{ Querystring: { login_challenge?: string } }>(async (request, reply) => {
         const challenge = request.query.login_challenge;
-        if (!challenge)
-          return reply
-            .status(400)
-            .type("text/html")
-            .send(renderErrorPage("missing_login_challenge"));
-        const loginReq = await admin.getLoginRequest(challenge);
+        if (!challenge) throw new FlowError("missing_login_challenge");
+        const loginReq = await hydra(admin.getLoginRequest(challenge), "invalid_login_challenge");
         if (loginReq.skip) {
-          const { redirect_to } = await admin.acceptLoginRequest(challenge, {
-            subject: loginReq.subject,
-          });
+          const { redirect_to } = await hydra(
+            admin.acceptLoginRequest(challenge, { subject: loginReq.subject }),
+            "login_flow_expired",
+          );
           return reply.redirect(redirect_to);
         }
         return reply.type("text/html; charset=utf-8").send(
@@ -203,7 +268,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
             extra: { login_challenge: challenge },
           }),
         );
-      },
+      }),
     );
 
     app.post("/api/hydra/login/options", { config: optionsLimit }, async () => {
@@ -212,56 +277,66 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
       return { ...result.options, challengeId: result.challengeId };
     });
 
-    app.post<{ Body: { login_challenge: string; challengeId: string; credential: unknown } }>(
+    app.post(
       "/api/hydra/login/verify",
       { config: verifyLimit },
-      async (request, reply) => {
-        const { login_challenge: challenge, challengeId, credential } = request.body;
-        if (!challenge) {
-          reply.status(400);
-          return { error: "missing login_challenge" };
-        }
-        const verified = await verifyPasskeyAssertion({
-          db,
-          accountRepo,
-          rpId,
-          trustedOrigins,
-          challengeId,
-          credential,
-        });
-        if (!verified.ok) {
-          reply.status(verified.status);
-          return { error: verified.error };
-        }
-        const { redirect_to } = await admin.acceptLoginRequest(challenge, {
-          subject: verified.accountId,
-          remember: true,
-          remember_for: REMEMBER_FOR,
-        });
-        return { redirectTo: redirect_to };
-      },
+      jsonFlow<{ Body: { login_challenge?: string; challengeId?: string; credential?: unknown } }>(
+        async (request, reply) => {
+          // Read defensively — a bodyless POST leaves request.body undefined, so
+          // destructuring first would TypeError → unauthenticated 500.
+          const challenge = request.body?.login_challenge;
+          if (typeof challenge !== "string" || !challenge) {
+            throw new FlowError("missing login_challenge");
+          }
+          const verified = await verifyPasskeyAssertion({
+            db,
+            accountRepo,
+            rpId,
+            trustedOrigins,
+            challengeId: request.body?.challengeId ?? "",
+            credential: request.body?.credential,
+          });
+          if (!verified.ok) {
+            reply.status(verified.status);
+            return { error: verified.error };
+          }
+          // Stale challenge after a successful ceremony would otherwise 500 with
+          // the assertion already burned — surface a clean "restart" instead.
+          const { redirect_to } = await hydra(
+            admin.acceptLoginRequest(challenge, {
+              subject: verified.accountId,
+              remember: true,
+              remember_for: REMEMBER_FOR,
+            }),
+            "login_flow_expired",
+          );
+          return { redirectTo: redirect_to };
+        },
+      ),
     );
 
     // --- Consent provider (passkey step-up; the first-party SPA auto-accepts) ---
-    app.get<{ Querystring: { consent_challenge?: string } }>(
+    app.get(
       "/api/hydra/consent",
-      async (request, reply) => {
+      { config: optionsLimit },
+      htmlFlow<{ Querystring: { consent_challenge?: string } }>(async (request, reply) => {
         const challenge = request.query.consent_challenge;
-        if (!challenge) {
-          return reply
-            .status(400)
-            .type("text/html")
-            .send(renderErrorPage("missing_consent_challenge"));
-        }
-        const consentReq = await admin.getConsentRequest(challenge);
+        if (!challenge) throw new FlowError("missing_consent_challenge");
+        const consentReq = await hydra(
+          admin.getConsentRequest(challenge),
+          "invalid_consent_challenge",
+        );
         const isFirstParty = consentReq.client.client_id === spaClient.clientId;
         if (isFirstParty || consentReq.skip) {
-          const { redirect_to } = await admin.acceptConsentRequest(challenge, {
-            grant_scope: consentReq.requested_scope,
-            grant_access_token_audience: consentReq.requested_access_token_audience,
-            remember: true,
-            remember_for: REMEMBER_FOR,
-          });
+          const { redirect_to } = await hydra(
+            admin.acceptConsentRequest(challenge, {
+              grant_scope: consentReq.requested_scope,
+              grant_access_token_audience: consentReq.requested_access_token_audience,
+              remember: true,
+              remember_for: REMEMBER_FOR,
+            }),
+            "consent_flow_expired",
+          );
           return reply.redirect(redirect_to);
         }
         const clientName = consentReq.client.client_name || consentReq.client.client_id;
@@ -277,27 +352,21 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
             buttonLabel: "Approve with passkey",
           }),
         );
-      },
+      }),
     );
 
-    app.post<{ Body: { consent_challenge: string } }>(
+    app.post(
       "/api/hydra/consent/options",
       { config: optionsLimit },
-      async (request, reply) => {
+      jsonFlow<{ Body: { consent_challenge?: string } }>(async (request) => {
         const challenge = request.body?.consent_challenge;
         if (typeof challenge !== "string" || !challenge) {
-          reply.status(400);
-          return { error: "missing consent_challenge" };
+          throw new FlowError("missing consent_challenge");
         }
-        // A bogus/expired challenge makes Hydra's admin API throw — return a
-        // clean 400 instead of an unhandled 500 on this unauthenticated route.
-        let consentReq: Awaited<ReturnType<typeof admin.getConsentRequest>>;
-        try {
-          consentReq = await admin.getConsentRequest(challenge);
-        } catch {
-          reply.status(400);
-          return { error: "invalid consent_challenge" };
-        }
+        const consentReq = await hydra(
+          admin.getConsentRequest(challenge),
+          "invalid consent_challenge",
+        );
         const result = await generatePasskeyAssertionOptions({
           db,
           rpId,
@@ -305,32 +374,31 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         });
         if (!result) return { error: "no_passkeys" };
         return { ...result.options, challengeId: result.challengeId };
-      },
+      }),
     );
 
-    app.post<{ Body: { consent_challenge: string; challengeId: string; credential: unknown } }>(
+    app.post(
       "/api/hydra/consent/verify",
       { config: verifyLimit },
-      async (request, reply) => {
-        const { consent_challenge: challenge, challengeId, credential } = request.body;
+      jsonFlow<{
+        Body: { consent_challenge?: string; challengeId?: string; credential?: unknown };
+      }>(async (request, reply) => {
+        // Read defensively — see login/verify.
+        const challenge = request.body?.consent_challenge;
         if (typeof challenge !== "string" || !challenge) {
-          reply.status(400);
-          return { error: "missing consent_challenge" };
+          throw new FlowError("missing consent_challenge");
         }
-        let consentReq: Awaited<ReturnType<typeof admin.getConsentRequest>>;
-        try {
-          consentReq = await admin.getConsentRequest(challenge);
-        } catch {
-          reply.status(400);
-          return { error: "invalid consent_challenge" };
-        }
+        const consentReq = await hydra(
+          admin.getConsentRequest(challenge),
+          "invalid consent_challenge",
+        );
         const verified = await verifyPasskeyAssertion({
           db,
           accountRepo,
           rpId,
           trustedOrigins,
-          challengeId,
-          credential,
+          challengeId: request.body?.challengeId ?? "",
+          credential: request.body?.credential,
           // Consent must be approved by the very subject Hydra is asking about.
           expectedAccountId: consentReq.subject,
         });
@@ -338,25 +406,39 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
           reply.status(verified.status);
           return { error: verified.error };
         }
-        const { redirect_to } = await admin.acceptConsentRequest(challenge, {
-          grant_scope: consentReq.requested_scope,
-          grant_access_token_audience: consentReq.requested_access_token_audience,
-          remember: true,
-          remember_for: REMEMBER_FOR,
-        });
+        const { redirect_to } = await hydra(
+          admin.acceptConsentRequest(challenge, {
+            grant_scope: consentReq.requested_scope,
+            grant_access_token_audience: consentReq.requested_access_token_audience,
+            remember: true,
+            remember_for: REMEMBER_FOR,
+          }),
+          "consent_flow_expired",
+        );
         return { redirectTo: redirect_to };
-      },
+      }),
     );
   } // end if (db) — login + consent providers
 
   // --- Hydra logout + error landing pages ---
   app.get<{ Querystring: { logout_challenge?: string } }>(
     "/api/hydra/logout",
+    { config: optionsLimit },
     async (request, reply) => {
       const challenge = request.query.logout_challenge;
       if (!challenge) return reply.redirect("/login");
-      const { redirect_to } = await admin.acceptLogoutRequest(challenge);
-      return reply.redirect(redirect_to);
+      // A stale/replayed logout_challenge (e.g. back button) shouldn't 500 —
+      // logout is forgiving, so fall back to /login on any Hydra rejection.
+      try {
+        const { redirect_to } = await hydra(
+          admin.acceptLogoutRequest(challenge),
+          "logout_flow_expired",
+        );
+        return reply.redirect(redirect_to);
+      } catch (err) {
+        if (err instanceof FlowError) return reply.redirect("/login");
+        throw err;
+      }
     },
   );
 

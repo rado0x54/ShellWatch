@@ -37,7 +37,7 @@ services:
 
   # One-shot: create/upgrade Hydra's schema in Postgres, then exit.
   hydra-migrate:
-    image: oryd/hydra:v2.2.0
+    image: oryd/hydra:v26.2.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
     restart: on-failure
 
   hydra:
-    image: oryd/hydra:v2.2.0
+    image: oryd/hydra:v26.2.0
     depends_on:
       postgres:
         condition: service_healthy

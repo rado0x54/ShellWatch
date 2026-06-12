@@ -503,4 +503,44 @@ describe("passkey invite — HTTP integration", () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  // ---- Provider GET pages + verify routes: 400 (HTML/JSON), never 500 (F3/F4) ----
+
+  it("GET /api/hydra/login returns 400 for a missing login_challenge", async () => {
+    const res = await testApp.app.inject({ method: "GET", url: "/api/hydra/login" });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("GET /api/hydra/login returns 400 (not 500) for a bogus login_challenge", async () => {
+    // getLoginRequest rejects (HydraApiError) → htmlFlow renders the error page
+    // with 400 instead of letting it bubble to a 500 (and amplify admin calls).
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/login?login_challenge=does-not-exist",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("GET /api/hydra/consent returns 400 (not 500) for a bogus consent_challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=does-not-exist",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("POST /api/hydra/login/verify returns 400 (not 500) for a bodyless request", async () => {
+    // No content-type / no body → request.body is undefined. Defensive reads
+    // must yield a 400, not a TypeError-500 from destructuring first.
+    const res = await testApp.app.inject({ method: "POST", url: "/api/hydra/login/verify" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("POST /api/hydra/consent/verify returns 400 (not 500) for a bodyless request", async () => {
+    const res = await testApp.app.inject({ method: "POST", url: "/api/hydra/consent/verify" });
+    expect(res.statusCode).toBe(400);
+  });
 });
