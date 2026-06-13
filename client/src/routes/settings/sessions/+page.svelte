@@ -23,7 +23,7 @@
     try {
       await fetchAuthSessions();
     } catch (err) {
-      toastError(errorMessage(err, "Failed to load sessions"));
+      toastError(errorMessage(err));
     } finally {
       loading = false;
     }
@@ -48,7 +48,7 @@
     } catch (err) {
       // A cancelled passkey prompt throws NotAllowedError — treat as a no-op.
       if ((err as Error)?.name !== "NotAllowedError") {
-        toastError(errorMessage(err, "Failed to invalidate sessions"));
+        toastError(errorMessage(err));
       }
     } finally {
       processing = false;
@@ -61,7 +61,7 @@
       await revokeAllAuthSessions(); // redirects via logout() on success
     } catch (err) {
       if ((err as Error)?.name !== "NotAllowedError") {
-        toastError(errorMessage(err, "Failed to invalidate all sessions"));
+        toastError(errorMessage(err));
       }
       processing = false;
       showRevokeAll = false;
