@@ -6,9 +6,10 @@ ShellWatch requires:
 
 - A `config.yaml` file (copy `config.sample.yaml` and edit to match your environment)
 - An SSH key directory with private keys for your endpoints
-- A persistent directory for the SQLite database
-- **Ory Hydra + Postgres** (the OAuth2/OIDC authority — see below). This is a
-  hard runtime dependency as of #217.
+- A persistent directory for the SQLite database (also holds Hydra's SQLite DB)
+- **Ory Hydra** (the OAuth2/OIDC authority — see below). This is a hard runtime
+  dependency as of #217. It defaults to a file SQLite store alongside
+  ShellWatch's own DB, so there's no separate database server to run.
 
 ## Ory Hydra (OAuth authority)
 
@@ -34,7 +35,7 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
                                                                           │
    /api, /ws, /mcp, /agent-proxy ── Bearer ── introspect(:4445) ─────────┘
                                        sub = accountId, scope = ui|mcp|agent
-                                  [Postgres]
+                                  [SQLite ./data/hydra.sqlite]
 ```
 
 - **`:4444` (public)** — discovery, `/oauth2/auth`, `/oauth2/token`,
@@ -45,16 +46,22 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
   **Never expose this to the internet.** ShellWatch reaches it over the trusted
   internal network only.
 
-### Local dev (Hydra + Postgres in compose, app via `pnpm dev`)
+### Local dev (Hydra in compose, app via `pnpm dev`)
 
 ```bash
 cp deploy/hydra/.env.sample .env.hydra      # dev-only secrets
+pnpm hydra:migrate                          # create Hydra's schema (./data/hydra.sqlite)
 docker compose --env-file .env.hydra -f docker-compose.hydra.yml up -d
 # Then run ShellWatch on the host:
 pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
 ```
 
-The compose stack runs `postgres`, a one-shot `hydra-migrate`, and `hydra`. The
+The compose stack is just `hydra`, backed by a file SQLite DB at
+`./data/hydra.sqlite` (the same folder as ShellWatch's own DB). **Migrations are
+not run automatically** — they can be destructive, so `pnpm hydra:migrate` is an
+explicit, backed-up step: it copies `./data/hydra.sqlite` to a timestamped
+`.bak-…` first, then applies the schema. Run it before the first `up`, and again
+after bumping the Hydra image. The
 passkey **login + consent providers** are server-rendered by ShellWatch at
 `http://localhost:3000/api/hydra/*`; the web UI's OAuth flow (and its
 `/auth/callback`) run in the browser. Point your browser at

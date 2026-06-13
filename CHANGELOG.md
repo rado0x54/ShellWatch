@@ -3,7 +3,8 @@
 ### ⚠️ Breaking: Ory Hydra is now the OAuth2/OIDC authority (#217)
 
 ShellWatch no longer ships its own OAuth shim or API keys. **Ory Hydra (backed by
-Postgres) is now a hard runtime dependency** and the single OAuth2/OIDC authority
+a file SQLite store, in the same folder as ShellWatch's own DB) is now a hard
+runtime dependency** and the single OAuth2/OIDC authority
 for all delegated access. Every client — the web UI, MCP clients, and the Go
 agent-client — uses the **same flow**: mediated Dynamic Client Registration +
 `authorization_code` + PKCE, with the user logging in via a passkey and
@@ -29,7 +30,8 @@ consent provider; authentication stays passkey-only. SSH signing /
 
 **Upgrade steps:**
 
-1. Stand up Hydra + Postgres (a sibling stack):
+1. Stand up Hydra (a sibling stack, file SQLite — no separate DB server):
+   `pnpm hydra:migrate` (creates the schema), then
    `docker compose --env-file .env.hydra -f docker-compose.hydra.yml up -d`.
 2. Add the `hydra:` section to `config.yaml` (see `config.sample.yaml`): public
    issuer URL, admin URL, and the SPA `clientId`.

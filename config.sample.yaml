@@ -128,7 +128,8 @@ security:
 # Ory Hydra — the OAuth2/OIDC authority (REQUIRED, #217). ShellWatch is Hydra's
 # passkey-gated login + consent provider. Every client (web UI, MCP, agent)
 # uses DCR + authorization_code + PKCE; the token carries the account.
-# Hydra needs Postgres; for local dev bring both up with:
+# Hydra uses a file SQLite store (no separate DB server). For local dev:
+#   pnpm hydra:migrate    # create the schema, then:
 #   docker compose --env-file .env.hydra -f docker-compose.hydra.yml up -d
 hydra:
   # Public issuer URL — must equal Hydra's urls.self.issuer. The browser SPA,
