@@ -253,6 +253,7 @@ export async function buildApp(params: BuildAppParams) {
       app,
       db,
       accountRepo,
+      admin: hydraAdmin,
       rpId: config.security.rpId,
       trustedOrigins: config.security.trustedWebauthnOrigins,
       selfRegistrationEnabled: config.security.selfRegistrationEnabled,

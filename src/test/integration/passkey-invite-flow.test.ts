@@ -84,6 +84,7 @@ async function makeTestApp(): Promise<TestApp> {
     app,
     db: conn.db,
     accountRepo,
+    admin,
     rpId: "localhost",
     trustedOrigins: ["http://localhost"],
     selfRegistrationEnabled: false,
@@ -616,5 +617,49 @@ describe("passkey invite — HTTP integration", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  // ---- Passkey revoke can optionally invalidate all sessions (#219) ----
+
+  it("revoke with invalidateSessions terminates all of the account's Hydra sessions", async () => {
+    insertCredential(testApp.conn, { label: "keep" }); // not the last active passkey
+    const target = insertCredential(testApp.conn, { label: "compromised" });
+
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: `/api/webauthn/credentials/${target.id}/revoke`,
+      headers: {
+        authorization: testApp.auth,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.revokePasskey),
+      },
+      payload: { invalidateSessions: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessionsInvalidated: boolean }).sessionsInvalidated).toBe(true);
+    // Account-wide: all consent grants (no clientId) + login sessions revoked.
+    expect(testApp.hydraAdmin.revokedConsent).toContainEqual({
+      subject: ACCOUNT_ID,
+      clientId: undefined,
+    });
+    expect(testApp.hydraAdmin.revokedLogin).toContain(ACCOUNT_ID);
+  });
+
+  it("revoke without the flag leaves Hydra sessions intact", async () => {
+    insertCredential(testApp.conn, { label: "keep2" });
+    const target = insertCredential(testApp.conn, { label: "old" });
+
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: `/api/webauthn/credentials/${target.id}/revoke`,
+      headers: {
+        authorization: testApp.auth,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.revokePasskey),
+      },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessionsInvalidated: boolean }).sessionsInvalidated).toBe(false);
+    expect(testApp.hydraAdmin.revokedLogin).toHaveLength(0);
+    expect(testApp.hydraAdmin.revokedConsent).toHaveLength(0);
   });
 });

@@ -86,6 +86,7 @@ async function makeTestApp(): Promise<TestApp> {
     app,
     db: conn.db,
     accountRepo,
+    admin,
     rpId: "localhost",
     trustedOrigins: ["http://localhost"],
     selfRegistrationEnabled: false,

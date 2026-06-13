@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { apiFetch } from "$lib/api.js";
+  import { logout } from "$lib/oauth.js";
   import { account } from "$lib/stores/account.js";
   import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
@@ -25,6 +26,8 @@
   let inviting = $state(false);
   let showAddModal = $state(false);
   let revokeTarget = $state<{ id: string; label: string } | null>(null);
+  // Opt-in on the revoke dialog: also invalidate every active session (#219).
+  let invalidateSessions = $state(false);
   // Single source of truth for the active invite slot for this account. Used
   // both for the on-page indicator (with live countdown) and as the prefilled
   // value when the user opens the Add-Passkey modal.
@@ -198,6 +201,7 @@
         return;
       }
     }
+    invalidateSessions = false;
     revokeTarget = { id, label: target.label };
   }
 
@@ -225,12 +229,20 @@
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
       const res = await apiFetch(`${base}/api/webauthn/credentials/${id}/revoke`, {
         method: "POST",
-        headers: { "X-Shellwatch-Stepup-Token": stepUpToken },
+        headers: { "X-Shellwatch-Stepup-Token": stepUpToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ invalidateSessions }),
       });
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to revoke");
         return false;
+      }
+      const data = (await res.json().catch(() => ({}))) as { sessionsInvalidated?: boolean };
+      // If we just invalidated all sessions, this browser's tokens are dead too
+      // — sign out and return to login rather than leaving a stale session.
+      if (invalidateSessions && data.sessionsInvalidated) {
+        await logout();
+        return true;
       }
       await fetchCredentials();
       return true;
@@ -492,6 +504,13 @@
         Revoke <strong>{revokeTarget.label}</strong>? This is permanent and cannot be undone. You'll
         be asked to verify with another passkey first.
       </p>
+      <label class="invalidate-option">
+        <input type="checkbox" bind:checked={invalidateSessions} disabled={revoking} />
+        <span>
+          Also invalidate all active sessions — every device and client (including this one) must
+          log in again. Recommended if this passkey was lost or compromised.
+        </span>
+      </label>
     </ConfirmDialog>
   {/if}
 </section>
@@ -518,6 +537,21 @@
 
   .row-label.revoked {
     opacity: 0.5;
+  }
+
+  .invalidate-option {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    margin-top: var(--space-4);
+    font-size: var(--body-md);
+    color: var(--on-surface-variant);
+    cursor: pointer;
+  }
+
+  .invalidate-option input {
+    margin-top: 0.2rem;
+    flex-shrink: 0;
   }
 
   .meta-mono {

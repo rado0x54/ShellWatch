@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { AccountRepository } from "../db/repositories/account-repo.js";
 import type { ShellWatchDB } from "../db/connection.js";
 import type { Config } from "../config/index.js";
+import type { HydraAdminClient } from "../hydra/admin-client.js";
 import { registerCredentialRoutes } from "./credentials.js";
 import { registerPasskeyInviteRoutes } from "./invite.js";
 import { registerRegistrationRoutes } from "./registration.js";
@@ -15,6 +16,7 @@ export interface WebAuthnRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
   accountRepo: AccountRepository;
+  admin: HydraAdminClient;
   rpId: string;
   trustedOrigins: string[];
 
@@ -23,8 +25,16 @@ export interface WebAuthnRoutesParams {
 }
 
 export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
-  const { app, db, accountRepo, rpId, trustedOrigins, selfRegistrationEnabled, rateLimitConfig } =
-    params;
+  const {
+    app,
+    db,
+    accountRepo,
+    admin,
+    rpId,
+    trustedOrigins,
+    selfRegistrationEnabled,
+    rateLimitConfig,
+  } = params;
 
   registerRegistrationRoutes({
     app,
@@ -40,7 +50,7 @@ export function registerWebAuthnRoutes(params: WebAuthnRoutesParams) {
     trustedOrigins,
     rateLimitConfig,
   });
-  registerCredentialRoutes({ app, db });
+  registerCredentialRoutes({ app, db, admin });
   registerPasskeyInviteRoutes({
     app,
     db,
