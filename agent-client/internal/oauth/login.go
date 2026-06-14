@@ -212,7 +212,8 @@ func callbackHandler(state string, resultCh chan<- callbackResult) http.Handler 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("state") != state {
-			writeCallbackPage(w, false, "State mismatch — possible CSRF, ignoring this callback.")
+			writeCallbackPage(w, false, "State mismatch — possible CSRF. Sign-in aborted.")
+			resultCh <- callbackResult{err: errors.New("state mismatch on authorize callback (possible CSRF)")}
 			return
 		}
 		if errCode := q.Get("error"); errCode != "" {

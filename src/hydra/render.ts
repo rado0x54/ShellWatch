@@ -17,6 +17,18 @@ function esc(s: string): string {
 }
 
 /**
+ * JSON for embedding inside an inline `<script>`: escape `<` to `<` so a
+ * value can never smuggle a closing `</script>` (or `<!--`) and break out of
+ * the block. Parses back to the original string at JS load time. Today the
+ * embedded values are server-controlled (challenge ids, URLs), so this is
+ * defence-in-depth — but it's the correct thing if a user-controlled value ever
+ * flows in.
+ */
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+/**
  * Styles mirror the SvelteKit /login page (client/src/routes/login/+page.svelte
  * + Wordmark.svelte) so the passkey login/consent providers are visually
  * indistinguishable from the SPA. The design tokens and @font-face rules are
@@ -93,9 +105,9 @@ function ceremonyScript(
   extra: Record<string, string>,
 ): string {
   return `
-const OPTIONS_URL=${JSON.stringify(optionsUrl)};
-const VERIFY_URL=${JSON.stringify(verifyUrl)};
-const EXTRA=${JSON.stringify(extra)};
+const OPTIONS_URL=${jsonForScript(optionsUrl)};
+const VERIFY_URL=${jsonForScript(verifyUrl)};
+const EXTRA=${jsonForScript(extra)};
 const statusEl=document.getElementById('status');
 const btn=document.getElementById('go');
 function setStatus(m){statusEl.className='status';statusEl.textContent=m;}
@@ -131,8 +143,8 @@ btn.addEventListener('click',run);
  */
 function approveScript(approveUrl: string, extra: Record<string, string>): string {
   return `
-const APPROVE_URL=${JSON.stringify(approveUrl)};
-const EXTRA=${JSON.stringify(extra)};
+const APPROVE_URL=${jsonForScript(approveUrl)};
+const EXTRA=${jsonForScript(extra)};
 const statusEl=document.getElementById('status');
 const btn=document.getElementById('go');
 function setStatus(m){statusEl.className='status';statusEl.textContent=m;}

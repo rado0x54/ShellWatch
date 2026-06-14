@@ -175,6 +175,11 @@ export async function buildApp(params: BuildAppParams) {
     // Revoke the subject's Hydra login + consent sessions so any live grant
     // (web UI, MCP, agent) for this account dies too (#217). Tokens are keyed
     // to sub = accountId, so revoking the subject's sessions covers them all.
+    // Note: an already-issued access token can still resolve for up to the
+    // introspection cache TTL (default 60s) — same window as any revocation.
+    // Harmless here: a deleted account owns no endpoints/sessions, so any call
+    // it makes in that window resolves to empty. If that window ever matters,
+    // clear the bearer-resolver cache on this event.
     void Promise.allSettled([
       hydraAdmin.revokeLoginSessions(accountId),
       hydraAdmin.revokeConsentSessions(accountId),
