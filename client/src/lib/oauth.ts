@@ -159,8 +159,13 @@ async function refresh(): Promise<string | null> {
         }).toString(),
       });
       if (!res.ok) {
-        // Refresh token revoked/expired — session is dead.
-        clearTokens();
+        // 4xx → the grant itself is dead (refresh token revoked/expired/
+        // invalid): clear local state so the next call re-logs-in. 5xx is
+        // transient (Hydra restart, proxy blip) — keep the refresh token and
+        // just return null so callers can retry rather than logging everyone
+        // out on a hiccup. (A thrown fetch — offline — is caught below, also
+        // transient, also keeps the token.)
+        if (res.status >= 400 && res.status < 500) clearTokens();
         return null;
       }
       storeTokens(await res.json());
@@ -192,6 +197,15 @@ export async function getAccessToken(opts?: { force?: boolean }): Promise<string
 /** True if we have (or can mint) a valid access token. */
 export async function isAuthenticated(): Promise<boolean> {
   return (await getAccessToken()) !== null;
+}
+
+/**
+ * True if a refresh token is still stored. Lets callers distinguish a transient
+ * refresh failure (token returned null but we still hold an RT → retry) from a
+ * truly-dead session (no RT → send to login). Cheap: just a localStorage read.
+ */
+export function hasRefreshToken(): boolean {
+  return getRefreshToken() !== null;
 }
 
 function clearTokens(): void {

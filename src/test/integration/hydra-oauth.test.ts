@@ -251,5 +251,15 @@ describe("Hydra OAuth surfaces", () => {
       });
       expect(res.status).toBe(200);
     });
+
+    it("does not accept a subprotocol-smuggled token outside /ws (F10)", async () => {
+      // The Sec-WebSocket-Protocol token fallback is scoped to /ws only. On
+      // /api/* the Authorization header is required — a valid ui token offered
+      // via the subprotocol must NOT authenticate.
+      const res = await fetch(`${appServer.url}/api/keys`, {
+        headers: { "sec-websocket-protocol": `shellwatch.bearer, ${appServer.uiToken}` },
+      });
+      expect(res.status).toBe(401);
+    });
   });
 });

@@ -149,14 +149,16 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
     if (!scope) return; // SPA HTML routes / static — pass through.
 
     // Authorization: Bearer for normal requests + non-browser WS clients
-    // (Go agent, MCP). Browsers can't set headers on a WS handshake, so the
-    // SPA carries the token in `Sec-WebSocket-Protocol: shellwatch.bearer, <token>`
-    // (a request header — unlike a query param, it's not in default access logs).
+    // (Go agent, MCP). The `Sec-WebSocket-Protocol` fallback exists ONLY because
+    // browsers can't set an Authorization header on a WS handshake — so it's
+    // scoped to `/ws`, the one path browser WebSockets hit. Everywhere else
+    // (`/api/*`, `/mcp`, `/agent-proxy`) requires the Authorization header, so a
+    // subprotocol-smuggled token isn't an accepted second credential channel.
     let token: string | undefined;
     const auth = request.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
       token = auth.slice(7);
-    } else {
+    } else if (path === "/ws") {
       const proto = request.headers["sec-websocket-protocol"];
       if (typeof proto === "string") {
         const parts = proto.split(",").map((s) => s.trim());

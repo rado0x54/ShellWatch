@@ -2,11 +2,15 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// connectWs() needs a token (else it starts the OAuth flow); stub the OAuth layer.
-vi.mock("../oauth.js", () => ({
-  getAccessToken: vi.fn(async () => "ui-test-token"),
-  beginLogin: vi.fn(),
+// connectWs() needs a token (else it retries / starts the OAuth flow); stub the
+// OAuth layer. Hoisted so individual tests can drive the token / refresh-token
+// state for the reconnect-resilience cases.
+const oauth = vi.hoisted(() => ({
+  getAccessToken: vi.fn(async (): Promise<string | null> => "ui-test-token"),
+  hasRefreshToken: vi.fn(() => true),
+  beginLogin: vi.fn(async () => {}),
 }));
+vi.mock("../oauth.js", () => oauth);
 
 import {
   connectWs,
@@ -56,7 +60,16 @@ describe("ws store", () => {
     // @ts-expect-error — mock
     globalThis.WebSocket = MockWebSocket;
     // Mock location for connectWs
-    vi.stubGlobal("location", { protocol: "http:", host: "localhost:3000" });
+    vi.stubGlobal("location", {
+      protocol: "http:",
+      host: "localhost:3000",
+      pathname: "/",
+      search: "",
+    });
+    // Default OAuth state: a usable token, a refresh token present.
+    oauth.getAccessToken.mockReset().mockResolvedValue("ui-test-token");
+    oauth.hasRefreshToken.mockReset().mockReturnValue(true);
+    oauth.beginLogin.mockReset();
   });
 
   afterEach(() => {
@@ -213,5 +226,46 @@ describe("ws store", () => {
     expect(get(sessions)).toEqual([]);
 
     consoleError.mockRestore();
+  });
+
+  // --- reconnect resilience (F6/F7) ---
+
+  it("retries instead of bouncing to login when the token is gone but a refresh token remains", async () => {
+    vi.useFakeTimers();
+    oauth.getAccessToken.mockResolvedValue(null);
+    oauth.hasRefreshToken.mockReturnValue(true); // transient — Hydra 5xx / offline
+
+    await connectWs();
+
+    expect(MockWebSocket.instances).toHaveLength(0); // no socket opened
+    expect(oauth.beginLogin).not.toHaveBeenCalled(); // NOT bounced to login
+
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("sends the user to login when the session is truly gone (no refresh token)", async () => {
+    oauth.getAccessToken.mockResolvedValue(null);
+    oauth.hasRefreshToken.mockReturnValue(false);
+
+    await connectWs();
+
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(oauth.beginLogin).toHaveBeenCalledOnce();
+  });
+
+  it("reconnect after a drop forces a token refresh", async () => {
+    vi.useFakeTimers();
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+
+    oauth.getAccessToken.mockClear();
+    ws.onclose?.(); // simulate a drop
+    await vi.advanceTimersByTimeAsync(2000); // let the scheduled reconnect fire
+
+    expect(oauth.getAccessToken).toHaveBeenCalledWith({ force: true });
+
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 });

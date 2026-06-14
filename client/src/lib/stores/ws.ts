@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
-import { beginLogin, getAccessToken } from "../oauth.js";
+import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
 import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
 const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
+
+/** Delay before a reconnect attempt after a drop. */
+const RECONNECT_DELAY_MS = 2000;
 
 export type SessionMode = "control" | "observer";
 
@@ -81,14 +84,27 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
   };
 }
 
-export async function connectWs(): Promise<void> {
-  // Re-checked on every (re)connect: if the session is truly gone (refresh
-  // failed → no token), stop reconnecting and send the user to sign in rather
-  // than hammering 401 handshakes forever (#217). Transient network blips keep
-  // the still-valid cached token, so those still retry.
-  const token = await getAccessToken();
+function scheduleReconnect(): void {
+  // Reconnect with a FORCED refresh so a server-revoked (but client-cache-valid)
+  // token is re-minted or fails fast — rather than looping with the same dead
+  // token until it expires (#217). A live revoke-all therefore drops the socket
+  // promptly: the forced refresh 4xx-clears the grant and we fall through to
+  // login below.
+  setTimeout(() => void connectWs({ force: true }), RECONNECT_DELAY_MS);
+}
+
+export async function connectWs(opts?: { force?: boolean }): Promise<void> {
+  const token = await getAccessToken({ force: opts?.force });
   if (!token) {
-    await beginLogin(window.location.pathname + window.location.search);
+    // No usable token. If we still hold a refresh token, this was a TRANSIENT
+    // failure (Hydra 5xx / offline) — keep retrying rather than bouncing the
+    // user out and losing terminal state. Only a truly-dead session (no refresh
+    // token left — e.g. revoked) goes to sign-in.
+    if (hasRefreshToken()) {
+      scheduleReconnect();
+      return;
+    }
+    await beginLogin(location.pathname + location.search);
     return;
   }
 
@@ -145,9 +161,7 @@ export async function connectWs(): Promise<void> {
   };
 
   ws.onclose = () => {
-    setTimeout(() => {
-      void connectWs();
-    }, 2000);
+    scheduleReconnect();
   };
 }
 
