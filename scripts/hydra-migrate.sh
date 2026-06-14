@@ -11,11 +11,12 @@
 set -eu
 
 DB="./data/hydra.sqlite"
-COMPOSE="docker compose -f docker-compose.hydra.yml"
+# `--profile hydra` so the profiled hydra service is in scope for `run`.
+COMPOSE="docker compose --profile hydra"
 
 # Honor a local env file if the operator created one (same as `up`).
 if [ -f .env.hydra ]; then
-  COMPOSE="docker compose --env-file .env.hydra -f docker-compose.hydra.yml"
+  COMPOSE="docker compose --env-file .env.hydra --profile hydra"
 fi
 
 if [ -f "$DB" ]; then

@@ -1,6 +1,7 @@
 # Ory Hydra configuration for ShellWatch (issue #217).
 #
-# This file is mounted into the Hydra container by docker-compose.hydra.yml.
+# This file is mounted into the Hydra container by the `hydra` service in
+# docker-compose.yml.
 # It wires Hydra to use ShellWatch (running on the host at :3000) as its
 # login + consent provider. Hydra never has an identity store of its own —
 # every login/consent decision is delegated back to ShellWatch via redirect

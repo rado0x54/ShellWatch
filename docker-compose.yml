@@ -1,3 +1,25 @@
+# ShellWatch + Ory Hydra (issue #217).
+#
+# Two services:
+#   shellwatch  — the app (default; starts on a bare `docker compose up`)
+#   hydra       — the OAuth2/OIDC authority, behind the `hydra` profile
+#
+# Common workflows:
+#   # Local dev: run ONLY Hydra here, ShellWatch on the host via `pnpm dev`.
+#   pnpm hydra:migrate                       # create/upgrade Hydra's schema (backed up first)
+#   docker compose up -d hydra               # naming the service starts just it
+#   # (optionally with secrets:  docker compose --env-file .env.hydra up -d hydra)
+#
+#   # Self-hosted app only (point hydra.* in config.yaml at an external Hydra):
+#   docker compose up -d                     # starts shellwatch only (hydra is profiled out)
+#
+#   # Both together on one host:
+#   docker compose --profile hydra up -d
+#
+# Schema migrations are NEVER applied automatically — they can be destructive.
+# Run `pnpm hydra:migrate` explicitly (it backs up ./data/hydra.sqlite first)
+# before the first `up` and after any Hydra image bump.
+
 services:
   shellwatch:
     image: ghcr.io/rado0x54/shellwatch:latest
@@ -12,4 +34,36 @@ services:
     # Image defaults to UID:GID 1000:1000. Override if your host user differs
     # (and make sure ./data and ./keys are chown'd to that UID:GID on the host).
     # user: "1000:1000"
+    restart: unless-stopped
+
+  # OAuth2/OIDC authority. Profiled so a bare `docker compose up` doesn't start
+  # it — bring it up explicitly with `docker compose up -d hydra` (local dev) or
+  # `docker compose --profile hydra up -d` (alongside the app).
+  #
+  # Backed by a file SQLite DB in ./data (the same folder ShellWatch uses) — no
+  # Postgres. Ports: 4444 PUBLIC (discovery, /oauth2/auth, /oauth2/token);
+  # 4445 ADMIN (login/consent accept, client CRUD, introspection) — bound to
+  # 127.0.0.1 only, never expose it. The browser is redirected to ShellWatch's
+  # login/consent providers at http://localhost:3000 (see deploy/hydra/hydra.yml).
+  hydra:
+    image: oryd/hydra:v26.2.0
+    profiles: ["hydra"]
+    ports:
+      - "4444:4444"
+      - "127.0.0.1:4445:4445"
+    environment:
+      # File SQLite in the bind-mounted ./data (host) → /data (container).
+      # `_fk=true` enables foreign-key enforcement (Hydra relies on it).
+      DSN: ${HYDRA_DSN:-sqlite:///data/hydra.sqlite?_fk=true}
+      SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:-this-is-a-dev-only-system-secret-change-me}
+      # `--dev` accepts the http:// issuer without TLS; only for local dev.
+    command: serve all --dev --config /etc/config/hydra.yml
+    volumes:
+      - ./deploy/hydra/hydra.yml:/etc/config/hydra.yml:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "hydra", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped

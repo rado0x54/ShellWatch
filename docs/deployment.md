@@ -51,13 +51,16 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
 ```bash
 cp deploy/hydra/.env.sample .env.hydra      # dev-only secrets
 pnpm hydra:migrate                          # create Hydra's schema (./data/hydra.sqlite)
-docker compose --env-file .env.hydra -f docker-compose.hydra.yml up -d
+docker compose --env-file .env.hydra up -d hydra   # naming the service starts ONLY Hydra
 # Then run ShellWatch on the host:
 pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
 ```
 
-The compose stack is just `hydra`, backed by a file SQLite DB at
-`./data/hydra.sqlite` (the same folder as ShellWatch's own DB). **Migrations are
+`hydra` is a profiled service in `docker-compose.yml` (alongside the `shellwatch`
+app service) — naming it (`up -d hydra`) starts just Hydra; a bare
+`docker compose up -d` starts the app only. Hydra is backed by a file SQLite DB
+at `./data/hydra.sqlite` (the same folder as ShellWatch's own DB). **Migrations
+are
 not run automatically** — they can be destructive, so `pnpm hydra:migrate` is an
 explicit, backed-up step: it copies `./data/hydra.sqlite` to a timestamped
 `.bak-…` first, then applies the schema. Run it before the first `up`, and again

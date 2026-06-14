@@ -57,7 +57,7 @@ try {
   } catch (err) {
     throw new Error(
       `Failed to provision the SPA client in Hydra at ${config.hydra.adminUrl}. ` +
-        `Is Hydra running? (docker compose -f docker-compose.hydra.yml up -d). ` +
+        `Is Hydra running? (docker compose up -d hydra). ` +
         `Cause: ${(err as Error).message}`,
       { cause: err },
     );
