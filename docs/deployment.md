@@ -41,7 +41,7 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
 - **`:4444` (public)** — discovery, `/oauth2/auth`, `/oauth2/token`,
   `/oauth2/revoke`. Reached by the browser SPA, MCP clients, and the
   agent-client. CORS must allow the web-UI origin (configured in
-  `deploy/hydra/hydra.yml`).
+  `hydra.yml`).
 - **`:4445` (admin)** — login/consent acceptance, client CRUD, introspection.
   **Never expose this to the internet.** ShellWatch reaches it over the trusted
   internal network only.
@@ -49,16 +49,18 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
 ### Local dev (Hydra in compose, app via `pnpm dev`)
 
 ```bash
-cp deploy/hydra/.env.sample .env.hydra      # dev-only secrets
-pnpm hydra:migrate                          # create Hydra's schema (./data/hydra.sqlite)
-docker compose --env-file .env.hydra up -d hydra   # naming the service starts ONLY Hydra
+pnpm hydra:migrate                # create Hydra's schema (./data/hydra.sqlite)
+docker compose up -d hydra        # naming the service starts ONLY Hydra
 # Then run ShellWatch on the host:
 pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
 ```
 
 `hydra` is a profiled service in `docker-compose.yml` (alongside the `shellwatch`
 app service) — naming it (`up -d hydra`) starts just Hydra; a bare
-`docker compose up -d` starts the app only. Hydra is backed by a file SQLite DB
+`docker compose up -d` starts the app only. Hydra's dev secret is defaulted
+inline in the compose `environment:` block; for a shared/prod deployment,
+override `HYDRA_SECRETS_SYSTEM` (e.g. via an `.env.hydra` passed with
+`--env-file`) with a freshly generated value (`openssl rand -hex 16`). Hydra is backed by a file SQLite DB
 at `./data/hydra.sqlite` (the same folder as ShellWatch's own DB). **Migrations
 are
 not run automatically** — they can be destructive, so `pnpm hydra:migrate` is an
@@ -89,7 +91,7 @@ hydra:
 ShellWatch provisions the public SPA client in Hydra automatically on boot
 (idempotent). Hydra must be configured with
 `oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
-login/consent URLs pointed at ShellWatch — see `deploy/hydra/hydra.yml`.
+login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 
 > **Reverse-proxy note:** ShellWatch's mediated DCR endpoint is `POST
 /oauth2/register` — the same path Hydra uses for its (disabled) native DCR. If

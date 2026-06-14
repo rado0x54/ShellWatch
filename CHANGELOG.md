@@ -32,7 +32,7 @@ consent provider; authentication stays passkey-only. SSH signing /
 
 1. Stand up Hydra (a sibling stack, file SQLite — no separate DB server):
    `pnpm hydra:migrate` (creates the schema), then
-   `docker compose --env-file .env.hydra up -d hydra`.
+   `docker compose up -d hydra`.
 2. Add the `hydra:` section to `config.yaml` (see `config.sample.yaml`): public
    issuer URL, admin URL, and the SPA `clientId`.
 3. Keep Hydra's **admin port (`:4445`) off the public internet** — only the

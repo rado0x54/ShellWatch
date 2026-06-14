@@ -44,7 +44,7 @@ services:
   # Postgres. Ports: 4444 PUBLIC (discovery, /oauth2/auth, /oauth2/token);
   # 4445 ADMIN (login/consent accept, client CRUD, introspection) — bound to
   # 127.0.0.1 only, never expose it. The browser is redirected to ShellWatch's
-  # login/consent providers at http://localhost:3000 (see deploy/hydra/hydra.yml).
+  # login/consent providers at http://localhost:3000 (see hydra.yml).
   hydra:
     image: oryd/hydra:v26.2.0
     profiles: ["hydra"]
@@ -59,7 +59,7 @@ services:
       # `--dev` accepts the http:// issuer without TLS; only for local dev.
     command: serve all --dev --config /etc/config/hydra.yml
     volumes:
-      - ./deploy/hydra/hydra.yml:/etc/config/hydra.yml:ro
+      - ./hydra.yml:/etc/config/hydra.yml:ro
       - ./data:/data
     healthcheck:
       test: ["CMD", "hydra", "version"]
