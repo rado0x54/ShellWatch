@@ -48,13 +48,14 @@ On Windows the proxy listens on a named pipe instead of a Unix socket — defaul
 ## Quickstart
 
 ```bash
-# Authorize this device via the browser. Opens https://app.shellwatch.ai
-# (or whatever you pass to --server) and walks you through creating an
-# agent-scoped API key. The token is persisted in the OS keyring or a
-# 0600 file fallback — no plaintext config to manage.
+# Authorize this device. Opens the browser for a passkey login (the same
+# loopback authorization_code + PKCE flow an MCP client uses).
 shellwatch-agent login
+# The resulting refresh token is persisted in the OS keyring or a 0600 file
+# fallback — no plaintext config. The daemon mints + refreshes short-lived
+# `agent`-scoped access tokens from it automatically.
 
-# Start the daemon. Picks up the token from the credstore automatically.
+# Start the daemon. Picks up the credentials from the credstore automatically.
 shellwatch-agent
 
 # Tell your shell where the socket lives.
@@ -74,28 +75,26 @@ shellwatch-agent --server https://shellwatch.example.com
 
 You can hold credentials for multiple instances simultaneously — `login` keys them by server URL, and the daemon looks up by whichever URL it's configured for.
 
-To remove a stored token:
+To remove stored credentials:
 
 ```bash
 shellwatch-agent logout                     # default server
 shellwatch-agent logout --server https://...  # specific server
 ```
 
-`logout` only removes the local token; the API key still exists on the server. To revoke it entirely, delete it in **Settings → API Keys** at your ShellWatch instance.
+`logout` only removes the local credentials; it does not revoke the grant server-side. To revoke remotely, sign out / revoke the device's sessions in ShellWatch.
 
-## Alternative: static API key (CI / headless)
+## Alternative: static bearer token (CI / headless)
 
-For environments where the browser-based flow isn't practical (CI runners, headless servers, automation), pass an API key directly. Generate one in **Settings → API Keys** with the `agent` scope.
+There is no non-interactive login (a Device Authorization Grant is a planned follow-up). For a short-lived headless run you can mint an `agent`-scoped access token out-of-band and pass it directly:
 
 ```bash
-# Flag form:
-shellwatch-agent --api-key sw_...
-
-# Env form:
-SHELLWATCH_API_KEY=sw_... shellwatch-agent
+# (Requires an existing browser-obtained refresh token, or a future device flow.)
+shellwatch-agent --token "$TOKEN"
+SHELLWATCH_TOKEN="$TOKEN" shellwatch-agent
 ```
 
-Static keys take precedence over the credstore, so this works even if you've also run `login`.
+A static token takes precedence over the credstore. Such tokens are short-lived and not refreshed — for a long-running daemon, use `login`.
 
 ## Configuration
 
@@ -104,7 +103,7 @@ Precedence: CLI flags > environment variables > credstore > defaults.
 | Flag          | Env var                 | Description                                                  |
 | ------------- | ----------------------- | ------------------------------------------------------------ |
 | `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (default: `https://app.shellwatch.ai`) |
-| `--api-key`   | `SHELLWATCH_API_KEY`    | Static API key. Skips the credstore lookup.                  |
+| `--token`     | `SHELLWATCH_TOKEN`      | Static bearer token. Skips the credstore lookup.             |
 | `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)                             |
 | `--insecure`  | —                       | Allow `ws://` (daemon) or `http://` (login) — local dev only |
 | `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
@@ -124,7 +123,7 @@ The path is stable across restarts, so it's safe to compute once in your shell p
 There's no Homebrew or service-installer integration yet — run the binary directly, or wrap it with `nssm` / `sc.exe` if you want it to start at logon. Service installation is tracked on a follow-up to #175.
 
 ```powershell
-# One-time browser login
+# One-time browser login (passkey)
 .\shellwatch-agent.exe login
 
 # Start the daemon (foreground)
@@ -202,11 +201,11 @@ export SSH_AUTH_SOCK="${TMPDIR:-/tmp/}shellwatch-agent-$(id -u).sock"
 If you installed via the [Homebrew tap](#homebrew-macos-linux), the formula's `service do` block already declares the daemon to Homebrew. Authorize once, then start the service:
 
 ```bash
-shellwatch-agent login            # browser flow, token lands in keyring
+shellwatch-agent login            # browser passkey login; refresh token lands in keyring
 brew services start shellwatch-agent
 ```
 
-Homebrew translates the formula's service definition to a launchd plist on macOS (`~/Library/LaunchAgents/homebrew.shellwatch-agent.plist`) and a systemd-user unit on Linux (`~/.config/systemd/user/homebrew.shellwatch-agent.service`), then loads it. The daemon picks up its API key from the keyring on startup — no plaintext secret in the generated unit. Manage it with the usual `brew services` commands:
+Homebrew translates the formula's service definition to a launchd plist on macOS (`~/Library/LaunchAgents/homebrew.shellwatch-agent.plist`) and a systemd-user unit on Linux (`~/.config/systemd/user/homebrew.shellwatch-agent.service`), then loads it. The daemon picks up its credentials from the keyring on startup — no plaintext secret in the generated unit. Manage it with the usual `brew services` commands:
 
 ```bash
 brew services list                         # status
@@ -247,7 +246,7 @@ Use this if you didn't install via the Homebrew tap, or if you need a custom `--
 
 (launchd does **not** expand `$HOME` or `~` in `ProgramArguments` — use a fully absolute path or the agent will fail to spawn with `EX_CONFIG (78)`.)
 
-No `EnvironmentVariables` block is needed — the daemon reads the API key from the keyring on startup. If you're using a self-hosted instance, add a `--server` flag to `ProgramArguments`:
+No `EnvironmentVariables` block is needed — the daemon reads its credentials from the keyring on startup. If you're using a self-hosted instance, add a `--server` flag to `ProgramArguments`:
 
 ```xml
 <key>ProgramArguments</key>
@@ -322,7 +321,7 @@ If `ssh-add -l` returns `Could not open a connection to your authentication agen
 If launchd or systemd keeps respawning the agent and eventually throttles it (`launchctl print gui/$(id -u)/ai.shellwatch.agent` shows `last exit code = 1`, or `systemctl --user status` shows repeated start failures), check the err log for two common causes:
 
 - `another process is listening on …` — you previously started the agent manually in a terminal and the supervisor can't bind the same socket. Kill the stray process (`lsof "$SSH_AUTH_SOCK"` to find it) and the supervisor will recover.
-- `no API key for …` — you haven't run `shellwatch-agent login` yet, or you're pointing at a different `--server` than you logged into. Run `login` for that server URL.
+- `no credentials for …` — you haven't run `shellwatch-agent login` yet, or you're pointing at a different `--server` than you logged into. Run `login` for that server URL.
 
 ## How it works
 
@@ -352,16 +351,15 @@ A browser session must be open in ShellWatch for passkey signing to work. If no 
 
 ### OAuth flow for `login`
 
-`shellwatch-agent login` runs an RFC 6749 + 7636 loopback PKCE flow against the server's `/oauth/authorize` endpoint:
+`shellwatch-agent login` runs a loopback `authorization_code` + PKCE flow (RFC 6749 + 7636 + 8252) against the ShellWatch instance's Ory Hydra — the same flow an MCP client uses:
 
-1. Generate a PKCE verifier and S256 challenge.
-2. Bind a one-shot HTTP listener on `127.0.0.1:0`.
-3. Open the user's browser to `${server}/oauth/authorize?response_type=code&scope=agent&...`.
-4. User logs in (passkey if required) and clicks Authorize on the consent page.
-5. Server redirects to the loopback URL with a code; agent verifies state, exchanges code at `/oauth/token`.
-6. Token (a long-lived `sw_…` API key) is persisted via the credstore.
+1. Discover endpoints from `${server}/.well-known/oauth-authorization-server`.
+2. Register a public loopback client via mediated DCR (`/api/hydra/register`).
+3. Open the browser to Hydra's authorize endpoint → ShellWatch's passkey login + consent providers.
+4. Catch the redirect on a loopback listener, exchange the code (PKCE) for an `agent`-scoped access token + refresh token (`offline_access` scope).
+5. Persist the **refresh token** (+ client id) via the credstore.
 
-The token is the same kind of API key you'd create in Settings → API Keys — `login` is a UX wrapper around the same machinery, not delegated auth with refresh tokens.
+At runtime the daemon mints short-lived access tokens from the stored refresh token before each WebSocket dial, persisting each rotated refresh token. There is no `client_credentials` grant and no long-lived API key — the token carries the user's identity.
 
 ### OpenSSH extension handling
 
@@ -391,12 +389,12 @@ File-based keys are unaffected and work with any OpenSSH version.
 
 The agent proxy needs a browser tab open in ShellWatch to forward passkey signing requests. Open the ShellWatch UI, then retry.
 
-### `no API key for <server>`
+### `no credentials for <server>`
 
-The daemon couldn't find an API key for the configured server URL. Either:
+The daemon couldn't find credentials for the configured server URL. Either:
 
-- Run `shellwatch-agent login --server <server>` to authorize via the browser, or
-- Pass `--api-key` / set `SHELLWATCH_API_KEY` to a key with the `agent` scope.
+- Run `shellwatch-agent login --server <server>` (browser passkey login), or
+- Pass `--token` / set `SHELLWATCH_TOKEN` to a bearer token with the `agent` scope.
 
 If you ran `login` against a different server URL than the daemon is using, the credentials won't match. Run `login` again for the URL the daemon expects.
 

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rado0x54/shellwatch-agent/internal/oauth"
 )
 
 // Tunables for keepalive + reconnect.
@@ -49,9 +50,11 @@ const (
 type ProxyConfig struct {
 	SocketPath string
 	ServerURL  string
-	ApiKey     string
-	Insecure   bool
-	Version    string
+	// Token yields the bearer for each WebSocket dial. Re-read per dial so a
+	// client_credentials source can transparently refresh the access token.
+	Token    oauth.Tokener
+	Insecure bool
+	Version  string
 }
 
 // Run starts the agent proxy. It listens on a local socket (Unix domain
@@ -100,7 +103,7 @@ func Run(cfg ProxyConfig) error {
 			// Listener closed (shutdown)
 			return nil
 		}
-		go handleConnection(conn, wsURL, cfg.ApiKey, cfg.Version)
+		go handleConnection(conn, wsURL, cfg.Token, cfg.Version)
 	}
 }
 
@@ -117,7 +120,7 @@ var agentFailureResponse = []byte{0, 0, 0, 1, sshAgentFailure}
 // handleConnection processes one SSH agent client connection.
 // Each connection gets its own WebSocket to the server, ensuring
 // clean protocol state isolation between concurrent SSH clients.
-func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
+func handleConnection(conn net.Conn, wsURL string, token oauth.Tokener, version string) {
 	defer conn.Close()
 
 	var ws *managedWS
@@ -156,7 +159,7 @@ func handleConnection(conn net.Conn, wsURL, apiKey, version string) {
 		// dialWithRetry handles transient network failures (laptop just
 		// woke up, WiFi switching, DNS hiccup) with exponential backoff.
 		if ws == nil {
-			ws, err = dialWithRetry(wsURL, apiKey, version)
+			ws, err = dialWithRetry(wsURL, token, version)
 			if err != nil {
 				log.Printf("WebSocket connect error: %v", err)
 				return
@@ -259,13 +262,13 @@ func (m *managedWS) Close() error {
 // (capped at dialMaxBackoff, total time capped at dialBudget) when the
 // failure looks transient. On non-transient failures (bad URL, auth
 // rejection, etc.) it returns immediately.
-func dialWithRetry(wsURL, apiKey, version string) (*managedWS, error) {
+func dialWithRetry(wsURL string, token oauth.Tokener, version string) (*managedWS, error) {
 	deadline := time.Now().Add(dialBudget)
 	backoff := dialInitialBackoff
 	attempt := 0
 	for {
 		attempt++
-		conn, resp, err := dialOnce(wsURL, apiKey, version)
+		conn, resp, err := dialOnce(wsURL, token, version)
 		if err == nil {
 			if attempt > 1 {
 				log.Printf("WebSocket reconnected after %d attempt(s)", attempt)
@@ -284,10 +287,15 @@ func dialWithRetry(wsURL, apiKey, version string) (*managedWS, error) {
 	}
 }
 
-// dialOnce performs a single WebSocket dial.
-func dialOnce(wsURL, apiKey, version string) (*websocket.Conn, *http.Response, error) {
+// dialOnce performs a single WebSocket dial. The bearer is fetched fresh from
+// the token source so a client_credentials access token is refreshed as needed.
+func dialOnce(wsURL string, token oauth.Tokener, version string) (*websocket.Conn, *http.Response, error) {
+	bearer, err := token.Token()
+	if err != nil {
+		return nil, nil, fmt.Errorf("acquire access token: %w", err)
+	}
 	header := http.Header{}
-	header.Set("Authorization", "Bearer "+apiKey)
+	header.Set("Authorization", "Bearer "+bearer)
 
 	// Best-effort client metadata advertised to the server so it can show a
 	// richer "who is asking?" context on the /sign/:id approval page. All

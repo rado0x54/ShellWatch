@@ -11,15 +11,12 @@ import type { Config } from "../../config/index.js";
 import { makeTestConfig } from "./test-config.js";
 import {
   StubAccountRepository,
-  InMemoryApiKeyRepository,
   InMemoryEndpointRepository,
   InMemorySshKeyRepository,
-  type ApiKeyRepository,
 } from "../../db/index.js";
-import { hashApiKey } from "../../server/auth/api-key-auth.js";
 import { AccountLifecycle } from "../../server/account-lifecycle.js";
 import { buildApp } from "../../server/app.js";
-import { createSessionCookie } from "../../server/auth/session-cookie.js";
+import { createFakeHydraAdmin, type FakeHydraAdmin } from "./fake-hydra.js";
 import { TerminalManager } from "../../terminal/index.js";
 import { InMemoryKeyProvider } from "../../transport/key-directory-watcher.js";
 import type { ScannedKey } from "../../transport/key-scanner.js";
@@ -36,23 +33,23 @@ export interface TestAppServer {
   /** Live config reference — mutate to test config-driven behavior (e.g. externalUrl). */
   config: Config;
   terminalManager: TerminalManager;
-  /** Session cookie header value (e.g. "sw_session=...") for authenticated requests */
-  sessionCookie: string;
-  /** Raw API key for MCP authentication (has `mcp` scope) */
+  /** Bearer access token with the `ui` scope — the web UI's token, for /api + /ws. */
+  uiToken: string;
+  /** Bearer access token that introspects with `mcp` scope (via the fake Hydra). */
   apiKey: string;
-  /** Raw API key that exists but lacks the `mcp` scope (agent-only) */
+  /** Bearer access token that introspects with `agent` scope only. */
   nonMcpApiKey: string;
+  /** The in-memory fake Hydra admin — register tokens / inspect created clients. */
+  hydraAdmin: FakeHydraAdmin;
   /**
    * Endpoint UUID owned by a *different* account than `apiKey`. Used by
    * cross-account isolation tests to verify the scoped lookup rejects foreign
    * endpoint ids.
    */
   foreignEndpointId: string;
-  /** Account id the session cookie + apiKey are bound to. */
+  /** Account id the tokens are bound to. */
   accountId: string;
-  /** Live reference to the in-memory API-key repo (for repo-level assertions). */
-  apiKeyRepo: ApiKeyRepository;
-  /** Fetch with session cookie pre-attached */
+  /** Fetch with the `ui` Bearer token pre-attached (the web-UI auth path). */
   fetch(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
 }
@@ -93,7 +90,6 @@ export async function startTestApp(
     privateKeyContent: sshServer.clientPrivateKey,
   };
 
-  const testCookieSecret = "test-secret-for-session-signing";
   const testAccountId = "test-account-00000000-0000-0000-0000-000000000000";
   const foreignAccountId = "foreign-account-0000-0000-0000-000000000000";
   const foreignEndpointId = "foreign-endpoint";
@@ -107,7 +103,6 @@ export async function startTestApp(
         agentForward: true,
       },
     ],
-    security: { cookieSecret: testCookieSecret },
     agentSocket: { proxyEnabled: agentProxyEnabled },
   });
 
@@ -158,24 +153,27 @@ export async function startTestApp(
     cleanupIntervalMs: 60_000,
   });
 
+  // Bearer access tokens. The fake Hydra introspects these to principals — a
+  // ui-scoped one (the web UI / account API), an mcp-scoped one, and an
+  // agent-scoped one — so the bearer gate behaves exactly as with a live Hydra.
+  const testUiToken = "sw_test_ui_0000000000000000000000";
   const testApiKey = "sw_test_000000000000000000000000";
   const testNonMcpApiKey = "sw_test_agent_00000000000000000";
-  const apiKeyRepo = new InMemoryApiKeyRepository();
-  await apiKeyRepo.create({
-    id: "test-api-key",
-    accountId: testAccountId,
-    label: "Test API Key",
-    keyHash: hashApiKey(testApiKey),
-    keyPrefix: testApiKey.slice(0, 10),
-    scopes: ["mcp"],
+  const hydraAdmin = createFakeHydraAdmin();
+  hydraAdmin.registerToken(testUiToken, {
+    sub: testAccountId,
+    scope: "openid offline_access ui",
+    client_id: "shellwatch-web",
   });
-  await apiKeyRepo.create({
-    id: "test-api-key-agent-only",
-    accountId: testAccountId,
-    label: "Agent-only Test Key",
-    keyHash: hashApiKey(testNonMcpApiKey),
-    keyPrefix: testNonMcpApiKey.slice(0, 10),
-    scopes: ["agent"],
+  hydraAdmin.registerToken(testApiKey, {
+    sub: testAccountId,
+    scope: "mcp",
+    client_id: "test-mcp-client",
+  });
+  hydraAdmin.registerToken(testNonMcpApiKey, {
+    sub: testAccountId,
+    scope: "agent",
+    client_id: "test-agent-client",
   });
 
   const app = await buildApp({
@@ -185,11 +183,9 @@ export async function startTestApp(
     keyRepo,
     accountRepo: new StubAccountRepository(),
     accountLifecycle: new AccountLifecycle(),
-    apiKeyRepo,
+    hydraAdmin,
     options: { logger: false, skipStaticFiles: true },
   });
-
-  const sessionCookie = `sw_session=${createSessionCookie(testCookieSecret, 86400, testAccountId)}`;
 
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();
@@ -200,7 +196,7 @@ export async function startTestApp(
   const baseUrl = `http://127.0.0.1:${port}`;
   // externalUrl is the source of truth for discovery metadata + WWW-Authenticate
   // hints. In prod it's the config value; in tests we only know the port after
-  // listen(), so patch it here — the oauth + api-key-auth modules read it
+  // listen(), so patch it here — the discovery + bearer gate read it
   // dynamically at request time.
   config.server.externalUrl = baseUrl;
 
@@ -210,15 +206,15 @@ export async function startTestApp(
     app,
     config,
     terminalManager,
-    sessionCookie,
+    uiToken: testUiToken,
     apiKey: testApiKey,
     nonMcpApiKey: testNonMcpApiKey,
+    hydraAdmin,
     foreignEndpointId,
     accountId: testAccountId,
-    apiKeyRepo,
     fetch(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);
-      headers.set("cookie", sessionCookie);
+      headers.set("authorization", `Bearer ${testUiToken}`);
       return fetch(`${baseUrl}${path}`, { ...init, headers });
     },
     async close(): Promise<void> {

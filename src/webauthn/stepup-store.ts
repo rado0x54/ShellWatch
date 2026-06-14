@@ -31,6 +31,10 @@ export const STEPUP_ACTION = {
   registerPasskey: "register_passkey",
   revokePasskey: "revoke_passkey",
   confirmPasskey: "confirm_passkey",
+  // Session management (#219). Distinct actions so a step-up minted to revoke a
+  // single session can't be replayed against the destructive revoke-all.
+  revokeSession: "revoke_session",
+  revokeAllSessions: "revoke_all_sessions",
 } as const;
 
 export type StepUpAction = (typeof STEPUP_ACTION)[keyof typeof STEPUP_ACTION];

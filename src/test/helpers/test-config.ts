@@ -15,6 +15,19 @@ const defaults: Config = {
   },
   notifications: { mcp: { debounceMs: 50 } },
   agentSocket: { proxyEnabled: false },
+  hydra: {
+    publicUrl: "http://localhost:4444",
+    adminUrl: "http://localhost:4445",
+    spa: {
+      clientId: "shellwatch-web",
+      redirectUri: "http://localhost:3000/auth/callback",
+    },
+    introspectionCacheTtlMs: 0,
+    dcr: {
+      allowedScopes: ["mcp", "agent"],
+      redirectUriPatterns: ["^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$"],
+    },
+  },
 };
 
 export function makeTestConfig(

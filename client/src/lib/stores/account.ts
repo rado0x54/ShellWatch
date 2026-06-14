@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 import { writable } from "svelte/store";
 
 export interface AccountData {
@@ -14,7 +15,7 @@ export const account = writable<AccountData | null>(null);
 
 export async function fetchAccount(): Promise<void> {
   try {
-    const res = await fetch("/api/auth/me");
+    const res = await apiFetch("/api/auth/me");
     if (!res.ok) {
       account.set(null);
       return;
@@ -27,7 +28,7 @@ export async function fetchAccount(): Promise<void> {
 }
 
 export async function updateAccountName(name: string): Promise<void> {
-  const res = await fetch("/api/auth/me", {
+  const res = await apiFetch("/api/auth/me", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -40,7 +41,7 @@ export async function updateAccountName(name: string): Promise<void> {
 }
 
 export async function updateShowDemoEndpoints(showDemoEndpoints: boolean): Promise<void> {
-  const res = await fetch("/api/auth/me", {
+  const res = await apiFetch("/api/auth/me", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ showDemoEndpoints }),

@@ -142,9 +142,6 @@ export const auditSessionLifecycle = sqliteTable(
     mcpReason: text("mcp_reason"),
     mcpClientName: text("mcp_client_name"),
     mcpClientVersion: text("mcp_client_version"),
-    // API-key-auth metadata (set whenever the session was authenticated via an API key)
-    apiKeyLabel: text("api_key_label"),
-    apiKeyPrefix: text("api_key_prefix"),
     // Agent-client metadata — populated for sessions opened via shellwatch-agent
     // paths once #12 (SSH bastion) lands. Reserved columns; left null until then.
     clientHostname: text("client_hostname"),
@@ -186,11 +183,11 @@ export const auditSessionLifecycle = sqliteTable(
 // value. credentialId is the correlation key for tying back to a passkey.
 //
 // Snapshot semantics: descriptive columns (passkey_label, key_label,
-// endpoint_label, mcp_client_name, api_key_label, etc.) are recorded as they
-// were at sign time and are intentionally not joined back to live tables on
-// read. A passkey rename or endpoint relabel must NOT rewrite history; resist
-// the urge to "fix" stale-looking values by joining to webauthn_credentials /
-// endpoints / api_keys at query time.
+// endpoint_label, mcp_client_name, etc.) are recorded as they were at sign
+// time and are intentionally not joined back to live tables on read. A passkey
+// rename or endpoint relabel must NOT rewrite history; resist the urge to "fix"
+// stale-looking values by joining to webauthn_credentials / endpoints at query
+// time.
 
 export const auditSigningRequests = sqliteTable(
   "audit_signing_requests",
@@ -216,9 +213,6 @@ export const auditSigningRequests = sqliteTable(
     mcpReason: text("mcp_reason"),
     mcpClientName: text("mcp_client_name"),
     mcpClientVersion: text("mcp_client_version"),
-    // agent-proxy + endpoint-auth (mcp) — API-key auth metadata
-    apiKeyLabel: text("api_key_label"),
-    apiKeyPrefix: text("api_key_prefix"),
     // agent-proxy advertised client metadata
     clientHostname: text("client_hostname"),
     clientOs: text("client_os"),
@@ -269,18 +263,9 @@ export const pushSubscriptions = sqliteTable("push_subscriptions", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// --- API Keys ---
-
-export const apiKeys = sqliteTable("api_keys", {
-  id: text("id").primaryKey(),
-  accountId: text("account_id")
-    .notNull()
-    .references(() => accounts.id),
-  label: text("label").notNull(),
-  keyHash: text("key_hash").notNull().unique(),
-  keyPrefix: text("key_prefix").notNull(),
-  scopes: text("scopes").notNull(),
-  endpoints: text("endpoints"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  createdAt: text("created_at").notNull(),
-});
+// --- OAuth (#217) ---
+// No OAuth-related tables. Ory Hydra is the single store for OAuth clients and
+// tokens; ShellWatch keeps no server-side session and no local client index.
+// Every token carries the account in its `sub` (the human who logged in), so
+// there is nothing to map or persist locally — the bearer gate reads `sub` from
+// introspection. The legacy `api_keys` table is dropped (migration 0009).

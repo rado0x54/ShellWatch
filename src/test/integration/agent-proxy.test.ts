@@ -6,7 +6,6 @@
  * round-trip over WebSocket.
  */
 
-import { randomUUID } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
@@ -14,11 +13,10 @@ import type { Config } from "../../config/index.js";
 import { makeTestConfig } from "../helpers/index.js";
 import {
   StubAccountRepository,
-  InMemoryApiKeyRepository,
   InMemoryEndpointRepository,
   InMemorySshKeyRepository,
 } from "../../db/index.js";
-import { hashApiKey } from "../../server/auth/api-key-auth.js";
+import { createFakeHydraAdmin } from "../helpers/fake-hydra.js";
 import { AccountLifecycle } from "../../server/account-lifecycle.js";
 import { buildApp } from "../../server/app.js";
 import { TerminalManager } from "../../terminal/index.js";
@@ -70,7 +68,6 @@ describe("agent-proxy WebSocket endpoint", () => {
     };
 
     const config: Config = makeTestConfig({
-      security: { cookieSecret: "test-secret" },
       agentSocket: { proxyEnabled: true },
     });
 
@@ -97,34 +94,23 @@ describe("agent-proxy WebSocket endpoint", () => {
     });
     const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params));
 
-    const apiKeyRepo = new InMemoryApiKeyRepository();
-    await apiKeyRepo.create({
-      id: randomUUID(),
-      accountId: testAccountId,
-      label: "Agent Test Key",
-      keyHash: hashApiKey(testApiKey),
-      keyPrefix: testApiKey.slice(0, 10),
-      scopes: ["agent"],
+    // Bearer tokens introspect to principals via the fake Hydra. agent-scoped
+    // token grants /agent-proxy; mcp-only and no-scope tokens must not.
+    const hydraAdmin = createFakeHydraAdmin();
+    hydraAdmin.registerToken(testApiKey, {
+      sub: testAccountId,
+      scope: "agent",
+      client_id: "agent-test-client",
     });
-
-    // Key with mcp scope only (should NOT grant agent access)
-    await apiKeyRepo.create({
-      id: randomUUID(),
-      accountId: testAccountId,
-      label: "MCP Only Key",
-      keyHash: hashApiKey("sw_mcp_only_key_00000000000000000"),
-      keyPrefix: "sw_mcp_on",
-      scopes: ["mcp"],
+    hydraAdmin.registerToken("sw_mcp_only_key_00000000000000000", {
+      sub: testAccountId,
+      scope: "mcp",
+      client_id: "mcp-only-client",
     });
-
-    // Key with no relevant scope
-    await apiKeyRepo.create({
-      id: randomUUID(),
-      accountId: testAccountId,
-      label: "No Scope Key",
-      keyHash: hashApiKey("sw_no_scope_key_0000000000000000"),
-      keyPrefix: "sw_no_sco",
-      scopes: ["readonly"],
+    hydraAdmin.registerToken("sw_no_scope_key_0000000000000000", {
+      sub: testAccountId,
+      scope: "readonly",
+      client_id: "no-scope-client",
     });
 
     app = await buildApp({
@@ -134,7 +120,7 @@ describe("agent-proxy WebSocket endpoint", () => {
       keyRepo,
       accountRepo: new StubAccountRepository(),
       accountLifecycle: new AccountLifecycle(),
-      apiKeyRepo,
+      hydraAdmin,
       options: { logger: false, skipStaticFiles: true },
       agentProxy: {
         keyProvider: extendedKeyProvider,

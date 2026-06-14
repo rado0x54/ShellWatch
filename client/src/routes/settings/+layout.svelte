@@ -28,10 +28,10 @@
     { path: "/settings/general", label: "General" },
     { path: "/settings/endpoints", label: "Endpoints" },
     { path: "/settings/keys", label: "Passkeys" },
+    { path: "/settings/sessions", label: "Sessions" },
     ...(showSshKeysTab
       ? [{ path: "/settings/ssh-keys" as Pathname, label: "Other SSH Keys" }]
       : []),
-    { path: "/settings/api-keys", label: "API Keys" },
     { path: "/settings/notifications", label: "Notifications" },
     { path: "/settings/setup", label: "Setup" },
   ]);

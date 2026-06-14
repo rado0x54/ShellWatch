@@ -81,8 +81,6 @@ export class TerminalManager extends EventEmitter<TerminalEventMap> {
         mcpReason: trigger.reason,
         mcpClientName: trigger.mcpClientName,
         mcpClientVersion: trigger.mcpClientVersion,
-        apiKeyLabel: trigger.apiKeyLabel,
-        apiKeyPrefix: trigger.apiKeyPrefix,
       }),
     };
 

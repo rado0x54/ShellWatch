@@ -20,6 +20,7 @@
 ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that delivers end-to-end secure SSH authentication to your local client. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
 - **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
+- **OAuth2 delegated to Ory Hydra** — the OAuth2/OIDC layer is owned entirely by [Ory Hydra](https://www.ory.sh/hydra/). Every client (web UI, MCP, agent) authenticates through it via mediated DCR + `authorization_code` + PKCE, with passkey login + consent; ShellWatch is Hydra's passkey-gated login/consent provider and the access token's subject is the human. No passwords, no API keys.
 - **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
 - **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into ShellWatch sessions (per-endpoint toggle), so you can hop to additional hosts and enable SSH-agent-based PAM integration
 - **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
@@ -89,16 +90,16 @@ Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and se
 
 ### Endpoints
 
-| Path           | Interface                                 |
-| -------------- | ----------------------------------------- |
-| `/`            | Web UI                                    |
-| `/observer`    | Multi-session grid                        |
-| `/settings/*`  | Endpoints, keys, passkeys, API keys       |
-| `/api/*`       | REST API                                  |
-| `/ws`          | WebSocket (terminal I/O + events)         |
-| `/mcp`         | MCP (streamable HTTP)                     |
-| `/agent-proxy` | SSH agent proxy (WebSocket, API key auth) |
-| `/health`      | Health check                              |
+| Path           | Interface                                          |
+| -------------- | -------------------------------------------------- |
+| `/`            | Web UI                                             |
+| `/observer`    | Multi-session grid                                 |
+| `/settings/*`  | Endpoints, keys, passkeys, sessions, notifications |
+| `/api/*`       | REST API                                           |
+| `/ws`          | WebSocket (terminal I/O + events)                  |
+| `/mcp`         | MCP (streamable HTTP, OAuth bearer)                |
+| `/agent-proxy` | SSH agent proxy (WebSocket, OAuth bearer)          |
+| `/health`      | Health check                                       |
 
 ## Reverse proxy
 
@@ -131,13 +132,13 @@ Each MCP client gets an isolated `AgentSession` — agents only see their own se
 
 ### Connecting an MCP client
 
-Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp` URL — the integrated OAuth flow handles credentials, no manual API key paste needed:
+Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp` URL — the OAuth flow (backed by Ory Hydra) handles credentials end-to-end:
 
 ```
 https://your-shellwatch-host/mcp
 ```
 
-OAuth mints an `mcp`-scoped API key after browser approval. For headless setups you can still seed a static key via `seedAdminApiKey` in `config.yaml`, or create one under **Settings → API Keys**.
+The client registers via mediated Dynamic Client Registration and you approve it with a **passkey** on the consent screen; Hydra issues an `mcp`-scoped token. Programmatic SSH-agent access works the same way — `shellwatch-agent login` runs a browser passkey login and obtains an `agent`-scoped token. See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the Hydra setup.
 
 ## Push notifications (PWA)
 
@@ -175,4 +176,4 @@ brew services start shellwatch-agent
 eval "$(shellwatch-agent --print-env)"
 ```
 
-Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, OAuth/static-key flows, and troubleshooting in the [agent-client README](./agent-client/README.md).
+Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, the headless static-token option, and troubleshooting in the [agent-client README](./agent-client/README.md).

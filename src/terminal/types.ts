@@ -39,10 +39,6 @@ export interface TerminalSession {
   mcpClientName?: string;
   /** MCP client version from the initialize handshake (sanitized). */
   mcpClientVersion?: string;
-  /** Label of the API key used to authenticate the request that triggered creation. */
-  apiKeyLabel?: string;
-  /** Prefix (first ~8 chars) of the API key used. */
-  apiKeyPrefix?: string;
 }
 
 export interface OutputReadResult {

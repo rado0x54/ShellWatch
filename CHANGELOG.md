@@ -1,3 +1,48 @@
+## Unreleased
+
+### ⚠️ Breaking: Ory Hydra is now the OAuth2/OIDC authority (#217)
+
+ShellWatch no longer ships its own OAuth shim or API keys. **Ory Hydra (backed by
+a file SQLite store, in the same folder as ShellWatch's own DB) is now a hard
+runtime dependency** and the single OAuth2/OIDC authority
+for all delegated access. Every client — the web UI, MCP clients, and the Go
+agent-client — uses the **same flow**: mediated Dynamic Client Registration +
+`authorization_code` + PKCE, with the user logging in via a passkey and
+consenting. The access token carries the identity (`sub` = account); an OAuth
+client is never bound to an account. ShellWatch is Hydra's passkey-gated login +
+consent provider; authentication stays passkey-only. SSH signing /
+`webauthn-sk-*` keys are untouched.
+
+**This is a hard cutover — there is no migration of existing credentials:**
+
+- **Existing API keys stop working.** The `api_keys` table is dropped (no new
+  tables are added).
+- **Web users** sign in again with their passkey. The web UI is now a public
+  PKCE client holding its token in the browser (access token in memory, rotating
+  refresh token); `/api/*` + `/ws` authenticate via Bearer (a `ui` scope).
+- **MCP clients** (Claude.ai, MCP Inspector, …) re-onboard automatically via DCR
+  → passkey consent.
+- **Agent clients**: run `shellwatch-agent login` (browser passkey login). The
+  old API-key / `client_credentials` paths and Settings → OAuth Clients are
+  gone.
+- **Headless/CI agents are unsupported** until a Device Authorization Grant
+  follow-up — every agent now does an interactive browser login.
+
+**Upgrade steps:**
+
+1. Stand up Hydra (a sibling stack, file SQLite — no separate DB server):
+   `pnpm hydra:migrate` (creates the schema), then
+   `docker compose up -d hydra`.
+2. Add the `hydra:` section to `config.yaml` (see `config.sample.yaml`): public
+   issuer URL, admin URL, and the SPA `clientId`.
+3. Keep Hydra's **admin port (`:4445`) off the public internet** — only the
+   public port (`:4444`) is exposed to clients; configure its CORS to allow the
+   web-UI origin.
+4. Re-authenticate: web users via passkey; agents via `shellwatch-agent login`.
+
+See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the
+full deployment + local-dev story.
+
 ## v1.0.2 (2026-05-18)
 
 ## What's Changed

@@ -80,10 +80,6 @@ export interface AgentHandlerDeps {
   accountId: string;
   /** Source IP of the connecting client */
   sourceIp: string;
-  /** Human-readable label for the API key in use */
-  apiKeyLabel: string;
-  /** API key prefix for display context */
-  apiKeyPrefix: string;
   /** Client hostname from WS handshake header (optional) */
   clientHostname?: string;
   /** Client OS/arch from WS handshake header (optional) */
@@ -178,8 +174,6 @@ function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
     rpId,
     accountId,
     sourceIp,
-    apiKeyLabel,
-    apiKeyPrefix,
     clientHostname,
     clientOs,
     clientVersion,
@@ -207,8 +201,6 @@ function buildAgent(deps: AgentHandlerDeps): CompositeSshAgent {
   const context: AgentProxyContext = {
     source: "agent-proxy",
     sourceIp,
-    apiKeyLabel,
-    apiKeyPrefix,
     clientHostname,
     clientOs,
     clientVersion,

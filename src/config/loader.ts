@@ -39,5 +39,12 @@ export function loadConfig(configPath?: string): Config {
   // Normalize keyDirectory to absolute path
   config.keyDirectory = resolve(configDir, config.keyDirectory);
 
+  // Derive the SPA redirect URI from externalUrl when not explicitly set, so
+  // the common case needs no duplication (#217). Must match the redirect URI
+  // registered on the SPA public client in Hydra.
+  if (!config.hydra.spa.redirectUri) {
+    config.hydra.spa.redirectUri = `${config.server.externalUrl.replace(/\/+$/, "")}/auth/callback`;
+  }
+
   return config;
 }

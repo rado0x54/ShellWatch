@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
+import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
 import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
+
+/** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
+const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
+
+/** Delay before a reconnect attempt after a drop. */
+const RECONNECT_DELAY_MS = 2000;
 
 export type SessionMode = "control" | "observer";
 
@@ -77,11 +84,36 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
   };
 }
 
-export function connectWs(): void {
+function scheduleReconnect(): void {
+  // Reconnect with a FORCED refresh so a server-revoked (but client-cache-valid)
+  // token is re-minted or fails fast — rather than looping with the same dead
+  // token until it expires (#217). A live revoke-all therefore drops the socket
+  // promptly: the forced refresh 4xx-clears the grant and we fall through to
+  // login below.
+  setTimeout(() => void connectWs({ force: true }), RECONNECT_DELAY_MS);
+}
+
+export async function connectWs(opts?: { force?: boolean }): Promise<void> {
+  const token = await getAccessToken({ force: opts?.force });
+  if (!token) {
+    // No usable token. If we still hold a refresh token, this was a TRANSIENT
+    // failure (Hydra 5xx / offline) — keep retrying rather than bouncing the
+    // user out and losing terminal state. Only a truly-dead session (no refresh
+    // token left — e.g. revoked) goes to sign-in.
+    if (hasRefreshToken()) {
+      scheduleReconnect();
+      return;
+    }
+    await beginLogin(location.pathname + location.search);
+    return;
+  }
+
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${proto}//${location.host}/ws`;
-
-  ws = new WebSocket(url);
+  // Browsers can't set an Authorization header on a WS handshake, so the token
+  // rides in Sec-WebSocket-Protocol alongside the sentinel — keeps it out of
+  // access logs (vs a query param). The bearer gate reads it from the header.
+  ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
   ws.onmessage = (event) => {
     try {
@@ -129,7 +161,7 @@ export function connectWs(): void {
   };
 
   ws.onclose = () => {
-    setTimeout(() => connectWs(), 2000);
+    scheduleReconnect();
   };
 }
 

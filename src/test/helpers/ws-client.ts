@@ -21,12 +21,15 @@ interface ParsedMessage {
 export function connectTestWsClient(
   appUrl: string,
   log: TestLog,
-  cookie?: string,
+  accessToken?: string,
 ): Promise<TestWsClient> {
+  // Mirror the browser: carry the bearer token in the Sec-WebSocket-Protocol
+  // subprotocol alongside the sentinel (#217). The bearer gate reads it there.
   const wsUrl = `${appUrl.replace("http://", "ws://")}/ws`;
+  const protocols = accessToken ? ["shellwatch.bearer", accessToken] : undefined;
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, cookie ? { headers: { cookie } } : undefined);
+    const ws = new WebSocket(wsUrl, protocols);
 
     // Buffer messages from the start — before "open" fires
     const buffered: ParsedMessage[] = [];

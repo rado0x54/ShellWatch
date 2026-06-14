@@ -156,11 +156,11 @@ Unified approval system for all human-in-the-loop interactions (passkey signing,
 
 **Sign request sources** — `SignRequestContext` is a discriminated union:
 
-| Source             | When                                                                         | Key fields                                                                      |
-| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `endpoint-auth`    | ShellWatch's own SSH client auth to an endpoint (UI- or MCP-triggered)       | `endpointLabel`, `endpointAddress`, `trigger: { kind: "ui" \| "mcp" }`          |
-| `agent-forwarding` | Downstream `auth-agent@openssh.com` channel from a running session           | `endpointLabel`, `endpointAddress`, `sessionId` of parent session               |
-| `agent-proxy`      | Remote `shellwatch-agent` Go client requesting a sign over `/agent-proxy` WS | `sourceIp`, `apiKeyLabel`, `apiKeyPrefix`, optional `clientHostname/OS/Version` |
+| Source             | When                                                                         | Key fields                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `endpoint-auth`    | ShellWatch's own SSH client auth to an endpoint (UI- or MCP-triggered)       | `endpointLabel`, `endpointAddress`, `trigger: { kind: "ui" \| "mcp" }`                            |
+| `agent-forwarding` | Downstream `auth-agent@openssh.com` channel from a running session           | `endpointLabel`, `endpointAddress`, `sessionId` of parent session                                 |
+| `agent-proxy`      | Remote `shellwatch-agent` Go client requesting a sign over `/agent-proxy` WS | `sourceIp`, the requesting OAuth client's label + id prefix, optional `clientHostname/OS/Version` |
 
 Client-reported fields on `agent-proxy` (hostname/OS/version from `X-ShellWatch-*` handshake headers) and MCP client name/version on `endpoint-auth` triggers are shown in a separate "self-reported" block on `/sign/:id` so approvers don't mistake spoofable data for authoritative identity.
 
@@ -186,17 +186,16 @@ Actions expire after 60s if no response; denied/expired actions surface back to 
 - Admin account (single, created on first passkey registration)
 - Non-admin accounts (created via WebAuthn registration)
 - Passkey-first authentication — no passwords
-- Session cookies (configurable TTL) for browser sessions
 - Inactive account cleanup (90+ days, admin exempt)
 
-### API Key Authentication (`src/server/auth/api-key-auth.ts`)
+### OAuth2 / OIDC — fully delegated to Ory Hydra (`src/hydra/`)
 
-Bearer token authentication for MCP and agent proxy endpoints.
+ShellWatch runs **no OAuth logic of its own** — [Ory Hydra](https://www.ory.sh/hydra/) is the single OAuth2/OIDC authority for every client (web UI, MCP, agent). ShellWatch is Hydra's **passkey-gated login + consent provider** and verifies the bearer tokens Hydra issues; it never sees a password and stores no client secrets or API keys.
 
-- Keys stored as SHA-256 hashes in the database
-- Scoped access: `mcp`, `agent`
-- Key prefix stored for identification in logs
-- `seedAdminApiKey` config option for bootstrapping
+- **One flow for everyone:** mediated Dynamic Client Registration (`POST /api/hydra/register`) → `authorization_code` + PKCE → passkey login + consent. The access token's `sub` is the ShellWatch account (the human who logged in); an OAuth client is never bound to an account, and the granted `scope` (`ui` / `mcp` / `agent`) selects the surface.
+- **Single bearer gate** (`src/server/auth/bearer-gate.ts`): every authenticated surface presents an opaque Hydra access token, introspected per request (RFC 7662) and authorized by path — `ui` for `/api/*` + `/ws`, `mcp` for `/mcp`, `agent` for `/agent-proxy`. Only access tokens are honored (`token_use`); introspection fails closed (errors → 401, never cached).
+- **Tokens, not cookies:** the web UI is a public PKCE client holding its tokens in the browser (access token in memory, rotating refresh token in `localStorage`). No server-side session, no session cookie, no API keys.
+- **Components** (`src/hydra/`): `routes.ts` (passkey login/consent/logout providers, mediated DCR, RFC 9728/8414 discovery), `admin-client.ts` (Hydra admin API), `bearer-resolver.ts` (cached introspection), `ensure-client.ts` (provisions the first-party SPA client on boot), `render.ts` (server-rendered passkey pages). Hydra itself runs as a separate service backed by its own SQLite DB (`./data/hydra.sqlite`).
 
 ## Client Interfaces
 
@@ -214,15 +213,15 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 | `/settings/endpoints` | SSH endpoint CRUD |
 | `/settings/keys` | SSH key listing |
 | `/settings/passkeys` | WebAuthn passkey management |
-| `/settings/api-keys` | API key management |
+| `/settings/sessions` | Authorized clients (Hydra consent sessions) |
 | `/settings/notifications` | Web Push subscription management |
 | `/audit/sessions` | Session-lifecycle audit log |
 | `/audit/signings` | Signing-request audit log |
 | `/admin/accounts` | Admin: account management |
 | `/admin/general` | Admin: general settings |
 | `/passkey-invite/[token]` | Cross-device passkey enrollment (token-gated) |
-| `/login` | WebAuthn passkey login (supports `?redirect=` bounce-back) |
-| `/register` | WebAuthn passkey registration |
+| `/auth/callback` | OAuth redirect target — exchanges the authorization code for tokens |
+| `/register` | WebAuthn passkey registration (bootstrap / self-register) |
 
 **Communication:**
 
@@ -248,7 +247,7 @@ Sign approval itself (resolve/deny with WebAuthn assertion payload) goes over RE
 
 - `ws.ts` — WebSocket connection, message dispatch, session list
 - `endpoints.ts` — endpoint CRUD operations
-- `keys.ts` — SSH keys and API keys
+- `keys.ts` — SSH keys
 - `webauthn.ts` — passkey registration, login, credential management
 - `connection.ts` — base path configuration
 
@@ -260,7 +259,7 @@ The web UI sees ALL sessions (admin view) regardless of source. Sessions are dis
 
 ### MCP Server (`src/mcp/`)
 
-Streamable HTTP MCP endpoint at `/mcp`. Each MCP client connection gets its own stateful transport (per the MCP spec for streamable HTTP). Requires API key with `mcp` scope.
+Streamable HTTP MCP endpoint at `/mcp`. Each MCP client connection gets its own stateful transport (per the MCP spec for streamable HTTP). Requires an OAuth bearer token with the `mcp` scope (Hydra-issued; see [OAuth2 / OIDC](#oauth2--oidc--fully-delegated-to-ory-hydra-srchydra)).
 
 **Tools:**
 | Tool | Description |
@@ -305,7 +304,7 @@ ssh client → Unix socket → shellwatch-agent (Go) → WSS → ShellWatch /age
 
 - Each WebSocket connection gets its own `AgentProtocol` instance
 - Both passkey signs _and_ file-key uses create `PendingAction`s for approval (no silent file-key auto-sign on this path — the whole point is human-in-the-loop)
-- Requires API key with `agent` scope
+- Requires an OAuth bearer token with the `agent` scope (Hydra-issued)
 - Requires OpenSSH 10.3+ on the client for passkey support (see [#36](https://github.com/rado0x54/ShellWatch/issues/36))
 - Client advertises `X-ShellWatch-Hostname` / `-OS` / `-Version` handshake headers so the approver can see which machine is asking (sanitized server-side, rendered as "self-reported")
 
@@ -350,7 +349,6 @@ Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM.
 | `webauthn_credentials`    | Passkey credentials (COSE public key, OpenSSH public key, label)                   |
 | `ssh_keys`                | File-based SSH key metadata (fingerprint, public key — private keys on filesystem) |
 | `endpoints`               | SSH target configuration (host, port, username, key/passkey assignment)            |
-| `api_keys`                | API key hashes, scopes, labels                                                     |
 | `audit_session_lifecycle` | Tamper-evident session audit log (open/close events, source, timestamps)           |
 | `audit_signing_requests`  | Signing-request audit log (passkey signs, key approvals — outcomes + metadata)     |
 | `push_subscriptions`      | Web Push subscriptions per account (endpoint, auth/p256dh keys)                    |
@@ -362,8 +360,9 @@ Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM.
 | `account-repo.ts`       | Account CRUD, admin check, activity tracking, cleanup |
 | `endpoint-repo.ts`      | Endpoint CRUD with key/passkey assignment             |
 | `key-repo.ts`           | SSH key registration and lookup                       |
-| `api-key-repo.ts`       | API key creation, hash-based lookup, scope validation |
 | `credential-queries.ts` | WebAuthn credential lookup for signing                |
+
+OAuth clients, tokens, and consent/login sessions are **not** stored here — they live in Hydra. ShellWatch only verifies Hydra-issued tokens (via introspection) and reads Hydra's consent sessions through the admin API.
 
 **Migrations:** Auto-run at startup from `drizzle/` directory.
 
@@ -388,13 +387,9 @@ CIDR-based network filter applied to MCP and agent proxy endpoints. Configured v
 
 Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`).
 
-### Auth Gate (`src/server/auth/auth-gate.ts`)
+### Bearer Gate (`src/server/auth/bearer-gate.ts`)
 
-Session-based authentication for the web UI. Protects REST API and WebSocket routes. Passkey login creates a signed session cookie.
-
-### API Key Auth (`src/server/auth/api-key-auth.ts`)
-
-Bearer token authentication for MCP and agent proxy. Keys are stored as SHA-256 hashes. Each key has scopes (`mcp`, `agent`) that control which interfaces it can access.
+The single authentication gate for every protected surface (`/api/*`, `/ws`, `/mcp`, `/agent-proxy`). It extracts the Hydra access token (the `Authorization: Bearer` header, or the `Sec-WebSocket-Protocol` subprotocol on `/ws` — browsers can't set headers on a WS handshake), introspects it via `bearer-resolver.ts` (RFC 7662, cached), and authorizes by path/scope (`ui` / `mcp` / `agent`). Only access tokens pass; introspection failures fail closed. There is no session cookie and no API-key path — all auth is Hydra-issued OAuth bearer tokens. See [OAuth2 / OIDC](#oauth2--oidc--fully-delegated-to-ory-hydra-srchydra).
 
 ## Configuration
 
@@ -408,11 +403,16 @@ security:
   allowedNetworks: # CIDR allowlist for MCP/agent proxy
     - 127.0.0.1/32
     - "::1/128"
-  cookieSecret: hex_string # Session signing (randomized if not set)
-  sessionTtlSeconds: 86400 # Session cookie TTL (default: 24h)
 
 server:
   port: 3000 # HTTP port
+  externalUrl: http://localhost:3000 # required — issuer/redirect base for OAuth
+
+hydra: # OAuth2/OIDC authority (required)
+  publicUrl: http://localhost:4444 # Hydra public issuer
+  adminUrl: http://localhost:4445 # Hydra admin API (trusted-network only)
+  spa:
+    clientId: shellwatch-web # first-party PKCE client (no secret)
 
 agentSocket:
   proxyEnabled: true # Enable /agent-proxy WebSocket endpoint
@@ -422,7 +422,6 @@ notifications:
     debounceMs: 100 # output_available debounce
 
 # Seeding (first run only)
-seedAdminApiKey: sw_... # Static API key for admin account
 seedAdminEndpoints: # Pre-seed SSH endpoints
   - label: Dev Box
     address: ubuntu@dev.example.com
@@ -509,7 +508,7 @@ Everything runs in a single Node.js process:
 5. SSH client sends SSH_AGENTC_SIGN_REQUEST for a passkey
 6. CompositeSshAgent delegates to WebAuthnSshAgent
 7. WebAuthnSshAgent's onSignRequest → SigningBridge creates a PendingAction
-   with an agent-proxy context (API key label, client metadata)
+   with an agent-proxy context (OAuth client label, client metadata)
 8. NotificationDispatcher fans out to connected browsers (sign:request via WS)
    and/or Web Push; user sees a toast and/or native push notification
 9. User opens /sign/:id, taps passkey → WebAuthn ceremony in browser
@@ -534,8 +533,6 @@ src/
     session-lifecycle-repo.ts   # Read API for /audit/sessions
     signing-requests-writer.ts  # Persists PendingAction outcomes (approve/deny/expire/cancel)
     signing-requests-repo.ts    # Read API for /audit/signings
-  cli/
-    keys.ts                     # CLI for API key management
   config/
     schema.ts                   # Zod schemas for config validation
     loader.ts                   # YAML config loading
@@ -543,14 +540,19 @@ src/
     connection.ts               # SQLite connection setup
     schema.ts                   # Drizzle table definitions
     repositories/               # Data access layer (accounts, keys, endpoints, etc.)
+  hydra/
+    routes.ts                   # Passkey login/consent/logout providers, mediated DCR, discovery
+    admin-client.ts             # Ory Hydra admin API client
+    bearer-resolver.ts          # Cached RFC 7662 token introspection
+    ensure-client.ts            # Provisions the first-party SPA client on boot
+    render.ts                   # Server-rendered passkey login/consent pages
   server/
     app.ts                      # Fastify app — routes, WebSocket, MCP, static files
     ws-handler.ts               # WebSocket protocol handler
     ws-extension.ts             # Pluggable WS message interceptor interface
     ws-protocol.ts              # WebSocket message type definitions
     auth/
-      api-key-auth.ts           # Bearer token authentication
-      auth-gate.ts              # Session-based auth for web UI
+      bearer-gate.ts            # Single OAuth bearer gate (introspects Hydra tokens)
       ip-allowlist.ts           # CIDR-based IP filtering
   terminal/
     terminal-manager.ts         # Central session registry and lifecycle
@@ -596,8 +598,8 @@ client/                           # SvelteKit frontend (adapter-static)
       +page.svelte              # Terminal view (default route)
       session/[id]/             # Specific session view
       sign/[id]/                # Sign-request approval page (+ tail preview for agent-forwarding)
-      login/                    # WebAuthn login page (supports ?redirect= bounce-back)
-      register/                 # WebAuthn passkey registration
+      auth/callback/            # OAuth redirect target — exchanges code for tokens
+      register/                 # WebAuthn passkey registration (bootstrap / self-register)
       observer/                 # Multi-session grid view
       audit/                    # Audit log views (sessions / signings)
       admin/                    # Admin views (accounts, general settings)

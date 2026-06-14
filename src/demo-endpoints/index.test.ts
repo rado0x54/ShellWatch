@@ -10,6 +10,11 @@ function buildConfig(yaml: { demoEndpoints?: unknown }) {
       rpId: "localhost",
       trustedWebauthnOrigins: ["http://localhost:3000"],
     },
+    hydra: {
+      publicUrl: "http://localhost:4444",
+      adminUrl: "http://localhost:4445",
+      spa: { clientId: "shellwatch-web" },
+    },
     ...yaml,
   });
 }

@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// connectWs() needs a token (else it retries / starts the OAuth flow); stub the
+// OAuth layer. Hoisted so individual tests can drive the token / refresh-token
+// state for the reconnect-resilience cases.
+const oauth = vi.hoisted(() => ({
+  getAccessToken: vi.fn(async (): Promise<string | null> => "ui-test-token"),
+  hasRefreshToken: vi.fn(() => true),
+  beginLogin: vi.fn(async () => {}),
+}));
+vi.mock("../oauth.js", () => oauth);
+
 import {
   connectWs,
   onWsMessage,
@@ -49,7 +60,16 @@ describe("ws store", () => {
     // @ts-expect-error — mock
     globalThis.WebSocket = MockWebSocket;
     // Mock location for connectWs
-    vi.stubGlobal("location", { protocol: "http:", host: "localhost:3000" });
+    vi.stubGlobal("location", {
+      protocol: "http:",
+      host: "localhost:3000",
+      pathname: "/",
+      search: "",
+    });
+    // Default OAuth state: a usable token, a refresh token present.
+    oauth.getAccessToken.mockReset().mockResolvedValue("ui-test-token");
+    oauth.hasRefreshToken.mockReset().mockReturnValue(true);
+    oauth.beginLogin.mockReset();
   });
 
   afterEach(() => {
@@ -57,14 +77,14 @@ describe("ws store", () => {
     vi.restoreAllMocks();
   });
 
-  it("connectWs creates a WebSocket connection", () => {
-    connectWs();
+  it("connectWs creates a WebSocket connection", async () => {
+    await connectWs();
     expect(MockWebSocket.instances).toHaveLength(1);
     expect(MockWebSocket.instances[0].url).toBe("ws://localhost:3000/ws");
   });
 
-  it("sessions:changed updates the sessions store", () => {
-    connectWs();
+  it("sessions:changed updates the sessions store", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const mockSessions: SessionListEntry[] = [
@@ -83,8 +103,8 @@ describe("ws store", () => {
     expect(get(sessions)).toEqual(mockSessions);
   });
 
-  it("onWsMessage registers a handler and returns unsubscribe", () => {
-    connectWs();
+  it("onWsMessage registers a handler and returns unsubscribe", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const received: unknown[] = [];
@@ -99,8 +119,8 @@ describe("ws store", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("onWsMessage delivers to multiple handlers", () => {
-    connectWs();
+  it("onWsMessage delivers to multiple handlers", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     let count1 = 0;
@@ -117,8 +137,8 @@ describe("ws store", () => {
     unsub2();
   });
 
-  it("wsSend sends JSON when connection is open", () => {
-    connectWs();
+  it("wsSend sends JSON when connection is open", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSend({ type: "test", data: "hello" });
@@ -127,8 +147,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "test", data: "hello" });
   });
 
-  it("wsSend does not send when connection is not open", () => {
-    connectWs();
+  it("wsSend does not send when connection is not open", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
     ws.readyState = 3; // CLOSED
 
@@ -137,8 +157,8 @@ describe("ws store", () => {
     expect(ws.sent).toHaveLength(0);
   });
 
-  it("wsAttach sends terminal:attach message", () => {
-    connectWs();
+  it("wsAttach sends terminal:attach message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsAttach("sess-1");
@@ -146,8 +166,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:attach", sessionId: "sess-1" });
   });
 
-  it("wsSendInput sends terminal:input message", () => {
-    connectWs();
+  it("wsSendInput sends terminal:input message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSendInput("sess-1", "ls\n");
@@ -159,8 +179,8 @@ describe("ws store", () => {
     });
   });
 
-  it("wsSendResize sends terminal:resize message", () => {
-    connectWs();
+  it("wsSendResize sends terminal:resize message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsSendResize("sess-1", 120, 40);
@@ -173,8 +193,8 @@ describe("ws store", () => {
     });
   });
 
-  it("wsTakeControl sends terminal:take-control message", () => {
-    connectWs();
+  it("wsTakeControl sends terminal:take-control message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsTakeControl("sess-1");
@@ -182,8 +202,8 @@ describe("ws store", () => {
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:take-control", sessionId: "sess-1" });
   });
 
-  it("wsReleaseControl sends terminal:release-control message", () => {
-    connectWs();
+  it("wsReleaseControl sends terminal:release-control message", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     wsReleaseControl("sess-1");
@@ -194,8 +214,8 @@ describe("ws store", () => {
     });
   });
 
-  it("ignores invalid JSON messages", () => {
-    connectWs();
+  it("ignores invalid JSON messages", async () => {
+    await connectWs();
     const ws = MockWebSocket.instances[0];
 
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -206,5 +226,46 @@ describe("ws store", () => {
     expect(get(sessions)).toEqual([]);
 
     consoleError.mockRestore();
+  });
+
+  // --- reconnect resilience (F6/F7) ---
+
+  it("retries instead of bouncing to login when the token is gone but a refresh token remains", async () => {
+    vi.useFakeTimers();
+    oauth.getAccessToken.mockResolvedValue(null);
+    oauth.hasRefreshToken.mockReturnValue(true); // transient — Hydra 5xx / offline
+
+    await connectWs();
+
+    expect(MockWebSocket.instances).toHaveLength(0); // no socket opened
+    expect(oauth.beginLogin).not.toHaveBeenCalled(); // NOT bounced to login
+
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("sends the user to login when the session is truly gone (no refresh token)", async () => {
+    oauth.getAccessToken.mockResolvedValue(null);
+    oauth.hasRefreshToken.mockReturnValue(false);
+
+    await connectWs();
+
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(oauth.beginLogin).toHaveBeenCalledOnce();
+  });
+
+  it("reconnect after a drop forces a token refresh", async () => {
+    vi.useFakeTimers();
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+
+    oauth.getAccessToken.mockClear();
+    ws.onclose?.(); // simulate a drop
+    await vi.advanceTimersByTimeAsync(2000); // let the scheduled reconnect fire
+
+    expect(oauth.getAccessToken).toHaveBeenCalledWith({ force: true });
+
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 });

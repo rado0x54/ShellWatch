@@ -24,6 +24,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "hydra:migrate": "sh scripts/hydra-migrate.sh",
     "update:aaguids": "tsx scripts/update-aaguids.ts",
     "licenses:bundle": "node scripts/bundle-licenses.mjs",
     "spdx:check": "node scripts/spdx-headers.mjs",
@@ -95,6 +96,6 @@
   },
   "lint-staged": {
     "*.{ts,svelte}": "eslint",
-    "*.{ts,svelte,js,json,css,md,yaml}": "prettier --write"
+    "*.{ts,svelte,js,json,css,md,yaml,yml}": "prettier --write"
   }
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 export interface AuditSessionRow {
   sessionId: string;
   accountId: string;
@@ -12,8 +13,6 @@ export interface AuditSessionRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;
@@ -44,7 +43,7 @@ export async function fetchAuditPage(
   if (filters.to) params.set("to", filters.to);
   if (cursor) params.set("cursor", cursor);
   params.set("limit", String(limit));
-  const res = await fetch(`/api/audit/sessions?${params}`);
+  const res = await apiFetch(`/api/audit/sessions?${params}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "Failed to fetch audit log");
@@ -70,8 +69,6 @@ export interface SigningRequestRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;
@@ -107,7 +104,7 @@ export async function fetchSigningsPage(
   if (filters.to) params.set("to", filters.to);
   if (cursor) params.set("cursor", cursor);
   params.set("limit", String(limit));
-  const res = await fetch(`/api/audit/signings?${params}`);
+  const res = await apiFetch(`/api/audit/signings?${params}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "Failed to fetch signing audit log");

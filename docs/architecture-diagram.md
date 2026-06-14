@@ -40,24 +40,35 @@ graph TB
     end
 
     User -- "REST API (CRUD)<br/>WebSocket (terminal I/O, events)<br/>WebAuthn (passkey signing)" --> WebUI
-    Agent -- "MCP over HTTP<br/>(create, send_keys, read_output)<br/>API key auth" --> MCP
-    SSHCli -- "shellwatch-agent (Go)<br/>SSH agent protocol over WSS<br/>API key auth" --> AgentProxy
+    Agent -- "MCP over HTTP<br/>(create, send_keys, read_output)<br/>OAuth bearer (mcp scope)" --> MCP
+    SSHCli -- "shellwatch-agent (Go)<br/>SSH agent protocol over WSS<br/>OAuth bearer (agent scope)" --> AgentProxy
     SSH -- "SSH (key or passkey auth)" --> Remote
 
     SB -. "sign:request (WS toast) /<br/>Web Push / resolve via REST" .-> User
     TM -. "events: output,<br/>status-change, close" .-> WebUI
     TM -. "events (debounced<br/>notifications)" .-> MCP
+
+    subgraph Auth["OAuth2 / OIDC (delegated)"]
+        Hydra["Ory Hydra<br/><i>:4444 public · :4445 admin</i>"]
+    end
+    User -. "passkey login + consent<br/>(authcode + PKCE)" .-> Hydra
+    Agent -. "mediated DCR + authcode/PKCE" .-> Hydra
+    SSHCli -. "mediated DCR + authcode/PKCE" .-> Hydra
+    WebUI -. "introspect bearer (:4445)" .-> Hydra
+    MCP -. "introspect bearer (:4445)" .-> Hydra
+    AgentProxy -. "introspect bearer (:4445)" .-> Hydra
 ```
 
 ## Actor Roles
 
-| Actor             | Protocol                          | Access Level          | Description                                                                                                                                                                                                                                    |
-| ----------------- | --------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **User**          | REST + WebSocket + WebAuthn       | Admin (all sessions)  | Browser-based terminal UI. Sees all sessions regardless of source. Handles WebAuthn signing for passkey-based SSH auth.                                                                                                                        |
-| **Agent**         | MCP (HTTP)                        | Scoped (own sessions) | AI agent connecting via MCP. Each agent gets an isolated `AgentSession` and can only see/control sessions it created. Requires API key with `mcp` scope.                                                                                       |
-| **SSH Client**    | SSH agent protocol (via Go proxy) | Key-based             | System SSH clients (`ssh`, `scp`, `git`) using ShellWatch-managed keys via the agent proxy. Both passkey signs and file-key uses require browser approval on `/sign/:id`. Passkeys require OpenSSH 10.3+. Requires API key with `agent` scope. |
-| **ShellWatch**    | &mdash;                           | &mdash;               | Session broker. Routes input/output, buffers terminal data, broadcasts events, enforces isolation between agents, manages key material and WebAuthn signing.                                                                                   |
-| **Target Server** | SSH                               | &mdash;               | Remote host accessed via ssh2 with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                                                      |
+| Actor             | Protocol                          | Access Level          | Description                                                                                                                                                                                                                                                                     |
+| ----------------- | --------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **User**          | REST + WebSocket + WebAuthn       | Admin (all sessions)  | Browser-based terminal UI. Sees all sessions regardless of source. Handles WebAuthn signing for passkey-based SSH auth.                                                                                                                                                         |
+| **Agent**         | MCP (HTTP)                        | Scoped (own sessions) | AI agent connecting via MCP. Each agent gets an isolated `AgentSession` and can only see/control sessions it created. Authenticates with a Hydra-issued OAuth bearer token (`mcp` scope), obtained via mediated DCR + passkey consent.                                          |
+| **SSH Client**    | SSH agent protocol (via Go proxy) | Key-based             | System SSH clients (`ssh`, `scp`, `git`) using ShellWatch-managed keys via the agent proxy. Both passkey signs and file-key uses require browser approval on `/sign/:id`. Passkeys require OpenSSH 10.3+. Authenticates with a Hydra-issued OAuth bearer token (`agent` scope). |
+| **ShellWatch**    | &mdash;                           | &mdash;               | Session broker + Hydra's passkey-gated login/consent provider. Routes I/O, buffers terminal data, broadcasts events, enforces agent isolation, manages key material + WebAuthn signing, and verifies Hydra-issued bearer tokens.                                                |
+| **Ory Hydra**     | OAuth2 / OIDC                     | &mdash;               | External authority. Issues all access/refresh tokens; ShellWatch delegates OAuth entirely to it and introspects tokens via the admin API.                                                                                                                                       |
+| **Target Server** | SSH                               | &mdash;               | Remote host accessed via ssh2 with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                                                                                       |
 
 ## Data Flow — MCP Session
 

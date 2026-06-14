@@ -9,9 +9,20 @@ function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "shellwatch-test-"));
 }
 
+// Hydra is a required config section (#217). Append a minimal block to every
+// fixture that doesn't already set one, so these tests stay focused on the
+// fields they actually exercise.
+const HYDRA_YAML = `
+hydra:
+  publicUrl: http://localhost:4444
+  adminUrl: http://localhost:4445
+  spa:
+    clientId: shellwatch-web
+`;
+
 function writeConfig(dir: string, yaml: string): string {
   const configPath = join(dir, "config.yaml");
-  writeFileSync(configPath, yaml);
+  writeFileSync(configPath, yaml.includes("\nhydra:") ? yaml : yaml + HYDRA_YAML);
   return configPath;
 }
 

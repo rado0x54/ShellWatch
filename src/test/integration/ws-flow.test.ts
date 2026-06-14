@@ -42,7 +42,7 @@ describe("WebSocket Flow", () => {
   }
 
   it("receives sessions:changed on connect", async () => {
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     try {
       const msg = await ws.waitForMessage<{ type: string; sessions: unknown[] }>(
         "sessions:changed",
@@ -55,7 +55,7 @@ describe("WebSocket Flow", () => {
 
   it("receives terminal:status after attach", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     try {
       // Wait for initial sessions:changed
       await ws.waitForMessage("sessions:changed");
@@ -76,7 +76,7 @@ describe("WebSocket Flow", () => {
     appServer.terminalManager.sendInput(sessionId, "buffer-test");
     await new Promise((r) => setTimeout(r, 100));
 
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -91,7 +91,7 @@ describe("WebSocket Flow", () => {
 
   it("sends input and receives echoed output", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -111,7 +111,7 @@ describe("WebSocket Flow", () => {
 
   it("terminal:close closes the session", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     try {
       await ws.waitForMessage("sessions:changed");
       ws.send({ type: "terminal:attach", sessionId });
@@ -133,7 +133,7 @@ describe("WebSocket Flow", () => {
 
   it("WebSocket disconnect does NOT kill the session", async () => {
     const sessionId = await createSessionViaApi();
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
 
     await ws.waitForMessage("sessions:changed");
     ws.send({ type: "terminal:attach", sessionId });

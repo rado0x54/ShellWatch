@@ -1,31 +1,23 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  import { resolve } from "$app/paths";
   import { get } from "svelte/store";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
-  import {
-    pushEnabled,
-    pushLoading,
-    pushSupported,
-    subscribePush,
-    unsubscribePush,
-    vapidAvailable,
-    checkPushStatus,
-  } from "$lib/stores/push.js";
-  import { credentials, fetchCredentials, registerAccount } from "$lib/stores/webauthn.js";
+  import { registerAccount } from "$lib/stores/webauthn.js";
+  import { beginLogin } from "$lib/oauth.js";
   import Wordmark from "$lib/components/Wordmark.svelte";
 
-  // The technical-setup steps (SSH server, endpoints, MCP key, advanced links)
-  // live in Settings → Setup now. Onboarding is a 3-step minimum-friction path
-  // that ends with the user landing in the app and seeing demo endpoints.
-  type StepId = "welcome" | "passkey" | "notifications";
+  // Onboarding is a minimum-friction path: name → register a passkey → sign in.
+  // Registration creates the account + passkey but issues no token (the web UI
+  // is a browser OAuth client, #217); the final step starts the PKCE login flow,
+  // where the just-created passkey authenticates you into the app. Notification
+  // setup lives in Settings → Notifications (it needs an authenticated session).
+  type StepId = "welcome" | "passkey";
 
   const stepOrder: { id: StepId; label: string }[] = [
     { id: "welcome", label: "Welcome" },
     { id: "passkey", label: "Passkey" },
-    { id: "notifications", label: "Notify" },
   ];
 
   let isAdminSetup = $state(false);
@@ -35,7 +27,7 @@
   let stepIdx = $state(0);
   let accountName = $state("");
   let registeredCredentialId = $state<string | null>(null);
-  let vapidConfigured = $state(false);
+  let registeredLabel = $state<string | null>(null);
 
   const currentStep = $derived(stepOrder[stepIdx].id);
   const currentLabel = $derived(stepOrder[stepIdx].label);
@@ -53,14 +45,17 @@
   // Detect mode on mount
   onMount(async () => {
     try {
-      const res = await fetch("/api/auth/login/options", { method: "POST" });
+      const res = await apiFetch("/api/auth/passkey-status");
       const data = await res.json();
-      if (data.error === "no_passkeys") {
+      if (!data.hasPasskeys) {
+        // First-run admin bootstrap — no passkeys exist yet.
         isAdminSetup = true;
         accountName = "admin";
       } else {
         if (!get(selfRegistrationEnabled)) {
-          await goto(resolve("/login"));
+          // Registration closed and an admin already exists — bounce back into
+          // the sign-in flow (Hydra owns the login UI).
+          await beginLogin("/");
           return;
         }
       }
@@ -68,10 +63,12 @@
       isAdminSetup = true;
       accountName = "admin";
     }
-    vapidConfigured = vapidAvailable();
   });
 
   // --- Passkey step ---
+  // Register only creates the account + passkey; it sets no session. We use the
+  // label returned directly (no authenticated /api/webauthn/credentials read —
+  // that would 401 and bounce us out of the wizard).
   async function handleRegisterPasskey() {
     loading = true;
     error = "";
@@ -79,11 +76,8 @@
     try {
       const result = await registerAccount(accountName.trim());
       registeredCredentialId = result.credentialId;
+      registeredLabel = result.label;
       status = "";
-      // Pull the freshly-stored credential row so the confirmation copy can
-      // surface its label.
-      await fetchCredentials();
-      next();
     } catch (err) {
       error = (err as Error).message;
       status = "";
@@ -91,37 +85,19 @@
     loading = false;
   }
 
-  const registeredCred = $derived(
-    $credentials.find((c) => c.credentialId === registeredCredentialId) ?? null,
-  );
-
-  // --- Notifications step ---
-  // Only probe the SW + push manager once. Re-firing on each back/forward
-  // visit is harmless but wasteful — the user can't toggle from elsewhere
-  // mid-wizard, so the first read is authoritative for the flow.
-  let pushChecked = $state(false);
-  $effect(() => {
-    if (currentStep === "notifications" && pushSupported && !pushChecked) {
-      pushChecked = true;
-      void checkPushStatus();
-    }
-  });
-
-  async function handleNotificationToggle() {
+  // Final step: start the OAuth PKCE login (full-page redirect to Hydra → the
+  // passkey just registered authenticates you → back into the app).
+  async function signIn() {
+    loading = true;
     error = "";
+    status = "Redirecting to sign-in…";
     try {
-      if ($pushEnabled) {
-        await unsubscribePush();
-      } else {
-        await subscribePush();
-      }
+      await beginLogin("/");
     } catch (err) {
       error = (err as Error).message;
+      status = "";
+      loading = false;
     }
-  }
-
-  function finish() {
-    window.location.href = "/";
   }
 </script>
 
@@ -190,13 +166,15 @@
       <h1>Register a Passkey</h1>
       {#if registeredCredentialId}
         <p class="description">
-          <span class="check">✓</span> Passkey registered{registeredCred?.label
-            ? ` as ${registeredCred.label}`
-            : ""}. You can manage passkeys later in Settings.
+          <span class="check">✓</span> Passkey registered{registeredLabel
+            ? ` as ${registeredLabel}`
+            : ""}. One more step — sign in with it to enter ShellWatch. You can manage passkeys and
+          notifications in Settings.
         </p>
         <div class="nav-row">
-          <button type="button" class="btn-secondary" onclick={back}>Back</button>
-          <button type="button" class="btn-primary" onclick={next}>Continue</button>
+          <button type="button" class="btn-primary" disabled={loading} onclick={signIn}>
+            Sign in
+          </button>
         </div>
       {:else}
         <p class="description">
@@ -215,55 +193,6 @@
           </button>
         </div>
       {/if}
-    {:else if currentStep === "notifications"}
-      <h1>Stay in the loop</h1>
-      <p class="description">
-        <Wordmark />'s value is the human-in-the-loop guard rail: when an agent (or another account)
-        requests to open an SSH session to your endpoint, you get a push notification on this device
-        and approve or deny — no terminal needed.
-      </p>
-
-      {#if !pushSupported}
-        <div class="info-box">Push notifications are not supported in this browser.</div>
-      {:else if !vapidConfigured}
-        <div class="info-box">
-          Push notifications are not configured on this server. Ask the admin to add a
-          <code>vapid</code> section to <code>config.yaml</code>.
-        </div>
-      {:else}
-        <div class="toggle-row">
-          <button
-            type="button"
-            class="toggle"
-            class:active={$pushEnabled}
-            disabled={$pushLoading}
-            onclick={handleNotificationToggle}
-            aria-label="Push Notifications"
-            role="switch"
-            aria-checked={$pushEnabled}
-          >
-            <span class="toggle-knob"></span>
-          </button>
-          <span class="toggle-label">
-            {#if $pushLoading}
-              Updating…
-            {:else if $pushEnabled}
-              Enabled on this device
-            {:else}
-              Disabled
-            {/if}
-          </span>
-        </div>
-        <p class="hint">
-          Toggle anytime from <strong>Settings → Notifications</strong>, on each device
-          independently.
-        </p>
-      {/if}
-
-      <div class="nav-row">
-        <button type="button" class="btn-secondary" onclick={back}>Back</button>
-        <button type="button" class="btn-primary" onclick={finish}>Open ShellWatch</button>
-      </div>
     {/if}
 
     {#if error}
@@ -451,66 +380,6 @@
   .btn-secondary:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-
-  /* Notifications step */
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .toggle {
-    position: relative;
-    width: 40px;
-    height: 22px;
-    border-radius: 11px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
-    cursor: pointer;
-    padding: 0;
-    transition: background-color 0.2s;
-  }
-
-  .toggle.active {
-    background: var(--green, #4ade80);
-    border-color: var(--green, #4ade80);
-  }
-
-  .toggle-knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition:
-      transform 0.2s,
-      background-color 0.2s;
-  }
-
-  .toggle.active .toggle-knob {
-    transform: translateX(18px);
-    background: white;
-  }
-
-  .toggle-label {
-    font-size: 0.85rem;
-    color: var(--text-primary);
-  }
-
-  .info-box {
-    padding: 0.6rem 0.75rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    text-align: left;
-    margin-bottom: 0.75rem;
   }
 
   .error {
