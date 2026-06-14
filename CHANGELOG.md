@@ -1,4 +1,4 @@
-## Unreleased
+## v1.1.0 (2026-06-14)
 
 ### ⚠️ Breaking: Ory Hydra is now the OAuth2/OIDC authority (#217)
 
@@ -42,6 +42,14 @@ consent provider; authentication stays passkey-only. SSH signing /
 
 See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the
 full deployment + local-dev story.
+
+## What's Changed
+
+- feat: replace OAuth shim + API keys with Ory Hydra (#217) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/218
+- chore: bump GitHub Actions off deprecated Node.js 20 runtime by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/221
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/222
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v1.0.2...v1.1.0
 
 ## v1.0.2 (2026-05-18)
 
