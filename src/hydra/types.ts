@@ -116,6 +116,9 @@ export interface HydraIntrospection {
   scope?: string;
   client_id?: string;
   token_type?: string;
+  /** Hydra discriminator: "access_token" | "refresh_token". The bearer gate
+   * only honors access tokens (a leaked refresh token must not work directly). */
+  token_use?: string;
   exp?: number;
   aud?: string[];
 }

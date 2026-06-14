@@ -61,7 +61,11 @@ export function createBearerResolver(params: CreateBearerResolverParams): Bearer
     let value: BearerPrincipal | null = null;
     try {
       const ins = await admin.introspect(token);
-      if (ins.active && ins.sub) {
+      // Default-deny: only access tokens authorize a request. Hydra tags every
+      // introspected token with token_use, so requiring "access_token" is what
+      // stops a refresh token (leaked from localStorage — it introspects active
+      // with the same sub+scope) being replayed directly as a bearer.
+      if (ins.active && ins.sub && ins.token_use === "access_token") {
         value = {
           accountId: ins.sub,
           label: ins.client_id ? `OAuth client ${shortId(ins.client_id)}` : "OAuth client",

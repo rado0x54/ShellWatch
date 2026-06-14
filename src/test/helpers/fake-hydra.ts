@@ -74,7 +74,9 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
       logoutRequests.set(challenge, req);
     },
     registerToken(token, claims) {
-      tokens.set(token, { active: true, ...claims });
+      // Default to an access token (the gate now requires token_use=access_token);
+      // callers can override via `claims`.
+      tokens.set(token, { active: true, token_use: "access_token", ...claims });
     },
     revokeRegisteredToken(token) {
       tokens.delete(token);

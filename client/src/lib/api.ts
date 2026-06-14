@@ -5,7 +5,7 @@
  * the OAuth flow (beginLogin) if the session is truly gone. Public/anonymous
  * endpoints (registration, passkey-status) should use bare `fetch` instead.
  */
-import { getAccessToken, beginLogin } from "./oauth.js";
+import { beginLogin, getAccessToken, hasRefreshToken } from "./oauth.js";
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = await getAccessToken();
@@ -22,8 +22,14 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     if (retry.status !== 401) return retry;
   }
 
-  // Session is gone — start the login flow, preserving where we were.
-  await beginLogin(window.location.pathname + window.location.search);
+  // Couldn't get a fresh token. If we still hold a refresh token, the failure
+  // was transient (Hydra 5xx / offline — refresh() keeps the RT on those) —
+  // surface the 401 and let the caller handle it rather than bouncing through a
+  // login that's probably also down. Only a truly-dead session (no refresh
+  // token left — revoked/expired) starts the login flow.
+  if (!hasRefreshToken()) {
+    await beginLogin(window.location.pathname + window.location.search);
+  }
   return res;
 }
 
