@@ -79,8 +79,20 @@ export function createBearerResolver(params: CreateBearerResolverParams): Bearer
       return null;
     }
 
-    if (cacheTtlMs > 0) {
-      if (cache.size >= MAX_CACHE_ENTRIES) cache.clear();
+    // Cache ONLY valid principals — never a null/invalid result. Negative
+    // caching has no upside (a legit client never replays an invalid token — it
+    // refreshes on 401) and is a liability: an attacker spraying unique invalid
+    // tokens would otherwise fill the cache and evict legit entries. So the
+    // cache size is bounded by real concurrent principals, and invalid tokens
+    // simply re-introspect (a 1:1 cost handled at the network edge, not here).
+    if (cacheTtlMs > 0 && value) {
+      // Evict the oldest entry (Map preserves insertion order) rather than
+      // clearing everything, so a large legit deployment that exceeds the cap
+      // degrades gracefully instead of dumping all hot entries at once.
+      if (cache.size >= MAX_CACHE_ENTRIES) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
       cache.set(token, { value, expiresAt: t + cacheTtlMs });
     }
     return value;

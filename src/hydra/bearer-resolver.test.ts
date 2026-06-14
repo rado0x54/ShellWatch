@@ -93,6 +93,16 @@ describe("bearer resolver", () => {
     expect(introspect).toHaveBeenCalledTimes(2);
   });
 
+  // Invalid tokens must NOT be negatively cached — otherwise an attacker
+  // spraying unique bad tokens could fill the cache and evict legit entries.
+  it("does not cache invalid tokens, even with a non-zero TTL (re-introspects each time)", async () => {
+    const introspect = vi.fn(async (): Promise<HydraIntrospection> => ({ active: false }));
+    const resolve = resolverWith(introspect, { cacheTtlMs: 60_000 });
+    expect(await resolve("bad")).toBeNull();
+    expect(await resolve("bad")).toBeNull();
+    expect(introspect).toHaveBeenCalledTimes(2);
+  });
+
   it("does not cache when the TTL is zero (every call re-introspects)", async () => {
     const introspect = vi.fn(
       async (): Promise<HydraIntrospection> => ({
