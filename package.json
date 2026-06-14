@@ -96,6 +96,6 @@
   },
   "lint-staged": {
     "*.{ts,svelte}": "eslint",
-    "*.{ts,svelte,js,json,css,md,yaml}": "prettier --write"
+    "*.{ts,svelte,js,json,css,md,yaml,yml}": "prettier --write"
   }
 }
