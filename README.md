@@ -20,6 +20,7 @@
 ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that delivers end-to-end secure SSH authentication to your local client. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
 - **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
+- **OAuth2 delegated to Ory Hydra** — the OAuth2/OIDC layer is owned entirely by [Ory Hydra](https://www.ory.sh/hydra/). Every client (web UI, MCP, agent) authenticates through it via mediated DCR + `authorization_code` + PKCE, with passkey login + consent; ShellWatch is Hydra's passkey-gated login/consent provider and the access token's subject is the human. No passwords, no API keys.
 - **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
 - **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into ShellWatch sessions (per-endpoint toggle), so you can hop to additional hosts and enable SSH-agent-based PAM integration
 - **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
@@ -89,16 +90,16 @@ Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and se
 
 ### Endpoints
 
-| Path           | Interface                                 |
-| -------------- | ----------------------------------------- |
-| `/`            | Web UI                                    |
-| `/observer`    | Multi-session grid                        |
-| `/settings/*`  | Endpoints, keys, passkeys, notifications  |
-| `/api/*`       | REST API                                  |
-| `/ws`          | WebSocket (terminal I/O + events)         |
-| `/mcp`         | MCP (streamable HTTP, OAuth bearer)       |
-| `/agent-proxy` | SSH agent proxy (WebSocket, OAuth bearer) |
-| `/health`      | Health check                              |
+| Path           | Interface                                          |
+| -------------- | -------------------------------------------------- |
+| `/`            | Web UI                                             |
+| `/observer`    | Multi-session grid                                 |
+| `/settings/*`  | Endpoints, keys, passkeys, sessions, notifications |
+| `/api/*`       | REST API                                           |
+| `/ws`          | WebSocket (terminal I/O + events)                  |
+| `/mcp`         | MCP (streamable HTTP, OAuth bearer)                |
+| `/agent-proxy` | SSH agent proxy (WebSocket, OAuth bearer)          |
+| `/health`      | Health check                                       |
 
 ## Reverse proxy
 
@@ -175,4 +176,4 @@ brew services start shellwatch-agent
 eval "$(shellwatch-agent --print-env)"
 ```
 
-Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, OAuth/static-key flows, and troubleshooting in the [agent-client README](./agent-client/README.md).
+Every signing request requires explicit browser approval. To make user-verification load-bearing on the server, set `PubkeyAuthOptions verify-required` in `sshd_config`. Full usage, the headless static-token option, and troubleshooting in the [agent-client README](./agent-client/README.md).

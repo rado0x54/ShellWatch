@@ -79,11 +79,6 @@ security:
     - http://localhost:3000
     - http://localhost:3001
 
-  # Secret used to sign session cookies. 32 random bytes, hex-encoded.
-  # If unset, a random value is generated at startup and sessions are lost on restart.
-  # Generate with: openssl rand -hex 32
-  # cookieSecret: "<64-char hex string>"
-
   # selfRegistrationEnabled: false                     # Set to true to allow self-service account creation
   #                                                     # (first-user bootstrap always works regardless of this setting)
 

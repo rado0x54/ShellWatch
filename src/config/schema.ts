@@ -38,7 +38,6 @@ export const rateLimitDefaults = {
 
 export const securityFieldDefaults = {
   allowedNetworks: ["127.0.0.1/32", "::1/128"],
-  sessionTtlSeconds: 86400,
   selfRegistrationEnabled: false,
   rateLimit: rateLimitDefaults,
 };
@@ -48,8 +47,6 @@ export const SecuritySchema = z.object({
     .string()
     .min(1, "security.rpId is required (e.g., 'localhost' or 'shellwatch.example.com')"),
   allowedNetworks: z.array(z.string()).default(securityFieldDefaults.allowedNetworks),
-  sessionTtlSeconds: z.number().int().min(60).default(securityFieldDefaults.sessionTtlSeconds),
-  cookieSecret: z.string().optional(),
   selfRegistrationEnabled: z.boolean().default(securityFieldDefaults.selfRegistrationEnabled),
   rateLimit: z
     .object({

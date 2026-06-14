@@ -21,7 +21,7 @@ Operationally, it brokers terminal sessions between configured SSH targets, huma
 - **Terminal:** xterm.js
 - **MCP:** @modelcontextprotocol/sdk (streamable HTTP transport)
 - **Persistence:** Drizzle ORM with SQLite (audit log, pending actions, key/passkey storage)
-- **Auth:** WebAuthn passkeys (UI), API keys (MCP/agent), OAuth provider for hosted MCP clients
+- **Auth:** WebAuthn passkeys (human login + SSH signing). OAuth2/OIDC is **fully delegated to Ory Hydra** (web UI, MCP, and agent all use mediated DCR + authorization_code + PKCE); ShellWatch is Hydra's passkey-gated login/consent provider and verifies opaque bearer tokens via introspection. No passwords, no API keys.
 - **Config:** YAML with zod validation
 - **Testing:** Vitest (unit + integration)
 - **Linting:** ESLint (typescript-eslint + eslint-plugin-svelte)
@@ -52,7 +52,7 @@ src/
   agent/                # AgentSession — per-agent session isolation
   agent-socket/         # Agent socket transport (Go agent-client bridge)
   mcp/                  # MCP server and streamable HTTP transport
-  oauth/                # OAuth provider for hosted MCP clients
+  hydra/                # Ory Hydra integration: passkey login/consent providers, mediated DCR, bearer introspection, discovery
   webauthn/             # WebAuthn passkey registration and authentication
   pending-action/       # Pending-action store (human-in-the-loop approvals)
   audit/                # Audit log (signing requests, session events)
@@ -75,7 +75,7 @@ client/                 # SvelteKit frontend app (adapter-static)
       +page.svelte      # Terminal view (default route)
       admin/            # Admin views
       audit/            # Audit log view
-      login/            # WebAuthn login page
+      auth/callback/    # OAuth redirect target — exchanges code for tokens
       observer/         # Multi-session grid view
       passkey-invite/   # Passkey invite flow
       register/         # Initial admin registration
@@ -85,7 +85,7 @@ client/                 # SvelteKit frontend app (adapter-static)
         endpoints/      # SSH endpoint management
         keys/           # SSH key listing
         passkeys/       # WebAuthn passkey management
-        api-keys/       # MCP API key management
+        sessions/       # Authorized clients (Hydra consent sessions) + invalidate
         notifications/  # Notification channel config
         general/        # General settings
 agent-client/           # Go agent binary (separate module, MIT)
@@ -185,7 +185,7 @@ Test categories (`src/test/integration/`):
 - `concurrent-sessions.test.ts` — independent I/O, mixed actor sessions
 - `agent-forward.test.ts` — agent-client SSH key forwarding
 - `agent-proxy.test.ts` — agent-client proxy transport
-- `oauth-flow.test.ts` — OAuth provider end-to-end flow
+- `hydra-oauth.test.ts` — Hydra OAuth surfaces (mediated DCR, bearer gate + introspection/revocation, discovery, session management)
 - `passkey-invite-flow.test.ts` — passkey invite minting and redemption
 - `passkey-stepup-flow.test.ts` — step-up auth for sensitive actions
 
@@ -215,11 +215,11 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 
 ## Design Principles
 
-- **Local-first:** No external database or auth dependency; SQLite via Drizzle is the only persistence
+- **Local-first persistence:** SQLite via Drizzle is the only datastore ShellWatch owns — no external/remote database. (OAuth2/OIDC is delegated to Ory Hydra, a required external service; Hydra keeps its own SQLite store, by default in the same `./data` folder.)
 - **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows — invite tokens minted on one worker won't resolve on another. The product is currently scoped to one process per deployment.
 - **Account-scoped:** All operations are scoped to the calling account. Admin is a role, not a cross-account view; never imply cross-account session/output visibility.
 - **Shared core:** UI and MCP must use the same TerminalManager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately
-- **Passkey-first:** No passwords. WebAuthn passkeys for human auth, API keys for agents.
+- **Passkey-first:** No passwords, no API keys. WebAuthn passkeys for humans; every client (UI, MCP, agent) authenticates with a Hydra-issued OAuth bearer token whose `sub` is the account.
 - **Human-in-the-loop:** Agent actions can require human approval via second channel (Slack, webhook)
 - **Simple:** Prefer straightforward code over abstractions. Ship function first, polish later.
