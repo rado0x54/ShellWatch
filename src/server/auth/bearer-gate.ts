@@ -62,7 +62,7 @@ const EXEMPT_EXACT = new Set([
   "/api/auth/register/options",
   "/api/auth/passkey-status",
   // Mediated DCR — reached by clients before they have a token.
-  "/oauth/register",
+  "/oauth2/register",
 ]);
 
 // Path prefixes that never require a token.

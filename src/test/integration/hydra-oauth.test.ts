@@ -4,7 +4,7 @@
  * oauth-flow.test.ts that exercised the deleted shim. Hydra itself is faked
  * (see helpers/fake-hydra), so this runs in CI without a live Hydra:
  *
- *   - mediated DCR (/oauth/register) enforces the redirect-URI + scope policy,
+ *   - mediated DCR (/oauth2/register) enforces the redirect-URI + scope policy,
  *   - the bearer gate validates tokens via introspection and rejects within the
  *     cache TTL once a token is revoked (instant-revocation property),
  *   - Settings → OAuth Clients mints/lists/deletes confidential clients.
@@ -39,9 +39,9 @@ describe("Hydra OAuth surfaces", () => {
     await sshServer?.close();
   });
 
-  describe("mediated DCR (/oauth/register)", () => {
+  describe("mediated DCR (/oauth2/register)", () => {
     it("provisions a public client for an allowed loopback redirect", async () => {
-      const res = await fetch(`${appServer.url}/oauth/register`, {
+      const res = await fetch(`${appServer.url}/oauth2/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -59,7 +59,7 @@ describe("Hydra OAuth surfaces", () => {
     });
 
     it("rejects a redirect_uri outside the policy allowlist", async () => {
-      const res = await fetch(`${appServer.url}/oauth/register`, {
+      const res = await fetch(`${appServer.url}/oauth2/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ redirect_uris: ["https://evil.example.com/cb"], scope: "mcp" }),
@@ -70,7 +70,7 @@ describe("Hydra OAuth surfaces", () => {
     });
 
     it("rejects a scope outside the allowed set", async () => {
-      const res = await fetch(`${appServer.url}/oauth/register`, {
+      const res = await fetch(`${appServer.url}/oauth2/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -84,7 +84,7 @@ describe("Hydra OAuth surfaces", () => {
     });
 
     it("provisions an agent-scoped client (loopback agent-client onboarding)", async () => {
-      const res = await fetch(`${appServer.url}/oauth/register`, {
+      const res = await fetch(`${appServer.url}/oauth2/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

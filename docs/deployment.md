@@ -88,6 +88,17 @@ ShellWatch provisions the public SPA client in Hydra automatically on boot
 `oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
 login/consent URLs pointed at ShellWatch — see `deploy/hydra/hydra.yml`.
 
+> **Reverse-proxy note:** ShellWatch's mediated DCR endpoint is `POST
+/oauth2/register` — the same path Hydra uses for its (disabled) native DCR. If
+> ShellWatch and Hydra share a hostname behind one proxy, route `/oauth2/register`
+> to **ShellWatch**, not Hydra (Hydra's is off, so routing it there breaks client
+> registration). The other `/oauth2/*` paths (`/oauth2/auth`, `/oauth2/token`,
+> `/oauth2/revoke`, `/oauth2/sessions/logout`) route to Hydra.
+>
+> **Allowed redirect URIs** for DCR clients are configurable under
+> `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
+> callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+
 ### Manual verification
 
 1. **Web UI:** sign in via passkey through the redirect flow; confirm the PWA

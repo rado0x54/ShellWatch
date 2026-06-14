@@ -183,12 +183,11 @@ export const hydraDcrDefaults = {
   // Scopes a mediated-DCR client may request. `mcp` for MCP clients, `agent`
   // for the agent-client (filtered out when the agent proxy is disabled).
   allowedScopes: ["mcp", "agent"],
-  // Loopback + Claude redirect URIs allowed by default so local MCP clients,
-  // Claude.ai, and the loopback agent-client can register. RegExp source
-  // strings, anchored at match time.
+  // Loopback only by default — the safe baseline for local MCP clients and the
+  // loopback agent-client. Hosted clients (e.g. Claude.ai) must have their
+  // callback added explicitly via config (see config.sample.yaml). RegExp
+  // source strings, anchored at match time.
   redirectUriPatterns: [
-    "^https://claude\\.ai/api/mcp/auth_callback$",
-    "^https://claude\\.com/api/mcp/auth_callback$",
     "^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$",
     "^http://\\[::1\\](:\\d+)?(/.*)?$",
   ],

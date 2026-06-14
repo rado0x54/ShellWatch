@@ -144,9 +144,15 @@ hydra:
     clientId: shellwatch-web
     # redirectUri: defaults to "${server.externalUrl}/auth/callback"
   # introspectionCacheTtlMs: 60000                    # bearer-introspection cache TTL (default 60000 = 60s)
-  # Mediated DCR policy for MCP + agent clients:
+  # Mediated DCR policy (ShellWatch's /oauth2/register) for MCP + agent clients:
   # dcr:
   #   allowedScopes: ["mcp", "agent"]                   # granted scope ⊆ this set (offline_access always added)
-  #   redirectUriPatterns:                              # RegExp source; client redirect_uri must match one
-  #     - "^https://claude\\.ai/api/mcp/auth_callback$"
+  #   # RegExp source strings; a client's redirect_uri must match at least one.
+  #   # Defaults to loopback only (below). Setting this REPLACES the default, so
+  #   # to keep loopback AND allow a hosted client (e.g. Claude.ai/.com), list
+  #   # them all. Anchor every pattern with ^…$.
+  #   redirectUriPatterns:
   #     - "^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$"
+  #     - "^http://\\[::1\\](:\\d+)?(/.*)?$"
+  #     - "^https://claude\\.ai/api/mcp/auth_callback$"
+  #     - "^https://claude\\.com/api/mcp/auth_callback$"
