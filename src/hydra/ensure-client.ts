@@ -19,9 +19,9 @@ export async function ensureSpaClient(admin: HydraAdminClient, hydra: HydraConfi
     client_name: "ShellWatch Web UI",
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
-    // openid → subject/id_token; offline → refresh token for silent renew;
-    // ui → the scope the bearer gate requires for ShellWatch's own /api + /ws.
-    scope: `openid offline ${UI_SCOPE}`,
+    // openid → subject/id_token; offline_access → refresh token for silent
+    // renew; ui → the scope the bearer gate requires for ShellWatch's /api + /ws.
+    scope: `openid offline_access ${UI_SCOPE}`,
     redirect_uris: [redirectUri],
     // Public client (browser) — no secret; Hydra enforces PKCE.
     token_endpoint_auth_method: "none",

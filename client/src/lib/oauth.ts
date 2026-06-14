@@ -14,7 +14,7 @@ interface OAuthBootstrap {
   issuer: string; // Hydra public issuer, e.g. http://localhost:4444
   clientId: string; // first-party public SPA client
   redirectUri: string; // ${externalUrl}/auth/callback
-  scope: string; // "openid offline ui"
+  scope: string; // "openid offline_access ui"
 }
 
 const REFRESH_TOKEN_KEY = "sw_refresh_token";

@@ -33,8 +33,8 @@ const LoginTimeout = 5 * time.Minute
 type LoginOptions struct {
 	// ServerURL is the ShellWatch instance (scheme + host).
 	ServerURL string
-	// Scope to request (resource scope; `offline` is added automatically so a
-	// refresh token is issued). For shellwatch-agent it's "agent".
+	// Scope to request (resource scope; `offline_access` is added automatically
+	// so a refresh token is issued). For shellwatch-agent it's "agent".
 	Scope string
 	// AllowInsecure permits http:// for local dev.
 	AllowInsecure bool
@@ -86,9 +86,9 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	addr := listener.Addr().(*net.TCPAddr)
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", addr.Port)
 
-	// `offline` → refresh token. The mediated DCR endpoint also adds it to the
-	// client's allowed scope, so the authorize request below can request it.
-	requestScope := strings.TrimSpace(opts.Scope) + " offline"
+	// `offline_access` → refresh token. The mediated DCR endpoint also adds it to
+	// the client's allowed scope, so the authorize request below can request it.
+	requestScope := strings.TrimSpace(opts.Scope) + " offline_access"
 
 	clientID, err := registerClient(ctx, httpClient, eps.Registration, redirectURI, requestScope)
 	if err != nil {
@@ -146,7 +146,7 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 		return nil, fmt.Errorf("exchange authorization code: %w", err)
 	}
 	if tok.RefreshToken == "" {
-		return nil, errors.New("token response had no refresh_token (offline scope not granted?)")
+		return nil, errors.New("token response had no refresh_token (offline_access scope not granted?)")
 	}
 	return &Result{ServerURL: server, ClientID: clientID, RefreshToken: tok.RefreshToken}, nil
 }

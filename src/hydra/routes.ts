@@ -137,7 +137,9 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     resource: `${ext()}${BEARER_PATHS[scope]}`,
     authorization_servers: [ext()],
     bearer_methods_supported: ["header"],
-    scopes_supported: [scope],
+    // `offline_access` advertised so clients request it → Hydra issues a
+    // refresh token (silent renewal instead of a re-auth redirect on expiry).
+    scopes_supported: [scope, "offline_access"],
   });
 
   app.get(WELL_KNOWN_PROTECTED_RESOURCE, async () => resourceMetadata("mcp"));
@@ -157,7 +159,10 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
-    scopes_supported: BEARER_SCOPES.filter((s) => s !== "agent" || agentProxyEnabled),
+    scopes_supported: [
+      ...BEARER_SCOPES.filter((s) => s !== "agent" || agentProxyEnabled),
+      "offline_access",
+    ],
   }));
 
   // --- Mediated DCR (#217): policy enforced locally, client minted in Hydra ---
@@ -213,10 +218,11 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
       try {
         // Public client, PKCE-enforced by Hydra (no secret). Omit client_id so
         // Hydra assigns one.
-        // Always allow `offline` so clients can obtain a refresh token (the
-        // agent-client + long-lived MCP sessions rely on silent renewal). The
-        // resource scope (mcp/agent) is still policy-gated above.
-        const clientScope = [...granted, "offline"].join(" ");
+        // Always allow `offline_access` (the OIDC standard scope for a refresh
+        // token) so clients can obtain one — the agent-client + long-lived MCP
+        // sessions rely on silent renewal. The resource scope (mcp/agent) is
+        // still policy-gated above.
+        const clientScope = [...granted, "offline_access"].join(" ");
         const created = await admin.createClient({
           client_name: clientName,
           grant_types: ["authorization_code", "refresh_token"],

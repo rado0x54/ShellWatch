@@ -356,7 +356,7 @@ A browser session must be open in ShellWatch for passkey signing to work. If no 
 1. Discover endpoints from `${server}/.well-known/oauth-authorization-server`.
 2. Register a public loopback client via mediated DCR (`/oauth/register`).
 3. Open the browser to Hydra's authorize endpoint → ShellWatch's passkey login + consent providers.
-4. Catch the redirect on a loopback listener, exchange the code (PKCE) for an `agent`-scoped access token + refresh token (`offline` scope).
+4. Catch the redirect on a loopback listener, exchange the code (PKCE) for an `agent`-scoped access token + refresh token (`offline_access` scope).
 5. Persist the **refresh token** (+ client id) via the credstore.
 
 At runtime the daemon mints short-lived access tokens from the stored refresh token before each WebSocket dial, persisting each rotated refresh token. There is no `client_credentials` grant and no long-lived API key — the token carries the user's identity.

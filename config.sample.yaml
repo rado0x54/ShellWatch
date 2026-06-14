@@ -146,7 +146,7 @@ hydra:
   # introspectionCacheTtlMs: 60000                    # bearer-introspection cache TTL (default 60000 = 60s)
   # Mediated DCR policy for MCP + agent clients:
   # dcr:
-  #   allowedScopes: ["mcp", "agent"]                   # granted scope ⊆ this set (offline always added)
+  #   allowedScopes: ["mcp", "agent"]                   # granted scope ⊆ this set (offline_access always added)
   #   redirectUriPatterns:                              # RegExp source; client redirect_uri must match one
   #     - "^https://claude\\.ai/api/mcp/auth_callback$"
   #     - "^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$"

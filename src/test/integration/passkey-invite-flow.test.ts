@@ -555,7 +555,7 @@ describe("passkey invite — HTTP integration", () => {
       skip: false,
       subject: ACCOUNT_ID,
       client: { client_id: "mcp-test-client", client_name: "Test MCP" },
-      requested_scope: ["mcp", "offline"],
+      requested_scope: ["mcp", "offline_access"],
       requested_access_token_audience: [],
       context: { freshLogin },
     });

@@ -96,9 +96,20 @@ describe("Hydra OAuth surfaces", () => {
       expect(res.status).toBe(201);
       const body = (await res.json()) as { client_id: string; scope: string };
       expect(body.client_id).toBeTruthy();
-      // `offline` is always added so the client can obtain a refresh token.
-      expect(body.scope).toContain("agent");
-      expect(body.scope).toContain("offline");
+      // `offline_access` is always added so the client can obtain a refresh token.
+      expect(body.scope.split(/\s+/)).toContain("agent");
+      expect(body.scope.split(/\s+/)).toContain("offline_access");
+    });
+
+    it("advertises offline_access in discovery so clients request a refresh token", async () => {
+      const asMeta = await (
+        await fetch(`${appServer.url}/.well-known/oauth-authorization-server`)
+      ).json();
+      expect(asMeta.scopes_supported).toContain("offline_access");
+      const resMeta = await (
+        await fetch(`${appServer.url}/.well-known/oauth-protected-resource/mcp`)
+      ).json();
+      expect(resMeta.scopes_supported).toContain("offline_access");
     });
   });
 
@@ -157,14 +168,14 @@ describe("Hydra OAuth surfaces", () => {
       appServer.hydraAdmin.setConsentSessions(appServer.accountId, [
         {
           consent_request: { client: { client_id: spaId, client_name: "ShellWatch Web" } },
-          grant_scope: ["ui", "offline"],
+          grant_scope: ["ui", "offline_access"],
           handled_at: "2026-01-01T00:00:00Z",
         },
         {
           consent_request: {
             client: { client_id: "mcp-abc", client_name: "Claude MCP", created_at: "2026-01-30Z" },
           },
-          grant_scope: ["mcp", "offline"],
+          grant_scope: ["mcp", "offline_access"],
           handled_at: "2026-02-01T00:00:00Z",
         },
       ]);

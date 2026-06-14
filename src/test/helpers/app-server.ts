@@ -162,7 +162,7 @@ export async function startTestApp(
   const hydraAdmin = createFakeHydraAdmin();
   hydraAdmin.registerToken(testUiToken, {
     sub: testAccountId,
-    scope: "openid offline ui",
+    scope: "openid offline_access ui",
     client_id: "shellwatch-web",
   });
   hydraAdmin.registerToken(testApiKey, {

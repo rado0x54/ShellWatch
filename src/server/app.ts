@@ -285,7 +285,7 @@ export async function buildApp(params: BuildAppParams) {
       redirectUri:
         config.hydra.spa.redirectUri ??
         `${config.server.externalUrl.replace(/\/+$/, "")}/auth/callback`,
-      scope: `openid offline ${UI_SCOPE}`,
+      scope: `openid offline_access ${UI_SCOPE}`,
     };
     return [
       `window.__SELF_REGISTRATION_ENABLED__=${JSON.stringify(config.security.selfRegistrationEnabled)};`,
