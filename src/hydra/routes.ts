@@ -502,6 +502,17 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
       // A stale/replayed logout_challenge (e.g. back button) shouldn't 500 —
       // logout is forgiving, so fall back to /login on any Hydra rejection.
       try {
+        const logoutReq = await hydra(admin.getLogoutRequest(challenge), "logout_flow_expired");
+        // Only honor a logout Hydra attributes to a relying party via a valid
+        // `id_token_hint` (→ `client` populated). ShellWatch's own logout()
+        // always sends the hint, so legitimate sign-outs pass. An unhinted
+        // navigation to Hydra's end-session endpoint (logout CSRF) has no
+        // client — reject it rather than silently terminating the victim's
+        // session.
+        if (!logoutReq.client?.client_id) {
+          await hydra(admin.rejectLogoutRequest(challenge), "logout_flow_expired");
+          return reply.redirect("/login");
+        }
         const { redirect_to } = await hydra(
           admin.acceptLogoutRequest(challenge),
           "logout_flow_expired",

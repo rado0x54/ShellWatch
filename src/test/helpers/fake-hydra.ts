@@ -11,6 +11,7 @@ import type {
   HydraConsentRequest,
   HydraConsentSession,
   HydraIntrospection,
+  HydraLogoutRequest,
   HydraOAuth2Client,
 } from "../../hydra/types.js";
 
@@ -26,9 +27,14 @@ export interface FakeHydraAdmin extends HydraAdminClient {
   setConsentRequest(challenge: string, req: HydraConsentRequest): void;
   /** Seed the consent-session list returned by listConsentSessions(subject). */
   setConsentSessions(subject: string, sessions: HydraConsentSession[]): void;
+  /** Seed a logout request returned by getLogoutRequest (logout-CSRF tests).
+   * Once seeded, acceptLogoutRequest for that challenge resolves too. */
+  setLogoutRequest(challenge: string, req: HydraLogoutRequest): void;
   /** Records of revoke calls, for assertions. */
   revokedConsent: { subject: string; clientId?: string }[];
   revokedLogin: string[];
+  /** Challenges passed to rejectLogoutRequest, for assertions. */
+  rejectedLogout: string[];
 }
 
 export function createFakeHydraAdmin(): FakeHydraAdmin {
@@ -36,8 +42,10 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
   const clients = new Map<string, HydraOAuth2Client>();
   const consentRequests = new Map<string, HydraConsentRequest>();
   const consentSessions = new Map<string, HydraConsentSession[]>();
+  const logoutRequests = new Map<string, HydraLogoutRequest>();
   const revokedConsent: { subject: string; clientId?: string }[] = [];
   const revokedLogin: string[] = [];
+  const rejectedLogout: string[] = [];
   let counter = 0;
 
   // Login + logout challenge flows still need a real Hydra redirect to drive
@@ -55,11 +63,15 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
     clients,
     revokedConsent,
     revokedLogin,
+    rejectedLogout,
     setConsentRequest(challenge, req) {
       consentRequests.set(challenge, req);
     },
     setConsentSessions(subject, sessions) {
       consentSessions.set(subject, sessions);
+    },
+    setLogoutRequest(challenge, req) {
+      logoutRequests.set(challenge, req);
     },
     registerToken(token, claims) {
       tokens.set(token, { active: true, ...claims });
@@ -124,6 +136,20 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
       return { redirect_to: `https://hydra.test/consent-callback?c=${challenge}` };
     },
     rejectConsentRequest: rejectsUnknownChallenge("rejectConsentRequest"),
-    acceptLogoutRequest: rejectsUnknownChallenge("acceptLogoutRequest"),
+    // Logout: resolve seeded challenges (logout-CSRF tests), reject others.
+    async getLogoutRequest(challenge) {
+      const req = logoutRequests.get(challenge);
+      if (!req) throw new HydraApiError(404, "", "fake-hydra: unknown logout challenge");
+      return req;
+    },
+    async acceptLogoutRequest(challenge) {
+      if (!logoutRequests.has(challenge)) {
+        throw new HydraApiError(404, "", "fake-hydra: unknown logout challenge");
+      }
+      return { redirect_to: `https://hydra.test/post-logout?c=${challenge}` };
+    },
+    async rejectLogoutRequest(challenge) {
+      rejectedLogout.push(challenge);
+    },
   };
 }

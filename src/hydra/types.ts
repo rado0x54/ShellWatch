@@ -72,6 +72,19 @@ export interface HydraAcceptConsent {
   };
 }
 
+/** Hydra logout request (GET /admin/oauth2/auth/requests/logout). */
+export interface HydraLogoutRequest {
+  challenge: string;
+  subject: string;
+  sid?: string;
+  /** True when the flow came via the RP-initiated end-session endpoint. */
+  rp_initiated?: boolean;
+  /** The RP identified from a valid `id_token_hint`. Absent for an unhinted
+   * (potentially forged) end-session navigation — the logout-CSRF case. */
+  client?: HydraOAuth2Client | null;
+  request_url?: string;
+}
+
 /** Hydra redirect response wrapper ({ redirect_to }). */
 export interface HydraRedirect {
   redirect_to: string;

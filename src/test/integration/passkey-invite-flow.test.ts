@@ -662,4 +662,40 @@ describe("passkey invite — HTTP integration", () => {
     expect(testApp.hydraAdmin.revokedLogin).toHaveLength(0);
     expect(testApp.hydraAdmin.revokedConsent).toHaveLength(0);
   });
+
+  // ---- Logout provider rejects unhinted (CSRF) logouts (F9) ----
+
+  it("accepts an RP-attributed logout (valid id_token_hint → client present)", async () => {
+    testApp.hydraAdmin.setLogoutRequest("logout-ok", {
+      challenge: "logout-ok",
+      subject: ACCOUNT_ID,
+      rp_initiated: true,
+      client: { client_id: "shellwatch-web" },
+    });
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/logout?logout_challenge=logout-ok",
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain("post-logout");
+    expect(testApp.hydraAdmin.rejectedLogout).not.toContain("logout-ok");
+  });
+
+  it("rejects an unhinted logout (no client → CSRF) without terminating the session", async () => {
+    // No id_token_hint → Hydra can't attribute the logout to a client. Our
+    // provider must reject rather than blindly destroy the victim's session.
+    testApp.hydraAdmin.setLogoutRequest("logout-csrf", {
+      challenge: "logout-csrf",
+      subject: ACCOUNT_ID,
+      rp_initiated: true,
+      client: null,
+    });
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/logout?logout_challenge=logout-csrf",
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/login");
+    expect(testApp.hydraAdmin.rejectedLogout).toContain("logout-csrf");
+  });
 });

@@ -25,6 +25,7 @@ import type {
   HydraConsentSession,
   HydraIntrospection,
   HydraLoginRequest,
+  HydraLogoutRequest,
   HydraOAuth2Client,
   HydraOAuth2ClientCreate,
   HydraRedirect,
@@ -56,7 +57,9 @@ export interface HydraAdminClient {
   deleteClient(clientId: string): Promise<void>;
 
   // --- Logout provider ---
+  getLogoutRequest(challenge: string): Promise<HydraLogoutRequest>;
   acceptLogoutRequest(challenge: string): Promise<HydraRedirect>;
+  rejectLogoutRequest(challenge: string): Promise<void>;
 
   // --- Token lifecycle ---
   /** RFC 7662 introspection — opaque access token → claims. */
@@ -177,11 +180,22 @@ export function createHydraAdminClient(params: CreateHydraAdminClientParams): Hy
       }
     },
 
+    getLogoutRequest: (challenge) =>
+      adminJson(
+        "GET",
+        `/admin/oauth2/auth/requests/logout?logout_challenge=${encodeURIComponent(challenge)}`,
+      ),
     acceptLogoutRequest: (challenge) =>
       adminJson(
         "PUT",
         `/admin/oauth2/auth/requests/logout/accept?logout_challenge=${encodeURIComponent(challenge)}`,
       ),
+    rejectLogoutRequest: async (challenge) => {
+      await adminJson(
+        "PUT",
+        `/admin/oauth2/auth/requests/logout/reject?logout_challenge=${encodeURIComponent(challenge)}`,
+      );
+    },
 
     introspect: async (token) => {
       const res = await fetchImpl(`${admin}/admin/oauth2/introspect`, {
