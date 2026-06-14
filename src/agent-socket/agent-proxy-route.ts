@@ -80,14 +80,12 @@ export function registerAgentProxyRoute(params: AgentProxyRouteParams): void {
       rpId,
       accountId: key.accountId,
       sourceIp: request.ip,
-      apiKeyLabel: key.label,
-      apiKeyPrefix: key.keyPrefix,
       clientHostname,
       clientOs,
       clientVersion,
     });
 
-    app.log.info(`Agent proxy connected (account: ${key.accountId}, key: ${key.keyPrefix}...)`);
+    app.log.info(`Agent proxy connected (account: ${key.accountId})`);
 
     // Wire WebSocket ↔ AgentProtocol
     // Incoming: binary WS messages → write to protocol stream

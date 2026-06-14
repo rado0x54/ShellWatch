@@ -10,7 +10,6 @@ import { startCleanupJob } from "./db/cleanup.js";
 import {
   createDatabase,
   DrizzleAccountRepository,
-  DrizzleApiKeyRepository,
   DrizzleEndpointRepository,
   DrizzlePushSubscriptionRepository,
   DrizzleSshKeyRepository,
@@ -18,6 +17,7 @@ import {
   seedFromConfig,
 } from "./db/index.js";
 import { findCredentialsForAccount } from "./db/repositories/credential-queries.js";
+import { createHydraAdminClient, ensureSpaClient } from "./hydra/index.js";
 import {
   NotificationDispatcher,
   PendingActionStore,
@@ -44,9 +44,24 @@ try {
 
   const endpointRepo = new DrizzleEndpointRepository(db);
   const keyRepo = new DrizzleSshKeyRepository(db);
-  const apiKeyRepo = new DrizzleApiKeyRepository(db);
   const accountRepo = new DrizzleAccountRepository(db);
   const accountLifecycle = new AccountLifecycle();
+
+  // Ory Hydra is the OAuth2/OIDC authority (#217). The admin client speaks the
+  // admin API (:4445) for login/consent acceptance, client CRUD, introspection.
+  const hydraAdmin = createHydraAdminClient({ adminUrl: config.hydra.adminUrl });
+  // Provision the first-party public SPA client in Hydra (idempotent). Fail
+  // fast — a missing/misconfigured Hydra means the web UI can't authenticate.
+  try {
+    await ensureSpaClient(hydraAdmin, config.hydra);
+  } catch (err) {
+    throw new Error(
+      `Failed to provision the SPA client in Hydra at ${config.hydra.adminUrl}. ` +
+        `Is Hydra running? (docker compose up -d hydra). ` +
+        `Cause: ${(err as Error).message}`,
+      { cause: err },
+    );
+  }
 
   // Scan key directory, auto-register keys in DB, and watch for changes
   const keyWatcher = new KeyDirectoryWatcher(config.keyDirectory, keyRepo);
@@ -120,7 +135,7 @@ try {
     db,
     wsExtensions: [wsChannel],
     keyAvailability: keyWatcher,
-    apiKeyRepo,
+    hydraAdmin,
     sessionLifecycleRepo,
     signingRequestsRepo,
     actionStore,
@@ -160,9 +175,6 @@ try {
   app.log.info(`Found ${scannedKeys.length} SSH key(s) in ${config.keyDirectory}`);
   for (const key of scannedKeys) {
     app.log.info(`  ${key.filename}: ${key.type} (${key.fingerprint})`);
-  }
-  if (seedResult.seededApiKey) {
-    app.log.info(`Seeded API key (prefix: ${seedResult.apiKeyPrefix}…)`);
   }
   if (seedResult.seededAdminAccount) {
     app.log.info(`Seeded admin account (${seedResult.seededAdminId})`);

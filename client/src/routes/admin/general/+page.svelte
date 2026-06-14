@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { toastError } from "$lib/stores/toasts.js";
 
   interface SeedPasskey {
@@ -70,7 +71,7 @@
   async function handleExport() {
     exportLoading = true;
     try {
-      const res = await fetch("/api/accounts/export-seed");
+      const res = await apiFetch("/api/accounts/export-seed");
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to export seed config");

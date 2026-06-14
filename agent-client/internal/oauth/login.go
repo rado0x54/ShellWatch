@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
-// Package oauth implements the loopback PKCE flow shellwatch-agent uses to
-// obtain an `agent`-scoped API key from a ShellWatch instance.
-//
-// Wire shape mirrors RFC 6749 + RFC 7636. shellwatch-agent is a public
-// client — there's no client secret. Authentication of the user happens on
-// the ShellWatch side (passkey login + step-up). The issued token is a
-// long-lived `sw_…` API key, not a short-lived OAuth access token; calling
-// "OAuth" here is a UX choice (loopback redirect, browser-based consent),
-// not a delegated-auth claim.
+// Package oauth implements how shellwatch-agent authenticates to a ShellWatch
+// instance (#217): a loopback authorization_code + PKCE flow (RFC 6749 + 7636 +
+// 8252), identical to how an MCP client onboards. The agent registers a public
+// client via ShellWatch's mediated DCR, opens the browser for the user to log
+// in with a passkey + consent, and exchanges the code for an `agent`-scoped
+// access token + (rotating) refresh token. The token carries the user's
+// identity; the client is account-agnostic.
 package oauth
 
 import (
@@ -28,52 +26,33 @@ import (
 	"time"
 )
 
-// ClientID matches the OAuth shim's STUB_CLIENT_ID. The server doesn't
-// verify it strictly (DCR is ceremonial), but sending the right one keeps
-// the consent screen's "Client ID" row honest.
-const ClientID = "sw-client"
-
-// LoginTimeout caps how long the loopback listener waits for the user to
-// approve in the browser. Five minutes is generous enough for passkey
-// step-up while bounded enough that a forgotten tab eventually frees the
-// port.
+// LoginTimeout caps how long the loopback listener waits for browser approval.
 const LoginTimeout = 5 * time.Minute
 
 // LoginOptions controls a single login flow.
 type LoginOptions struct {
-	// ServerURL is the ShellWatch instance to authenticate against. Must
-	// include scheme + host (e.g. "https://app.shellwatch.ai").
+	// ServerURL is the ShellWatch instance (scheme + host).
 	ServerURL string
-	// Scope is the OAuth scope to request. For shellwatch-agent it's always
-	// "agent"; left configurable for future tooling that might need "mcp".
+	// Scope to request (resource scope; `offline_access` is added automatically
+	// so a refresh token is issued). For shellwatch-agent it's "agent".
 	Scope string
-	// AllowInsecure lets the caller use http:// for local dev. Refuses
-	// otherwise — sending an API key over plaintext is a footgun.
+	// AllowInsecure permits http:// for local dev.
 	AllowInsecure bool
-	// OpenBrowser opens a URL in the user's default browser. Substituted in
-	// tests; defaults to the OS-native opener.
+	// OpenBrowser opens a URL; substituted in tests. Defaults to the OS opener.
 	OpenBrowser func(url string) error
-	// Stdout receives progress messages ("Opening …", "Waiting …"). nil →
-	// io.Discard, useful for tests that drive the flow programmatically.
+	// Stdout receives progress messages. nil → io.Discard.
 	Stdout io.Writer
 }
 
-// Result is what a successful login returns. The caller is responsible for
-// persisting AccessToken via the credstore.
+// Result is what a successful login returns. The caller persists ClientID +
+// RefreshToken (the daemon mints access tokens from them).
 type Result struct {
-	// AccessToken is the API key the server issued. Long-lived; revocation
-	// happens in Settings → API Keys.
-	AccessToken string
-	// TokenType is always "Bearer" for our shim, but echoed here so callers
-	// can match upstream OAuth client expectations.
-	TokenType string
-	// ServerURL canonicalized (trailing slash trimmed, scheme/host lowercased).
-	// Use this as the credstore key, not whatever the user typed on the CLI.
-	ServerURL string
+	ServerURL    string
+	ClientID     string
+	RefreshToken string
 }
 
-// Login runs the loopback PKCE flow end-to-end. Blocks until the browser
-// callback fires, the timeout elapses, or ctx is cancelled.
+// Login runs the loopback authorization_code + PKCE flow end-to-end.
 func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	if opts.ServerURL == "" {
 		return nil, errors.New("server URL is required")
@@ -89,9 +68,31 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 		stdout = io.Discard
 	}
 
-	serverURL, err := canonicalServer(opts.ServerURL, opts.AllowInsecure)
+	server, err := canonicalServer(opts.ServerURL, opts.AllowInsecure)
 	if err != nil {
 		return nil, err
+	}
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	eps, err := Discover(ctx, httpClient, server)
+	if err != nil {
+		return nil, fmt.Errorf("discover endpoints: %w", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("bind loopback listener: %w", err)
+	}
+	defer listener.Close()
+	addr := listener.Addr().(*net.TCPAddr)
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", addr.Port)
+
+	// `offline_access` → refresh token. The mediated DCR endpoint also adds it to
+	// the client's allowed scope, so the authorize request below can request it.
+	requestScope := strings.TrimSpace(opts.Scope) + " offline_access"
+
+	clientID, err := registerClient(ctx, httpClient, eps.Registration, redirectURI, requestScope)
+	if err != nil {
+		return nil, fmt.Errorf("register client (DCR): %w", err)
 	}
 
 	verifier, challenge, err := newPkce()
@@ -103,34 +104,19 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 		return nil, fmt.Errorf("generate state: %w", err)
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("bind loopback listener: %w", err)
-	}
-	defer listener.Close()
-	addr := listener.Addr().(*net.TCPAddr)
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", addr.Port)
-
-	authorizeURL := buildAuthorizeURL(serverURL, redirectURI, opts.Scope, state, challenge)
-
-	// Buffered so the handler can deliver a result without blocking on the
-	// flow goroutine that hasn't started reading yet.
 	resultCh := make(chan callbackResult, 1)
-	server := &http.Server{
-		Handler:           callbackHandler(state, resultCh),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	go func() { _ = server.Serve(listener) }()
+	srv := &http.Server{Handler: callbackHandler(state, resultCh), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	authorizeURL := buildAuthorizeURL(eps.Authorization, clientID, redirectURI, requestScope, state, challenge)
 	fmt.Fprintf(stdout, "Opening browser to authorize this device:\n  %s\n\n", authorizeURL)
 	fmt.Fprintf(stdout, "Waiting for approval (Ctrl-C to cancel)...\n")
 	if err := opts.OpenBrowser(authorizeURL); err != nil {
-		// Browser open failed — print the URL and let the user paste it manually.
 		fmt.Fprintf(stdout, "\nCouldn't open browser automatically (%v).\n", err)
 		fmt.Fprintf(stdout, "Open this URL manually: %s\n\n", authorizeURL)
 	}
@@ -149,24 +135,70 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 		return nil, cb.err
 	}
 
-	token, tokenType, err := exchangeCode(ctx, serverURL, redirectURI, cb.code, verifier)
+	tok, err := postToken(ctx, httpClient, eps.Token, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {cb.code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+		"client_id":     {clientID},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("exchange authorization code: %w", err)
 	}
-
-	return &Result{AccessToken: token, TokenType: tokenType, ServerURL: serverURL}, nil
+	if tok.RefreshToken == "" {
+		return nil, errors.New("token response had no refresh_token (offline_access scope not granted?)")
+	}
+	return &Result{ServerURL: server, ClientID: clientID, RefreshToken: tok.RefreshToken}, nil
 }
 
-func buildAuthorizeURL(server, redirect, scope, state, challenge string) string {
+// registerClient performs mediated DCR for a public loopback client.
+func registerClient(ctx context.Context, client *http.Client, registrationEndpoint, redirectURI, scope string) (string, error) {
+	payload := map[string]any{
+		"client_name":                "shellwatch-agent",
+		"redirect_uris":              []string{redirectURI},
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
+		"scope":                      scope,
+		"token_endpoint_auth_method": "none",
+	}
+	buf, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, strings.NewReader(string(buf)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("registration returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("parse registration response: %w", err)
+	}
+	if out.ClientID == "" {
+		return "", errors.New("registration response missing client_id")
+	}
+	return out.ClientID, nil
+}
+
+func buildAuthorizeURL(authEndpoint, clientID, redirect, scope, state, challenge string) string {
 	q := url.Values{}
 	q.Set("response_type", "code")
-	q.Set("client_id", ClientID)
+	q.Set("client_id", clientID)
 	q.Set("redirect_uri", redirect)
 	q.Set("scope", scope)
 	q.Set("state", state)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
-	return server + "/oauth/authorize?" + q.Encode()
+	return authEndpoint + "?" + q.Encode()
 }
 
 type callbackResult struct {
@@ -174,17 +206,14 @@ type callbackResult struct {
 	err  error
 }
 
-// callbackHandler answers the one-shot redirect from /oauth/authorize. It
-// validates state (CSRF), shoves the code (or error) into resultCh, and
-// renders a small "you can close this tab" page.
+// callbackHandler answers the one-shot redirect from the authorization endpoint.
 func callbackHandler(state string, resultCh chan<- callbackResult) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		gotState := q.Get("state")
-		if gotState != state {
-			writeCallbackPage(w, false, "State mismatch — possible CSRF, ignoring this callback.")
-			// Don't deliver to resultCh: a stale request shouldn't cancel a real one.
+		if q.Get("state") != state {
+			writeCallbackPage(w, false, "State mismatch — possible CSRF. Sign-in aborted.")
+			resultCh <- callbackResult{err: errors.New("state mismatch on authorize callback (possible CSRF)")}
 			return
 		}
 		if errCode := q.Get("error"); errCode != "" {
@@ -202,185 +231,44 @@ func callbackHandler(state string, resultCh chan<- callbackResult) http.Handler 
 		writeCallbackPage(w, true, "")
 		resultCh <- callbackResult{code: code}
 	})
-	// Anything else: 404. Browsers sometimes prefetch /favicon.ico etc.;
-	// don't let those poison the result channel.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
 	return mux
 }
 
-// callbackPageTemplate is the single HTML shell used for both the success
-// and error responses. Style tokens mirror `src/oauth/render.ts` so the
-// loopback page reads as part of ShellWatch instead of a generic browser
-// dialog. Self-contained — the agent doesn't serve static assets, so
-// fonts are pulled from Google Fonts (same as the server-side authorize
-// page) and the brand is the wordmark only (no SVG logo).
-//
-// Placeholders: %s status accent var, %s page title, %s heading,
-//
-//	%s body paragraph (already HTML-escaped).
 const callbackPageTemplate = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
+<html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ShellWatch — %s</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
 <style>
-  :root {
-    --surface-dim: #0e0e0e;
-    --surface-container-low: #131313;
-    --primary: #69f6b8;
-    --primary-dark: #06b77f;
-    --error: #ff5a5a;
-    --on-surface: #f2f2f2;
-    --on-surface-variant: #adaaaa;
-    --font-display: "Geist", system-ui, sans-serif;
-    --font-mono: "Geist Mono", ui-monospace, monospace;
-  }
-  *, *::before, *::after { box-sizing: border-box; border-radius: 0 !important; }
-  html, body { height: 100%%; margin: 0; }
-  body {
-    font-family: var(--font-display);
-    background: var(--surface-dim);
-    color: var(--on-surface);
-    line-height: 1.5;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem 1rem;
-    -webkit-font-smoothing: antialiased;
-  }
-  .card {
-    background: var(--surface-container-low);
-    padding: 2.4rem;
-    width: 100%%;
-    max-width: 460px;
-    border-left: 2px solid %s;
-    box-shadow: 0 0 32px rgba(0, 0, 0, 0.4);
-  }
-  .wordmark {
-    font-family: var(--font-display);
-    font-size: 1.1rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-    margin-bottom: 1.6rem;
-  }
-  .wordmark .shell { color: var(--primary-dark); }
-  .wordmark .watch { color: #f0efea; }
-  h1 {
-    font-family: var(--font-display);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    margin: 0 0 0.6rem;
-    color: %s;
-  }
-  p { margin: 0; color: var(--on-surface-variant); font-size: 0.95rem; }
-  .hint {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--on-surface-variant);
-    margin-top: 1.4rem;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="wordmark"><span class="shell">SHELL</span><span class="watch">WATCH</span></div>
-  <h1>%s</h1>
-  <p>%s</p>
-  <div class="hint">You can close this tab</div>
-</div>
-</body>
-</html>`
+  :root { color-scheme: dark; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; background: #0b0d12; color: #e6e8ee;
+    display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .card { background: #141821; border: 1px solid #232a36; border-left: 2px solid %s;
+    padding: 2.4rem; max-width: 460px; width: 90%%; box-shadow: 0 0 32px rgba(0,0,0,.4); }
+  h1 { font-size: 1.4rem; margin: 0 0 .6rem; color: %s; }
+  p { margin: 0; color: #9aa3b2; }
+  .hint { margin-top: 1.4rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .14em; color: #6b7280; }
+</style></head>
+<body><div class="card"><h1>%s</h1><p>%s</p><div class="hint">You can close this tab</div></div></body></html>`
 
 func writeCallbackPage(w http.ResponseWriter, ok bool, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var (
-		title, heading, body, accent string
-	)
-	if ok {
-		title = "Authorized"
-		heading = "Authorized"
-		body = "This device is now authorized. Return to your terminal — the agent has the token."
-		accent = "var(--primary)"
-	} else {
-		title = "Error"
-		heading = "Authorization failed"
-		body = htmlEscape(message)
-		accent = "var(--error)"
+	title, heading, body, accent := "Authorized", "Authorized",
+		"This device is now authorized. Return to your terminal — the agent has the token.", "#69f6b8"
+	if !ok {
+		title, heading, body, accent = "Error", "Authorization failed", htmlEscape(message), "#ff5a5a"
 		w.WriteHeader(http.StatusBadRequest)
 	}
 	fmt.Fprintf(w, callbackPageTemplate, title, accent, accent, heading, body)
 }
 
-// exchangeCode redeems the authorization code at /oauth/token for an API key.
-func exchangeCode(ctx context.Context, server, redirectURI, code, verifier string) (string, string, error) {
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", redirectURI)
-	form.Set("code_verifier", verifier)
-	form.Set("client_id", ClientID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if resp.StatusCode != http.StatusOK {
-		// Surface the OAuth error fields if the server gave us JSON; fall
-		// back to body text otherwise so debugging isn't blind.
-		var oauthErr struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
-		}
-		if json.Unmarshal(body, &oauthErr) == nil && oauthErr.Error != "" {
-			return "", "", fmt.Errorf("token endpoint returned %s: %s", oauthErr.Error, oauthErr.ErrorDescription)
-		}
-		return "", "", fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var tok struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return "", "", fmt.Errorf("parse token response: %w", err)
-	}
-	if tok.AccessToken == "" {
-		return "", "", errors.New("token response missing access_token")
-	}
-	return tok.AccessToken, tok.TokenType, nil
-}
-
-// newPkce returns (verifier, S256 challenge). Verifier is 32 random bytes
-// base64url-encoded — exactly 43 chars, which is RFC 7636 §4.1's minimum.
 func newPkce() (verifier, challenge string, err error) {
 	verifier, err = randomString(32)
 	if err != nil {
 		return "", "", err
 	}
 	sum := sha256.Sum256([]byte(verifier))
-	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
-	return verifier, challenge, nil
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
 func randomString(n int) (string, error) {
@@ -391,8 +279,7 @@ func randomString(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// canonicalServer mirrors credstore.CanonicalizeServerURL but also enforces
-// HTTPS unless the caller opts into insecure mode (local dev only).
+// canonicalServer normalizes a server URL and enforces HTTPS unless insecure.
 func canonicalServer(raw string, allowInsecure bool) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -403,7 +290,7 @@ func canonicalServer(raw string, allowInsecure bool) (string, error) {
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "https" && !allowInsecure {
-		return "", fmt.Errorf("server URL must use https:// (got %s://); pass --insecure to override for local dev", scheme)
+		return "", fmt.Errorf("server URL must use https:// (got %s://); pass --insecure for local dev", scheme)
 	}
 	if scheme != "https" && scheme != "http" {
 		return "", fmt.Errorf("server URL scheme must be http or https (got %s)", scheme)
@@ -416,9 +303,7 @@ func canonicalServer(raw string, allowInsecure bool) (string, error) {
 	return u.String(), nil
 }
 
-// OpenBrowser launches a URL in the user's default browser. Pure best-effort
-// — failure paths (no GUI, headless server) are surfaced to the caller so
-// it can fall back to printing the URL.
+// OpenBrowser launches a URL in the user's default browser (best-effort).
 func OpenBrowser(rawURL string) error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -431,12 +316,5 @@ func OpenBrowser(rawURL string) error {
 }
 
 func htmlEscape(s string) string {
-	r := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		`"`, "&quot;",
-		"'", "&#39;",
-	)
-	return r.Replace(s)
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;").Replace(s)
 }

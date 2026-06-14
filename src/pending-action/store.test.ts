@@ -14,8 +14,6 @@ function makeWebAuthnParams(overrides?: Partial<WebAuthnCreateParams>): WebAuthn
     context: {
       source: "agent-proxy",
       sourceIp: "127.0.0.1",
-      apiKeyLabel: "Test Key",
-      apiKeyPrefix: "sw_test",
     },
     credentialId: "cred-1",
     challenge: "dGVzdC1jaGFsbGVuZ2U=",

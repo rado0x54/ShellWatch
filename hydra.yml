@@ -1,0 +1,72 @@
+# Ory Hydra configuration for ShellWatch (issue #217).
+#
+# This file is mounted into the Hydra container by the `hydra` service in
+# docker-compose.yml.
+# It wires Hydra to use ShellWatch (running on the host at :3000) as its
+# login + consent provider. Hydra never has an identity store of its own —
+# every login/consent decision is delegated back to ShellWatch via redirect
+# challenges, where it is gated behind a passkey.
+#
+# The URLs under `urls.login`/`urls.consent` are sent to the *browser* as
+# redirects, so they must be reachable from the user's machine — hence
+# localhost:3000 (the ShellWatch dev server), not a Docker-internal hostname.
+#
+# `dev: true` is passed as a CLI flag in compose (not here) so the HTTP issuer
+# is accepted without TLS for local development.
+
+serve:
+  cookies:
+    same_site_mode: Lax
+  public:
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://localhost:3000
+        - http://localhost:3001
+
+urls:
+  self:
+    # Public issuer — advertised in discovery, embedded in tokens, and reached
+    # by the web UI, MCP clients, and the agent-client for /oauth2/token.
+    # Browser- and host-reachable.
+    issuer: http://localhost:4444
+    public: http://localhost:4444
+  # ShellWatch login + consent providers (passkey-gated). Browser-reachable.
+  login: http://localhost:3000/api/hydra/login
+  consent: http://localhost:3000/api/hydra/consent
+  logout: http://localhost:3000/api/hydra/logout
+  error: http://localhost:3000/api/hydra/error
+  # Where Hydra sends the browser after a successful logout with no redirect.
+  # The SPA root: the auth guard sees no token and (re)starts the OAuth flow —
+  # Hydra has no session post-logout, so it lands on the passkey login page.
+  post_logout_redirect: http://localhost:3000/
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+  # Mediated DCR only — ShellWatch exposes /api/hydra/register and provisions
+  # clients via the admin API after enforcing local policy. Hydra's own public
+  # registration endpoint stays off.
+  dynamic_client_registration:
+    enabled: false
+
+strategies:
+  access_token: opaque
+
+ttl:
+  access_token: 30m
+  refresh_token: 720h
+  id_token: 30m
+  auth_code: 10m
+
+oauth2:
+  # All ShellWatch clients (web UI, MCP, agent) are public clients and use PKCE;
+  # Hydra enforces PKCE for public clients by default. No global enforcement is
+  # needed since there are no confidential clients.
+  pkce:
+    enforced: false
+
+log:
+  level: info
+  format: text

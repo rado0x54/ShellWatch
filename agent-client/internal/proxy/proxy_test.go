@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rado0x54/shellwatch-agent/internal/oauth"
 )
 
 func TestReadFrame(t *testing.T) {
@@ -182,7 +183,7 @@ func TestDialWithRetry_RecoversAfterTransientFailures(t *testing.T) {
 
 	// Tighten the budget so this test runs fast — the production dial timing
 	// would still complete, but we want to keep the test cheap.
-	ws, err := dialWithRetry(u.String(), "test-key", "test")
+	ws, err := dialWithRetry(u.String(), oauth.StaticToken("test-key"), "test")
 	if err != nil {
 		t.Fatalf("dialWithRetry: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestDialWithRetry_DoesNotRetryOnAuthRejection(t *testing.T) {
 	u.Scheme = "ws"
 
 	start := time.Now()
-	_, err := dialWithRetry(u.String(), "test-key", "test")
+	_, err := dialWithRetry(u.String(), oauth.StaticToken("test-key"), "test")
 	if err == nil {
 		t.Fatal("expected error for 401")
 	}

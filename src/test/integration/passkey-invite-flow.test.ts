@@ -25,14 +25,18 @@ import { randomUUID } from "node:crypto";
 import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { rateLimitDefaults, securityFieldDefaults } from "../../config/schema.js";
+import { rateLimitDefaults } from "../../config/schema.js";
 import { createDatabase, type DatabaseConnection } from "../../db/connection.js";
 import { runMigrations } from "../../db/migrate.js";
 import { CREDENTIAL_STATE } from "../../db/repositories/index.js";
 import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { accounts, webauthnCredentials } from "../../db/schema.js";
-import { registerAuthGate } from "../../server/auth/auth-gate.js";
-import { createSessionCookie } from "../../server/auth/session-cookie.js";
+import { registerBearerGate } from "../../server/auth/bearer-gate.js";
+import { createBearerResolver } from "../../hydra/bearer-resolver.js";
+import type { FakeHydraAdmin } from "../helpers/fake-hydra.js";
+import { makeTestBearer } from "../helpers/test-bearer.js";
+import { makeTestConfig } from "../helpers/test-config.js";
+import { registerHydraRoutes } from "../../hydra/routes.js";
 import { _resetInviteStore } from "../../webauthn/invite-store.js";
 import { registerWebAuthnRoutes } from "../../webauthn/routes.js";
 import {
@@ -43,12 +47,12 @@ import {
 } from "../../webauthn/stepup-store.js";
 
 const ACCOUNT_ID = "00000000-0000-0000-0000-00000000000a";
-const COOKIE_SECRET = "test-cookie-secret-passkey-invite";
 
 interface TestApp {
   app: FastifyInstance;
   conn: DatabaseConnection;
-  cookie: string;
+  auth: string;
+  hydraAdmin: FakeHydraAdmin;
 }
 
 async function makeTestApp(): Promise<TestApp> {
@@ -67,22 +71,41 @@ async function makeTestApp(): Promise<TestApp> {
   await app.register(fastifyRateLimit, { global: false });
 
   const accountRepo = new StubAccountRepository();
-  registerAuthGate({ app, secret: COOKIE_SECRET, accountRepo });
+  const config = makeTestConfig();
+  const { admin, bearerFor } = makeTestBearer();
+  registerBearerGate({
+    app,
+    resolveBearer: createBearerResolver({ admin, cacheTtlMs: 0 }),
+    accountRepo,
+    config,
+    agentProxyEnabled: false,
+  });
   registerWebAuthnRoutes({
     app,
     db: conn.db,
     accountRepo,
+    admin,
     rpId: "localhost",
     trustedOrigins: ["http://localhost"],
-    sessionConfig: { secret: COOKIE_SECRET, ttlSeconds: securityFieldDefaults.sessionTtlSeconds },
     selfRegistrationEnabled: false,
     rateLimitConfig: rateLimitDefaults,
+  });
+  // Mount the Hydra login provider so login-options/verify behavior (active-only
+  // credentials, reject pending/revoked) is covered against the real endpoints.
+  registerHydraRoutes({
+    app,
+    config,
+    db: conn.db,
+    accountRepo,
+    admin,
+    rpId: "localhost",
+    trustedOrigins: ["http://localhost"],
+    agentProxyEnabled: false,
   });
 
   await app.ready();
 
-  const cookie = `sw_session=${createSessionCookie(COOKIE_SECRET, 86_400, ACCOUNT_ID)}`;
-  return { app, conn, cookie };
+  return { app, conn, auth: bearerFor(ACCOUNT_ID), hydraAdmin: admin };
 }
 
 /**
@@ -148,7 +171,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     expect(created.statusCode).toBe(200);
@@ -169,7 +192,7 @@ describe("passkey invite — HTTP integration", () => {
     const created = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const token = (created.json() as { invite: { token: string } }).invite.token;
@@ -190,7 +213,7 @@ describe("passkey invite — HTTP integration", () => {
     const first = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const firstToken = (first.json() as { invite: { token: string } }).invite.token;
@@ -198,7 +221,7 @@ describe("passkey invite — HTTP integration", () => {
     const second = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
     const secondToken = (second.json() as { invite: { token: string } }).invite.token;
@@ -221,21 +244,21 @@ describe("passkey invite — HTTP integration", () => {
     const empty = await testApp.app.inject({
       method: "GET",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie },
+      headers: { authorization: testApp.auth },
     });
     expect(empty.statusCode).toBe(404);
 
     await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie, "content-type": "application/json" },
+      headers: { authorization: testApp.auth, "content-type": "application/json" },
       payload: {},
     });
 
     const present = await testApp.app.inject({
       method: "GET",
       url: "/api/webauthn/invite",
-      headers: { cookie: testApp.cookie },
+      headers: { authorization: testApp.auth },
     });
     expect(present.statusCode).toBe(200);
   });
@@ -264,7 +287,7 @@ describe("passkey invite — HTTP integration", () => {
     expect(register.statusCode).toBe(404);
   });
 
-  it("invite create requires a session cookie", async () => {
+  it("invite create requires authentication (ui bearer token)", async () => {
     const res = await testApp.app.inject({
       method: "POST",
       url: "/api/webauthn/invite",
@@ -285,7 +308,7 @@ describe("passkey invite — HTTP integration", () => {
 
     const res = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { allowCredentials?: { id: string }[] };
@@ -302,7 +325,7 @@ describe("passkey invite — HTTP integration", () => {
     insertCredential(testApp.conn, { label: "active-decoy" });
     const optionsRes = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     const { challengeId } = optionsRes.json() as { challengeId: string };
     expect(challengeId).toBeTruthy();
@@ -314,9 +337,10 @@ describe("passkey invite — HTTP integration", () => {
 
     const verify = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login",
+      url: "/api/hydra/login/verify",
       headers: { "content-type": "application/json" },
       payload: {
+        login_challenge: "dummy-challenge",
         challengeId,
         credential: {
           id: pending.credentialId,
@@ -335,7 +359,7 @@ describe("passkey invite — HTTP integration", () => {
     insertCredential(testApp.conn, { label: "active-decoy" });
     const optionsRes = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login/options",
+      url: "/api/hydra/login/options",
     });
     const { challengeId } = optionsRes.json() as { challengeId: string };
 
@@ -343,9 +367,10 @@ describe("passkey invite — HTTP integration", () => {
 
     const verify = await testApp.app.inject({
       method: "POST",
-      url: "/api/auth/login",
+      url: "/api/hydra/login/verify",
       headers: { "content-type": "application/json" },
       payload: {
+        login_challenge: "dummy-challenge",
         challengeId,
         credential: {
           id: revoked.credentialId,
@@ -370,7 +395,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -389,7 +414,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: "/api/webauthn/credentials/does-not-exist/confirm",
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -402,7 +427,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -419,7 +444,7 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${cred.id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
@@ -451,10 +476,226 @@ describe("passkey invite — HTTP integration", () => {
       method: "POST",
       url: `/api/webauthn/credentials/${id}/confirm`,
       headers: {
-        cookie: testApp.cookie,
+        authorization: testApp.auth,
         ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.confirmPasskey),
       },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  // ---- Consent provider input validation: unauth 400, never 500 (#217) ----
+
+  it("/api/hydra/consent/options returns 400 (not 500) for a missing challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/options",
+      headers: { "content-type": "application/json" },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("/api/hydra/consent/options returns 400 (not 500) for a bogus challenge", async () => {
+    // The fake Hydra admin rejects getConsentRequest → the handler must catch
+    // and return 400, not let a HydraApiError bubble to a 500.
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/options",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "does-not-exist" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // ---- Provider GET pages + verify routes: 400 (HTML/JSON), never 500 (F3/F4) ----
+
+  it("GET /api/hydra/login returns 400 for a missing login_challenge", async () => {
+    const res = await testApp.app.inject({ method: "GET", url: "/api/hydra/login" });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("GET /api/hydra/login returns 400 (not 500) for a bogus login_challenge", async () => {
+    // getLoginRequest rejects (HydraApiError) → htmlFlow renders the error page
+    // with 400 instead of letting it bubble to a 500 (and amplify admin calls).
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/login?login_challenge=does-not-exist",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("GET /api/hydra/consent returns 400 (not 500) for a bogus consent_challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=does-not-exist",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["content-type"]).toContain("text/html");
+  });
+
+  it("POST /api/hydra/login/verify returns 400 (not 500) for a bodyless request", async () => {
+    // No content-type / no body → request.body is undefined. Defensive reads
+    // must yield a 400, not a TypeError-500 from destructuring first.
+    const res = await testApp.app.inject({ method: "POST", url: "/api/hydra/login/verify" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("POST /api/hydra/consent/verify returns 400 (not 500) for a bodyless request", async () => {
+    const res = await testApp.app.inject({ method: "POST", url: "/api/hydra/consent/verify" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // ---- Option-1: one passkey, not two, on a fresh-login consent ----
+
+  const seedConsent = (challenge: string, freshLogin: boolean) =>
+    testApp.hydraAdmin.setConsentRequest(challenge, {
+      challenge,
+      skip: false,
+      subject: ACCOUNT_ID,
+      client: { client_id: "mcp-test-client", client_name: "Test MCP" },
+      requested_scope: ["mcp", "offline_access"],
+      requested_access_token_audience: [],
+      context: { freshLogin },
+    });
+
+  it("GET /api/hydra/consent shows the no-passkey Approve page after a fresh login", async () => {
+    seedConsent("consent-fresh-ui", true);
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=consent-fresh-ui",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain("/api/hydra/consent/approve");
+    // No passkey ceremony on the fresh-login path.
+    expect(res.payload).not.toContain("navigator.credentials");
+  });
+
+  it("GET /api/hydra/consent still requires a passkey when login was remembered", async () => {
+    seedConsent("consent-stale-ui", false);
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/consent?consent_challenge=consent-stale-ui",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain("/api/hydra/consent/verify");
+    expect(res.payload).toContain("navigator.credentials");
+  });
+
+  it("POST /api/hydra/consent/approve grants when login was fresh", async () => {
+    seedConsent("consent-fresh-ok", true);
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "consent-fresh-ok" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { redirectTo?: string }).redirectTo).toContain("consent-fresh-ok");
+  });
+
+  it("POST /api/hydra/consent/approve refuses (no passkey) when login was NOT fresh", async () => {
+    // Security-critical: the no-passkey path must re-check freshness against
+    // Hydra's own record, so a remembered-login flow can't skip the passkey.
+    seedConsent("consent-stale-deny", false);
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: { consent_challenge: "consent-stale-deny" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toBe("passkey_required");
+  });
+
+  it("POST /api/hydra/consent/approve returns 400 for a missing challenge", async () => {
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: "/api/hydra/consent/approve",
+      headers: { "content-type": "application/json" },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // ---- Passkey revoke can optionally invalidate all sessions (#219) ----
+
+  it("revoke with invalidateSessions terminates all of the account's Hydra sessions", async () => {
+    insertCredential(testApp.conn, { label: "keep" }); // not the last active passkey
+    const target = insertCredential(testApp.conn, { label: "compromised" });
+
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: `/api/webauthn/credentials/${target.id}/revoke`,
+      headers: {
+        authorization: testApp.auth,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.revokePasskey),
+      },
+      payload: { invalidateSessions: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessionsInvalidated: boolean }).sessionsInvalidated).toBe(true);
+    // Account-wide: all consent grants (no clientId) + login sessions revoked.
+    expect(testApp.hydraAdmin.revokedConsent).toContainEqual({
+      subject: ACCOUNT_ID,
+      clientId: undefined,
+    });
+    expect(testApp.hydraAdmin.revokedLogin).toContain(ACCOUNT_ID);
+  });
+
+  it("revoke without the flag leaves Hydra sessions intact", async () => {
+    insertCredential(testApp.conn, { label: "keep2" });
+    const target = insertCredential(testApp.conn, { label: "old" });
+
+    const res = await testApp.app.inject({
+      method: "POST",
+      url: `/api/webauthn/credentials/${target.id}/revoke`,
+      headers: {
+        authorization: testApp.auth,
+        ...stepUpHeader(ACCOUNT_ID, STEPUP_ACTION.revokePasskey),
+      },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessionsInvalidated: boolean }).sessionsInvalidated).toBe(false);
+    expect(testApp.hydraAdmin.revokedLogin).toHaveLength(0);
+    expect(testApp.hydraAdmin.revokedConsent).toHaveLength(0);
+  });
+
+  // ---- Logout provider rejects unhinted (CSRF) logouts (F9) ----
+
+  it("accepts an RP-attributed logout (valid id_token_hint → client present)", async () => {
+    testApp.hydraAdmin.setLogoutRequest("logout-ok", {
+      challenge: "logout-ok",
+      subject: ACCOUNT_ID,
+      rp_initiated: true,
+      client: { client_id: "shellwatch-web" },
+    });
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/logout?logout_challenge=logout-ok",
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain("post-logout");
+    expect(testApp.hydraAdmin.rejectedLogout).not.toContain("logout-ok");
+  });
+
+  it("rejects an unhinted logout (no client → CSRF) without terminating the session", async () => {
+    // No id_token_hint → Hydra can't attribute the logout to a client. Our
+    // provider must reject rather than blindly destroy the victim's session.
+    testApp.hydraAdmin.setLogoutRequest("logout-csrf", {
+      challenge: "logout-csrf",
+      subject: ACCOUNT_ID,
+      rp_initiated: true,
+      client: null,
+    });
+    const res = await testApp.app.inject({
+      method: "GET",
+      url: "/api/hydra/logout?logout_challenge=logout-csrf",
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/");
+    expect(testApp.hydraAdmin.rejectedLogout).toContain("logout-csrf");
   });
 });

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/rado0x54/shellwatch-agent/internal/credstore"
+	"github.com/rado0x54/shellwatch-agent/internal/oauth"
 )
 
 // fakeStore is the default credstore swapped in for the duration of every
@@ -110,57 +111,72 @@ func TestResolveServerPrecedence(t *testing.T) {
 	}
 }
 
-func TestResolveApiKeyPrecedence(t *testing.T) {
+// tokenString resolves the bearer a Config would present, or "" if none. A
+// raw credstore/flag value decodes as a StaticToken (not OAuth-client JSON), so
+// Token() returns it verbatim — which is what these precedence tests assert.
+func tokenString(t *testing.T, cfg *Config) string {
+	t.Helper()
+	if cfg.Token == nil {
+		return ""
+	}
+	tok, err := cfg.Token.Token()
+	if err != nil {
+		t.Fatalf("Token() error: %v", err)
+	}
+	return tok
+}
+
+func TestResolveTokenPrecedence(t *testing.T) {
 	// explicit flag overrides env
 	cfg := resolve(
-		flagValues{apiKey: "from-flag", explicit: map[string]bool{"api-key": true}},
-		envValues{apiKey: "from-env"},
+		flagValues{token: "from-flag", explicit: map[string]bool{"token": true}},
+		envValues{token: "from-env"},
 	)
-	if cfg.ApiKey != "from-flag" {
-		t.Errorf("ApiKey = %q, want from-flag", cfg.ApiKey)
+	if got := tokenString(t, cfg); got != "from-flag" {
+		t.Errorf("token = %q, want from-flag", got)
 	}
 
 	// env used when flag not set
 	cfg = resolve(
 		flagValues{explicit: map[string]bool{}},
-		envValues{apiKey: "from-env"},
+		envValues{token: "from-env"},
 	)
-	if cfg.ApiKey != "from-env" {
-		t.Errorf("ApiKey = %q, want from-env", cfg.ApiKey)
+	if got := tokenString(t, cfg); got != "from-env" {
+		t.Errorf("token = %q, want from-env", got)
 	}
 }
 
-func TestResolveApiKey_FallsBackToCredstore(t *testing.T) {
-	// Neither flag nor env set; credstore has a token for the resolved
-	// server URL — resolve() should pick it up.
+func TestResolveToken_FallsBackToCredstore(t *testing.T) {
+	// Neither flag nor env set; credstore has a (legacy raw) value for the
+	// resolved server URL — resolve() should pick it up as a static bearer.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
 		DefaultServer: "from-credstore",
 	}})
 
 	cfg := resolve(flagValues{explicit: map[string]bool{}}, envValues{})
-	if cfg.ApiKey != "from-credstore" {
-		t.Errorf("ApiKey = %q, want from-credstore", cfg.ApiKey)
+	if got := tokenString(t, cfg); got != "from-credstore" {
+		t.Errorf("token = %q, want from-credstore", got)
 	}
 }
 
-func TestResolveApiKey_FlagBeatsCredstore(t *testing.T) {
-	// Static flag must win even when the credstore has a token — this is
+func TestResolveToken_FlagBeatsCredstore(t *testing.T) {
+	// Static flag must win even when the credstore has a value — this is
 	// the documented precedence and the path CI environments rely on.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
 		DefaultServer: "from-credstore",
 	}})
 
 	cfg := resolve(
-		flagValues{apiKey: "from-flag", explicit: map[string]bool{"api-key": true}},
+		flagValues{token: "from-flag", explicit: map[string]bool{"token": true}},
 		envValues{},
 	)
-	if cfg.ApiKey != "from-flag" {
-		t.Errorf("ApiKey = %q, want from-flag", cfg.ApiKey)
+	if got := tokenString(t, cfg); got != "from-flag" {
+		t.Errorf("token = %q, want from-flag", got)
 	}
 }
 
-func TestResolveApiKey_CredstoreLookedUpByServerURL(t *testing.T) {
-	// Different servers must isolate cleanly: a token saved for prod
+func TestResolveToken_CredstoreLookedUpByServerURL(t *testing.T) {
+	// Different servers must isolate cleanly: a value saved for prod
 	// must not satisfy a daemon configured to point at dev.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
 		"https://prod.example.com": "prod-token",
@@ -170,16 +186,16 @@ func TestResolveApiKey_CredstoreLookedUpByServerURL(t *testing.T) {
 		flagValues{server: "https://dev.example.com", explicit: map[string]bool{"server": true}},
 		envValues{},
 	)
-	if cfg.ApiKey != "" {
-		t.Errorf("ApiKey for dev should be empty (only prod token saved); got %q", cfg.ApiKey)
+	if cfg.Token != nil {
+		t.Errorf("token for dev should be nil (only prod value saved); got %v", cfg.Token)
 	}
 }
 
-func TestValidateRequiresApiKey(t *testing.T) {
+func TestValidateRequiresCredentials(t *testing.T) {
 	if err := (&Config{Server: DefaultServer}).Validate(); err == nil {
-		t.Fatal("expected error for missing API key")
+		t.Fatal("expected error for missing credentials")
 	}
-	if err := (&Config{Server: DefaultServer, ApiKey: "k"}).Validate(); err != nil {
+	if err := (&Config{Server: DefaultServer, Token: oauth.StaticToken("k")}).Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

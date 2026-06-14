@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
@@ -49,7 +50,7 @@
 
   async function handleDeny(actionId: string, toastId: string) {
     try {
-      const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
+      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (!res.ok) {
         toastError(`Failed to deny action: ${await res.text()}`);
       }

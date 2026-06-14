@@ -69,8 +69,6 @@ export class SessionLifecycleWriter {
         mcpReason: session.mcpReason,
         mcpClientName: session.mcpClientName,
         mcpClientVersion: session.mcpClientVersion,
-        apiKeyLabel: session.apiKeyLabel,
-        apiKeyPrefix: session.apiKeyPrefix,
       });
     } catch (err) {
       // Don't let an audit-write failure break the live session — it would

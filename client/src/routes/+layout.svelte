@@ -1,7 +1,6 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import "../app.css";
   import Sidebar from "$lib/components/Sidebar.svelte";
@@ -11,7 +10,7 @@
   import { initBuildInfoFromWindow } from "$lib/stores/build-info.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
-  import { checkAuth } from "$lib/stores/webauthn.js";
+  import { beginLogin, isAuthenticated } from "$lib/oauth.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
 
   let { children } = $props();
@@ -20,12 +19,14 @@
   let mobileMenuOpen = $state(false);
   let sessionModes = $state<Record<string, string>>({});
 
-  // `/passkey-invite/<token>` is reached by a *second* device that has no
-  // session yet — it must render fullscreen (no sidebar) and skip the
-  // auth-gated bootstrap below, same as /login and /register.
+  // Public, no-token routes that render fullscreen (no sidebar) and skip the
+  // auth-gated bootstrap below. There's no SPA /login anymore — Hydra owns the
+  // login UI, so an unauthenticated user is sent straight into the OAuth flow.
   function isUnauthPath(path: string): boolean {
     return (
-      path.endsWith("/login") || path.endsWith("/register") || path.includes("/passkey-invite/")
+      path.endsWith("/register") ||
+      path.includes("/passkey-invite/") ||
+      path.includes("/auth/callback")
     );
   }
 
@@ -43,23 +44,20 @@
     const isUnauthPage = isUnauthPath(currentPath);
 
     if (!isUnauthPage) {
-      const { authenticated } = await checkAuth();
-      if (!authenticated) {
-        const redirect = window.location.pathname + window.location.search;
-        const target =
-          redirect && redirect !== "/"
-            ? `/login?redirect=${encodeURIComponent(redirect)}`
-            : resolve("/login");
-        // Full-page reload (not goto) — typed routes can't validate a dynamic
-        // string, and this flushes any in-memory state from the unauth view.
-        window.location.href = target;
+      // Auth is a browser-held OAuth token (#217). isAuthenticated() tries a
+      // silent refresh; if there's no usable token, start the OAuth flow rather
+      // than showing a local login mask. A remembered Hydra session skips
+      // straight through (no prompt); otherwise Hydra renders the passkey login
+      // page. The current path is preserved as the post-login destination.
+      if (!(await isAuthenticated())) {
+        await beginLogin(window.location.pathname + window.location.search);
         ready = true;
         return;
       }
     }
 
     if (!isUnauthPage) {
-      connectWs();
+      await connectWs();
       await fetchEndpoints();
       fetchAccount();
 

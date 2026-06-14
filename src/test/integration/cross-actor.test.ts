@@ -33,7 +33,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP creates session → WebSocket receives sessions:changed", async () => {
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       // Drain initial sessions:changed
@@ -60,7 +60,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP sends input → WebSocket receives terminal:output", async () => {
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       await ws.waitForMessage("sessions:changed");
@@ -94,7 +94,7 @@ describe("Cross-Actor: MCP ↔ WebSocket", () => {
   });
 
   it("MCP closes session → WebSocket receives sessions:changed and terminal:closed", async () => {
-    const ws = await connectTestWsClient(appServer.url, log, appServer.sessionCookie);
+    const ws = await connectTestWsClient(appServer.url, log, appServer.uiToken);
     const mcp = await createTestMcpClient(appServer.url, log, appServer.apiKey);
     try {
       await ws.waitForMessage("sessions:changed");

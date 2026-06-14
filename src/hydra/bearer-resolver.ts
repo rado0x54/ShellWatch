@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+/**
+ * Resolves an opaque bearer access token to a ShellWatch principal via RFC 7662
+ * introspection against Hydra (#217), with a short cache.
+ *
+ * Every token reaching ShellWatch is an `authorization_code` token whose `sub`
+ * IS the ShellWatch account id — the human who logged in (web UI, MCP client,
+ * or agent-client all use the same DCR + authcode + PKCE flow). The OAuth
+ * client is never bound to an account, so there's nothing to map: `sub` is the
+ * account, and the granted `scope` distinguishes the surface (ui/mcp/agent).
+ *
+ * Results are cached for hydra.introspectionCacheTtlMs (default 60s) to amortize
+ * bursts; that window also bounds how long a revoked token keeps working.
+ * Failures introspecting fail CLOSED (return null → 401).
+ */
+import type { HydraAdminClient } from "./admin-client.js";
+
+/** What the bearer gate sets on `request.apiKey` (legacy field name; see request.d.ts). */
+export interface BearerPrincipal {
+  accountId: string;
+  /** Granted scopes from the introspected token. */
+  scopes: string[];
+}
+
+export type BearerResolver = (token: string) => Promise<BearerPrincipal | null>;
+
+interface CacheEntry {
+  value: BearerPrincipal | null;
+  expiresAt: number;
+}
+
+export interface CreateBearerResolverParams {
+  admin: HydraAdminClient;
+  cacheTtlMs: number;
+  /** Injectable clock for tests. Defaults to Date.now. */
+  now?: () => number;
+}
+
+const MAX_CACHE_ENTRIES = 2048;
+
+export function createBearerResolver(params: CreateBearerResolverParams): BearerResolver {
+  const { admin, cacheTtlMs } = params;
+  const now = params.now ?? Date.now;
+  const cache = new Map<string, CacheEntry>();
+
+  return async (token: string): Promise<BearerPrincipal | null> => {
+    const cached = cache.get(token);
+    const t = now();
+    if (cached && cached.expiresAt > t) return cached.value;
+    if (cached) cache.delete(token);
+
+    let value: BearerPrincipal | null = null;
+    try {
+      const ins = await admin.introspect(token);
+      // Default-deny: only access tokens authorize a request. Hydra tags every
+      // introspected token with token_use, so requiring "access_token" is what
+      // stops a refresh token (leaked from localStorage — it introspects active
+      // with the same sub+scope) being replayed directly as a bearer.
+      if (ins.active && ins.sub && ins.token_use === "access_token") {
+        value = {
+          accountId: ins.sub,
+          scopes: (ins.scope ?? "").split(/\s+/).filter(Boolean),
+        };
+      }
+    } catch {
+      // Fail closed: an unreachable / erroring introspection endpoint must not
+      // grant access. Do not cache transient failures.
+      return null;
+    }
+
+    // Cache ONLY valid principals — never a null/invalid result. Negative
+    // caching has no upside (a legit client never replays an invalid token — it
+    // refreshes on 401) and is a liability: an attacker spraying unique invalid
+    // tokens would otherwise fill the cache and evict legit entries. So the
+    // cache size is bounded by real concurrent principals, and invalid tokens
+    // simply re-introspect (a 1:1 cost handled at the network edge, not here).
+    if (cacheTtlMs > 0 && value) {
+      // Evict the oldest entry (Map preserves insertion order) rather than
+      // clearing everything, so a large legit deployment that exceeds the cap
+      // degrades gracefully instead of dumping all hot entries at once.
+      if (cache.size >= MAX_CACHE_ENTRIES) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+      cache.set(token, { value, expiresAt: t + cacheTtlMs });
+    }
+    return value;
+  };
+}

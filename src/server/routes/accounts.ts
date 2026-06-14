@@ -6,7 +6,6 @@ import type { AccountRepository } from "../../db/index.js";
 import { CREDENTIAL_STATE } from "../../db/repositories/credential-queries.js";
 import {
   accounts as accountsTable,
-  apiKeys as apiKeysTable,
   endpoints as endpointsTable,
   webauthnCredentials,
 } from "../../db/schema.js";
@@ -120,10 +119,11 @@ export function registerAccountRoutes(params: AccountRoutesParams) {
     }
 
     // Hard-delete: cascade all owned data (order matters for FK constraints).
-    // audit_session_lifecycle has ON DELETE CASCADE; pushSubscriptions same.
+    // audit_session_lifecycle + push_subscriptions have ON DELETE CASCADE.
+    // The lifecycle listener in app.ts additionally revokes the subject's Hydra
+    // login + consent sessions, so any live token for this account dies (#217).
     if (db) {
       db.delete(webauthnCredentials).where(eq(webauthnCredentials.accountId, targetId)).run();
-      db.delete(apiKeysTable).where(eq(apiKeysTable.accountId, targetId)).run();
       db.delete(endpointsTable).where(eq(endpointsTable.accountId, targetId)).run();
       db.delete(accountsTable).where(eq(accountsTable.id, targetId)).run();
     }

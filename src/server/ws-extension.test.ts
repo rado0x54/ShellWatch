@@ -48,8 +48,6 @@ describe("WebSocketChannel as WsExtension", () => {
       context: {
         source: "agent-proxy" as const,
         sourceIp: "1.2.3.4",
-        apiKeyLabel: "Test Key",
-        apiKeyPrefix: "sw_test",
       },
       credentialId: "cred-1",
       challenge: "dGVzdA==",

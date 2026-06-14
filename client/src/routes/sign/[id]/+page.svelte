@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  import { apiFetch } from "$lib/api.js";
+  import { beginLogin } from "$lib/oauth.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
@@ -31,8 +33,6 @@
     | {
         source: "agent-proxy";
         sourceIp: string;
-        apiKeyLabel: string;
-        apiKeyPrefix: string;
         clientHostname?: string;
         clientOs?: string;
         clientVersion?: string;
@@ -81,9 +81,9 @@
 
   onMount(async () => {
     try {
-      const res = await fetch(`/api/actions/${actionId}`);
+      const res = await apiFetch(`/api/actions/${actionId}`);
       if (res.status === 401) {
-        await goto(resolve(`/login?redirect=/sign/${actionId}`));
+        await beginLogin(`/sign/${actionId}`);
         return;
       }
       if (!res.ok) {
@@ -98,7 +98,9 @@
       // just hide the preview rather than blocking approval.
       if (action && action.context.source === "agent-forwarding") {
         try {
-          const tailRes = await fetch(`/api/sessions/${action.context.sessionId}/tail?limit=2000`);
+          const tailRes = await apiFetch(
+            `/api/sessions/${action.context.sessionId}/tail?limit=2000`,
+          );
           if (tailRes.ok) {
             const body = (await tailRes.json()) as { data?: string };
             parentSessionTail = body.data ?? "";
@@ -155,7 +157,7 @@
   async function handleDeny() {
     if (!action) return;
     try {
-      const res = await fetch(`/api/actions/${actionId}/deny`, { method: "POST" });
+      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (res.ok) {
         resultStatus = "denied";
         clearAction(actionId);
@@ -297,13 +299,6 @@
           <div class="sign-field">
             <span class="sign-label">Source IP</span>
             <span class="sign-value sign-mono">{ctx.sourceIp}</span>
-          </div>
-          <div class="sign-field">
-            <span class="sign-label">API Key</span>
-            <span class="sign-value">
-              {ctx.apiKeyLabel}
-              <span class="sign-muted sign-mono">({ctx.apiKeyPrefix}…)</span>
-            </span>
           </div>
         {/if}
 

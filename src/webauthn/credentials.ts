@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { ShellWatchDB } from "../db/connection.js";
 import { CREDENTIAL_STATE } from "../db/repositories/credential-queries.js";
 import { webauthnCredentials } from "../db/schema.js";
+import type { HydraAdminClient } from "../hydra/admin-client.js";
 import { detectAlgorithm } from "./credential-utils.js";
 import { fingerprintFromAuthorizedKeys } from "./fingerprint.js";
 import { getSshdConfigLine } from "./ssh-key-format.js";
@@ -13,10 +14,12 @@ import { STEPUP_ACTION } from "./stepup-store.js";
 export interface CredentialRoutesParams {
   app: FastifyInstance;
   db: ShellWatchDB;
+  /** Hydra admin — used to optionally invalidate all sessions on revoke (#219). */
+  admin: HydraAdminClient;
 }
 
 export function registerCredentialRoutes(params: CredentialRoutesParams) {
-  const { app, db } = params;
+  const { app, db, admin } = params;
 
   // --- List Registered Credentials (scoped to account) ---
   app.get("/api/webauthn/credentials", async (request) => {
@@ -118,11 +121,12 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
   // --- Revoke Credential (permanent, scoped to account) ---
   // Step-up gated via preHandler. Label edits (PATCH /label) intentionally
   // don't require step-up — labels are cosmetic, not a factor change.
-  app.post<{ Params: { id: string } }>(
+  app.post<{ Params: { id: string }; Body: { invalidateSessions?: boolean } }>(
     "/api/webauthn/credentials/:id/revoke",
     { preHandler: requireStepUp(STEPUP_ACTION.revokePasskey) },
     async (request, reply) => {
       const { id } = request.params;
+      const invalidateSessions = request.body?.invalidateSessions === true;
 
       // Verify ownership
       const cred = db
@@ -181,7 +185,36 @@ export function registerCredentialRoutes(params: CredentialRoutesParams) {
         "passkey revoked",
       );
 
-      return { status: "revoked" };
+      // Optionally terminate every active session for the account (#219).
+      // Hydra keys sessions by subject, not credential, so this is necessarily
+      // account-wide: it kills all consent grants + login (SSO) sessions, so the
+      // revoked-passkey holder — and every other device/client — must log in
+      // again. Covered by the same revoke_passkey step-up above (one passkey).
+      // The credential is already revoked; a Hydra hiccup here shouldn't fail
+      // the whole request, so report it back instead of 500-ing.
+      let sessionsInvalidated = false;
+      if (invalidateSessions) {
+        try {
+          await admin.revokeConsentSessions(request.accountId);
+          await admin.revokeLoginSessions(request.accountId);
+          sessionsInvalidated = true;
+          request.log.info(
+            { event: "passkey.revoked.sessions_invalidated", accountId: request.accountId },
+            "all sessions invalidated after passkey revoke",
+          );
+        } catch (err) {
+          request.log.error(
+            {
+              err,
+              event: "passkey.revoked.sessions_invalidate_failed",
+              accountId: request.accountId,
+            },
+            "failed to invalidate sessions after passkey revoke",
+          );
+        }
+      }
+
+      return { status: "revoked", sessionsInvalidated };
     },
   );
 }

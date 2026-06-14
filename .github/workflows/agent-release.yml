@@ -53,7 +53,7 @@ jobs:
       tag: ${{ steps.set.outputs.tag }}
       prev_tag: ${{ steps.set.outputs.prev_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
@@ -114,11 +114,11 @@ jobs:
           - { goos: windows, goarch: amd64, ext: .exe }
           - { goos: windows, goarch: arm64, ext: .exe }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: main
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: agent-client/go.mod
           cache-dependency-path: agent-client/go.sum
@@ -150,7 +150,7 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
@@ -160,7 +160,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: agent-client/go.mod
           cache-dependency-path: agent-client/go.sum

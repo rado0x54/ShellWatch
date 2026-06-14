@@ -29,27 +29,29 @@ import { randomUUID } from "node:crypto";
 import fastifyRateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { rateLimitDefaults, securityFieldDefaults } from "../../config/schema.js";
+import { rateLimitDefaults } from "../../config/schema.js";
 import { createDatabase, type DatabaseConnection } from "../../db/connection.js";
 import { runMigrations } from "../../db/migrate.js";
 import { CREDENTIAL_STATE } from "../../db/repositories/index.js";
 import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { accounts, webauthnCredentials } from "../../db/schema.js";
-import { registerAuthGate } from "../../server/auth/auth-gate.js";
-import { createSessionCookie } from "../../server/auth/session-cookie.js";
+import { registerBearerGate } from "../../server/auth/bearer-gate.js";
+import { createBearerResolver } from "../../hydra/bearer-resolver.js";
+import { makeTestBearer } from "../helpers/test-bearer.js";
+import { makeTestConfig } from "../helpers/test-config.js";
+import { registerHydraRoutes } from "../../hydra/routes.js";
 import { registerWebAuthnRoutes } from "../../webauthn/routes.js";
 import { _resetInviteStore } from "../../webauthn/invite-store.js";
 import { _resetStepUpStore, mintStepUpToken, STEPUP_ACTION } from "../../webauthn/stepup-store.js";
 
 const ACCOUNT_A = "00000000-0000-0000-0000-00000000000a";
 const ACCOUNT_B = "00000000-0000-0000-0000-00000000000b";
-const COOKIE_SECRET = "test-cookie-secret-stepup";
 
 interface TestApp {
   app: FastifyInstance;
   conn: DatabaseConnection;
-  cookieA: string;
-  cookieB: string;
+  authA: string;
+  authB: string;
 }
 
 async function makeTestApp(): Promise<TestApp> {
@@ -71,23 +73,41 @@ async function makeTestApp(): Promise<TestApp> {
   await app.register(fastifyRateLimit, { global: false });
 
   const accountRepo = new StubAccountRepository();
-  registerAuthGate({ app, secret: COOKIE_SECRET, accountRepo });
+  const config = makeTestConfig();
+  const { admin, bearerFor } = makeTestBearer();
+  registerBearerGate({
+    app,
+    resolveBearer: createBearerResolver({ admin, cacheTtlMs: 0 }),
+    accountRepo,
+    config,
+    agentProxyEnabled: false,
+  });
   registerWebAuthnRoutes({
     app,
     db: conn.db,
     accountRepo,
+    admin,
     rpId: "localhost",
     trustedOrigins: ["http://localhost"],
-    sessionConfig: { secret: COOKIE_SECRET, ttlSeconds: securityFieldDefaults.sessionTtlSeconds },
     selfRegistrationEnabled: false,
     rateLimitConfig: rateLimitDefaults,
+  });
+  // The Hydra login provider mints login-purpose challenges — used by the
+  // purpose-binding test to prove a login challenge can't satisfy step-up.
+  registerHydraRoutes({
+    app,
+    config,
+    db: conn.db,
+    accountRepo,
+    admin,
+    rpId: "localhost",
+    trustedOrigins: ["http://localhost"],
+    agentProxyEnabled: false,
   });
 
   await app.ready();
 
-  const cookieA = `sw_session=${createSessionCookie(COOKIE_SECRET, 86_400, ACCOUNT_A)}`;
-  const cookieB = `sw_session=${createSessionCookie(COOKIE_SECRET, 86_400, ACCOUNT_B)}`;
-  return { app, conn, cookieA, cookieB };
+  return { app, conn, authA: bearerFor(ACCOUNT_A), authB: bearerFor(ACCOUNT_B) };
 }
 
 function insertCredential(
@@ -146,7 +166,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/register/options",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { label: "first" },
       });
       expect(res.statusCode).toBe(200);
@@ -162,7 +182,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/register",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { challengeId: "x", credential: {} },
       });
       expect(res.statusCode).toBe(401);
@@ -179,7 +199,7 @@ describe("passkey step-up gate — HTTP integration", () => {
         method: "POST",
         url: "/api/webauthn/register",
         headers: {
-          cookie: testApp.cookieA,
+          authorization: testApp.authA,
           "content-type": "application/json",
           "x-shellwatch-stepup-token": minted.token,
         },
@@ -192,7 +212,7 @@ describe("passkey step-up gate — HTTP integration", () => {
         method: "POST",
         url: "/api/webauthn/register",
         headers: {
-          cookie: testApp.cookieA,
+          authorization: testApp.authA,
           "content-type": "application/json",
           "x-shellwatch-stepup-token": minted.token,
         },
@@ -211,7 +231,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/revoke`,
-        headers: { cookie: testApp.cookieA },
+        headers: { authorization: testApp.authA },
       });
       expect(res.statusCode).toBe(401);
       expect((res.json() as { code: string }).code).toBe("stepup_required");
@@ -226,7 +246,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(401);
       expect((res.json() as { code: string }).code).toBe("stepup_wrong_action");
@@ -241,7 +261,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(401);
       expect((res.json() as { code: string }).code).toBe("stepup_wrong_account");
@@ -264,7 +284,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const first = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred1.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(first.statusCode).toBe(200);
       expect((first.json() as { status: string }).status).toBe("revoked");
@@ -272,7 +292,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const second = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred2.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(second.statusCode).toBe(401);
       expect((second.json() as { code: string }).code).toBe("stepup_required");
@@ -291,7 +311,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(200);
       expect((res.json() as { status: string }).status).toBe("revoked");
@@ -308,7 +328,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/revoke`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(400);
       expect((res.json() as { error: string }).error.toLowerCase()).toContain("last active");
@@ -322,7 +342,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/options",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { action: "log_in_as_root" },
       });
       expect(res.statusCode).toBe(400);
@@ -344,7 +364,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/options",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { action: STEPUP_ACTION.registerPasskey },
       });
       expect(res.statusCode).toBe(200);
@@ -363,7 +383,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/options",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { action: STEPUP_ACTION.registerPasskey },
       });
       // The endpoint returns 400 with no_active_credentials — assert the body
@@ -384,7 +404,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/invite",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: {},
       });
       expect(res.statusCode).toBe(200);
@@ -399,7 +419,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "GET",
         url: "/api/webauthn/invite",
-        headers: { cookie: testApp.cookieA },
+        headers: { authorization: testApp.authA },
       });
       // 404 = no active invite, but the gate didn't fire.
       expect(res.statusCode).toBe(404);
@@ -417,7 +437,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/confirm`,
-        headers: { cookie: testApp.cookieA },
+        headers: { authorization: testApp.authA },
       });
       expect(res.statusCode).toBe(401);
       expect((res.json() as { code: string }).code).toBe("stepup_required");
@@ -435,7 +455,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/confirm`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(401);
       expect((res.json() as { code: string }).code).toBe("stepup_wrong_action");
@@ -453,7 +473,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const res = await testApp.app.inject({
         method: "POST",
         url: `/api/webauthn/credentials/${cred.id}/confirm`,
-        headers: { cookie: testApp.cookieA, "x-shellwatch-stepup-token": minted.token },
+        headers: { authorization: testApp.authA, "x-shellwatch-stepup-token": minted.token },
       });
       expect(res.statusCode).toBe(200);
       expect((res.json() as { status: string }).status).toBe("active");
@@ -477,7 +497,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const optionsRes = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/options",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: { action: STEPUP_ACTION.registerPasskey },
       });
       expect(optionsRes.statusCode).toBe(200);
@@ -490,7 +510,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const verifyRes = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/verify",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: {
           challengeId,
           credential: { id: "x", rawId: "x", response: {}, type: "public-key" },
@@ -506,7 +526,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const legitRes = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/verify",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: {
           challengeId,
           credential: { id: "x", rawId: "x", response: {}, type: "public-key" },
@@ -519,10 +539,11 @@ describe("passkey step-up gate — HTTP integration", () => {
     it("/stepup/verify rejects a login-purpose challenge", async () => {
       insertCredential(testApp.conn, { label: "anchor" });
 
-      // Mint a challenge via login/options instead of stepup/options.
+      // Mint a login-purpose challenge via the Hydra login provider instead of
+      // stepup/options.
       const loginOpts = await testApp.app.inject({
         method: "POST",
-        url: "/api/auth/login/options",
+        url: "/api/hydra/login/options",
       });
       expect(loginOpts.statusCode).toBe(200);
       const { challengeId } = loginOpts.json() as { challengeId: string };
@@ -532,7 +553,7 @@ describe("passkey step-up gate — HTTP integration", () => {
       const verifyRes = await testApp.app.inject({
         method: "POST",
         url: "/api/webauthn/stepup/verify",
-        headers: { cookie: testApp.cookieA, "content-type": "application/json" },
+        headers: { authorization: testApp.authA, "content-type": "application/json" },
         payload: {
           challengeId,
           credential: { id: "x", rawId: "x", response: {}, type: "public-key" },

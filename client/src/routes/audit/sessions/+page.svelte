@@ -150,12 +150,6 @@
               <dt>Source IP</dt>
               <dd>{row.sourceIp}</dd>
             {/if}
-            {#if row.apiKeyLabel || row.apiKeyPrefix}
-              <dt>API key</dt>
-              <dd>
-                {row.apiKeyLabel ?? "—"}{row.apiKeyPrefix ? ` (${row.apiKeyPrefix}…)` : ""}
-              </dd>
-            {/if}
             {#if row.mcpClientName}
               <dt>MCP client</dt>
               <dd>{row.mcpClientName}{row.mcpClientVersion ? ` ${row.mcpClientVersion}` : ""}</dd>

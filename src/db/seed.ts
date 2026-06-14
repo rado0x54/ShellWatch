@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import type { Config } from "../config/index.js";
 import { coseToAuthorizedKeys } from "../webauthn/ssh-key-format.js";
 import type { ShellWatchDB } from "./connection.js";
-import { accounts, adminAccount, apiKeys, endpoints, webauthnCredentials } from "./schema.js";
+import { accounts, adminAccount, endpoints, webauthnCredentials } from "./schema.js";
 
 /**
- * Seed the database with admin account, passkey, endpoints, and API key from config.
- * SSH keys are auto-discovered by KeyDirectoryWatcher.
+ * Seed the database with admin account, passkey, and endpoints from config.
+ * SSH keys are auto-discovered by KeyDirectoryWatcher. Programmatic access is
+ * no longer seeded here — agent credentials are minted as Hydra
+ * OAuth clients self-register via mediated DCR + passkey login (#217).
  * Each section is independently idempotent.
  */
 export interface SeedResult {
-  seededApiKey: boolean;
-  apiKeyPrefix?: string;
   seededAdminPasskey: boolean;
   seededAdminAccount: boolean;
   seededAdminId?: string;
@@ -21,7 +21,6 @@ export interface SeedResult {
 
 export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
   const result: SeedResult = {
-    seededApiKey: false,
     seededAdminPasskey: false,
     seededAdminAccount: false,
   };
@@ -112,33 +111,6 @@ export function seedFromConfig(db: ShellWatchDB, config: Config): SeedResult {
           updatedAt: now,
         })
         .run();
-    }
-  }
-
-  // Seed API key if configured and not already present
-  if (config.seedAdminApiKey) {
-    const hash = createHash("sha256").update(config.seedAdminApiKey).digest("hex");
-    const existing = db
-      .select({ id: apiKeys.id })
-      .from(apiKeys)
-      .where(eq(apiKeys.keyHash, hash))
-      .get();
-    if (!existing) {
-      db.insert(apiKeys)
-        .values({
-          id: randomUUID(),
-          accountId: adminId,
-          label: "Seeded from config",
-          keyHash: hash,
-          keyPrefix: config.seedAdminApiKey.slice(0, 10),
-          scopes: JSON.stringify(["mcp", "agent"]),
-          endpoints: null,
-          enabled: true,
-          createdAt: new Date().toISOString(),
-        })
-        .run();
-      result.seededApiKey = true;
-      result.apiKeyPrefix = config.seedAdminApiKey.slice(0, 10);
     }
   }
 

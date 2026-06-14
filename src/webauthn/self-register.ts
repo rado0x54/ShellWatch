@@ -8,7 +8,7 @@ import type { ShellWatchDB } from "../db/connection.js";
 import { accounts } from "../db/schema.js";
 import { CHALLENGE_PURPOSE, storeChallenge } from "./challenge-store.js";
 import { insertCredentialRow, verifyAndDecodeRegistration } from "./credential-store.js";
-import type { RateLimitConfig, SessionConfig } from "./routes.js";
+import type { RateLimitConfig } from "./routes.js";
 
 export interface SelfRegisterRoutesParams {
   app: FastifyInstance;
@@ -17,22 +17,20 @@ export interface SelfRegisterRoutesParams {
   rpId: string;
   trustedOrigins: string[];
 
-  sessionConfig?: SessionConfig;
   selfRegistrationEnabled: boolean;
   rateLimitConfig: RateLimitConfig;
 }
 
 export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
-  const {
-    app,
-    db,
-    accountRepo,
-    rpId,
-    trustedOrigins,
-    sessionConfig,
-    selfRegistrationEnabled,
-    rateLimitConfig,
-  } = params;
+  const { app, db, accountRepo, rpId, trustedOrigins, selfRegistrationEnabled, rateLimitConfig } =
+    params;
+
+  // --- Passkey status (anonymous) ---
+  // The register page uses this to tell first-run admin bootstrap (no passkeys
+  // yet) apart from ordinary self-registration. Replaces the old probe against
+  // /api/auth/login/options, which is gone now that web login is the SPA's
+  // PKCE flow to the Hydra passkey login provider (#217).
+  app.get("/api/auth/passkey-status", async () => ({ hasPasskeys: hasPasskeys(db) }));
 
   // --- Self-Registration: Generate WebAuthn options (anonymous) ---
   // Companion to POST /api/auth/register. Returns no excludeCredentials so
@@ -174,21 +172,10 @@ export function registerSelfRegisterRoutes(params: SelfRegisterRoutesParams) {
           return { error: "Self-registration is disabled" };
         }
 
-        // Auto-login: set session cookie
-        if (sessionConfig) {
-          const { createSessionCookie } = await import("../server/auth/session-cookie.js");
-          const cookieValue = createSessionCookie(
-            sessionConfig.secret,
-            sessionConfig.ttlSeconds,
-            account.id,
-          );
-          const secure = request.protocol === "https" || !!request.headers["x-forwarded-proto"];
-          reply.header(
-            "Set-Cookie",
-            `sw_session=${cookieValue}; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${sessionConfig.ttlSeconds}`,
-          );
-        }
-
+        // No auto-login: the web UI obtains its token via the OAuth PKCE flow
+        // (#217), which the SPA starts after the passkey is registered (the
+        // just-created passkey then satisfies the Hydra login provider).
+        // Registration itself issues no token/session.
         return {
           verified: true,
           accountId: account.id,

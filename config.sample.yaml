@@ -25,10 +25,6 @@ server:
 # Directory containing SSH private key files (.pem)
 keyDirectory: ./keys
 
-# Optional: seed a static API key for the admin account on first run.
-# Useful for local dev so .mcp.json can reference a known key.
-# seedAdminApiKey: sw_000000000000000000000000000000000000000000000000
-
 # Optional: seed passkeys for the admin account on first run.
 # Export from Admin > General in the web UI, or provide manually.
 # seedAdminPasskeys:
@@ -83,11 +79,6 @@ security:
     - http://localhost:3000
     - http://localhost:3001
 
-  # Secret used to sign session cookies. 32 random bytes, hex-encoded.
-  # If unset, a random value is generated at startup and sessions are lost on restart.
-  # Generate with: openssl rand -hex 32
-  # cookieSecret: "<64-char hex string>"
-
   # selfRegistrationEnabled: false                     # Set to true to allow self-service account creation
   #                                                     # (first-user bootstrap always works regardless of this setting)
 
@@ -128,3 +119,35 @@ security:
 # Requires the shellwatch-agent thin client on the user's workstation.
 # agentSocket:
 #   proxyEnabled: true                                  # Enable /agent-proxy WebSocket endpoint (default: false)
+
+# Ory Hydra — the OAuth2/OIDC authority (REQUIRED, #217). ShellWatch is Hydra's
+# passkey-gated login + consent provider. Every client (web UI, MCP, agent)
+# uses DCR + authorization_code + PKCE; the token carries the account.
+# Hydra uses a file SQLite store (no separate DB server). For local dev:
+#   pnpm hydra:migrate    # create the schema, then:
+#   docker compose up -d hydra
+hydra:
+  # Public issuer URL — must equal Hydra's urls.self.issuer. The browser SPA,
+  # MCP clients, and the agent-client reach this; advertised in discovery.
+  publicUrl: http://localhost:4444
+  # Admin API URL — login/consent acceptance, client CRUD, token introspection.
+  # NEVER expose this to the internet; bind it to a trusted network only.
+  adminUrl: http://localhost:4445
+  spa:
+    # First-party PUBLIC client the web UI uses for its PKCE flow (no secret).
+    # ShellWatch ensures it exists in Hydra on boot.
+    clientId: shellwatch-web
+    # redirectUri: defaults to "${server.externalUrl}/auth/callback"
+  # introspectionCacheTtlMs: 60000                    # bearer-introspection cache TTL (default 60000 = 60s)
+  # Mediated DCR policy (ShellWatch's /api/hydra/register) for MCP + agent clients:
+  # dcr:
+  #   allowedScopes: ["mcp", "agent"]                   # granted scope ⊆ this set (offline_access always added)
+  #   # RegExp source strings; a client's redirect_uri must match at least one.
+  #   # Defaults to loopback only (below). Setting this REPLACES the default, so
+  #   # to keep loopback AND allow a hosted client (e.g. Claude.ai/.com), list
+  #   # them all. Anchor every pattern with ^…$.
+  #   redirectUriPatterns:
+  #     - "^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$"
+  #     - "^http://\\[::1\\](:\\d+)?(/.*)?$"
+  #     - "^https://claude\\.ai/api/mcp/auth_callback$"
+  #     - "^https://claude\\.com/api/mcp/auth_callback$"

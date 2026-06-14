@@ -7,8 +7,6 @@ import type { SignResponse } from "../webauthn/ssh-agent.js";
 export interface AgentProxyContext {
   source: "agent-proxy";
   sourceIp: string;
-  apiKeyLabel: string;
-  apiKeyPrefix: string;
   /** Client hostname advertised via X-ShellWatch-Hostname header on WS handshake. */
   clientHostname?: string;
   /** Client OS/arch (e.g. "darwin/arm64") advertised via X-ShellWatch-OS header. */
@@ -21,11 +19,7 @@ export interface AgentProxyContext {
  * MCP triggers carry a `reason` string so the approval UI (and future audit
  * log, #16) can show the agent's stated intent — humans clicking through the
  * web UI already know what they meant, so the `ui` variant has no equivalent.
- *
- * `apiKeyLabel`/`apiKeyPrefix` are populated for MCP triggers (which are
- * always bearer-authenticated). UI triggers come through the cookie auth-gate,
- * which never sets `request.apiKey`, so the `ui` variant carries no API-key
- * fields. Used by the session-lifecycle audit log (#184).
+ * Used by the session-lifecycle audit log (#184).
  */
 export type EndpointAuthTrigger =
   | { kind: "ui"; sourceIp?: string }
@@ -35,8 +29,6 @@ export type EndpointAuthTrigger =
       sourceIp?: string;
       mcpClientName?: string;
       mcpClientVersion?: string;
-      apiKeyLabel?: string;
-      apiKeyPrefix?: string;
     };
 
 export interface EndpointAuthContext {

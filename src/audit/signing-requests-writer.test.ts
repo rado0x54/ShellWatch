@@ -22,8 +22,6 @@ function webauthnAgentProxyParams(): CreateActionParams {
     context: {
       source: "agent-proxy",
       sourceIp: "203.0.113.5",
-      apiKeyLabel: "agent-key",
-      apiKeyPrefix: "sw_abc",
       clientHostname: "laptop.local",
       clientOs: "darwin/arm64",
       clientVersion: "0.1.0",
@@ -52,8 +50,6 @@ function webauthnEndpointAuthMcpParams(): CreateActionParams {
         sourceIp: "10.0.0.7",
         mcpClientName: "claude-code",
         mcpClientVersion: "0.10.0",
-        apiKeyLabel: "mcp-key",
-        apiKeyPrefix: "sw_def",
       },
     },
     credentialId: "cred-xyz",
@@ -111,8 +107,6 @@ describe("SigningRequestsWriter", () => {
     expect(arg.type).toBe("webauthn-sign");
     expect(arg.source).toBe("agent-proxy");
     expect(arg.sourceIp).toBe("203.0.113.5");
-    expect(arg.apiKeyLabel).toBe("agent-key");
-    expect(arg.apiKeyPrefix).toBe("sw_abc");
     expect(arg.clientHostname).toBe("laptop.local");
     expect(arg.clientOs).toBe("darwin/arm64");
     expect(arg.clientVersion).toBe("0.1.0");
@@ -132,8 +126,6 @@ describe("SigningRequestsWriter", () => {
     expect(arg.mcpReason).toBe("fetch nightly dump");
     expect(arg.mcpClientName).toBe("claude-code");
     expect(arg.mcpClientVersion).toBe("0.10.0");
-    expect(arg.apiKeyLabel).toBe("mcp-key");
-    expect(arg.apiKeyPrefix).toBe("sw_def");
   });
 
   it("maps agent-forwarding + key-approve fields", () => {

@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { apiFetch } from "$lib/api.js";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
@@ -56,7 +57,7 @@
     revoking = true;
     try {
       const base = (window as unknown as { __BASE_PATH__?: string }).__BASE_PATH__ ?? "";
-      const res = await fetch(`${base}/api/keys/${revokeTarget.id}`, { method: "DELETE" });
+      const res = await apiFetch(`${base}/api/keys/${revokeTarget.id}`, { method: "DELETE" });
       if (!res.ok) {
         const err = await res.json();
         toastError(err.error || "Failed to revoke");

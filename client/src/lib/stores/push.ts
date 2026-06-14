@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { apiFetch } from "../api.js";
 import { writable } from "svelte/store";
 
 export const pushSupported =
@@ -32,7 +33,7 @@ export async function subscribePush(): Promise<void> {
     });
 
     const subJson = sub.toJSON();
-    const res = await fetch("/api/push/subscribe", {
+    const res = await apiFetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -60,7 +61,7 @@ export async function unsubscribePush(): Promise<void> {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
-      await fetch("/api/push/subscribe", {
+      await apiFetch("/api/push/subscribe", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint: sub.endpoint }),
