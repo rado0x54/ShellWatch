@@ -71,6 +71,13 @@
       "when": 1779052745017,
       "tag": "0009_hydra_oauth",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1781446167747,
+      "tag": "0010_drop_audit_api_key_columns",
+      "breakpoints": true
     }
   ]
 }

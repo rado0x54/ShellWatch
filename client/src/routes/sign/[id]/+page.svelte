@@ -33,8 +33,6 @@
     | {
         source: "agent-proxy";
         sourceIp: string;
-        apiKeyLabel: string;
-        apiKeyPrefix: string;
         clientHostname?: string;
         clientOs?: string;
         clientVersion?: string;
@@ -301,13 +299,6 @@
           <div class="sign-field">
             <span class="sign-label">Source IP</span>
             <span class="sign-value sign-mono">{ctx.sourceIp}</span>
-          </div>
-          <div class="sign-field">
-            <span class="sign-label">API Key</span>
-            <span class="sign-value">
-              {ctx.apiKeyLabel}
-              <span class="sign-muted sign-mono">({ctx.apiKeyPrefix}…)</span>
-            </span>
           </div>
         {/if}
 

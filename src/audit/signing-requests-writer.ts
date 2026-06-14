@@ -96,8 +96,6 @@ function mapContext(context: SignRequestContext): Partial<SigningRequestInsert> 
     case "agent-proxy":
       return {
         sourceIp: context.sourceIp,
-        apiKeyLabel: context.apiKeyLabel,
-        apiKeyPrefix: context.apiKeyPrefix,
         clientHostname: context.clientHostname,
         clientOs: context.clientOs,
         clientVersion: context.clientVersion,
@@ -114,8 +112,6 @@ function mapContext(context: SignRequestContext): Partial<SigningRequestInsert> 
           mcpReason: context.trigger.reason,
           mcpClientName: context.trigger.mcpClientName,
           mcpClientVersion: context.trigger.mcpClientVersion,
-          apiKeyLabel: context.trigger.apiKeyLabel,
-          apiKeyPrefix: context.trigger.apiKeyPrefix,
         };
       }
       return base;

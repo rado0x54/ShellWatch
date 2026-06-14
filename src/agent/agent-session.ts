@@ -32,9 +32,6 @@ export interface AgentSessionOptions {
   maxSessions?: number;
   /** Source IP of the calling agent (used when building the signing trigger). */
   sourceIp?: string;
-  /** API key label / prefix used to authenticate the agent connection (audit log #184). */
-  apiKeyLabel?: string;
-  apiKeyPrefix?: string;
 }
 
 /**
@@ -58,8 +55,6 @@ export class AgentSession {
   private readonly accountId: string;
   private readonly maxSessions: number;
   private readonly sourceIp?: string;
-  private readonly apiKeyLabel?: string;
-  private readonly apiKeyPrefix?: string;
 
   constructor(opts: AgentSessionOptions) {
     this.endpointRepo = opts.endpointRepo;
@@ -70,8 +65,6 @@ export class AgentSession {
     this.accountId = opts.accountId;
     this.maxSessions = opts.maxSessions ?? 5;
     this.sourceIp = opts.sourceIp;
-    this.apiKeyLabel = opts.apiKeyLabel;
-    this.apiKeyPrefix = opts.apiKeyPrefix;
   }
 
   /**
@@ -143,8 +136,6 @@ export class AgentSession {
       sourceIp: this.sourceIp,
       mcpClientName: this.mcpClientName,
       mcpClientVersion: this.mcpClientVersion,
-      apiKeyLabel: this.apiKeyLabel,
-      apiKeyPrefix: this.apiKeyPrefix,
     };
     const session = await this.terminalManager.create(endpoint, this.accountId, trigger);
     this.ownedSessions.add(session.sessionId);

@@ -16,8 +16,6 @@ export interface SessionLifecycleRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;
@@ -35,8 +33,6 @@ export interface SessionLifecycleInsert {
   mcpReason?: string;
   mcpClientName?: string;
   mcpClientVersion?: string;
-  apiKeyLabel?: string;
-  apiKeyPrefix?: string;
 }
 
 export interface SessionLifecycleClose {
@@ -97,8 +93,6 @@ export class DrizzleSessionLifecycleRepository implements SessionLifecycleReposi
         mcpReason: row.mcpReason ?? null,
         mcpClientName: row.mcpClientName ?? null,
         mcpClientVersion: row.mcpClientVersion ?? null,
-        apiKeyLabel: row.apiKeyLabel ?? null,
-        apiKeyPrefix: row.apiKeyPrefix ?? null,
       })
       .run();
   }

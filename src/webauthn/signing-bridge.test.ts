@@ -33,8 +33,6 @@ describe("SigningBridge", () => {
     bridge.handleSignRequest(request, "acc-1", {
       source: "agent-proxy",
       sourceIp: "1.2.3.4",
-      apiKeyLabel: "Test Key",
-      apiKeyPrefix: "sw_test",
     });
 
     expect(dispatchSpy).toHaveBeenCalledOnce();

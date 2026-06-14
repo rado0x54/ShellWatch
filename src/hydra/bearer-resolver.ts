@@ -15,13 +15,9 @@
  */
 import type { HydraAdminClient } from "./admin-client.js";
 
-/** What the bearer gate sets on `request.apiKey` (audit fields keep the api-key name; see request.d.ts). */
+/** What the bearer gate sets on `request.apiKey` (legacy field name; see request.d.ts). */
 export interface BearerPrincipal {
   accountId: string;
-  /** Human label for audit: derived from the OAuth client id that minted the token. */
-  label: string;
-  /** Short, non-secret client identifier for audit (client id prefix). */
-  keyPrefix: string;
   /** Granted scopes from the introspected token. */
   scopes: string[];
 }
@@ -41,11 +37,6 @@ export interface CreateBearerResolverParams {
 }
 
 const MAX_CACHE_ENTRIES = 2048;
-
-function shortId(id: string | undefined): string {
-  if (!id) return "unknown";
-  return id.length <= 12 ? id : id.slice(0, 12);
-}
 
 export function createBearerResolver(params: CreateBearerResolverParams): BearerResolver {
   const { admin, cacheTtlMs } = params;
@@ -68,8 +59,6 @@ export function createBearerResolver(params: CreateBearerResolverParams): Bearer
       if (ins.active && ins.sub && ins.token_use === "access_token") {
         value = {
           accountId: ins.sub,
-          label: ins.client_id ? `OAuth client ${shortId(ins.client_id)}` : "OAuth client",
-          keyPrefix: shortId(ins.client_id),
           scopes: (ins.scope ?? "").split(/\s+/).filter(Boolean),
         };
       }

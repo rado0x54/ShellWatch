@@ -19,8 +19,6 @@ export interface SigningRequestRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;
@@ -45,8 +43,6 @@ export interface SigningRequestInsert {
   mcpReason?: string;
   mcpClientName?: string;
   mcpClientVersion?: string;
-  apiKeyLabel?: string;
-  apiKeyPrefix?: string;
   clientHostname?: string;
   clientOs?: string;
   clientVersion?: string;
@@ -119,8 +115,6 @@ export class DrizzleSigningRequestsRepository implements SigningRequestsReposito
         mcpReason: row.mcpReason ?? null,
         mcpClientName: row.mcpClientName ?? null,
         mcpClientVersion: row.mcpClientVersion ?? null,
-        apiKeyLabel: row.apiKeyLabel ?? null,
-        apiKeyPrefix: row.apiKeyPrefix ?? null,
         clientHostname: row.clientHostname ?? null,
         clientOs: row.clientOs ?? null,
         clientVersion: row.clientVersion ?? null,

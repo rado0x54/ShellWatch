@@ -13,8 +13,6 @@ export interface AuditSessionRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;
@@ -71,8 +69,6 @@ export interface SigningRequestRow {
   mcpReason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
-  apiKeyLabel: string | null;
-  apiKeyPrefix: string | null;
   clientHostname: string | null;
   clientOs: string | null;
   clientVersion: string | null;

@@ -85,13 +85,11 @@
 
   function describeOriginatingActor(row: SigningRequestRow): string {
     if (row.source === "agent-proxy") {
-      return [row.apiKeyLabel, row.clientHostname, row.sourceIp].filter(Boolean).join(" · ") || "—";
+      return [row.clientHostname, row.sourceIp].filter(Boolean).join(" · ") || "—";
     }
     if (row.source === "endpoint-auth") {
       if (row.mcpClientName) {
-        return (
-          [row.mcpClientName, row.apiKeyLabel, row.sourceIp].filter(Boolean).join(" · ") || "—"
-        );
+        return [row.mcpClientName, row.sourceIp].filter(Boolean).join(" · ") || "—";
       }
       return row.sourceIp ?? "UI";
     }
@@ -205,12 +203,6 @@
             {#if row.sourceIp}
               <dt>Source IP</dt>
               <dd>{row.sourceIp}</dd>
-            {/if}
-            {#if row.apiKeyLabel || row.apiKeyPrefix}
-              <dt>API key</dt>
-              <dd>
-                {row.apiKeyLabel ?? "—"}{row.apiKeyPrefix ? ` (${row.apiKeyPrefix}…)` : ""}
-              </dd>
             {/if}
             {#if row.mcpClientName}
               <dt>MCP client</dt>

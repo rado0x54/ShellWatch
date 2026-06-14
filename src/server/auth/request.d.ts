@@ -14,10 +14,10 @@ declare module "fastify" {
     accountId: string;
     /**
      * The introspected OAuth principal set by the bearer gate (#217). Null on
-     * exempt routes. The field name is retained (rather than renamed to e.g.
-     * `bearer`) so the audit pipeline's apiKeyLabel/apiKeyPrefix plumbing keeps
-     * working unchanged; those columns now carry the OAuth client label/id
-     * rather than an API-key label.
+     * exempt routes. The legacy field name `apiKey` is retained (rather than
+     * renamed to e.g. `bearer`) to avoid churn across the request-handling
+     * plumbing; it now holds a Hydra-introspected OAuth principal, not an API
+     * key.
      */
     apiKey: BearerPrincipal | null;
   }
