@@ -29,7 +29,7 @@ type Config struct {
 	SocketPath string
 	Insecure   bool
 	// Token yields the bearer for /agent-proxy. Either a StaticToken (from
-	// --api-key / SHELLWATCH_API_KEY, or a legacy credstore value) or a
+	// --token / SHELLWATCH_TOKEN, or a legacy credstore value) or a
 	// ClientCredentialsSource that mints + refreshes short-lived access tokens
 	// from a stored OAuth client (#217). Nil when no credential is configured.
 	Token oauth.Tokener
@@ -40,7 +40,7 @@ type Config struct {
 // --server=https://app.shellwatch.ai" from "flag was left at its default".
 type flagValues struct {
 	server     string
-	apiKey     string
+	token      string
 	socketPath string
 	insecure   bool
 	printEnv   bool
@@ -50,7 +50,7 @@ type flagValues struct {
 // envValues holds the relevant environment variables.
 type envValues struct {
 	server     string
-	apiKey     string
+	token      string
 	socketPath string
 }
 
@@ -59,7 +59,7 @@ func Load() (*Config, bool, error) {
 	fv := parseFlags()
 	ev := envValues{
 		server:     os.Getenv("SHELLWATCH_SERVER"),
-		apiKey:     os.Getenv("SHELLWATCH_API_KEY"),
+		token:      os.Getenv("SHELLWATCH_TOKEN"),
 		socketPath: os.Getenv("SHELLWATCH_AGENT_SOCK"),
 	}
 	cfg := resolve(fv, ev)
@@ -68,7 +68,7 @@ func Load() (*Config, bool, error) {
 
 func parseFlags() flagValues {
 	server := flag.String("server", DefaultServer, "ShellWatch server URL")
-	apiKey := flag.String("api-key", "", "API key for authentication")
+	token := flag.String("token", "", "Static bearer token; skips the credstore lookup")
 	socketPath := flag.String("socket", "", "Unix socket path")
 	insecure := flag.Bool("insecure", false, "Allow ws:// (unencrypted) connections")
 	printEnv := flag.Bool("print-env", false, "Print SSH_AUTH_SOCK export and exit")
@@ -79,7 +79,7 @@ func parseFlags() flagValues {
 
 	return flagValues{
 		server:     *server,
-		apiKey:     *apiKey,
+		token:      *token,
 		socketPath: *socketPath,
 		insecure:   *insecure,
 		printEnv:   *printEnv,
@@ -96,13 +96,13 @@ func resolve(fv flagValues, ev envValues) *Config {
 	}
 
 	// A bare static bearer passed directly (an access token minted out-of-band).
-	staticToken := ev.apiKey
+	staticToken := ev.token
 
 	if fv.explicit["server"] {
 		cfg.Server = fv.server
 	}
-	if fv.explicit["api-key"] {
-		staticToken = fv.apiKey
+	if fv.explicit["token"] {
+		staticToken = fv.token
 	}
 	if fv.explicit["socket"] {
 		cfg.SocketPath = fv.socketPath
@@ -115,7 +115,7 @@ func resolve(fv flagValues, ev envValues) *Config {
 		cfg.SocketPath = defaultSocketPath()
 	}
 
-	// A static token from --api-key / SHELLWATCH_API_KEY wins — used as a fixed
+	// A static token from --token / SHELLWATCH_TOKEN wins — used as a fixed
 	// bearer (e.g. an access token you minted with curl for a quick test).
 	if staticToken != "" {
 		cfg.Token = oauth.StaticToken(staticToken)
@@ -162,7 +162,7 @@ func (c *Config) Validate() error {
 	if c.Token == nil {
 		return fmt.Errorf(
 			"no credentials for %s — run `shellwatch-agent login --server %s` (browser passkey login), "+
-				"or pass a token via SHELLWATCH_API_KEY / --api-key",
+				"or pass a token via SHELLWATCH_TOKEN / --token",
 			c.Server, c.Server,
 		)
 	}

@@ -695,7 +695,7 @@ describe("passkey invite — HTTP integration", () => {
       url: "/api/hydra/logout?logout_challenge=logout-csrf",
     });
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe("/login");
+    expect(res.headers.location).toBe("/");
     expect(testApp.hydraAdmin.rejectedLogout).toContain("logout-csrf");
   });
 });

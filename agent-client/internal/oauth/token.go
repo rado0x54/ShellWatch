@@ -47,7 +47,7 @@ type Tokener interface {
 	Token() (string, error)
 }
 
-// StaticToken is a fixed bearer — a token passed via --api-key / SHELLWATCH_API_KEY.
+// StaticToken is a fixed bearer — a token passed via --token / SHELLWATCH_TOKEN.
 type StaticToken string
 
 func (s StaticToken) Token() (string, error) {

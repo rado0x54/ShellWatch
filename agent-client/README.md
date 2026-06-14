@@ -90,8 +90,8 @@ There is no non-interactive login (a Device Authorization Grant is a planned fol
 
 ```bash
 # (Requires an existing browser-obtained refresh token, or a future device flow.)
-shellwatch-agent --api-key "$TOKEN"
-SHELLWATCH_API_KEY="$TOKEN" shellwatch-agent
+shellwatch-agent --token "$TOKEN"
+SHELLWATCH_TOKEN="$TOKEN" shellwatch-agent
 ```
 
 A static token takes precedence over the credstore. Such tokens are short-lived and not refreshed — for a long-running daemon, use `login`.
@@ -103,7 +103,7 @@ Precedence: CLI flags > environment variables > credstore > defaults.
 | Flag          | Env var                 | Description                                                  |
 | ------------- | ----------------------- | ------------------------------------------------------------ |
 | `--server`    | `SHELLWATCH_SERVER`     | ShellWatch server URL (default: `https://app.shellwatch.ai`) |
-| `--api-key`   | `SHELLWATCH_API_KEY`    | Static bearer token. Skips the credstore lookup.             |
+| `--token`     | `SHELLWATCH_TOKEN`      | Static bearer token. Skips the credstore lookup.             |
 | `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)                             |
 | `--insecure`  | —                       | Allow `ws://` (daemon) or `http://` (login) — local dev only |
 | `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
@@ -394,7 +394,7 @@ The agent proxy needs a browser tab open in ShellWatch to forward passkey signin
 The daemon couldn't find credentials for the configured server URL. Either:
 
 - Run `shellwatch-agent login --server <server>` (browser passkey login), or
-- Pass `--api-key` / set `SHELLWATCH_API_KEY` to a bearer token with the `agent` scope.
+- Pass `--token` / set `SHELLWATCH_TOKEN` to a bearer token with the `agent` scope.
 
 If you ran `login` against a different server URL than the daemon is using, the credentials won't match. Run `login` again for the URL the daemon expects.
 

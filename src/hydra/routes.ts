@@ -507,9 +507,11 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     { config: optionsLimit },
     async (request, reply) => {
       const challenge = request.query.logout_challenge;
-      if (!challenge) return reply.redirect("/login");
-      // A stale/replayed logout_challenge (e.g. back button) shouldn't 500 —
-      // logout is forgiving, so fall back to /login on any Hydra rejection.
+      // Land on "/" (the configured post_logout target) — there is no SPA
+      // /login route; the auth guard there restarts the OAuth flow. A stale/
+      // replayed logout_challenge (e.g. back button) shouldn't 500 either —
+      // logout is forgiving, so fall back to "/" on any Hydra rejection.
+      if (!challenge) return reply.redirect("/");
       try {
         const logoutReq = await hydra(admin.getLogoutRequest(challenge), "logout_flow_expired");
         // Only honor a logout Hydra attributes to a relying party via a valid
@@ -520,7 +522,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         // session.
         if (!logoutReq.client?.client_id) {
           await hydra(admin.rejectLogoutRequest(challenge), "logout_flow_expired");
-          return reply.redirect("/login");
+          return reply.redirect("/");
         }
         const { redirect_to } = await hydra(
           admin.acceptLogoutRequest(challenge),
@@ -528,7 +530,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
         );
         return reply.redirect(redirect_to);
       } catch (err) {
-        if (err instanceof FlowError) return reply.redirect("/login");
+        if (err instanceof FlowError) return reply.redirect("/");
         throw err;
       }
     },

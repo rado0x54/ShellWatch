@@ -19,7 +19,7 @@
 //	shellwatch-agent logout [--server URL]
 //
 //	# Default daemon mode (no subcommand). Resolves credentials from
-//	# --api-key, SHELLWATCH_API_KEY, or the credstore (in that order) and
+//	# --token, SHELLWATCH_TOKEN, or the credstore (in that order) and
 //	# mints + refreshes short-lived access tokens from the refresh token.
 //	shellwatch-agent [--server URL] [--socket PATH] [--insecure]
 //
@@ -72,7 +72,7 @@ func main() {
 }
 
 // runDaemon is the historical entry point — relay the SSH agent socket
-// over WebSocket. Now also picks up its API key from the credstore when
+// over WebSocket. Now also picks up its credentials from the credstore when
 // no flag/env was given.
 func runDaemon() error {
 	cfg, printEnv, err := config.Load()
@@ -199,7 +199,7 @@ COMMANDS
 DAEMON FLAGS
   --server URL          ShellWatch server (default: $SHELLWATCH_SERVER or
                         `+config.DefaultServer+`)
-  --api-key KEY         Static bearer token (e.g. an access token minted
+  --token KEY         Static bearer token (e.g. an access token minted
                         out-of-band). Skips the credstore lookup.
   --socket PATH         Listener path. On macOS/Linux, a Unix socket
                         ($XDG_RUNTIME_DIR/shellwatch-agent.sock or a
@@ -217,7 +217,7 @@ LOGIN FLAGS
 
 ENVIRONMENT
   SHELLWATCH_SERVER         Default --server value.
-  SHELLWATCH_API_KEY        Static bearer token (skips credstore).
+  SHELLWATCH_TOKEN        Static bearer token (skips credstore).
   SHELLWATCH_AGENT_SOCK     Default --socket value.
 `)
 }

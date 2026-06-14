@@ -175,6 +175,10 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
       send401(reply, scope, "Invalid or expired access token", "invalid");
       return;
     }
+    // Authorization is by SCOPE only. Tokens also carry an audience
+    // (grant_access_token_audience), but we deliberately don't check it: with a
+    // single issuer and per-path scope-gating, scope is the control and audience
+    // would be redundant. Don't assume audience binding exists here.
     if (!principal.scopes.includes(scope)) {
       send401(reply, scope, `Token lacks '${scope}' scope`, "scope");
       return;
@@ -182,6 +186,8 @@ export function registerBearerGate(params: RegisterBearerGateParams): void {
 
     request.accountId = principal.accountId;
     request.apiKey = principal;
+    // Sync (better-sqlite3) write on the hot path — fine today; if this ever
+    // becomes async, add a .catch() so a failed write isn't an unhandled rejection.
     accountRepo.touchLastUsed(principal.accountId);
   });
 }

@@ -126,11 +126,11 @@ func tokenString(t *testing.T, cfg *Config) string {
 	return tok
 }
 
-func TestResolveApiKeyPrecedence(t *testing.T) {
+func TestResolveTokenPrecedence(t *testing.T) {
 	// explicit flag overrides env
 	cfg := resolve(
-		flagValues{apiKey: "from-flag", explicit: map[string]bool{"api-key": true}},
-		envValues{apiKey: "from-env"},
+		flagValues{token: "from-flag", explicit: map[string]bool{"token": true}},
+		envValues{token: "from-env"},
 	)
 	if got := tokenString(t, cfg); got != "from-flag" {
 		t.Errorf("token = %q, want from-flag", got)
@@ -139,14 +139,14 @@ func TestResolveApiKeyPrecedence(t *testing.T) {
 	// env used when flag not set
 	cfg = resolve(
 		flagValues{explicit: map[string]bool{}},
-		envValues{apiKey: "from-env"},
+		envValues{token: "from-env"},
 	)
 	if got := tokenString(t, cfg); got != "from-env" {
 		t.Errorf("token = %q, want from-env", got)
 	}
 }
 
-func TestResolveApiKey_FallsBackToCredstore(t *testing.T) {
+func TestResolveToken_FallsBackToCredstore(t *testing.T) {
 	// Neither flag nor env set; credstore has a (legacy raw) value for the
 	// resolved server URL — resolve() should pick it up as a static bearer.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
@@ -159,7 +159,7 @@ func TestResolveApiKey_FallsBackToCredstore(t *testing.T) {
 	}
 }
 
-func TestResolveApiKey_FlagBeatsCredstore(t *testing.T) {
+func TestResolveToken_FlagBeatsCredstore(t *testing.T) {
 	// Static flag must win even when the credstore has a value — this is
 	// the documented precedence and the path CI environments rely on.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
@@ -167,7 +167,7 @@ func TestResolveApiKey_FlagBeatsCredstore(t *testing.T) {
 	}})
 
 	cfg := resolve(
-		flagValues{apiKey: "from-flag", explicit: map[string]bool{"api-key": true}},
+		flagValues{token: "from-flag", explicit: map[string]bool{"token": true}},
 		envValues{},
 	)
 	if got := tokenString(t, cfg); got != "from-flag" {
@@ -175,7 +175,7 @@ func TestResolveApiKey_FlagBeatsCredstore(t *testing.T) {
 	}
 }
 
-func TestResolveApiKey_CredstoreLookedUpByServerURL(t *testing.T) {
+func TestResolveToken_CredstoreLookedUpByServerURL(t *testing.T) {
 	// Different servers must isolate cleanly: a value saved for prod
 	// must not satisfy a daemon configured to point at dev.
 	withCredStore(t, &fakeStore{tokens: map[string]string{
