@@ -25,10 +25,10 @@ func newFakeAS(t *testing.T) *fakeAS {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"authorization_endpoint": f.srv.URL + "/oauth2/auth",
 			"token_endpoint":         f.srv.URL + "/oauth2/token",
-			"registration_endpoint":  f.srv.URL + "/oauth2/register",
+			"registration_endpoint":  f.srv.URL + "/api/hydra/register",
 		})
 	})
-	mux.HandleFunc("/oauth2/register", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/hydra/register", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "dcr-client-1"})
 	})

@@ -61,12 +61,11 @@ const EXEMPT_EXACT = new Set([
   "/api/auth/register",
   "/api/auth/register/options",
   "/api/auth/passkey-status",
-  // Mediated DCR — reached by clients before they have a token.
-  "/oauth2/register",
 ]);
 
 // Path prefixes that never require a token.
-//   /api/hydra/        — the passkey login + consent providers (establish auth).
+//   /api/hydra/        — passkey login + consent providers (establish auth) and
+//                        mediated DCR (/api/hydra/register, pre-token).
 //   /api/passkey-invite/ + /passkey-invite/ — anonymous invite registration.
 //   /.well-known/      — OAuth discovery.
 //   /_app/             — SvelteKit static assets.

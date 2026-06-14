@@ -45,7 +45,7 @@ oidc:
   subject_identifiers:
     supported_types:
       - public
-  # Mediated DCR only — ShellWatch exposes /oauth/register and provisions
+  # Mediated DCR only — ShellWatch exposes /api/hydra/register and provisions
   # clients via the admin API after enforcing local policy. Hydra's own public
   # registration endpoint stays off.
   dynamic_client_registration:

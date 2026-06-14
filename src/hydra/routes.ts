@@ -132,7 +132,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
   // The AS metadata points authorization/token at Hydra (the real issuer) but
   // advertises ShellWatch's *mediated* registration_endpoint — Hydra's own DCR
   // is disabled. MCP clients discover the protected resource here, then this
-  // blended doc, then DCR against /oauth2/register and auth against Hydra.
+  // blended doc, then DCR against /api/hydra/register and auth against Hydra.
   const resourceMetadata = (scope: BearerScope): Record<string, unknown> => ({
     resource: `${ext()}${BEARER_PATHS[scope]}`,
     authorization_servers: [ext()],
@@ -152,7 +152,7 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     issuer: hydraPub,
     authorization_endpoint: `${hydraPub}/oauth2/auth`,
     token_endpoint: `${hydraPub}/oauth2/token`,
-    registration_endpoint: `${ext()}/oauth2/register`,
+    registration_endpoint: `${ext()}/api/hydra/register`,
     jwks_uri: `${hydraPub}/.well-known/jwks.json`,
     revocation_endpoint: `${hydraPub}/oauth2/revoke`,
     response_types_supported: ["code"],
@@ -175,11 +175,12 @@ export function registerHydraRoutes(params: RegisterHydraRoutesParams): void {
     dcr.allowedScopes.filter((s) => s !== "agent" || agentProxyEnabled),
   );
 
-  // Path mirrors Hydra's own DCR endpoint (`/oauth2/register`) so a reverse
-  // proxy fronting both can route consistently — Hydra's native DCR stays
-  // disabled, so ShellWatch's mediated endpoint owns this path.
+  // Lives under ShellWatch's own `/api/hydra/*` namespace (not `/oauth2/*`) so a
+  // reverse proxy fronting both ShellWatch and Hydra has an unambiguous owner:
+  // everything under `/oauth2/*` routes to Hydra, the mediated DCR endpoint to
+  // ShellWatch. Hydra's native DCR stays disabled.
   app.post<{ Body: Record<string, unknown> }>(
-    "/oauth2/register",
+    "/api/hydra/register",
     {
       config: {
         rateLimit: { max: 10, timeWindow: "15 minutes" },
