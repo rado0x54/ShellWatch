@@ -6,3 +6,8 @@ export { createTestLog, type TestLog } from "./test-log.js";
 export { connectTestWsClient, type TestWsClient } from "./ws-client.js";
 export { makeTestConfig } from "./test-config.js";
 export { expectGolden, normalizeGolden, type NormalizeOptions } from "./golden.js";
+export {
+  createFakeAuthenticator,
+  type FakeAuthenticator,
+  type CeremonyOverrides,
+} from "./fake-authenticator.js";
