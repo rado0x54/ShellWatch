@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/sessions"
+  },
+  "status": 404,
+  "body": {
+    "error": "Endpoint not found"
+  }
+}

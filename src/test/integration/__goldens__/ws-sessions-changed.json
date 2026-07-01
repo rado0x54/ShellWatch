@@ -1,0 +1,13 @@
+{
+  "type": "sessions:changed",
+  "sessions": [
+    {
+      "sessionId": "sess_<ID>",
+      "endpointId": "test-server",
+      "status": "open",
+      "createdAt": "<TS>",
+      "source": "ui",
+      "mode": "observer"
+    }
+  ]
+}

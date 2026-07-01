@@ -1,0 +1,20 @@
+{
+  "request": {
+    "path": "/.well-known/oauth-authorization-server"
+  },
+  "status": 200,
+  "wwwAuthenticate": null,
+  "body": {
+    "issuer": "http://localhost:4444",
+    "authorization_endpoint": "http://localhost:4444/oauth2/auth",
+    "token_endpoint": "http://localhost:4444/oauth2/token",
+    "registration_endpoint": "<BASE_URL>/api/hydra/register",
+    "jwks_uri": "http://localhost:4444/.well-known/jwks.json",
+    "revocation_endpoint": "http://localhost:4444/oauth2/revoke",
+    "response_types_supported": ["code"],
+    "grant_types_supported": ["authorization_code", "refresh_token"],
+    "code_challenge_methods_supported": ["S256"],
+    "token_endpoint_auth_methods_supported": ["none", "client_secret_basic", "client_secret_post"],
+    "scopes_supported": ["agent", "mcp", "offline_access"]
+  }
+}

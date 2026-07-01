@@ -1,0 +1,60 @@
+{
+  "status": 200,
+  "body": {
+    "rows": [
+      {
+        "id": "act_0000000000000000000003",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "type": "webauthn-sign",
+        "source": "agent-proxy",
+        "createdAt": "<TS>",
+        "resolvedAt": null,
+        "outcome": null,
+        "latencyMs": null,
+        "sourceIp": null,
+        "endpointLabel": null,
+        "endpointAddress": null,
+        "sessionId": null,
+        "mcpReason": null,
+        "mcpClientName": null,
+        "mcpClientVersion": null,
+        "clientHostname": "laptop.local",
+        "clientOs": "darwin/arm64",
+        "clientVersion": "1.2.3",
+        "credentialId": null,
+        "passkeyLabel": null,
+        "userVerification": null,
+        "keyLabel": null,
+        "keyFingerprint": null,
+        "cancelReason": null
+      },
+      {
+        "id": "act_0000000000000000000002",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "type": "key-approve",
+        "source": "agent-forwarding",
+        "createdAt": "<TS>",
+        "resolvedAt": "<TS>",
+        "outcome": "denied",
+        "latencyMs": 800,
+        "sourceIp": null,
+        "endpointLabel": null,
+        "endpointAddress": null,
+        "sessionId": "sess_<ID>",
+        "mcpReason": null,
+        "mcpClientName": null,
+        "mcpClientVersion": null,
+        "clientHostname": null,
+        "clientOs": null,
+        "clientVersion": null,
+        "credentialId": null,
+        "passkeyLabel": null,
+        "userVerification": null,
+        "keyLabel": "deploy key",
+        "keyFingerprint": "<FINGERPRINT>",
+        "cancelReason": null
+      }
+    ],
+    "nextCursor": "<CURSOR>"
+  }
+}

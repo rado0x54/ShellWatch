@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "body": {
+    "id": "act_0000000000000000000001",
+    "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+    "type": "webauthn-sign",
+    "source": "endpoint-auth",
+    "createdAt": "<TS>",
+    "resolvedAt": "<TS>",
+    "outcome": "approved",
+    "latencyMs": 1200,
+    "sourceIp": null,
+    "endpointLabel": "Prod Web",
+    "endpointAddress": "ubuntu@web-01:22",
+    "sessionId": null,
+    "mcpReason": null,
+    "mcpClientName": null,
+    "mcpClientVersion": null,
+    "clientHostname": null,
+    "clientOs": null,
+    "clientVersion": null,
+    "credentialId": "cred-abc",
+    "passkeyLabel": "YubiKey 5",
+    "userVerification": "required",
+    "keyLabel": null,
+    "keyFingerprint": null,
+    "cancelReason": null
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "request": {
+    "path": "/api/endpoints"
+  },
+  "status": 401,
+  "wwwAuthenticate": "Bearer realm=\"shellwatch\"",
+  "body": {
+    "error": "Access token required"
+  }
+}

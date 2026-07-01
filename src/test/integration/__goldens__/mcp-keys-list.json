@@ -1,0 +1,14 @@
+{
+  "tool": "shellwatch_manage_keys",
+  "isError": false,
+  "result": {
+    "keys": [
+      {
+        "id": "test-key",
+        "label": "Test Key",
+        "type": "file",
+        "fingerprint": "<FINGERPRINT>"
+      }
+    ]
+  }
+}
