@@ -24,7 +24,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "hydra:migrate": "sh scripts/hydra-migrate.sh",
+    "hydra:migrate": "docker compose --profile hydra run --rm hydra migrate sql -e --yes",
     "update:aaguids": "tsx scripts/update-aaguids.ts",
     "licenses:bundle": "node scripts/bundle-licenses.mjs",
     "spdx:check": "node scripts/spdx-headers.mjs",

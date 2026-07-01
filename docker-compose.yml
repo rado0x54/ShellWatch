@@ -6,7 +6,7 @@
 #
 # Common workflows:
 #   # Local dev: run ONLY Hydra here, ShellWatch on the host via `pnpm dev`.
-#   pnpm hydra:migrate                       # create/upgrade Hydra's schema (backed up first)
+#   pnpm hydra:migrate                       # create/upgrade Hydra's schema (back up ./data first!)
 #   docker compose up -d hydra               # naming the service starts just it
 #   # (optionally with secrets:  docker compose --env-file .env.hydra up -d hydra)
 #
@@ -17,8 +17,8 @@
 #   docker compose --profile hydra up -d
 #
 # Schema migrations are NEVER applied automatically — they can be destructive.
-# Run `pnpm hydra:migrate` explicitly (it backs up ./data/hydra.sqlite first)
-# before the first `up` and after any Hydra image bump.
+# Run `pnpm hydra:migrate` explicitly before the first `up` and after any Hydra
+# image bump. It does NOT back up automatically — copy ./data/hydra.sqlite first.
 
 services:
   shellwatch:
