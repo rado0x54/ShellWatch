@@ -1,3 +1,9 @@
+allowBuilds:
+  better-sqlite3: true
+  cbor-extract: true
+  cpu-features: true
+  esbuild: true
+  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/dd4f9633bbe66a94824761e41e28fa8723d0dbb9: true
 onlyBuiltDependencies:
   - better-sqlite3
   - cbor-extract
