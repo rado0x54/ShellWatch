@@ -13,6 +13,22 @@ overrides:
   hono: ^4.12.25
   # undici 7.28.0 patches TLS-validation-bypass + DoS advisories (test-only, via jsdom/vitest).
   undici: ^7.28.0
+  # --- moderate advisories ---
+  # @hono/node-server serveStatic path-bypass (runtime, via MCP sdk); stay on 1.x (MCP expects ^1).
+  "@hono/node-server": ^1.19.13
+  # ip-address XSS in Address6 HTML methods (runtime, via MCP sdk > express-rate-limit).
+  ip-address: ^10.1.1
+  # qs stringify DoS (runtime, via MCP sdk > express).
+  qs: ^6.15.2
+  # postcss <\/style> XSS in stringify output (dev, via eslint-plugin-svelte).
+  postcss: ^8.5.10
+  # cookie OOB chars in name/path/domain (low; SvelteKit stays on 0.x).
+  cookie: ^0.7.0
+  # brace-expansion range-DoS; scope to the vulnerable 5.0.x window so other majors are untouched.
+  "brace-expansion@>=5.0.0 <5.0.6": ^5.0.6
+  # esbuild dev-server request advisory; only the deprecated @esbuild-kit chain (drizzle-kit) pulls
+  # the vulnerable 0.18.x — scope the bump there so vite/svelte's healthy esbuild copies are untouched.
+  "@esbuild-kit/core-utils>esbuild": ^0.25.0
 onlyBuiltDependencies:
   - better-sqlite3
   - cbor-extract
