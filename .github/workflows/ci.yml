@@ -61,6 +61,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
 
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Fail on any advisory of moderate severity or higher. Patched transitives
+      # are pinned via `overrides` in pnpm-workspace.yaml.
+      - run: pnpm audit --audit-level moderate
+
   svelte-check:
     name: Svelte Check
     runs-on: ubuntu-latest
