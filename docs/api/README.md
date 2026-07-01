@@ -102,13 +102,24 @@ MCP `shellwatch_read_output` returns `hasMore: boolean`; REST `/tail` returns
 neither (just `data`). Same buffer, three different pagination/eviction
 vocabularies.
 
-### F. Errors have no machine-readable `code`
+### F. Errors are _mostly_ `{ error }` with no machine-readable `code` — with two exceptions
 
-Everything is `{ error: "<human string>" }` discriminated only by HTTP status.
-Clients must string-match to distinguish, e.g., "already revoked" (400) from
-"last active passkey" (400) — same status, different meaning. A stable `code`
-field would make the contract testable and i18n-friendly. (The Hydra/DCR routes
-_do_ use `{ error, error_description }` OAuth-style — a third error shape.)
+The general envelope is `{ error: "<human string>" }`, discriminated only by
+HTTP status. Clients must string-match to distinguish, e.g., "already revoked"
+(400) from "last active passkey" (400) — same status, different meaning. A stable
+`code` across all routes would make the contract testable and i18n-friendly.
+
+Two routes already break the pattern, in different directions:
+
+- The **step-up gate** (401 on the five `requireStepUp` routes) _does_ return a
+  `code`: `{ error, code }` with `code ∈ {stepup_required, stepup_expired,
+stepup_wrong_action, stepup_wrong_account}` (`stepup-gate.ts`). This is the
+  only machine-readable error code in the API today.
+- The **Hydra/DCR** routes use `{ error, error_description }` OAuth-style — a
+  third error shape.
+
+So a Go port inherits three error envelopes; converging on one `{ error, code }`
+is the natural cleanup.
 
 ### G. `409` vs `400` for "already revoked" is inconsistent across resources
 

@@ -17,7 +17,9 @@ and [`src/server/ws-message-router.ts`](../../src/server/ws-message-router.ts)
   the sentinel `shellwatch.bearer` back (never the token). Non-browser clients
   that already send `Authorization: Bearer` offer no subprotocol.
 - Every frame is a JSON object with a `type` discriminator. Unparseable frames
-  are dropped (`parseClientMessage` returns `null`).
+  (`parseClientMessage` returns `null`) are **rejected with a reply**:
+  `{ type: "error", message: "Invalid message format" }` (`ws-handler.ts`) — the
+  connection stays open. Handler exceptions similarly reply with `error`.
 - All messages carry `sessionId` **except** the server→client `sessions:changed`
   and `error`.
 
@@ -49,14 +51,14 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
 
 ## Server → Client
 
-| `type`             | Fields                                                        | Meaning                                                                                                                                                |
-| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `terminal:output`  | `sessionId`, `data: string`, `offset: number`, `reset?: true` | Output chunk. `offset` is the absolute buffer offset after this chunk. `reset:true` means the client must clear its buffer first (offset was evicted). |
-| `terminal:status`  | `sessionId`, `status`                                         | Status change. `status ∈ {opening, open, closing, closed, error}`.                                                                                     |
-| `terminal:closed`  | `sessionId`                                                   | Session closed. _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_                                                          |
-| `terminal:mode`    | `sessionId`, `mode`                                           | Control-mode change. `mode ∈ {control, observer}`.                                                                                                     |
-| `sessions:changed` | `sessions: SessionListEntry[]`                                | Full session-list snapshot for the account. Broadcast on any lifecycle change.                                                                         |
-| `error`            | `message: string`                                             | Non-fatal error (bad attach, input without control, etc.). No `code`, no `sessionId`.                                                                  |
+| `type`             | Fields                                                        | Meaning                                                                                                                                                                                                                                                                      |
+| ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `terminal:output`  | `sessionId`, `data: string`, `offset: number`, `reset?: true` | Output chunk. `offset` is the absolute buffer offset after this chunk. `reset:true` means the client must clear its buffer first (offset was evicted).                                                                                                                       |
+| `terminal:status`  | `sessionId`, `status`                                         | The session's status, sent **once** in the `terminal:attach` reply (the only emitter, `ws-message-router.ts`). It is **not** pushed on subsequent transitions — runtime status changes propagate via `sessions:changed`. `status ∈ {opening, open, closing, closed, error}`. |
+| `terminal:closed`  | `sessionId`                                                   | Session closed. _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_                                                                                                                                                                                |
+| `terminal:mode`    | `sessionId`, `mode`                                           | Control-mode change. `mode ∈ {control, observer}`.                                                                                                                                                                                                                           |
+| `sessions:changed` | `sessions: SessionListEntry[]`                                | Full session-list snapshot for the account. Broadcast on any lifecycle change.                                                                                                                                                                                               |
+| `error`            | `message: string`                                             | Non-fatal error (bad attach, input without control, etc.). No `code`, no `sessionId`.                                                                                                                                                                                        |
 
 ### `SessionListEntry`
 

@@ -110,8 +110,39 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    StepUpRequired:
+      description: >-
+        Step-up authentication missing, or the supplied token is expired / not
+        valid for this action or account. Emitted by the `requireStepUp`
+        preHandler (src/webauthn/stepup-gate.ts) before the route body runs.
+        NOTE: unlike the general `{ error }` envelope, this body carries a
+        machine-readable `code` (see README inconsistency F).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/StepUpError" }
+
+  parameters:
+    StepUpTokenHeader:
+      name: X-ShellWatch-StepUp-Token
+      in: header
+      required: true
+      description: >-
+        Single-use step-up token minted by POST /api/webauthn/stepup/verify,
+        bound to the specific action. Sent on the header
+        `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
+      schema: { type: string }
 
   schemas:
+    StepUpError:
+      type: object
+      description: Error body returned by the step-up gate (401).
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum: [stepup_required, stepup_expired, stepup_wrong_action, stepup_wrong_account]
+
     Error:
       type: object
       description: Standard error envelope. Almost every 4xx/5xx returns this.
@@ -175,7 +206,11 @@ components:
         agentForward: { type: boolean }
         description: { type: string, nullable: true }
         isDemo: { type: boolean }
-      required: [id, label, host, port, username, isDemo]
+      # userVerification/agentForward/description are always emitted: DB columns
+      # are NOT NULL with defaults (user_verification='required', agent_forward=true),
+      # and the demo-endpoint synthesizer sets all three (description may be null).
+      required:
+        [id, label, host, port, username, userVerification, agentForward, description, isDemo]
 
     AuthSessionView:
       type: object
@@ -233,8 +268,9 @@ components:
         sessionId: { type: string }
         accountId: { type: string }
         endpointId: { type: string }
-        source: { type: string }
-        status: { type: string }
+        # Enforced by DB CHECK constraints (src/db/schema.ts):
+        source: { type: string, enum: [ui, mcp, ssh] }
+        status: { type: string, enum: [open, closed, error] }
         createdAt: { type: string, format: date-time }
         closedAt: { type: string, format: date-time, nullable: true }
         durationMs: { type: integer, nullable: true }
@@ -374,12 +410,29 @@ paths:
       tags: [meta]
       security: []
       summary: Build info (curl-able without auth)
+      description: >-
+        The BuildInfo object (src/server/buildInfo.ts) — also injected into the
+        SPA as `window.__BUILD_INFO__` via /config.js.
       responses:
         "200":
-          description: Build identity object (version/commit/buildTime).
+          description: BuildInfo
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                properties:
+                  sha: { type: string, description: 'Full git SHA, or "dev" for local builds' }
+                  ref: { type: string, description: 'Branch/ref name, or "local"' }
+                  tag: { type: string, nullable: true, description: "Release tag, or null" }
+                  builtAt:
+                    {
+                      type: string,
+                      format: date-time,
+                      nullable: true,
+                      description: "Build timestamp, or null",
+                    }
+                  display: { type: string, description: "Human-readable: tag, else ref@shortSha" }
+                required: [sha, ref, tag, builtAt, display]
 
   /config.js:
     get:
@@ -728,9 +781,10 @@ paths:
     delete:
       tags: [auth-sessions]
       summary: Revoke one client's grant (step-up gated)
-      description: "Requires an X-StepUp token for action `revokeSession`."
+      description: "Requires a step-up token for action `revokeSession`."
       parameters:
         - { name: clientId, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
       responses:
         "200":
           description: Revoked
@@ -739,11 +793,14 @@ paths:
               schema:
                 type: object
                 properties: { status: { type: string, enum: [revoked] } }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
   /api/auth/sessions/revoke-all:
     post:
       tags: [auth-sessions]
       summary: Sign out everywhere (step-up gated)
-      description: "Requires an X-StepUp token for action `revokeAllSessions`."
+      description: "Requires a step-up token for action `revokeAllSessions`."
+      parameters:
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
       responses:
         "200":
           description: Revoked all
@@ -752,6 +809,7 @@ paths:
               schema:
                 type: object
                 properties: { status: { type: string, enum: [revoked_all] } }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
 
   # ------------------------------------------------------------- endpoints
   /api/endpoints:
@@ -1019,7 +1077,12 @@ paths:
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - { name: cursor, in: query, schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side (clampLimit): non-finite or ≤0 → 50;
+            values above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
       responses:
         "200":
           description: Page of rows
@@ -1044,7 +1107,12 @@ paths:
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - { name: cursor, in: query, schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side (clampLimit): non-finite or ≤0 → 50;
+            values above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
       responses:
         "200":
           description: Page of rows
@@ -1190,6 +1258,8 @@ paths:
     post:
       tags: [webauthn]
       summary: Verify + store a new passkey (step-up gated — registerPasskey)
+      parameters:
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
       requestBody:
         required: true
         content:
@@ -1217,6 +1287,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
   /api/webauthn/credentials:
     get:
       tags: [webauthn]
@@ -1282,6 +1353,7 @@ paths:
       summary: Revoke a passkey (step-up gated — revokePasskey)
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
       requestBody:
         content:
           application/json:
@@ -1299,7 +1371,13 @@ paths:
                   status: { type: string, enum: [revoked] }
                   sessionsInvalidated: { type: boolean }
         "400":
-          description: Not found / already revoked / last active passkey
+          description: Already revoked, or the last active passkey (can't revoke)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
+        "404":
+          description: Credential not found
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1309,6 +1387,7 @@ paths:
       summary: Confirm a pending invite passkey (step-up gated — confirmPasskey)
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
       responses:
         "200":
           description: Activated
@@ -1322,6 +1401,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
   /api/webauthn/invite:
     get:

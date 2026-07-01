@@ -80,10 +80,13 @@ Input: `{ action: "list" | "read"; id?: string }`.
 
 ## Notifications (server → client)
 
-Debounced, per subscribed session:
+Debounced, per subscribed session (`src/mcp/notifications.ts`). `params`:
 
-- `notifications/shellwatch/output_available` — new output is buffered for a session.
+- `notifications/shellwatch/output_available` — new output is buffered.
+  `params: { sessionId: string, offset: number }` (current buffer offset).
 - `notifications/shellwatch/session_status` — session status changed.
+  `params: { sessionId: string, status: string, endpointId?: string }`
+  (`endpointId` is omitted if the session is already gone).
 
 ## REST ↔ MCP divergences to reconcile (see #225)
 
