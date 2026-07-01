@@ -4,6 +4,13 @@ allowBuilds:
   cpu-features: true
   esbuild: true
   ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/dd4f9633bbe66a94824761e41e28fa8723d0dbb9: true
+overrides:
+  # Security: force patched transitive versions (see pnpm audit).
+  # fast-uri stays on 3.x (fastify/@modelcontextprotocol/sdk expect ^3); 3.1.2 patches
+  # the path-traversal + host-confusion advisories.
+  fast-uri: ^3.1.2
+  # hono 4.12.25 patches the CORS credentialed-Origin reflection advisory (via MCP sdk).
+  hono: ^4.12.25
 onlyBuiltDependencies:
   - better-sqlite3
   - cbor-extract

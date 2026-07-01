@@ -41,7 +41,7 @@
   "packageManager": "pnpm@11.9.0+sha512.bd682d5d03fe525ef7c9fd6780c6884d1e756ac4c9c9fe00c538782824310dcf90e3ddc4f53835f06dfaebd5085e41855e0bcbb3b60de2ac5bbab89e5036f03b",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@fastify/middie": "^9.3.1",
+    "@fastify/middie": "^9.3.2",
     "@fontsource-variable/geist": "5.2.8",
     "@fontsource-variable/geist-mono": "5.2.7",
     "@sveltejs/adapter-static": "^3.0.10",
@@ -76,9 +76,9 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
-    "@fastify/static": "^9.0.0",
+    "@fastify/static": "^9.1.3",
     "@fastify/websocket": "^11.2.0",
-    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.0",
     "@xterm/addon-fit": "^0.11.0",
@@ -87,10 +87,10 @@
     "better-sqlite3": "^12.8.0",
     "cbor-x": "^1.6.4",
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.8.4",
+    "fastify": "^5.9.0",
     "ssh2": "github:rado0x54/ssh2#shellwatch",
     "web-push": "^3.6.7",
-    "ws": "^8.20.0",
+    "ws": "^8.21.0",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
