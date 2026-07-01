@@ -39,6 +39,7 @@ Operationally, it brokers terminal sessions between configured SSH targets, huma
 - Do not add "Generated with Claude Code" or similar AI attribution to commits or PRs
 - **Functions with 5+ parameters must use a typed parameter object** instead of positional args. Export the params interface for callers.
 - **Every new source file must carry an `SPDX-License-Identifier` header on its first line** (after the shebang, if any). Use `LicenseRef-FSL-1.1-Apache-2.0` for files at the repo root and `MIT` for anything under `agent-client/`. CI enforces this via `pnpm spdx:check`; run `pnpm spdx:write` to add headers to files you've just created. Comment styles by extension: `// …` for `.ts`/`.mjs`/`.js`/`.go`, `<!-- … -->` for `.svelte`/`.html`, `/* … */` for `.css`, `# …` for `.sh`/`Makefile`.
+- **Keep the wire contract in sync with the code.** `docs/api/` is the language-agnostic source of truth for every external interface, frozen ahead of the Go rewrite (#210/#225) and used as the parity oracle. Whenever you add, remove, or change the shape of an HTTP route (path, method, request/response body, status code), a WebSocket message, or an MCP tool, update the matching artifact in the **same change**: HTTP → [`docs/api/openapi.yaml`](./docs/api/openapi.yaml); WebSocket → [`docs/api/websocket-protocol.md`](./docs/api/websocket-protocol.md); MCP → [`docs/api/mcp-tools.md`](./docs/api/mcp-tools.md). Document the shape **as-is** (mismatches are catalogued under "Known inconsistencies" in [`docs/api/README.md`](./docs/api/README.md) — don't silently normalize; converge in code + spec together as a deliberate change). Validate with `pnpm api:lint`.
 
 ## Project Structure
 
@@ -123,6 +124,10 @@ pnpm test:coverage    # Run tests with coverage report
 # SPDX headers
 pnpm spdx:check       # Verify all source files have SPDX headers (CI gate)
 pnpm spdx:write       # Add missing SPDX headers
+
+# API wire contract (docs/api/)
+pnpm api:preview      # Build a self-contained Redoc HTML from the OpenAPI spec and open it (local, no upload)
+pnpm api:lint         # Validate docs/api/openapi.yaml
 ```
 
 ## Architecture

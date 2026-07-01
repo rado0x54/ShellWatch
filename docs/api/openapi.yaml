@@ -1,0 +1,1533 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+#
+# ShellWatch HTTP wire contract (REST).
+#
+# This spec is the language-agnostic source of truth for the HTTP surface, hand-
+# authored from the Fastify route handlers as of the Node/TypeScript backend. It
+# exists to freeze the contract ahead of the Go rewrite (#210, #225): the Go
+# server must reproduce these paths, methods, request/response shapes, and status
+# codes exactly.
+#
+# Scope: REST only. Two sibling protocols are documented separately because
+# OpenAPI cannot express them:
+#   - WebSocket (/ws)  -> websocket-protocol.md
+#   - MCP tools (/mcp) -> mcp-tools.md
+#
+# Fidelity notes:
+#   - Response bodies here mirror what the handlers literally return. Several
+#     envelopes are inconsistent across routes (see docs/api/README.md
+#     "Known inconsistencies"); this spec documents them AS-IS rather than
+#     normalizing, so it can serve as a parity oracle. Do not "fix" shapes here
+#     without a matching code change.
+#   - WebAuthn ceremony option bodies (registration/authentication options) are
+#     the @simplewebauthn/server output shapes; modeled loosely as objects.
+
+openapi: 3.0.3
+
+info:
+  title: ShellWatch HTTP API
+  version: "1.1.0"
+  description: >-
+    Passkey-backed SSH brokering for humans and AI agents. All authenticated
+    surfaces present a Hydra-issued opaque OAuth bearer token, validated by
+    introspection; the token `sub` is the account id. Authorization is by scope
+    (`ui` for /api + /ws, `mcp` for /mcp, `agent` for /agent-proxy).
+  license:
+    name: FSL-1.1-Apache-2.0
+    url: https://fsl.software/
+
+servers:
+  - url: "{externalUrl}"
+    description: Deployment base URL (config.server.externalUrl)
+    variables:
+      externalUrl:
+        default: http://localhost:3000
+
+tags:
+  - name: meta
+    description: Unauthenticated health / build / bootstrap
+  - name: discovery
+    description: OAuth discovery + mediated DCR (RFC 8414 / 9728 / 7591)
+  - name: hydra-provider
+    description: Passkey-gated Hydra login & consent providers (HTML + JSON)
+  - name: account
+    description: Current account + admin account management
+  - name: auth-sessions
+    description: Authorized OAuth clients (Hydra consent sessions)
+  - name: endpoints
+    description: SSH endpoint CRUD
+  - name: sessions
+    description: Terminal session lifecycle
+  - name: actions
+    description: Human-in-the-loop signing approvals
+  - name: audit
+    description: Session-lifecycle + signing-request audit log
+  - name: keys
+    description: File-based SSH key listing (admin)
+  - name: push
+    description: Web Push subscription management
+  - name: webauthn
+    description: Passkey registration, credentials, step-up
+  - name: passkey-invite
+    description: Anonymous invite-based passkey enrollment
+
+security:
+  - bearerUi: []
+
+components:
+  securitySchemes:
+    bearerUi:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: >-
+        Hydra opaque access token with the `ui` scope. Required for all `/api/*`
+        routes except those listed as `security: []`. For `/ws` the same token
+        is passed via `Sec-WebSocket-Protocol: shellwatch.bearer, <token>`
+        because browsers cannot set an Authorization header on a WS handshake.
+    bearerMcp:
+      type: http
+      scheme: bearer
+      description: Opaque token with `mcp` scope (guards /mcp; IP-allowlisted).
+    bearerAgent:
+      type: http
+      scheme: bearer
+      description: Opaque token with `agent` scope (guards /agent-proxy, when enabled).
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token (WWW-Authenticate set).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Token lacks required scope, or admin-only route.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found (or hidden cross-account).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      description: Standard error envelope. Almost every 4xx/5xx returns this.
+      required: [error]
+      properties:
+        error: { type: string }
+      additionalProperties: true
+
+    StatusCreated:
+      type: object
+      properties:
+        status: { type: string, enum: [created] }
+        id: { type: string }
+    StatusUpdated:
+      type: object
+      properties: { status: { type: string, enum: [updated] } }
+    StatusDeleted:
+      type: object
+      properties: { status: { type: string, enum: [deleted] } }
+
+    TerminalStatus:
+      type: string
+      enum: [opening, open, closing, closed, error]
+    TerminalSource:
+      type: string
+      enum: [ui, mcp, ssh]
+
+    TerminalSession:
+      type: object
+      description: >-
+        Returned verbatim by POST /api/sessions and inside GET /api/sessions.
+        Mirrors src/terminal/types.ts TerminalSession (Date fields serialize to
+        ISO-8601 strings over the wire).
+      properties:
+        sessionId: { type: string, example: "sess_a1b2c3d4e5f6" }
+        endpointId: { type: string }
+        accountId: { type: string }
+        status: { $ref: "#/components/schemas/TerminalStatus" }
+        createdAt: { type: string, format: date-time }
+        lastActivityAt: { type: string, format: date-time }
+        source: { $ref: "#/components/schemas/TerminalSource" }
+        closeReason: { type: string, nullable: true }
+        sourceIp: { type: string }
+        mcpReason: { type: string }
+        mcpClientName: { type: string }
+        mcpClientVersion: { type: string }
+      required: [sessionId, endpointId, accountId, status, createdAt, source]
+
+    Endpoint:
+      type: object
+      description: Endpoint as listed by GET /api/endpoints.
+      properties:
+        id: { type: string }
+        label: { type: string }
+        host: { type: string }
+        port: { type: integer, default: 22 }
+        username: { type: string, default: shellwatch }
+        userVerification:
+          type: string
+          enum: [required, preferred, discouraged]
+        agentForward: { type: boolean }
+        description: { type: string, nullable: true }
+        isDemo: { type: boolean }
+      required: [id, label, host, port, username, isDemo]
+
+    AuthSessionView:
+      type: object
+      properties:
+        clientId: { type: string }
+        clientName: { type: string }
+        scopes: { type: array, items: { type: string } }
+        authorizedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        current:
+          type: boolean
+          description: True for the first-party web-UI client.
+
+    PendingActionView:
+      type: object
+      description: >-
+        Client-safe projection of a pending signing action (resolve/reject
+        omitted). Discriminated on `type`.
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        type: { type: string, enum: [webauthn-sign, key-approve] }
+        status: { type: string, enum: [pending, completed, expired, denied] }
+        createdAt: { type: integer, description: epoch ms }
+        expiresAt: { type: integer, description: epoch ms }
+        context: { type: object, description: "SignRequestContext (source-tagged union)" }
+        redirectTo: { type: string }
+        connectionId: { type: string }
+        # webauthn-sign only:
+        credentialId: { type: string }
+        challenge: { type: string }
+        rpId: { type: string }
+        passkeyLabel: { type: string }
+        userVerification: { type: string, enum: [required, preferred, discouraged] }
+        # key-approve only:
+        keyLabel: { type: string }
+        keyFingerprint: { type: string }
+      required: [id, accountId, type, status, createdAt, expiresAt, context]
+
+    SessionLifecyclePage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SessionLifecycleRow" }
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque cursor; null on the final page.
+      required: [rows, nextCursor]
+
+    SessionLifecycleRow:
+      type: object
+      properties:
+        sessionId: { type: string }
+        accountId: { type: string }
+        endpointId: { type: string }
+        source: { type: string }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        sourceIp: { type: string, nullable: true }
+        mcpReason: { type: string, nullable: true }
+        mcpClientName: { type: string, nullable: true }
+        mcpClientVersion: { type: string, nullable: true }
+        clientHostname: { type: string, nullable: true }
+        clientOs: { type: string, nullable: true }
+        clientVersion: { type: string, nullable: true }
+        closeReason: { type: string, nullable: true }
+
+    SigningRequestPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SigningRequestRow" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    SigningRequestRow:
+      type: object
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        type: { type: string }
+        source: { type: string, enum: [endpoint-auth, agent-forwarding, agent-proxy] }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        outcome:
+          type: string
+          nullable: true
+          enum: [approved, denied, expired, cancelled, null]
+        latencyMs: { type: integer, nullable: true }
+        sourceIp: { type: string, nullable: true }
+        endpointLabel: { type: string, nullable: true }
+        endpointAddress: { type: string, nullable: true }
+        sessionId: { type: string, nullable: true }
+        mcpReason: { type: string, nullable: true }
+        mcpClientName: { type: string, nullable: true }
+        mcpClientVersion: { type: string, nullable: true }
+        clientHostname: { type: string, nullable: true }
+        clientOs: { type: string, nullable: true }
+        clientVersion: { type: string, nullable: true }
+        credentialId: { type: string, nullable: true }
+        passkeyLabel: { type: string, nullable: true }
+        userVerification: { type: string, nullable: true }
+        keyLabel: { type: string, nullable: true }
+        keyFingerprint: { type: string, nullable: true }
+        cancelReason: { type: string, nullable: true }
+
+    ProtectedResourceMetadata:
+      type: object
+      description: >-
+        RFC 9728 protected-resource metadata. Emitted by `resourceMetadata(scope)`
+        in src/hydra/routes.ts for the `/mcp` and `/agent-proxy` resources.
+      properties:
+        resource:
+          type: string
+          description: Absolute URL of the guarded resource (externalUrl + /mcp or /agent-proxy).
+        authorization_servers:
+          type: array
+          items: { type: string }
+          description: Points back at this deployment's AS metadata origin (externalUrl).
+        bearer_methods_supported:
+          type: array
+          items: { type: string }
+          example: [header]
+        scopes_supported:
+          type: array
+          items: { type: string }
+          description: The resource scope (mcp|agent) plus offline_access.
+      required: [resource, authorization_servers, bearer_methods_supported, scopes_supported]
+
+    AuthorizationServerMetadata:
+      type: object
+      description: >-
+        RFC 8414 authorization-server metadata, blended: issuer + auth/token/jwks/
+        revocation point at Hydra; registration_endpoint points at ShellWatch's
+        mediated DCR (/api/hydra/register).
+      properties:
+        issuer: { type: string }
+        authorization_endpoint: { type: string }
+        token_endpoint: { type: string }
+        registration_endpoint: { type: string }
+        jwks_uri: { type: string }
+        revocation_endpoint: { type: string }
+        response_types_supported: { type: array, items: { type: string }, example: [code] }
+        grant_types_supported:
+          type: array
+          items: { type: string }
+          example: [authorization_code, refresh_token]
+        code_challenge_methods_supported: { type: array, items: { type: string }, example: [S256] }
+        token_endpoint_auth_methods_supported:
+          type: array
+          items: { type: string }
+          example: [none, client_secret_basic, client_secret_post]
+        scopes_supported: { type: array, items: { type: string } }
+      required: [issuer, authorization_endpoint, token_endpoint, registration_endpoint]
+
+    WebAuthnRegistrationOptions:
+      type: object
+      description: >-
+        @simplewebauthn generateRegistrationOptions() output, spread at the top
+        level alongside `challengeId`. Modeled loosely.
+      additionalProperties: true
+      properties:
+        challengeId: { type: string }
+    WebAuthnAuthenticationOptions:
+      type: object
+      description: >-
+        @simplewebauthn generateAuthenticationOptions() output, spread at the top
+        level alongside `challengeId` (and `action` for step-up). Modeled loosely.
+      additionalProperties: true
+      properties:
+        challengeId: { type: string }
+
+paths:
+  # ---------------------------------------------------------------- meta
+  /health:
+    get:
+      tags: [meta]
+      security: []
+      summary: Liveness probe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [ok] } }
+
+  /api/version:
+    get:
+      tags: [meta]
+      security: []
+      summary: Build info (curl-able without auth)
+      responses:
+        "200":
+          description: Build identity object (version/commit/buildTime).
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /config.js:
+    get:
+      tags: [meta]
+      security: []
+      summary: Browser bootstrap config (JS, not JSON)
+      description: >-
+        Emits `window.__SELF_REGISTRATION_ENABLED__`, `__VAPID_PUBLIC_KEY__`,
+        `__BUILD_INFO__`, and `__OAUTH__` (issuer, clientId, redirectUri, scope)
+        as executable JavaScript assignments.
+      responses:
+        "200":
+          description: JavaScript
+          content:
+            application/javascript:
+              schema: { type: string }
+
+  # ------------------------------------------------------------ discovery
+  /.well-known/oauth-authorization-server:
+    get:
+      tags: [discovery]
+      security: []
+      summary: Blended AS metadata (RFC 8414)
+      description: >-
+        authorization/token endpoints point at Hydra (the real issuer); the
+        `registration_endpoint` points at ShellWatch's mediated DCR. `scopes_supported`
+        includes the bearer scopes (`mcp`, plus `agent` when the proxy is enabled)
+        and `offline_access`.
+      responses:
+        "200":
+          description: AS metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthorizationServerMetadata" }
+
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [discovery]
+      security: []
+      summary: Protected-resource metadata — bare/default location (RFC 9728)
+      description: >-
+        Convenience alias that returns the **same** MCP resource metadata as
+        `/.well-known/oauth-protected-resource/mcp`. Many MCP clients probe this
+        default path first. See README inconsistency (I).
+      responses:
+        "200":
+          description: Resource metadata (MCP)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags: [discovery]
+      security: []
+      summary: Protected-resource metadata for /mcp (RFC 9728)
+      description: >-
+        This is the MCP auth-discovery document. On a 401 from `/mcp`, the
+        `WWW-Authenticate` header's `resource_metadata` param points here so an
+        OAuth-aware MCP client can find the Hydra issuer, then DCR, then
+        authorization_code + PKCE.
+      responses:
+        "200":
+          description: Resource metadata (MCP)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+
+  /.well-known/oauth-protected-resource/agent-proxy:
+    get:
+      tags: [discovery]
+      security: []
+      summary: Protected-resource metadata for /agent-proxy (only when agent proxy enabled)
+      responses:
+        "200":
+          description: Resource metadata (agent)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+        "404":
+          description: Agent proxy disabled — route not mounted.
+
+  /api/hydra/register:
+    post:
+      tags: [discovery]
+      security: []
+      summary: Mediated Dynamic Client Registration (RFC 7591)
+      description: >-
+        Policy enforced locally (redirect-uri patterns, allowed scopes); the
+        client is minted in Hydra as a public PKCE client. Rate-limited
+        (10 / 15 min). `offline_access` is always added to the granted scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                redirect_uris: { type: array, items: { type: string } }
+                scope: { type: string, description: "space-delimited; subset of allowed" }
+                client_name: { type: string, default: "MCP Client" }
+              required: [redirect_uris]
+      responses:
+        "201":
+          description: Registered client
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id: { type: string }
+                  client_id_issued_at: { type: integer }
+                  token_endpoint_auth_method: { type: string, enum: [none] }
+                  grant_types: { type: array, items: { type: string } }
+                  response_types: { type: array, items: { type: string } }
+                  redirect_uris: { type: array, items: { type: string } }
+                  scope: { type: string }
+                  client_name: { type: string }
+        "400":
+          description: "invalid_redirect_uri | invalid_scope"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  error_description: { type: string }
+        "502":
+          description: server_error — Hydra client creation failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [server_error] }
+                  error_description: { type: string }
+
+  # ---------------------------------------------- hydra login/consent providers
+  # These are unauthenticated (pre-token) provider flows. GET routes render HTML;
+  # options/verify are JSON. Documented for completeness; full request/response
+  # detail lives in src/hydra/routes.ts.
+  /api/hydra/login/options:
+    post:
+      tags: [hydra-provider]
+      security: []
+      summary: Passkey login challenge (rate-limited)
+      responses:
+        "200":
+          description: "Assertion options + challengeId, or an error object when no passkeys exist."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebAuthnAuthenticationOptions" }
+  /api/hydra/login/verify:
+    post:
+      tags: [hydra-provider]
+      security: []
+      summary: Verify login assertion, accept Hydra login request
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login_challenge: { type: string }
+                challengeId: { type: string }
+                credential: {}
+      responses:
+        "200":
+          description: "{ redirectTo } on success; { error } on failure"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { redirectTo: { type: string }, error: { type: string } }
+  /api/hydra/consent/options:
+    post:
+      tags: [hydra-provider]
+      security: []
+      summary: Passkey consent challenge
+      responses:
+        "200": { description: "Assertion options + challengeId, or an error object." }
+  /api/hydra/consent/verify:
+    post:
+      tags: [hydra-provider]
+      security: []
+      summary: Verify consent assertion, accept Hydra consent request
+      responses:
+        "200":
+          description: "{ redirectTo }"
+          content:
+            application/json:
+              schema: { type: object, properties: { redirectTo: { type: string } } }
+  /api/hydra/consent/approve:
+    post:
+      tags: [hydra-provider]
+      security: []
+      summary: No-passkey consent grant (valid only after a fresh login in-flow)
+      responses:
+        "200":
+          description: "{ redirectTo }; 400 { error: passkey_required } otherwise"
+          content:
+            application/json:
+              schema: { type: object, properties: { redirectTo: { type: string } } }
+
+  # -------------------------------------------------------------- account
+  /api/auth/me:
+    get:
+      tags: [account]
+      summary: Current account profile
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  isAdmin: { type: boolean }
+                  showDemoEndpoints: { type: boolean }
+                  demoEndpointsAvailable: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [account]
+      summary: Update current account (name, demo visibility)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                showDemoEndpoints: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusUpdated" }
+        "400":
+          description: Empty name or non-boolean flag
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/accounts:
+    get:
+      tags: [account]
+      summary: List all accounts (admin only)
+      responses:
+        "200":
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        isAdmin: { type: boolean }
+                        enabled: { type: boolean }
+                        maxSessions: { type: integer }
+                        lastUsedAt: { type: string, format: date-time, nullable: true }
+                        createdAt: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/accounts/{id}:
+    delete:
+      tags: [account]
+      summary: Hard-delete an account + cascade (admin only)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusDeleted" }
+        "400":
+          description: Cannot delete self or the admin account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/accounts/export-seed:
+    get:
+      tags: [account]
+      summary: Export passkeys + endpoints as seed config (admin only)
+      responses:
+        "200":
+          description: Seed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passkeys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        credentialId: { type: string }
+                        publicKeyHex: { type: string }
+                        counter: { type: integer }
+                        transports: { type: array, items: { type: string } }
+                        label: { type: string }
+                  endpoints:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        address: { type: string, description: "user@host:port" }
+                        agentForward: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500":
+          description: Database not available
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --------------------------------------------------------- auth-sessions
+  /api/auth/sessions:
+    get:
+      tags: [auth-sessions]
+      summary: List authorized OAuth clients (one row per client_id)
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuthSessionView" }
+  /api/auth/sessions/{clientId}:
+    delete:
+      tags: [auth-sessions]
+      summary: Revoke one client's grant (step-up gated)
+      description: "Requires an X-StepUp token for action `revokeSession`."
+      parameters:
+        - { name: clientId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [revoked] } }
+  /api/auth/sessions/revoke-all:
+    post:
+      tags: [auth-sessions]
+      summary: Sign out everywhere (step-up gated)
+      description: "Requires an X-StepUp token for action `revokeAllSessions`."
+      responses:
+        "200":
+          description: Revoked all
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [revoked_all] } }
+
+  # ------------------------------------------------------------- endpoints
+  /api/endpoints:
+    get:
+      tags: [endpoints]
+      summary: List account endpoints (+ demo endpoints if enabled)
+      responses:
+        "200":
+          description: Endpoints
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoints:
+                    type: array
+                    items: { $ref: "#/components/schemas/Endpoint" }
+    post:
+      tags: [endpoints]
+      summary: Create endpoint (server generates the id)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string }
+                host: { type: string }
+                port: { type: integer, default: 22 }
+                username: { type: string, default: shellwatch }
+                userVerification: { type: string, enum: [required, preferred, discouraged] }
+                agentForward: { type: boolean }
+                description: { type: string, nullable: true }
+              required: [label, host]
+      responses:
+        "200":
+          description: Created (returns generated id)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusCreated" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/endpoints/{id}:
+    put:
+      tags: [endpoints]
+      summary: Update endpoint (demo ids rejected)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string }
+                host: { type: string }
+                port: { type: integer }
+                username: { type: string }
+                userVerification: { type: string, enum: [required, preferred, discouraged] }
+                agentForward: { type: boolean }
+                description: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusUpdated" }
+        "400":
+          description: Validation error, or demo endpoint (read-only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [endpoints]
+      summary: Delete endpoint
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusDeleted" }
+        "400":
+          description: Demo endpoint (read-only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Endpoint has active sessions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -------------------------------------------------------------- sessions
+  /api/sessions:
+    get:
+      tags: [sessions]
+      summary: List the account's terminal sessions
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/TerminalSession" }
+    post:
+      tags: [sessions]
+      summary: Open an SSH session to an endpoint
+      description: >-
+        NOTE the asymmetric envelope — this returns the bare TerminalSession
+        object, unlike POST /api/endpoints which returns `{ status, id }`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { endpointId: { type: string } }
+              required: [endpointId]
+      responses:
+        "200":
+          description: Session (bare object)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerminalSession" }
+        "404":
+          description: Endpoint not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Per-account concurrent session limit reached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "400":
+          description: Connect failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/sessions/{sessionId}/tail:
+    get:
+      tags: [sessions]
+      summary: Read the tail of a session's output buffer
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string } }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 2000, maximum: 8000 }
+      responses:
+        "200":
+          description: Output tail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { type: string } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/sessions/{sessionId}:
+    delete:
+      tags: [sessions]
+      summary: Close a session
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Closed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [closed] } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --------------------------------------------------------------- actions
+  /api/actions/{actionId}:
+    get:
+      tags: [actions]
+      summary: Get a pending signing action
+      parameters:
+        - { name: actionId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Action view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingActionView" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/actions/{actionId}/resolve:
+    post:
+      tags: [actions]
+      summary: Resolve a signing action (WebAuthn signature or key-approve)
+      parameters:
+        - { name: actionId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        description: Required for `webauthn-sign`; omit for `key-approve`.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                authenticatorData: { type: string, description: base64url }
+                signature: { type: string, description: base64url }
+                clientDataJSON: { type: string, description: base64url }
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { redirectTo: { type: string, nullable: true } }
+        "400":
+          description: Missing fields, or UV required but not set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Action not pending / could not be resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/actions/{actionId}/deny:
+    post:
+      tags: [actions]
+      summary: Deny a signing action
+      parameters:
+        - { name: actionId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Denied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [denied] } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Action not pending
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ----------------------------------------------------------------- audit
+  /api/audit/sessions:
+    get:
+      tags: [audit]
+      summary: Query session-lifecycle events
+      parameters:
+        - { name: endpointId, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        "200":
+          description: Page of rows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionLifecyclePage" }
+  /api/audit/signings:
+    get:
+      tags: [audit]
+      summary: Query signing-request audit
+      parameters:
+        - {
+            name: source,
+            in: query,
+            schema: { type: string, enum: [endpoint-auth, agent-forwarding, agent-proxy] },
+          }
+        - {
+            name: outcome,
+            in: query,
+            schema: { type: string, enum: [approved, denied, expired, cancelled] },
+          }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        "200":
+          description: Page of rows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SigningRequestPage" }
+        "400":
+          description: Invalid source/outcome filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/audit/signings/{id}:
+    get:
+      tags: [audit]
+      summary: Get one signing-request record
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SigningRequestRow" }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ------------------------------------------------------------------ keys
+  /api/keys:
+    get:
+      tags: [keys]
+      summary: List file-based SSH keys (admin sees keys; non-admin sees empty)
+      responses:
+        "200":
+          description: Keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        label: { type: string }
+                        type: { type: string }
+                        algorithm: { type: string }
+                        fingerprint: { type: string }
+                        revoked: { type: boolean }
+                        available: { type: boolean }
+                        authorizedKeysEntry: { type: string, nullable: true }
+                        createdAt: { type: string, format: date-time }
+                        lastUsedAt: { type: string, format: date-time, nullable: true }
+
+  # ------------------------------------------------------------------ push
+  /api/push/subscribe:
+    post:
+      tags: [push]
+      summary: Register a Web Push subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endpoint: { type: string }
+                keys:
+                  type: object
+                  properties:
+                    p256dh: { type: string }
+                    auth: { type: string }
+                  required: [p256dh, auth]
+              required: [endpoint, keys]
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: string } }
+        "400":
+          description: Invalid subscription or unrecognized push service
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Endpoint already registered to a different account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [push]
+      summary: Unregister a Web Push subscription
+      description: "NOTE the envelope — success is `{ ok: true }`, not `{ status }`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { endpoint: { type: string } }
+              required: [endpoint]
+      responses:
+        "200":
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { ok: { type: boolean, enum: [true] } }
+        "400":
+          description: endpoint required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -------------------------------------------------------------- webauthn
+  /api/webauthn/register/options:
+    post:
+      tags: [webauthn]
+      summary: Registration options for an in-account passkey add
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { label: { type: string }, name: { type: string } }
+              required: [label]
+      responses:
+        "200":
+          description: Registration options + challengeId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebAuthnRegistrationOptions" }
+  /api/webauthn/register:
+    post:
+      tags: [webauthn]
+      summary: Verify + store a new passkey (step-up gated — registerPasskey)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { challengeId: { type: string }, credential: {} }
+              required: [challengeId, credential]
+      responses:
+        "200":
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean, enum: [true] }
+                  credentialId: { type: string }
+                  id: { type: string }
+                  label: { type: string }
+                  authorizedKeysEntry: { type: string, nullable: true }
+                  sshdConfig: { type: string, nullable: true }
+        "400":
+          description: Verification failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/webauthn/credentials:
+    get:
+      tags: [webauthn]
+      summary: List the account's passkeys
+      responses:
+        "200":
+          description: Credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        credentialId: { type: string }
+                        label: { type: string }
+                        algorithm: { type: string }
+                        fingerprint: { type: string }
+                        authorizedKeysEntry: { type: string, nullable: true }
+                        revoked: { type: boolean }
+                        state: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        lastUsedAt: { type: string, format: date-time, nullable: true }
+                  sshdConfig: { type: string }
+  /api/webauthn/credentials/{id}/label:
+    patch:
+      tags: [webauthn]
+      summary: Rename a passkey (no step-up — cosmetic)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { label: { type: string } }
+              required: [label]
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusUpdated" }
+        "400":
+          description: Label required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Duplicate label
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/webauthn/credentials/{id}/revoke:
+    post:
+      tags: [webauthn]
+      summary: Revoke a passkey (step-up gated — revokePasskey)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { invalidateSessions: { type: boolean } }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [revoked] }
+                  sessionsInvalidated: { type: boolean }
+        "400":
+          description: Not found / already revoked / last active passkey
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/webauthn/credentials/{id}/confirm:
+    post:
+      tags: [webauthn]
+      summary: Confirm a pending invite passkey (step-up gated — confirmPasskey)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [active] } }
+        "400":
+          description: Revoked / already active
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/webauthn/invite:
+    get:
+      tags: [webauthn]
+      summary: Get the active passkey invite (if any)
+      responses:
+        "200":
+          description: Invite
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invite:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      createdAt: { type: string, format: date-time }
+                      expiresAt: { type: string, format: date-time }
+        "404":
+          description: No active invite
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [webauthn]
+      summary: Mint a passkey invite
+      responses:
+        "200":
+          description: Invite
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invite:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      createdAt: { type: string, format: date-time }
+                      expiresAt: { type: string, format: date-time }
+  /api/webauthn/stepup/options:
+    post:
+      tags: [webauthn]
+      summary: Authentication options for a step-up ceremony
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum:
+                    [
+                      registerPasskey,
+                      revokePasskey,
+                      confirmPasskey,
+                      revokeSession,
+                      revokeAllSessions,
+                    ]
+              required: [action]
+      responses:
+        "200":
+          description: Auth options + challengeId + action
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebAuthnAuthenticationOptions" }
+        "400":
+          description: Invalid/missing action, or no active credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/webauthn/stepup/verify:
+    post:
+      tags: [webauthn]
+      summary: Verify a step-up assertion, mint a single-use step-up token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                challengeId: { type: string }
+                credential: {}
+                action:
+                  type: string
+                  enum:
+                    [
+                      registerPasskey,
+                      revokePasskey,
+                      confirmPasskey,
+                      revokeSession,
+                      revokeAllSessions,
+                    ]
+              required: [challengeId, credential, action]
+      responses:
+        "200":
+          description: Step-up token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stepUpToken: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  action: { type: string }
+        "400":
+          description: Invalid action / expired challenge / unknown credential / verification failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -------------------------------------------------- passkey-invite (anon)
+  /api/passkey-invite/{token}:
+    get:
+      tags: [passkey-invite]
+      security: []
+      summary: Look up an invite by token (anonymous)
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Invite meta
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accountName: { type: string, nullable: true }
+                  expiresAt: { type: string, format: date-time }
+        "404":
+          description: Invite not found or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/passkey-invite/register/options:
+    post:
+      tags: [passkey-invite]
+      security: []
+      summary: Registration options for invite enrollment (anonymous)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { token: { type: string } }
+              required: [token]
+      responses:
+        "200":
+          description: Registration options + challengeId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebAuthnRegistrationOptions" }
+        "400":
+          description: Token required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Invite not found or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/passkey-invite/register:
+    post:
+      tags: [passkey-invite]
+      security: []
+      summary: Verify + enroll a passkey via invite (anonymous)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                challengeId: { type: string }
+                credential: {}
+              required: [token, challengeId, credential]
+      responses:
+        "200":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [registered] }
+                  label: { type: string }
+                  fingerprint: { type: string }
+        "400":
+          description: Token required / verification failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Invite not found or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Invite already used
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
