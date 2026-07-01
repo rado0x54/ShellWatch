@@ -29,6 +29,8 @@
     "licenses:bundle": "node scripts/bundle-licenses.mjs",
     "spdx:check": "node scripts/spdx-headers.mjs",
     "spdx:write": "node scripts/spdx-headers.mjs --write",
+    "api:preview": "npx --yes @redocly/cli@latest build-docs docs/api/openapi.yaml -o docs/api/openapi.html && open docs/api/openapi.html",
+    "api:lint": "npx --yes @redocly/cli@latest lint docs/api/openapi.yaml",
     "sync:fonts": "node scripts/sync-fonts.mjs",
     "prepare": "husky"
   },
