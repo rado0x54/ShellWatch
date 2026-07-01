@@ -11,6 +11,8 @@ overrides:
   fast-uri: ^3.1.2
   # hono 4.12.25 patches the CORS credentialed-Origin reflection advisory (via MCP sdk).
   hono: ^4.12.25
+  # undici 7.28.0 patches TLS-validation-bypass + DoS advisories (test-only, via jsdom/vitest).
+  undici: ^7.28.0
 onlyBuiltDependencies:
   - better-sqlite3
   - cbor-extract
