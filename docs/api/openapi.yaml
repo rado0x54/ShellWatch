@@ -1545,13 +1545,15 @@ paths:
               properties:
                 action:
                   type: string
+                  # Wire values are snake_case (STEPUP_ACTION map values), not the
+                  # camelCase keys — verified by the fake-authenticator ceremony test.
                   enum:
                     [
-                      registerPasskey,
-                      revokePasskey,
-                      confirmPasskey,
-                      revokeSession,
-                      revokeAllSessions,
+                      register_passkey,
+                      revoke_passkey,
+                      confirm_passkey,
+                      revoke_session,
+                      revoke_all_sessions,
                     ]
               required: [action]
       responses:
@@ -1580,13 +1582,15 @@ paths:
                 credential: {}
                 action:
                   type: string
+                  # Wire values are snake_case (STEPUP_ACTION map values), not the
+                  # camelCase keys — verified by the fake-authenticator ceremony test.
                   enum:
                     [
-                      registerPasskey,
-                      revokePasskey,
-                      confirmPasskey,
-                      revokeSession,
-                      revokeAllSessions,
+                      register_passkey,
+                      revoke_passkey,
+                      confirm_passkey,
+                      revoke_session,
+                      revoke_all_sessions,
                     ]
               required: [challengeId, credential, action]
       responses:

@@ -27,6 +27,9 @@ export interface FakeHydraAdmin extends HydraAdminClient {
   setConsentRequest(challenge: string, req: HydraConsentRequest): void;
   /** Seed the consent-session list returned by listConsentSessions(subject). */
   setConsentSessions(subject: string, sessions: HydraConsentSession[]): void;
+  /** Seed a login challenge so acceptLoginRequest resolves for it (login-
+   * provider ceremony tests). Unseeded challenges still reject as Hydra would. */
+  setLoginRequest(challenge: string): void;
   /** Seed a logout request returned by getLogoutRequest (logout-CSRF tests).
    * Once seeded, acceptLogoutRequest for that challenge resolves too. */
   setLogoutRequest(challenge: string, req: HydraLogoutRequest): void;
@@ -43,6 +46,7 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
   const consentRequests = new Map<string, HydraConsentRequest>();
   const consentSessions = new Map<string, HydraConsentSession[]>();
   const logoutRequests = new Map<string, HydraLogoutRequest>();
+  const loginChallenges = new Set<string>();
   const revokedConsent: { subject: string; clientId?: string }[] = [];
   const revokedLogin: string[] = [];
   const rejectedLogout: string[] = [];
@@ -69,6 +73,9 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
     },
     setConsentSessions(subject, sessions) {
       consentSessions.set(subject, sessions);
+    },
+    setLoginRequest(challenge) {
+      loginChallenges.add(challenge);
     },
     setLogoutRequest(challenge, req) {
       logoutRequests.set(challenge, req);
@@ -122,7 +129,14 @@ export function createFakeHydraAdmin(): FakeHydraAdmin {
     // See rejectsUnknownChallenge above — these reject as Hydra would for a
     // challenge it doesn't recognize.
     getLoginRequest: rejectsUnknownChallenge("getLoginRequest"),
-    acceptLoginRequest: rejectsUnknownChallenge("acceptLoginRequest"),
+    // Resolve seeded login challenges (login-provider ceremony tests); reject
+    // others the way Hydra would for an unknown/expired challenge.
+    async acceptLoginRequest(challenge) {
+      if (!loginChallenges.has(challenge)) {
+        throw new HydraApiError(404, "", "fake-hydra: acceptLoginRequest — unknown challenge");
+      }
+      return { redirect_to: `https://hydra.test/login-callback?c=${challenge}` };
+    },
     rejectLoginRequest: rejectsUnknownChallenge("rejectLoginRequest"),
     // Consent: resolve seeded challenges (option-1 tests), reject others as
     // Hydra would for an unknown challenge.
