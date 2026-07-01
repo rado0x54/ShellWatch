@@ -262,7 +262,13 @@ describe("WebAuthn ceremonies (fake authenticator)", () => {
   });
 
   describe("negatives", () => {
+    // Seed the login challenge so acceptLoginRequest would SUCCEED (→ 200) if the
+    // assertion verified. This is load-bearing for the negatives: without it, an
+    // unseeded challenge makes acceptLoginRequest throw → FlowError → 400, so the
+    // test would pass even if UV-enforcement / origin-pinning silently regressed.
+    // With it, the only path to 400 is verifyPasskeyAssertion rejecting the crypto.
     async function loginAttempt(fake: FakeAuthenticator, overrides = {}) {
+      c.admin.setLoginRequest("login-chal-neg");
       const optRes = await post(c.app, "/api/hydra/login/options", {});
       const { challenge, challengeId } = optRes.json();
       return post(c.app, "/api/hydra/login/verify", {
@@ -274,7 +280,6 @@ describe("WebAuthn ceremonies (fake authenticator)", () => {
 
     it("rejects a counter rollback on re-authentication", async () => {
       const { fake } = await enroll(c.app);
-      c.admin.setLoginRequest("login-chal-neg");
 
       const first = await loginAttempt(fake, { signCount: 5 });
       expect(first.statusCode).toBe(200); // stored counter → 5
@@ -287,13 +292,15 @@ describe("WebAuthn ceremonies (fake authenticator)", () => {
     it("rejects an assertion without the User Verified flag", async () => {
       const { fake } = await enroll(c.app);
       const res = await loginAttempt(fake, { uv: false });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(400); // seeded challenge → 400 proves the crypto rejected
+      expect(res.json().error).toBeTruthy();
     });
 
     it("rejects an origin mismatch", async () => {
       const { fake } = await enroll(c.app);
       const res = await loginAttempt(fake, { origin: "http://evil.example" });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(400); // seeded challenge → 400 proves the crypto rejected
+      expect(res.json().error).toBeTruthy();
     });
 
     it("rejects an RP-ID mismatch at registration", async () => {
