@@ -1,0 +1,10 @@
+{
+  "status": 200,
+  "body": {
+    "verified": true,
+    "accountId": "<UUID>",
+    "id": "<UUID>",
+    "credentialId": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo",
+    "label": "Passkey"
+  }
+}

@@ -16,7 +16,14 @@
  * decode identically in the verifier; COSE keys and the attestation object are
  * built as JS `Map`s as tiny-cbor requires.
  */
-import { createHash, generateKeyPairSync, type KeyObject, sign } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  type KeyObject,
+  sign,
+} from "node:crypto";
 import { isoCBOR } from "@simplewebauthn/server/helpers";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 
@@ -61,6 +68,17 @@ export interface FakeAuthenticatorOptions {
   origin?: string;
   /** 16-byte AAGUID. Default all-zero (self-attestation-ish, "none" fmt). */
   aaguid?: Uint8Array;
+  /**
+   * Fixed PKCS#8 P-256 private key (PEM). Default: a fresh random keypair. Pass a
+   * constant to make the derived credential public key / OpenSSH line / fingerprint
+   * deterministic — required for golden fixtures.
+   */
+  privateKeyPem?: string;
+  /**
+   * Fixed 32-byte credential id. Default: random. Pass a constant alongside
+   * `privateKeyPem` for fully-deterministic ceremony responses.
+   */
+  credentialId?: Uint8Array;
 }
 
 export interface CeremonyOverrides {
@@ -96,11 +114,23 @@ export function createFakeAuthenticator(options: FakeAuthenticatorOptions = {}):
   const rpId = options.rpId ?? "localhost";
   const origin = options.origin ?? "http://localhost";
   const aaguid = options.aaguid ?? new Uint8Array(16);
-  const credentialIdBytes = new Uint8Array(32);
-  crypto.getRandomValues(credentialIdBytes);
+  let credentialIdBytes: Uint8Array;
+  if (options.credentialId) {
+    credentialIdBytes = options.credentialId;
+  } else {
+    const rnd = new Uint8Array(32); // fresh ArrayBuffer-backed array for getRandomValues
+    crypto.getRandomValues(rnd);
+    credentialIdBytes = rnd;
+  }
 
-  const { publicKey, privateKey }: { publicKey: KeyObject; privateKey: KeyObject } =
-    generateKeyPairSync("ec", { namedCurve: "P-256" });
+  let publicKey: KeyObject;
+  let privateKey: KeyObject;
+  if (options.privateKeyPem) {
+    privateKey = createPrivateKey(options.privateKeyPem);
+    publicKey = createPublicKey(privateKey);
+  } else {
+    ({ publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }));
+  }
 
   // COSE_Key for ES256 (EC2 / P-256), built from the JWK coordinates.
   const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };

@@ -15,137 +15,32 @@
  *
  * plus the negatives that require a signer we control: counter rollback,
  * UV-required-but-not-set, origin mismatch, and RP-ID mismatch.
+ *
+ * The thin-app + enroll/stepUp helpers live in ../helpers/webauthn-app.ts,
+ * shared with golden-webauthn.test.ts.
  */
-import fastifyRateLimit from "@fastify/rate-limit";
-import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { rateLimitDefaults } from "../../config/schema.js";
-import { createDatabase, type DatabaseConnection } from "../../db/connection.js";
-import { runMigrations } from "../../db/migrate.js";
-import { StubAccountRepository } from "../../db/repositories/account-repo.js";
 import { webauthnCredentials } from "../../db/schema.js";
-import { createBearerResolver } from "../../hydra/bearer-resolver.js";
-import { registerHydraRoutes } from "../../hydra/routes.js";
-import { registerBearerGate } from "../../server/auth/bearer-gate.js";
 import { _resetInviteStore } from "../../webauthn/invite-store.js";
-import { registerWebAuthnRoutes } from "../../webauthn/routes.js";
 import { _resetStepUpStore, STEPUP_ACTION } from "../../webauthn/stepup-store.js";
+import { createFakeAuthenticator, type FakeAuthenticator } from "../helpers/index.js";
 import {
-  createFakeAuthenticator,
-  type FakeAuthenticator,
-  makeTestConfig,
-} from "../helpers/index.js";
-import { makeTestBearer } from "../helpers/test-bearer.js";
-import type { FakeHydraAdmin } from "../helpers/fake-hydra.js";
-
-const RP_ID = "localhost";
-const ORIGIN = "http://localhost";
-
-interface Ceremony {
-  app: FastifyInstance;
-  conn: DatabaseConnection;
-  admin: FakeHydraAdmin;
-  bearerFor: (accountId: string) => string;
-}
-
-async function makeApp(): Promise<Ceremony> {
-  const conn = createDatabase(":memory:");
-  runMigrations(conn.db);
-
-  const app = Fastify({ logger: false });
-  app.decorateRequest("accountId", "");
-  app.decorateRequest("apiKey", null);
-  await app.register(fastifyRateLimit, { global: false });
-
-  const accountRepo = new StubAccountRepository();
-  const config = makeTestConfig();
-  const { admin, bearerFor } = makeTestBearer();
-  registerBearerGate({
-    app,
-    resolveBearer: createBearerResolver({ admin, cacheTtlMs: 0 }),
-    accountRepo,
-    config,
-    agentProxyEnabled: false,
-  });
-  registerWebAuthnRoutes({
-    app,
-    db: conn.db,
-    accountRepo,
-    admin,
-    rpId: RP_ID,
-    trustedOrigins: [ORIGIN],
-    selfRegistrationEnabled: false, // fresh db has no passkeys → bootstrap still allowed
-    rateLimitConfig: rateLimitDefaults,
-  });
-  registerHydraRoutes({
-    app,
-    config,
-    db: conn.db,
-    accountRepo,
-    admin,
-    rpId: RP_ID,
-    trustedOrigins: [ORIGIN],
-    agentProxyEnabled: false,
-  });
-  await app.ready();
-  return { app, conn, admin, bearerFor };
-}
-
-function post(
-  app: FastifyInstance,
-  url: string,
-  payload: Record<string, unknown>,
-  opts: { auth?: string; stepUp?: string } = {},
-): Promise<LightMyRequestResponse> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (opts.auth) headers.authorization = opts.auth;
-  if (opts.stepUp) headers["x-shellwatch-stepup-token"] = opts.stepUp;
-  return app.inject({ method: "POST", url, headers, payload });
-}
-
-/** Run the self-register (bootstrap) ceremony; returns the authenticator + account id. */
-async function enroll(
-  app: FastifyInstance,
-): Promise<{ fake: FakeAuthenticator; accountId: string }> {
-  const optRes = await post(app, "/api/auth/register/options", { name: "User" });
-  const { challenge, challengeId } = optRes.json();
-  const fake = createFakeAuthenticator({ rpId: RP_ID, origin: ORIGIN });
-  const res = await post(app, "/api/auth/register", {
-    name: "User",
-    challengeId,
-    credential: fake.register(challenge),
-  });
-  if (res.statusCode !== 200) throw new Error(`enroll failed (${res.statusCode}): ${res.body}`);
-  return { fake, accountId: res.json().accountId };
-}
-
-/** Mint a step-up token for `action` using an already-enrolled authenticator. */
-async function stepUp(
-  app: FastifyInstance,
-  auth: string,
-  fake: FakeAuthenticator,
-  action: string,
-): Promise<string> {
-  const optRes = await post(app, "/api/webauthn/stepup/options", { action }, { auth });
-  const { challenge, challengeId } = optRes.json();
-  const verRes = await post(
-    app,
-    "/api/webauthn/stepup/verify",
-    { challengeId, credential: fake.authenticate(challenge), action },
-    { auth },
-  );
-  if (verRes.statusCode !== 200)
-    throw new Error(`stepUp failed (${verRes.statusCode}): ${verRes.body}`);
-  return verRes.json().stepUpToken;
-}
+  enroll,
+  injectPost as post,
+  makeWebauthnApp,
+  ORIGIN,
+  RP_ID,
+  stepUp,
+  type WebauthnTestApp,
+} from "../helpers/webauthn-app.js";
 
 describe("WebAuthn ceremonies (fake authenticator)", () => {
-  let c: Ceremony;
+  let c: WebauthnTestApp;
 
   beforeEach(async () => {
     _resetInviteStore();
     _resetStepUpStore();
-    c = await makeApp();
+    c = await makeWebauthnApp();
   });
 
   afterEach(() => {
