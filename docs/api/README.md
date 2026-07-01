@@ -14,8 +14,16 @@ by drift.
 | WebSocket   | [`websocket-protocol.md`](./websocket-protocol.md) | `src/server/ws-protocol.ts`, `ws-message-router.ts`          |
 | MCP tools   | [`mcp-tools.md`](./mcp-tools.md)                   | `src/mcp/tools/`, `src/mcp/notifications.ts`                 |
 
-Not yet covered: `/agent-proxy` WebSocket framing (the Go agent-client bridge) —
-tracked separately; add when that surface is stabilized.
+Coverage: every REST route is in `openapi.yaml`, including the anonymous
+bootstrap surface (`/api/auth/passkey-status`, `/api/auth/register/options`,
+`/api/auth/register`). Deliberately **not** schema-documented here:
+
+- `/ws` and `/mcp` — non-REST protocols, in the companion docs above.
+- `/agent-proxy` WebSocket framing (the Go agent-client bridge) — tracked
+  separately; add when that surface stabilizes.
+- The Hydra provider **GET** pages (`/api/hydra/{login,consent,logout,error}`)
+  are HTML/redirect flows; the `hydra-provider` tag documents the JSON
+  options/verify endpoints and points to `src/hydra/routes.ts` for the pages.
 
 ## Auth model (all surfaces)
 

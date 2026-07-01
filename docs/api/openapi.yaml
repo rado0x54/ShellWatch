@@ -8,8 +8,12 @@
 # server must reproduce these paths, methods, request/response shapes, and status
 # codes exactly.
 #
-# Scope: REST only. Two sibling protocols are documented separately because
-# OpenAPI cannot express them:
+# Scope: every REST route (including the anonymous bootstrap surface). Excluded
+# on purpose: the /ws + /mcp protocols (documented separately, below), the
+# /agent-proxy WS bridge (tracked separately), and the Hydra provider GET pages
+# (/api/hydra/{login,consent,logout,error}), which are HTML/redirect flows — the
+# hydra-provider tag covers their JSON options/verify endpoints. Sibling protocol
+# docs:
 #   - WebSocket (/ws)  -> websocket-protocol.md
 #   - MCP tools (/mcp) -> mcp-tools.md
 #
@@ -449,6 +453,91 @@ paths:
           content:
             application/javascript:
               schema: { type: string }
+
+  # ------------------------------------------- anonymous self-registration
+  # Bootstrap onboarding (src/webauthn/self-register.ts). Unauthenticated
+  # (pre-token); listed in the bearer-gate EXEMPT set. First run (no passkeys
+  # yet) bootstraps the admin; afterward gated by security.selfRegistrationEnabled.
+  /api/auth/passkey-status:
+    get:
+      tags: [meta]
+      security: []
+      summary: Whether any passkeys exist yet (first-run detection)
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { hasPasskeys: { type: boolean } }
+                required: [hasPasskeys]
+  /api/auth/register/options:
+    post:
+      tags: [meta]
+      security: []
+      summary: Registration options for anonymous self-registration (rate-limited)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { name: { type: string } }
+      responses:
+        "200":
+          description: Registration options + challengeId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebAuthnRegistrationOptions" }
+        "403":
+          description: Self-registration disabled (and passkeys already exist)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/auth/register:
+    post:
+      tags: [meta]
+      security: []
+      summary: Verify passkey + create the account (anonymous, rate-limited)
+      description: >-
+        On first run (no passkeys) bootstraps the admin account; otherwise creates
+        a self-registered account when enabled. Issues no token/session — the SPA
+        starts the Hydra login flow afterward.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                challengeId: { type: string }
+                credential: {}
+              required: [name, challengeId, credential]
+      responses:
+        "200":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean, enum: [true] }
+                  accountId: { type: string }
+                  id: { type: string, description: "credential row id" }
+                  credentialId: { type: string }
+                  label: { type: string }
+                required: [verified, accountId, id, credentialId, label]
+        "400":
+          description: Missing fields or verification failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Self-registration disabled (and passkeys already exist)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ------------------------------------------------------------ discovery
   /.well-known/oauth-authorization-server:
