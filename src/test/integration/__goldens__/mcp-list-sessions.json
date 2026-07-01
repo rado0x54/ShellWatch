@@ -1,0 +1,14 @@
+{
+  "tool": "shellwatch_list_sessions",
+  "isError": false,
+  "result": {
+    "sessions": [
+      {
+        "sessionId": "sess_<ID>",
+        "endpointId": "test-server",
+        "status": "open",
+        "createdAt": "<TS>"
+      }
+    ]
+  }
+}

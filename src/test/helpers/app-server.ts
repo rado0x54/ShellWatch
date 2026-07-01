@@ -8,6 +8,7 @@ import ssh2 from "ssh2";
 const { utils } = ssh2;
 
 import type { Config } from "../../config/index.js";
+import type { SessionLifecycleRepository, SigningRequestsRepository } from "../../audit/index.js";
 import { makeTestConfig } from "./test-config.js";
 import {
   StubAccountRepository,
@@ -62,6 +63,13 @@ export interface StartTestAppOptions {
    * to verify the gated-off behavior.
    */
   agentProxyEnabled?: boolean;
+  /**
+   * Optional audit repositories. When provided, buildApp mounts the
+   * `/api/audit/*` routes backed by them (they're otherwise unregistered). The
+   * caller owns the DB + seeding. Used by the audit golden characterization.
+   */
+  sessionLifecycleRepo?: SessionLifecycleRepository;
+  signingRequestsRepo?: SigningRequestsRepository;
 }
 
 export async function startTestApp(
@@ -69,7 +77,7 @@ export async function startTestApp(
   log: TestLog,
   options: StartTestAppOptions = {},
 ): Promise<TestAppServer> {
-  const { agentProxyEnabled = true } = options;
+  const { agentProxyEnabled = true, sessionLifecycleRepo, signingRequestsRepo } = options;
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -184,6 +192,8 @@ export async function startTestApp(
     accountRepo: new StubAccountRepository(),
     accountLifecycle: new AccountLifecycle(),
     hydraAdmin,
+    sessionLifecycleRepo,
+    signingRequestsRepo,
     options: { logger: false, skipStaticFiles: true },
   });
 

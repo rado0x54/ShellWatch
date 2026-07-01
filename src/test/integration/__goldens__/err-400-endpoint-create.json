@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/endpoints"
+  },
+  "status": 400,
+  "body": {
+    "error": "userVerification must be one of: required, preferred, discouraged"
+  }
+}

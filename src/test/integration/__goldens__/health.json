@@ -1,0 +1,10 @@
+{
+  "request": {
+    "path": "/health"
+  },
+  "status": 200,
+  "wwwAuthenticate": null,
+  "body": {
+    "status": "ok"
+  }
+}

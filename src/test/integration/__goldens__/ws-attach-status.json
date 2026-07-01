@@ -1,0 +1,5 @@
+{
+  "type": "terminal:status",
+  "sessionId": "sess_<ID>",
+  "status": "open"
+}

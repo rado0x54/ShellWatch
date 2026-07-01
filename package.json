@@ -19,6 +19,8 @@
     "pretest": "cd client && npx svelte-kit sync",
     "test": "vitest run --exclude 'src/test/integration/**'",
     "test:integration": "vitest run src/test/integration",
+    "test:golden": "vitest run src/test/integration/golden-*.test.ts",
+    "test:golden:update": "UPDATE_GOLDENS=1 vitest run src/test/integration/golden-*.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",

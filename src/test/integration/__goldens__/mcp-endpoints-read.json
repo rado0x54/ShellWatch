@@ -1,0 +1,15 @@
+{
+  "tool": "shellwatch_manage_endpoints",
+  "isError": false,
+  "result": {
+    "id": "test-server",
+    "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+    "label": "Test Server",
+    "host": "127.0.0.1",
+    "port": "<PORT>",
+    "username": "testuser",
+    "userVerification": "required",
+    "agentForward": true,
+    "description": null
+  }
+}
