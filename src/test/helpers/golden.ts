@@ -12,8 +12,8 @@
  *
  * Normalization contract (keep in sync with the Go side):
  *   - Keys carrying wall-clock or per-run values → placeholder, regardless of
- *     type: createdAt, updatedAt, lastActivityAt, lastUsedAt, builtAt,
- *     authorizedAt, closedAt, resolvedAt, expiresAt, createdAtEpoch → "<TS>".
+ *     type (ISO string or epoch-ms number): createdAt, updatedAt, lastActivityAt,
+ *     lastUsedAt, builtAt, authorizedAt, closedAt, resolvedAt, expiresAt → "<TS>".
  *   - challenge, challengeId, token, stepUpToken → "<REDACTED>".
  *   - nextCursor (when non-null) → "<CURSOR>".
  *   - Value patterns anywhere:
@@ -24,8 +24,9 @@
  *   - Any occurrence of the live server origin (http://127.0.0.1:<port>) in a
  *     string → "<BASE_URL>" (ports are per-run). Discovery docs additionally run
  *     against a pinned externalUrl so their bodies are stable on their own.
- *   - Numeric fields equal to a per-run ephemeral port (ssh/app) → "<PORT>"
- *     (e.g. the seeded endpoint's `port` is the test SSH server's random port).
+ *   - A `port` field whose value is a per-run ephemeral port (ssh/app) → "<PORT>"
+ *     (the seeded endpoint's `port` is the test SSH server's random port). Scoped
+ *     to the `port` key so unrelated numbers can't be masked by coincidence.
  *
  * Regenerate all fixtures after an intentional contract change:
  *     UPDATE_GOLDENS=1 pnpm test:integration
@@ -58,7 +59,7 @@ const FINGERPRINT_RE = /^SHA256:[A-Za-z0-9+/=]+$/;
 export interface NormalizeOptions {
   /** Live server origin(s) to fold to "<BASE_URL>" in string values. */
   baseUrls?: string[];
-  /** Per-run ephemeral ports (ssh/app) to fold to "<PORT>" in numeric fields. */
+  /** Per-run ephemeral ports (ssh/app) to fold to "<PORT>" in a `port` field. */
   ports?: number[];
 }
 
@@ -81,7 +82,9 @@ export function normalizeGolden(value: unknown, opts: NormalizeOptions = {}): un
     if (key && TS_KEYS.has(key) && v !== null && v !== undefined) return "<TS>";
     if (key && REDACT_KEYS.has(key) && typeof v === "string") return "<REDACTED>";
     if (key === "nextCursor" && typeof v === "string" && v.length > 0) return "<CURSOR>";
-    if (typeof v === "number" && ports.includes(v)) return "<PORT>";
+    // Scoped to `port` on purpose: a bare `ports.includes(v)` is key-agnostic and
+    // would mask any numeric field that happened to equal an ephemeral port.
+    if (key === "port" && typeof v === "number" && ports.includes(v)) return "<PORT>";
     if (typeof v === "string") return normalizeString(v, baseUrls);
     if (Array.isArray(v)) return v.map((item) => walk(item));
     if (v && typeof v === "object") {

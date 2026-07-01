@@ -35,7 +35,7 @@ apply the identical set:
 | `<CURSOR>`      | opaque audit `nextCursor`                             |
 | `<REDACTED>`    | `challenge` / `challengeId` / `token` / `stepUpToken` |
 | `<FINGERPRINT>` | `SHA256:…` key fingerprints                           |
-| `<PORT>`        | numeric fields equal to a per-run ssh/app port        |
+| `<PORT>`        | a `port` field equal to a per-run ssh/app port        |
 | `<BASE_URL>`    | the live server origin inside a string                |
 
 Discovery suites additionally pin `externalUrl` to a fixed host so those bodies
