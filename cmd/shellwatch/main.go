@@ -25,6 +25,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/web"
 )
 
@@ -72,8 +73,23 @@ func run() error {
 	resolve := hydra.NewResolver(admin,
 		time.Duration(*cfg.Hydra.IntrospectionCacheTtlMs)*time.Millisecond, clk)
 
+	// Provision the first-party SPA client (fail fast if Hydra is unreachable,
+	// matching the Node boot).
+	if err := hydra.EnsureSpaClient(ctx, admin, cfg.Hydra.Spa.ClientID, cfg.Hydra.Spa.RedirectURI); err != nil {
+		return fmt.Errorf("provision SPA client: %w", err)
+	}
+
 	flusher := store.NewLastUsedFlusher(db, clk)
 	go flusher.Run(ctx, time.Minute)
+
+	webauthnDeps := &webauthn.Deps{
+		Credentials:    store.NewCredentials(db, clk),
+		Challenges:     webauthn.NewChallengeStore(clk),
+		StepUp:         webauthn.NewStepUpStore(clk),
+		RpID:           cfg.Security.RpID,
+		TrustedOrigins: cfg.Security.TrustedWebauthnOrigins,
+		SelfRegEnabled: cfg.Security.SelfRegistrationEnabled,
+	}
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
@@ -81,6 +97,8 @@ func run() error {
 		TouchLastUsed: flusher.Touch,
 		StaticFS:      staticFS,
 		BuildInfo:     buildinfo.Load(mustGetwd()),
+		WebAuthn:      webauthnDeps,
+		HydraAdmin:    admin,
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

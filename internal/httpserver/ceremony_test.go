@@ -23,7 +23,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/golden"
-	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/hydratest"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/webauthntest"
@@ -79,6 +79,7 @@ func fakeB(t *testing.T) *webauthntest.Authenticator {
 type ceremonyServer struct {
 	ts       *httptest.Server
 	deps     *webauthn.Deps
+	admin    *hydratest.FakeAdmin
 	tokenFor func(accountID string) string
 }
 
@@ -105,22 +106,25 @@ func newCeremonyServer(t *testing.T, selfReg bool) *ceremonyServer {
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = "https://shellwatch.example"
 	cfg.Hydra.PublicURL = "http://localhost:4444"
+	cfg.Hydra.Dcr.AllowedScopes = []string{"mcp", "agent"}
+	cfg.Hydra.Dcr.RedirectURIPatterns = []string{`^http://(127\.0\.0\.1|localhost)(:\d+)?(/.*)?$`}
 
 	// Bearer: "tok-<accountID>" authorizes that account with the ui scope.
-	resolve := hydra.Resolver(func(_ context.Context, token string) *hydra.Principal {
+	resolve := auth.Resolver(func(_ context.Context, token string) *auth.Principal {
 		const p = "tok-"
 		if len(token) > len(p) && token[:len(p)] == p {
-			return &hydra.Principal{AccountID: token[len(p):], Scopes: []string{"ui"}}
+			return &auth.Principal{AccountID: token[len(p):], Scopes: []string{"ui"}}
 		}
 		return nil
 	})
+	admin := hydratest.New()
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()),
-		BuildInfo: buildinfo.Info{}, WebAuthn: deps,
+		BuildInfo: buildinfo.Info{}, WebAuthn: deps, HydraAdmin: admin,
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return &ceremonyServer{ts: ts, deps: deps, tokenFor: func(id string) string { return "tok-" + id }}
+	return &ceremonyServer{ts: ts, deps: deps, admin: admin, tokenFor: func(id string) string { return "tok-" + id }}
 }
 
 func (c *ceremonyServer) post(t *testing.T, path string, body any, headers map[string]string) (int, map[string]any) {
@@ -227,6 +231,64 @@ func TestCeremonyInAccountRegisterGolden(t *testing.T) {
 		"challengeId": id, "credential": json.RawMessage(fakeB(t).Register(ch)),
 	}, map[string]string{"Authorization": "Bearer " + bearer, "X-Shellwatch-Stepup-Token": stepToken})
 	assertGolden(t, "webauthn-register", status, body)
+}
+
+// TestCeremonyLoginVerifyGolden drives the Hydra login provider end to end:
+// enroll a passkey, seed the login challenge in the fake Hydra, then
+// options + verify -> acceptLoginRequest -> {redirectTo}.
+func TestCeremonyLoginVerifyGolden(t *testing.T) {
+	c := newCeremonyServer(t, false)
+	c.enroll(t) // registers fakeA's credential
+	fake := fakeA(t)
+	c.admin.SetLoginRequest("login-chal-1")
+
+	_, opts := c.post(t, "/api/hydra/login/options", map[string]any{}, nil)
+	ch, id := challengePair(opts)
+	status, body := c.post(t, "/api/hydra/login/verify", map[string]any{
+		"login_challenge": "login-chal-1",
+		"challengeId":     id,
+		"credential":      json.RawMessage(fake.Authenticate(ch)),
+	}, nil)
+	assertGolden(t, "webauthn-login-verify", status, body)
+}
+
+// TestMediatedDCR covers the /api/hydra/register policy: allowed redirect +
+// scope subset -> 201 with a minted client; disallowed redirect -> 400.
+func TestMediatedDCR(t *testing.T) {
+	c := newCeremonyServer(t, false)
+
+	status, body := c.post(t, "/api/hydra/register", map[string]any{
+		"redirect_uris": []string{"http://127.0.0.1:8080/callback"},
+		"scope":         "mcp",
+		"client_name":   "Test MCP",
+	}, nil)
+	if status != 201 {
+		t.Fatalf("valid DCR: got %d (%v)", status, body)
+	}
+	if body["client_id"] == nil || body["scope"] != "mcp offline_access" {
+		t.Errorf("DCR response: %v", body)
+	}
+	if len(c.admin.Clients()) != 1 {
+		t.Errorf("client not created in Hydra: %v", c.admin.Clients())
+	}
+
+	// Disallowed redirect host.
+	status, body = c.post(t, "/api/hydra/register", map[string]any{
+		"redirect_uris": []string{"https://evil.example/callback"},
+		"scope":         "mcp",
+	}, nil)
+	if status != 400 || body["error"] != "invalid_redirect_uri" {
+		t.Errorf("disallowed redirect: got %d %v", status, body)
+	}
+
+	// `ui` is never grantable via DCR (not in allowedScopes).
+	status, body = c.post(t, "/api/hydra/register", map[string]any{
+		"redirect_uris": []string{"http://localhost:9000/cb"},
+		"scope":         "ui",
+	}, nil)
+	if status != 400 || body["error"] != "invalid_scope" {
+		t.Errorf("ui scope must be refused: got %d %v", status, body)
+	}
 }
 
 var _ = auth.UIScope

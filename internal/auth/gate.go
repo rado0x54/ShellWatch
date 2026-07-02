@@ -11,8 +11,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-
-	"github.com/rado0x54/shellwatch/internal/hydra"
 )
 
 const (
@@ -65,13 +63,13 @@ var exemptPrefixes = []string{
 type principalKey struct{}
 
 // PrincipalFrom returns the authenticated principal, if the gate set one.
-func PrincipalFrom(ctx context.Context) (hydra.Principal, bool) {
-	p, ok := ctx.Value(principalKey{}).(hydra.Principal)
+func PrincipalFrom(ctx context.Context) (Principal, bool) {
+	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
 }
 
 type GateParams struct {
-	Resolve hydra.Resolver
+	Resolve Resolver
 	// ExternalURL is read at request time (test helpers pin it after boot).
 	ExternalURL func() string
 	// AgentProxyEnabled gates the /agent-proxy path (unregistered otherwise).

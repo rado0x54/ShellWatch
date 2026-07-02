@@ -15,10 +15,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/golden"
-	"github.com/rado0x54/shellwatch/internal/hydra"
 )
 
 const goldensDir = "../../src/test/integration/__goldens__"
@@ -36,7 +36,7 @@ func testServer(t *testing.T) *httptest.Server {
 
 	// No valid tokens exist in this suite — the resolver denies everything,
 	// which is exactly what the 401 goldens capture.
-	deny := hydra.Resolver(func(context.Context, string) *hydra.Principal { return nil })
+	deny := auth.Resolver(func(context.Context, string) *auth.Principal { return nil })
 
 	handler := New(Params{
 		Config:    cfg,
@@ -91,12 +91,12 @@ func TestGateScopeMatrix(t *testing.T) {
 	cfg.Hydra.PublicURL = "http://localhost:4444"
 	cfg.AgentSocket.ProxyEnabled = true
 
-	resolve := hydra.Resolver(func(_ context.Context, token string) *hydra.Principal {
+	resolve := auth.Resolver(func(_ context.Context, token string) *auth.Principal {
 		switch token {
 		case "ui-token":
-			return &hydra.Principal{AccountID: "acc-ui", Scopes: []string{"ui"}}
+			return &auth.Principal{AccountID: "acc-ui", Scopes: []string{"ui"}}
 		case "mcp-token":
-			return &hydra.Principal{AccountID: "acc-mcp", Scopes: []string{"mcp"}}
+			return &auth.Principal{AccountID: "acc-mcp", Scopes: []string{"mcp"}}
 		}
 		return nil
 	})

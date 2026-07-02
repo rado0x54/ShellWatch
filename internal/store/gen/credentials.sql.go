@@ -149,6 +149,34 @@ func (q *Queries) ListActiveCredentialLabelsForAccount(ctx context.Context, acco
 	return items, nil
 }
 
+const listAllActiveCredentialIDs = `-- name: ListAllActiveCredentialIDs :many
+SELECT credential_id FROM webauthn_credentials
+WHERE revoked = 0 AND state = 'active'
+`
+
+func (q *Queries) ListAllActiveCredentialIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAllActiveCredentialIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var credential_id string
+		if err := rows.Scan(&credential_id); err != nil {
+			return nil, err
+		}
+		items = append(items, credential_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateCredentialCounter = `-- name: UpdateCredentialCounter :exec
 UPDATE webauthn_credentials SET counter = ?, last_used_at = ? WHERE id = ?
 `

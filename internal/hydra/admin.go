@@ -90,3 +90,87 @@ func (c *AdminClient) Introspect(ctx context.Context, token string) (Introspecti
 	}
 	return ins, nil
 }
+
+// adminJSON performs a JSON admin request and decodes the response into out.
+func (c *AdminClient) adminJSON(ctx context.Context, method, path string, in, out any) error {
+	var reader io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		reader = strings.NewReader(string(raw))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
+	if err != nil {
+		return err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return &APIError{Status: res.StatusCode, Body: string(body),
+			Msg: fmt.Sprintf("Hydra admin %s %s -> %d", method, path, res.StatusCode)}
+	}
+	if out != nil && len(body) > 0 {
+		return json.Unmarshal(body, out)
+	}
+	return nil
+}
+
+// AcceptLoginRequest accepts a login challenge (admin-client.ts).
+func (c *AdminClient) AcceptLoginRequest(ctx context.Context, challenge string, body AcceptLogin) (Redirect, error) {
+	var r Redirect
+	err := c.adminJSON(ctx, http.MethodPut,
+		"/admin/oauth2/auth/requests/login/accept?login_challenge="+url.QueryEscape(challenge), body, &r)
+	return r, err
+}
+
+// CreateClient registers an OAuth2 client (POST /admin/clients).
+func (c *AdminClient) CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error) {
+	var out OAuth2Client
+	err := c.adminJSON(ctx, http.MethodPost, "/admin/clients", client, &out)
+	return out, err
+}
+
+// GetClient fetches a client, returning nil on 404.
+func (c *AdminClient) GetClient(ctx context.Context, clientID string) (*OAuth2Client, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.base+"/admin/clients/"+url.PathEscape(clientID), nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, &APIError{Status: res.StatusCode, Body: string(body),
+			Msg: fmt.Sprintf("Hydra admin GET client -> %d", res.StatusCode)}
+	}
+	var out OAuth2Client
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateClient replaces a client (PUT /admin/clients/{id}).
+func (c *AdminClient) UpdateClient(ctx context.Context, clientID string, client OAuth2Client) (OAuth2Client, error) {
+	var out OAuth2Client
+	err := c.adminJSON(ctx, http.MethodPut, "/admin/clients/"+url.PathEscape(clientID), client, &out)
+	return out, err
+}
+
+var _ Admin = (*AdminClient)(nil)

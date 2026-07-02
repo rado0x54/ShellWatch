@@ -23,7 +23,7 @@ import (
 
 type Params struct {
 	Config  *config.Config
-	Resolve hydra.Resolver
+	Resolve auth.Resolver
 	// TouchLastUsed records authenticated activity (nil-able in tests).
 	TouchLastUsed func(accountID string)
 	StaticFS      fs.FS
@@ -31,6 +31,8 @@ type Params struct {
 	// WebAuthn mounts the ceremony routes (nil-able: omitted in the
 	// slice-1 discovery-only tests).
 	WebAuthn *webauthn.Deps
+	// HydraAdmin enables the login provider + mediated DCR (nil-able).
+	HydraAdmin hydra.Admin
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -59,6 +61,16 @@ func New(p Params) http.Handler {
 
 	if p.WebAuthn != nil {
 		p.WebAuthn.Mount(r)
+	}
+
+	if p.HydraAdmin != nil && p.WebAuthn != nil {
+		hydra.MountProviders(r, hydra.ProviderParams{
+			Admin:               p.HydraAdmin,
+			WebAuthn:            p.WebAuthn,
+			AllowedScopes:       p.Config.Hydra.Dcr.AllowedScopes,
+			RedirectURIPatterns: p.Config.Hydra.Dcr.RedirectURIPatterns,
+			AgentProxyEnabled:   agentProxy,
+		})
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.

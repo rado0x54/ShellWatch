@@ -9,40 +9,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/ephemeral"
 )
 
-// Principal is what the bearer gate attaches to the request context
-// (BearerPrincipal in bearer-resolver.ts).
-type Principal struct {
-	AccountID string
-	Scopes    []string
-}
-
-func (p Principal) HasScope(s string) bool {
-	for _, sc := range p.Scopes {
-		if sc == s {
-			return true
-		}
-	}
-	return false
-}
-
-// Resolver maps a bearer token to a principal, or nil (fail closed).
-type Resolver func(ctx context.Context, token string) *Principal
-
 const maxCacheEntries = 2048
 
-// NewResolver builds the caching resolver. cacheTTL <= 0 disables caching
-// (introspect every request), matching introspectionCacheTtlMs: 0.
-func NewResolver(admin Introspector, cacheTTL time.Duration, clk clock.Clock) Resolver {
-	var cache *ephemeral.Store[string, Principal]
+// NewResolver builds the caching resolver (returns an auth.Resolver, since
+// Principal is an auth concept). cacheTTL <= 0 disables caching (introspect
+// every request), matching introspectionCacheTtlMs: 0.
+func NewResolver(admin Introspector, cacheTTL time.Duration, clk clock.Clock) auth.Resolver {
+	var cache *ephemeral.Store[string, auth.Principal]
 	if cacheTTL > 0 {
-		cache = ephemeral.New[string, Principal](cacheTTL, maxCacheEntries, clk)
+		cache = ephemeral.New[string, auth.Principal](cacheTTL, maxCacheEntries, clk)
 	}
 
-	return func(ctx context.Context, token string) *Principal {
+	return func(ctx context.Context, token string) *auth.Principal {
 		if cache != nil {
 			if p, ok := cache.Get(token); ok {
 				return &p
@@ -62,7 +45,7 @@ func NewResolver(admin Introspector, cacheTTL time.Duration, clk clock.Clock) Re
 		if !ins.Active || ins.Sub == "" || ins.TokenUse != "access_token" {
 			return nil
 		}
-		p := Principal{AccountID: ins.Sub, Scopes: strings.Fields(ins.Scope)}
+		p := auth.Principal{AccountID: ins.Sub, Scopes: strings.Fields(ins.Scope)}
 		// Cache ONLY valid principals — negative caching would let an
 		// attacker spraying invalid tokens evict legitimate entries.
 		if cache != nil {

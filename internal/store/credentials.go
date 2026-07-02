@@ -57,6 +57,12 @@ func (c *Credentials) ActiveCredentialIDs(ctx context.Context, accountID string)
 	return gen.New(c.db).ListActiveCredentialIDsForAccount(ctx, accountID)
 }
 
+// AllActiveCredentialIDs returns every active, non-revoked credential id (the
+// login provider's allowCredentials — not account-scoped).
+func (c *Credentials) AllActiveCredentialIDs(ctx context.Context) ([]string, error) {
+	return gen.New(c.db).ListAllActiveCredentialIDs(ctx)
+}
+
 // FoundCredential is a credential row needed for assertion verification.
 type FoundCredential struct {
 	RowID         string

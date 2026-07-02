@@ -16,6 +16,10 @@ INSERT INTO webauthn_credentials (
 SELECT credential_id FROM webauthn_credentials
 WHERE account_id = ? AND revoked = 0;
 
+-- name: ListAllActiveCredentialIDs :many
+SELECT credential_id FROM webauthn_credentials
+WHERE revoked = 0 AND state = 'active';
+
 -- name: ListActiveCredentialLabelsForAccount :many
 SELECT label FROM webauthn_credentials WHERE account_id = ?;
 
