@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# oapi-codegen configuration for the Go REST surface (#210 / #232 item 3).
+# CI runs scripts/check-api-codegen.sh against this config to guarantee the
+# spec stays consumable by the pinned generator; the Go module (Phase 1,
+# internal/api) reuses the same config so CI and codegen cannot drift.
+# The generator version is pinned in scripts/check-api-codegen.sh.
+package: api
+generate:
+  models: true
+  chi-server: true
+  strict-server: true

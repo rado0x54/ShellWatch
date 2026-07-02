@@ -121,6 +121,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration
 
+  # Go-codegen gate for the wire contract (#232, ahead of the #210 rewrite):
+  # the OpenAPI spec must stay consumable by the pinned oapi-codegen and the
+  # generated REST surface must compile. Full build/vet/test jobs for the
+  # root Go module arrive with Phase 1.
+  api-codegen:
+    name: API Codegen (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - run: bash scripts/check-api-codegen.sh
+
   # Agent build matrix — catches windows/unix build-tag breakage at PR time
   # rather than at release-cut. Build only; tests run once on linux below.
   agent-build:
