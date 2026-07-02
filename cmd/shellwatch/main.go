@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // ShellWatch Go backend (#210). Composition root: config, store, Hydra
 // resolver, HTTP server — wired here and only here
-// (docs/go-backend-architecture.md §5.1). Phase 2 in progress: the bearer
-// gate + discovery docs are live; providers/ceremonies/DCR land next. The
-// Node backend remains the production server until cutover.
+// (docs/go-backend-architecture.md §5.1). Auth plane (Phase 2) + endpoints
+// REST (Phase 3 slice 1) are live; terminal core / SSH / WS follow. The Node
+// backend remains the production server until cutover.
 package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,8 +24,10 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/web"
@@ -100,6 +104,11 @@ func run() error {
 		BuildInfo:     buildinfo.Load(mustGetwd()),
 		WebAuthn:      webauthnDeps,
 		HydraAdmin:    admin,
+		Endpoints: &rest.Endpoints{
+			Store: store.NewEndpoints(db, clk),
+			Demo:  demo.NewService(cfg.DemoEndpoints),
+			NewID: newUUID,
+		},
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
@@ -133,6 +142,15 @@ func staticFilesystem(dir string) (fs.FS, error) {
 		return os.DirFS(dir), nil
 	}
 	return web.Dist()
+}
+
+func newUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
 func mustGetwd() string {

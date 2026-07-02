@@ -18,6 +18,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
@@ -33,6 +34,8 @@ type Params struct {
 	WebAuthn *webauthn.Deps
 	// HydraAdmin enables the login provider + mediated DCR (nil-able).
 	HydraAdmin hydra.Admin
+	// Endpoints mounts the endpoint CRUD routes (nil-able).
+	Endpoints *rest.Endpoints
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -71,6 +74,10 @@ func New(p Params) http.Handler {
 			RedirectURIPatterns: p.Config.Hydra.Dcr.RedirectURIPatterns,
 			AgentProxyEnabled:   agentProxy,
 		})
+	}
+
+	if p.Endpoints != nil {
+		p.Endpoints.Mount(r)
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.
