@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    # go-backend is the long-lived base branch for the #210 rewrite; its
+    # pushes and the PRs targeting it need the same gates as develop.
+    branches: [develop, main, go-backend]
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, go-backend]
   workflow_call:
 
 concurrency:
