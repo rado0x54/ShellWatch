@@ -79,6 +79,15 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
     };
   }>("/api/endpoints", async (request, reply) => {
     try {
+      // label + host are the two required fields (openapi.yaml marks them so, and
+      // the MCP create path already enforces it). Reject empty/whitespace-only
+      // rather than persisting a blank endpoint.
+      const label = typeof request.body.label === "string" ? request.body.label.trim() : "";
+      const host = typeof request.body.host === "string" ? request.body.host.trim() : "";
+      if (!label || !host) {
+        reply.status(400);
+        return { error: "label and host are required" };
+      }
       const uv = request.body.userVerification;
       if (uv !== undefined && !isUserVerification(uv)) {
         reply.status(400);
@@ -104,8 +113,8 @@ export function registerEndpointRoutes(params: EndpointRoutesParams) {
       await endpointRepo.create({
         id,
         accountId: request.accountId,
-        label: request.body.label,
-        host: request.body.host,
+        label,
+        host,
         port: request.body.port ?? 22,
         username: request.body.username ?? "shellwatch",
         userVerification: uv as UserVerification | undefined,
