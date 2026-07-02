@@ -13,12 +13,18 @@ return, byte for byte (after normalization).
 Each `*.json` is one captured case. Generated and asserted by the
 `src/test/integration/golden-*.test.ts` suites:
 
-| Suite          | Fixtures                                        | Covers                                                           |
-| -------------- | ----------------------------------------------- | ---------------------------------------------------------------- |
-| `golden-http`  | `discovery-*`, `err-*`, `endpoints-*`, `health` | OAuth/RFC 9728 discovery, REST envelopes, 401/404/400 matrix     |
-| `golden-mcp`   | `mcp-*`                                         | MCP tool JSON payloads + `isError`/message shape                 |
-| `golden-ws`    | `ws-*`                                          | connect-time `sessions:changed`, `terminal:attach` reply         |
-| `golden-audit` | `audit-*`                                       | paged `{ rows, nextCursor }`, keyset pagination, single-row, 400 |
+| Suite                 | Fixtures                                                         | Covers                                                                                                                                 |
+| --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `golden-http`         | `discovery-*`, `err-*`, `endpoints-*`, `health`                  | OAuth/RFC 9728 discovery, REST envelopes, 401/404/400 matrix                                                                           |
+| `golden-mcp`          | `mcp-*`                                                          | MCP tool JSON payloads + `isError`/message shape                                                                                       |
+| `golden-ws`           | `ws-*`                                                           | connect-time `sessions:changed`, `terminal:attach` reply                                                                               |
+| `golden-audit`        | `audit-*`                                                        | paged `{ rows, nextCursor }`, keyset pagination, single-row, 400                                                                       |
+| `golden-webauthn`     | `webauthn-*`                                                     | WebAuthn ceremony _finish_ response envelopes (self-register, login, step-up, in-account add, invite mint/redeem)                      |
+| `golden-account`      | `account-*`, `keys-list`, `meta-*`, `endpoint-*`                 | current-account read/update, admin accounts + delete + export-seed, SSH-key list, `/api/version`, `/config.js`, endpoint update/delete |
+| `golden-session`      | `session-*`                                                      | session-lifecycle success bodies (create → list → tail → close)                                                                        |
+| `golden-credentials`  | `credentials-list`, `credential-*`, `passkey-status`, `invite-*` | passkey list/label/confirm/revoke (step-up minted), status probe, invite reads                                                         |
+| `golden-hydra`        | `auth-session*`, `consent-*`, `dcr-register`                     | authorized-client list/revoke, mediated DCR, consent-approve                                                                           |
+| `golden-actions-push` | `action-*`, `push-*`                                             | pending-action get/resolve/deny, Web Push subscribe/unsubscribe                                                                        |
 
 ## Normalization
 
@@ -47,6 +53,26 @@ are stable independent of the listen port.
 pnpm test:golden          # assert current backend matches the committed goldens
 pnpm test:golden:update   # regenerate after an INTENTIONAL contract change (review the diff!)
 ```
+
+A few suites fold values the `golden.ts` normalizer can't pattern-match, by hand
+before capture: `<ID>` (random base64url pending-action ids) and `<OUTPUT>` (raw
+terminal tail bytes). These are per-suite, documented in each suite's docblock.
+
+## Coverage guard
+
+The goldens are the parity oracle, so a silent gap in them (the #225 failure
+mode — ~20 of 54 operationIds covered, parity generalized from the subset) is
+exactly what must not recur. [`golden-coverage.ts`](../golden-coverage.ts) is a
+committed manifest mapping **every** `openapi.yaml` `operationId` to its golden
+fixture(s) or to an `excluded` entry with a stated reason, and
+[`golden-coverage.test.ts`](../golden-coverage.test.ts) fails CI on any operation
+that is neither goldened nor deliberately excluded, on stale manifest entries,
+and on mapped fixtures missing from disk. Adding or renaming an operation in
+`openapi.yaml` therefore forces a matching golden (or a documented exclusion) in
+the same change. Current deliberate exclusions: the WebAuthn/consent `/options`
+passthroughs (non-deterministic `@simplewebauthn` challenge bodies) and
+`finishHydraConsent` (its `{ redirectTo }` envelope is identical to
+`finishHydraLogin`/`webauthn-login-verify`).
 
 A failing `pnpm test:golden` means the backend's observable contract changed. If
 intentional, regenerate and review the JSON diff as part of the PR; if not, it's

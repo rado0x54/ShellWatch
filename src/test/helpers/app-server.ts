@@ -12,8 +12,11 @@ import type { SessionLifecycleRepository, SigningRequestsRepository } from "../.
 import type { PendingActionStore } from "../../pending-action/index.js";
 import type { WebSocketChannel } from "../../pending-action/ws-channel.js";
 import type { PushSubscriptionRepository } from "../../db/repositories/push-subscription-repo.js";
+import type { ShellWatchDB } from "../../db/connection.js";
 import { makeTestConfig } from "./test-config.js";
 import {
+  type AccountRepository,
+  type SshKeyRepository,
   StubAccountRepository,
   InMemoryEndpointRepository,
   InMemorySshKeyRepository,
@@ -82,6 +85,26 @@ export interface StartTestAppOptions {
   wsChannel?: WebSocketChannel;
   /** Web Push subscription repo. When set, buildApp mounts `/api/push/subscribe`. */
   pushSubRepo?: PushSubscriptionRepository;
+  /**
+   * Account repository override. Defaults to `StubAccountRepository` (findById →
+   * null, isAdmin → false), which is fine for endpoint/session tests but 401s
+   * `/api/auth/me` and 403s the admin routes. Golden suites that characterize
+   * account/admin/keys responses inject a real `DrizzleAccountRepository` seeded
+   * with the test account (and `setAdmin` for admin-gated bodies).
+   */
+  accountRepo?: AccountRepository;
+  /**
+   * SSH key repository override. Defaults to a one-file-key `InMemorySshKeyRepository`.
+   * Injectable so key-listing goldens can pin a deterministic set.
+   */
+  keyRepo?: SshKeyRepository;
+  /**
+   * Live SQLite handle. When provided, buildApp additionally mounts the WebAuthn
+   * credential routes and the Hydra login/consent providers (they key off `db`),
+   * and `/api/accounts/export-seed` + account delete read it directly. Golden
+   * suites own the DB: `createDatabase(":memory:")` + `runMigrations` + seed.
+   */
+  db?: ShellWatchDB | null;
 }
 
 export async function startTestApp(
@@ -96,6 +119,9 @@ export async function startTestApp(
     actionStore,
     wsChannel,
     pushSubRepo,
+    accountRepo: accountRepoOverride,
+    keyRepo: keyRepoOverride,
+    db = null,
   } = options;
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
@@ -153,9 +179,11 @@ export async function startTestApp(
       username: "foreign",
     },
   ]);
-  const keyRepo = new InMemorySshKeyRepository([
-    { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
-  ]);
+  const keyRepo =
+    keyRepoOverride ??
+    new InMemorySshKeyRepository([
+      { id: "test-key", label: "Test Key", type: "file", publicKey: publicKeyOpenSsh, fingerprint },
+    ]);
   const keyProvider = new InMemoryKeyProvider([scannedKey]);
 
   const sshTransportFactory = new SshTransportFactory(keyRepo, keyProvider, {
@@ -208,8 +236,9 @@ export async function startTestApp(
     terminalManager,
     endpointRepo,
     keyRepo,
-    accountRepo: new StubAccountRepository(),
+    accountRepo: accountRepoOverride ?? new StubAccountRepository(),
     accountLifecycle: new AccountLifecycle(),
+    db,
     hydraAdmin,
     sessionLifecycleRepo,
     signingRequestsRepo,
