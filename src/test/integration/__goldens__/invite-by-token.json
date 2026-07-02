@@ -1,0 +1,10 @@
+{
+  "request": {
+    "path": "/api/passkey-invite/<REDACTED>"
+  },
+  "status": 200,
+  "body": {
+    "accountName": "Admin",
+    "expiresAt": "<TS>"
+  }
+}

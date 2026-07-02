@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/auth/sessions/mcp-abc"
+  },
+  "status": 200,
+  "body": {
+    "status": "revoked"
+  }
+}

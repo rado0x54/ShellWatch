@@ -1,0 +1,27 @@
+{
+  "request": {
+    "path": "/api/actions/{actionId}"
+  },
+  "status": 200,
+  "body": {
+    "type": "key-approve",
+    "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+    "context": {
+      "source": "endpoint-auth",
+      "endpointLabel": "Prod DB",
+      "endpointAddress": "deploy@db.internal:2222",
+      "trigger": {
+        "kind": "mcp",
+        "reason": "deploy hotfix",
+        "mcpClientName": "codex"
+      }
+    },
+    "keyLabel": "Deploy Key",
+    "keyFingerprint": "<FINGERPRINT>",
+    "redirectTo": "/sign/approved",
+    "id": "<ID>",
+    "status": "pending",
+    "createdAt": "<TS>",
+    "expiresAt": "<TS>"
+  }
+}

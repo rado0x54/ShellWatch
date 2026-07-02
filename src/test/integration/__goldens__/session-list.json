@@ -1,0 +1,20 @@
+{
+  "request": {
+    "path": "/api/sessions"
+  },
+  "status": 200,
+  "body": {
+    "sessions": [
+      {
+        "sessionId": "sess_<ID>",
+        "endpointId": "test-server",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "status": "open",
+        "createdAt": "<TS>",
+        "lastActivityAt": "<TS>",
+        "source": "ui",
+        "sourceIp": "127.0.0.1"
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "request": {
+    "path": "/api/accounts"
+  },
+  "status": 200,
+  "body": {
+    "accounts": [
+      {
+        "id": "test-account-00000000-0000-0000-0000-000000000000",
+        "name": "Admin",
+        "isAdmin": true,
+        "enabled": true,
+        "maxSessions": 5,
+        "lastUsedAt": null,
+        "createdAt": "<TS>"
+      },
+      {
+        "id": "<UUID>",
+        "name": "Bob",
+        "isAdmin": false,
+        "enabled": true,
+        "maxSessions": 3,
+        "lastUsedAt": null,
+        "createdAt": "<TS>"
+      }
+    ]
+  }
+}

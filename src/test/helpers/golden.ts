@@ -12,8 +12,9 @@
  *
  * Normalization contract (keep in sync with the Go side):
  *   - Keys carrying wall-clock or per-run values → placeholder, regardless of
- *     type (ISO string or epoch-ms number): createdAt, updatedAt, lastActivityAt,
- *     lastUsedAt, builtAt, authorizedAt, closedAt, resolvedAt, expiresAt → "<TS>".
+ *     type (ISO string or epoch-ms/epoch-s number): createdAt, updatedAt,
+ *     lastActivityAt, lastUsedAt, builtAt, authorizedAt, closedAt, resolvedAt,
+ *     expiresAt, client_id_issued_at → "<TS>".
  *   - challenge, challengeId, token, stepUpToken → "<REDACTED>".
  *   - nextCursor (when non-null) → "<CURSOR>".
  *   - Value patterns anywhere:
@@ -48,6 +49,8 @@ const TS_KEYS = new Set([
   "closedAt",
   "resolvedAt",
   "expiresAt",
+  // DCR (RFC 7591): epoch-SECONDS number, not ISO — folded by key, not pattern.
+  "client_id_issued_at",
 ]);
 const REDACT_KEYS = new Set(["challenge", "challengeId", "token", "stepUpToken"]);
 

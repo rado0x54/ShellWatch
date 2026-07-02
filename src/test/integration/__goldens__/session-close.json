@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/sessions/{id}"
+  },
+  "status": 200,
+  "body": {
+    "status": "closed"
+  }
+}

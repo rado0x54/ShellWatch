@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/actions/{actionId}/resolve"
+  },
+  "status": 200,
+  "body": {
+    "redirectTo": "/sign/approved"
+  }
+}
