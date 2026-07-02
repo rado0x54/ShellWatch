@@ -29,6 +29,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/web"
 )
@@ -96,6 +97,15 @@ func run() error {
 		SelfRegEnabled: cfg.Security.SelfRegistrationEnabled,
 	}
 
+	endpointStore := store.NewEndpoints(db, clk)
+	demoSvc := demo.NewService(cfg.DemoEndpoints)
+	// Transport factory lands in Phase 3 slice 3 (SSH); until then Create
+	// returns a connect error (no sessions can open, but the surface exists).
+	var factory terminal.TransportFactory = func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
+		return nil, fmt.Errorf("SSH transport not yet wired (Phase 3 slice 3)")
+	}
+	manager := terminal.NewManager(factory, clk, 0)
+
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
 		Resolve:       resolve,
@@ -105,9 +115,16 @@ func run() error {
 		WebAuthn:      webauthnDeps,
 		HydraAdmin:    admin,
 		Endpoints: &rest.Endpoints{
-			Store: store.NewEndpoints(db, clk),
-			Demo:  demo.NewService(cfg.DemoEndpoints),
-			NewID: newUUID,
+			Store:    endpointStore,
+			Demo:     demoSvc,
+			Sessions: manager,
+			NewID:    newUUID,
+		},
+		Sessions: &rest.Sessions{
+			Manager:     manager,
+			Endpoints:   endpointStore,
+			Demo:        demoSvc,
+			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
 	})
 

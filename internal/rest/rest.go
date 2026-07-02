@@ -3,10 +3,24 @@ package rest
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	"github.com/rado0x54/shellwatch/internal/auth"
 )
+
+// isoMillis matches Node's new Date().toISOString().
+const isoMillis = "2006-01-02T15:04:05.000Z"
+
+// clientIP is the request peer (Node request.ip; trust-proxy handling lands
+// with the middleware stack).
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 // accountID returns the authenticated account (the gate guarantees one on
 // /api/* routes; "" is never seen by these handlers).

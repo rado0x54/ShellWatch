@@ -36,6 +36,8 @@ type Params struct {
 	HydraAdmin hydra.Admin
 	// Endpoints mounts the endpoint CRUD routes (nil-able).
 	Endpoints *rest.Endpoints
+	// Sessions mounts the session routes (nil-able).
+	Sessions *rest.Sessions
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -78,6 +80,9 @@ func New(p Params) http.Handler {
 
 	if p.Endpoints != nil {
 		p.Endpoints.Mount(r)
+	}
+	if p.Sessions != nil {
+		p.Sessions.Mount(r)
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.
