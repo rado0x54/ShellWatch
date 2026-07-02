@@ -114,6 +114,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 }
 
 // pump ranges over transport events until it ends (one goroutine per session).
+// An explicit Err/Closed event drives the terminal state; if the channel just
+// closes (the client-initiated close path, where transport.Close suppresses a
+// duplicate Closed event), the session is still finalized here — reasonOr
+// preserves the reason Close() already stamped (e.g. client.ui).
 func (m *Manager) pump(mg *managed) {
 	for ev := range mg.transport.Events() {
 		switch {
@@ -138,6 +142,7 @@ func (m *Manager) pump(mg *managed) {
 			}
 		}
 	}
+	m.setStatus(mg, StatusClosed, reasonOr(mg, CloseServerHangup))
 }
 
 func reasonOr(mg *managed, fallback CloseReason) CloseReason {

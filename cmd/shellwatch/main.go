@@ -28,6 +28,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/rest"
+	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
@@ -99,12 +100,11 @@ func run() error {
 
 	endpointStore := store.NewEndpoints(db, clk)
 	demoSvc := demo.NewService(cfg.DemoEndpoints)
-	// Transport factory lands in Phase 3 slice 3 (SSH); until then Create
-	// returns a connect error (no sessions can open, but the surface exists).
-	var factory terminal.TransportFactory = func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
-		return nil, fmt.Errorf("SSH transport not yet wired (Phase 3 slice 3)")
-	}
-	manager := terminal.NewManager(factory, clk, 0)
+	// File-key SSH transport (Phase 3 slice 3). The passkey/pending-action
+	// signer path is added in Phase 4; today file keys from the key directory
+	// authenticate.
+	keyDir := sshx.NewKeyDir(cfg.KeyDirectory)
+	manager := terminal.NewManager(sshx.NewFileKeyFactory(keyDir), clk, 0)
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
@@ -144,11 +144,14 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
-	// Ordered shutdown: HTTP first, then the final last-used flush (via
-	// flusher.Run's ctx-done path), then the DB (deferred Close).
+	// Ordered shutdown (§5.1): stop accepting HTTP, close all terminals, then
+	// the final last-used flush (via flusher.Run's ctx-done path) and the DB
+	// (deferred Close).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	err = srv.Shutdown(shutdownCtx)
+	manager.Destroy()
+	return err
 }
 
 func staticFilesystem(dir string) (fs.FS, error) {
