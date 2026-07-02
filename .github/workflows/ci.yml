@@ -134,18 +134,31 @@ jobs:
           node-version: 24
       - run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 
-  # Go-codegen gate for the wire contract (#232, ahead of the #210 rewrite):
-  # the OpenAPI spec must stay consumable by the pinned oapi-codegen and the
-  # generated REST surface must compile. Full build/vet/test jobs for the
-  # root Go module arrive with Phase 1.
-  api-codegen:
-    name: API Codegen (Go)
+  # Root Go module (#210 rewrite, go-backend track): build, vet, test.
+  go:
+    name: Go (build/vet/test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # Codegen drift gate: committed internal/api (oapi-codegen from the frozen
+  # OpenAPI spec) and internal/store/gen (sqlc) must match their sources.
+  api-codegen:
+    name: Codegen Drift (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: bash scripts/check-api-codegen.sh
 
   # Agent build matrix — catches windows/unix build-tag breakage at PR time
