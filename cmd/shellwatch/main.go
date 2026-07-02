@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rado0x54/shellwatch/internal/agent"
+	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
@@ -111,6 +112,17 @@ func run() error {
 	wsHub := ws.NewHub(manager)
 	defer wsHub.Close()
 
+	// Human-in-the-loop signing machinery (Phase 4 slice 2). The pending-action
+	// store + broker + WS channel are the approval path; the webauthn signer
+	// (proven end-to-end) wires into the transport factory + agent proxy in
+	// slice 3. sign:request/resolved reach browsers via the hub.
+	actionStore := approval.NewStore(clk, newUUID)
+	go sweepActions(ctx, actionStore)
+	signBroker := approval.NewBroker(actionStore,
+		func() string { return cfg.Server.ExternalURL },
+		&approval.WSChannel{Hub: wsHub})
+	_ = signBroker // wired into the transport factory in slice 3
+
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
 		Resolve:       resolve,
@@ -136,6 +148,7 @@ func run() error {
 			AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
 			Keys:      store.NewSSHKeys(db),
 		},
+		Actions: &rest.Actions{Store: actionStore},
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
@@ -189,4 +202,18 @@ func mustGetwd() string {
 		return "."
 	}
 	return wd
+}
+
+// sweepActions expires overdue pending actions every 10s (the store janitor).
+func sweepActions(ctx context.Context, store *approval.Store) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			store.Sweep()
+		}
+	}
 }

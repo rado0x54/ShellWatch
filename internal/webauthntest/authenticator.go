@@ -96,6 +96,12 @@ func (a *Authenticator) CredentialID() string {
 	return base64.RawURLEncoding.EncodeToString(a.credID)
 }
 
+// ECDSAPublicKey exposes the credential's public key for signature
+// verification in tests.
+func (a *Authenticator) ECDSAPublicKey() *ecdsa.PublicKey {
+	return &a.priv.PublicKey
+}
+
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func pad32(b []byte) []byte {

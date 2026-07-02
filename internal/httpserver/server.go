@@ -44,6 +44,8 @@ type Params struct {
 	WSHub *ws.Hub
 	// MCP mounts the /mcp streamable-HTTP surface (nil-able).
 	MCP *mcp.Deps
+	// Actions mounts the pending-action resolve/deny routes (nil-able).
+	Actions *rest.Actions
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -89,6 +91,9 @@ func New(p Params) http.Handler {
 	}
 	if p.Sessions != nil {
 		p.Sessions.Mount(r)
+	}
+	if p.Actions != nil {
+		p.Actions.Mount(r)
 	}
 	if p.WSHub != nil {
 		r.Get("/ws", p.WSHub.Handler())
