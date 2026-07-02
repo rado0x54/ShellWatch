@@ -6,6 +6,7 @@
 package approval
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -49,6 +50,55 @@ type Context struct {
 	MCPReason     string `json:"-"`
 	MCPClientName string `json:"-"`
 	MCPClientVer  string `json:"-"`
+}
+
+// MarshalJSON emits the source-discriminated wire shape (SignRequestContext):
+// endpoint-auth nests a `trigger` object (kind + optional sourceIp/mcp fields);
+// agent-forwarding carries sessionId; agent-proxy carries the client fields.
+func (c Context) MarshalJSON() ([]byte, error) {
+	m := map[string]any{"source": c.Source}
+	if c.EndpointLabel != "" {
+		m["endpointLabel"] = c.EndpointLabel
+	}
+	if c.EndpointAddress != "" {
+		m["endpointAddress"] = c.EndpointAddress
+	}
+	if c.SessionID != "" {
+		m["sessionId"] = c.SessionID
+	}
+	switch c.Source {
+	case "endpoint-auth":
+		tr := map[string]any{"kind": c.TriggerKind}
+		if c.SourceIP != "" {
+			tr["sourceIp"] = c.SourceIP
+		}
+		if c.TriggerKind == "mcp" {
+			if c.MCPReason != "" {
+				tr["reason"] = c.MCPReason
+			}
+			if c.MCPClientName != "" {
+				tr["mcpClientName"] = c.MCPClientName
+			}
+			if c.MCPClientVer != "" {
+				tr["mcpClientVersion"] = c.MCPClientVer
+			}
+		}
+		m["trigger"] = tr
+	default: // agent-forwarding / agent-proxy
+		if c.SourceIP != "" {
+			m["sourceIp"] = c.SourceIP
+		}
+		if c.ClientHostname != "" {
+			m["clientHostname"] = c.ClientHostname
+		}
+		if c.ClientOS != "" {
+			m["clientOs"] = c.ClientOS
+		}
+		if c.ClientVersion != "" {
+			m["clientVersion"] = c.ClientVersion
+		}
+	}
+	return json.Marshal(m)
 }
 
 // Action is a pending human-in-the-loop approval.

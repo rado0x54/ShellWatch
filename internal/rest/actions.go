@@ -83,7 +83,8 @@ func (a *Actions) resolve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]any{"status": "resolved", "redirectTo": action.RedirectTo})
+	// Node returns just { redirectTo } here (no status field) — match it.
+	writeJSON(w, 200, map[string]any{"redirectTo": action.RedirectTo})
 }
 
 func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
