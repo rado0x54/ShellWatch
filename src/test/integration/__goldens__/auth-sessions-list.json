@@ -1,0 +1,26 @@
+{
+  "request": {
+    "path": "/api/auth/sessions"
+  },
+  "status": 200,
+  "body": {
+    "sessions": [
+      {
+        "clientId": "shellwatch-web",
+        "clientName": "ShellWatch Web",
+        "scopes": ["ui", "offline_access"],
+        "authorizedAt": "<TS>",
+        "createdAt": null,
+        "current": true
+      },
+      {
+        "clientId": "mcp-abc",
+        "clientName": "Claude MCP",
+        "scopes": ["mcp", "offline_access"],
+        "authorizedAt": "<TS>",
+        "createdAt": "<TS>",
+        "current": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "request": {
+    "path": "/api/auth/me"
+  },
+  "status": 200,
+  "body": {
+    "id": "test-account-00000000-0000-0000-0000-000000000000",
+    "name": "Admin",
+    "isAdmin": true,
+    "showDemoEndpoints": true,
+    "demoEndpointsAvailable": false
+  }
+}

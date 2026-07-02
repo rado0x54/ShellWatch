@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/hydra/consent/approve"
+  },
+  "status": 200,
+  "body": {
+    "redirectTo": "https://hydra.test/consent-callback?c=consent-approve-chal"
+  }
+}

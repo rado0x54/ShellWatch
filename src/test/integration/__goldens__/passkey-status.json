@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/auth/passkey-status"
+  },
+  "status": 200,
+  "body": {
+    "hasPasskeys": true
+  }
+}

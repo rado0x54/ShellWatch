@@ -1,0 +1,8 @@
+{
+  "request": {
+    "path": "/config.js"
+  },
+  "status": 200,
+  "contentType": "application/javascript",
+  "body": "window.__SELF_REGISTRATION_ENABLED__=false;window.__VAPID_PUBLIC_KEY__=null;window.__BUILD_INFO__={\"sha\":\"dev\",\"ref\":\"local\",\"tag\":null,\"builtAt\":null,\"display\":\"local@dev\"};window.__OAUTH__={\"issuer\":\"http://localhost:4444\",\"clientId\":\"shellwatch-web\",\"redirectUri\":\"http://localhost:3000/auth/callback\",\"scope\":\"openid offline_access ui\"};"
+}

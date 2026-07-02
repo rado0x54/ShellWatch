@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/push/subscribe"
+  },
+  "status": 200,
+  "body": {
+    "id": "<UUID>"
+  }
+}

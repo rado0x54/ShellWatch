@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/sessions/{id}/tail"
+  },
+  "status": 200,
+  "body": {
+    "data": "<OUTPUT>"
+  }
+}

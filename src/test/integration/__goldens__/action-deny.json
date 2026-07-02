@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/actions/{actionId}/deny"
+  },
+  "status": 200,
+  "body": {
+    "status": "denied"
+  }
+}
