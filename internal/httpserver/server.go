@@ -18,6 +18,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
 type Params struct {
@@ -27,6 +28,9 @@ type Params struct {
 	TouchLastUsed func(accountID string)
 	StaticFS      fs.FS
 	BuildInfo     buildinfo.Info
+	// WebAuthn mounts the ceremony routes (nil-able: omitted in the
+	// slice-1 discovery-only tests).
+	WebAuthn *webauthn.Deps
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -52,6 +56,10 @@ func New(p Params) http.Handler {
 		HydraPublicURL:    p.Config.Hydra.PublicURL,
 		AgentProxyEnabled: agentProxy,
 	})
+
+	if p.WebAuthn != nil {
+		p.WebAuthn.Mount(r)
+	}
 
 	// SPA: exact static files, fallback to index.html for client routes.
 	r.NotFound(spaHandler(p.StaticFS))
