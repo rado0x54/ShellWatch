@@ -21,12 +21,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/agent"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/mcp"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -130,6 +132,10 @@ func run() error {
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
 		WSHub: wsHub,
+		MCP: &mcp.Deps{
+			AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
+			Keys:      store.NewSSHKeys(db),
+		},
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

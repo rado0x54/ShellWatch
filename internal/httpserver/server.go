@@ -18,6 +18,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/hydra"
+	"github.com/rado0x54/shellwatch/internal/mcp"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -41,6 +42,8 @@ type Params struct {
 	Sessions *rest.Sessions
 	// WSHub mounts the /ws terminal WebSocket (nil-able).
 	WSHub *ws.Hub
+	// MCP mounts the /mcp streamable-HTTP surface (nil-able).
+	MCP *mcp.Deps
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -89,6 +92,10 @@ func New(p Params) http.Handler {
 	}
 	if p.WSHub != nil {
 		r.Get("/ws", p.WSHub.Handler())
+	}
+	if p.MCP != nil {
+		r.Handle("/mcp", p.MCP.Handler())
+		r.Handle("/mcp/*", p.MCP.Handler())
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.
