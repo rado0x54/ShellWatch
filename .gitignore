@@ -29,3 +29,9 @@ spike/out/
 # overwrite this directory with client/build/* before compiling.
 !web/dist/
 !web/dist/index.html
+
+# Compiled Go server binary (local builds)
+/shellwatch-go
+/shellwatch
+# Local Go test databases
+/data/go-*.db
