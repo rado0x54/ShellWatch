@@ -107,8 +107,12 @@ func New(p Params) http.Handler {
 		r.Get("/ws", p.WSHub.Handler())
 	}
 	if p.MCP != nil {
-		r.Handle("/mcp", p.MCP.Handler())
-		r.Handle("/mcp/*", p.MCP.Handler())
+		// /mcp is gated by scope AND a CIDR allowlist (auth model), defaulting
+		// to localhost.
+		ipGate := auth.NewIPChecker(p.Config.Security.AllowedNetworks).Middleware
+		mcpHandler := ipGate(p.MCP.Handler())
+		r.Handle("/mcp", mcpHandler)
+		r.Handle("/mcp/*", mcpHandler)
 	}
 	if p.AgentProxy != nil && agentProxy {
 		r.Get("/agent-proxy", p.AgentProxy.Handler())

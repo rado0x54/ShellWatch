@@ -94,6 +94,14 @@ func run() error {
 	flusher := store.NewLastUsedFlusher(db, clk)
 	go flusher.Run(ctx, time.Minute)
 
+	// First-run seeding (admin endpoints from config) + inactive-account cleanup.
+	if _, err := store.SeedAdminEndpoints(ctx, db, clk, cfg.SeedAdminEndpoints, newUUID); err != nil {
+		slog.Warn("seed admin endpoints failed", "err", err)
+	}
+	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
+		slog.Info("cleaned up inactive accounts", "count", len(ids))
+	})
+
 	webauthnDeps := &webauthn.Deps{
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),

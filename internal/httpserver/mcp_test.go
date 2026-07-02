@@ -55,6 +55,9 @@ func mcpServer(t *testing.T) *httptest.Server {
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
 	cfg.Hydra.PublicURL = "http://localhost:4444"
+	// httptest serves on 127.0.0.1; the /mcp IP allowlist must permit it (the
+	// config loader applies this default in production).
+	cfg.Security.AllowedNetworks = []string{"127.0.0.1/32", "::1/128"}
 	resolve := auth.Resolver(func(_ context.Context, tok string) *auth.Principal {
 		if tok == "mcp" {
 			return &auth.Principal{AccountID: acc, Scopes: []string{"mcp"}}
