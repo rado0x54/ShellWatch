@@ -86,6 +86,7 @@ func run() error {
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),
 		StepUp:         webauthn.NewStepUpStore(clk),
+		Invites:        webauthn.NewInviteStore(clk),
 		RpID:           cfg.Security.RpID,
 		TrustedOrigins: cfg.Security.TrustedWebauthnOrigins,
 		SelfRegEnabled: cfg.Security.SelfRegistrationEnabled,

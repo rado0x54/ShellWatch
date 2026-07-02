@@ -98,6 +98,7 @@ func newCeremonyServer(t *testing.T, selfReg bool) *ceremonyServer {
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),
 		StepUp:         webauthn.NewStepUpStore(clk),
+		Invites:        webauthn.NewInviteStore(clk),
 		RpID:           rpID,
 		TrustedOrigins: []string{origin},
 		SelfRegEnabled: selfReg,
@@ -250,6 +251,75 @@ func TestCeremonyLoginVerifyGolden(t *testing.T) {
 		"credential":      json.RawMessage(fake.Authenticate(ch)),
 	}, nil)
 	assertGolden(t, "webauthn-login-verify", status, body)
+}
+
+// TestCeremonyInviteGolden covers mint + redeem: an authenticated account
+// mints an invite, then device B (anonymous, fakeB) redeems it -> a
+// pending_confirmation credential and the {status, label, fingerprint}
+// envelope. Two goldens.
+func TestCeremonyInviteGolden(t *testing.T) {
+	c := newCeremonyServer(t, false)
+	_, bearer := c.enroll(t) // account exists with fakeA
+	authHdr := map[string]string{"Authorization": "Bearer " + bearer}
+
+	status, mint := c.post(t, "/api/webauthn/invite", map[string]any{}, authHdr)
+	assertGolden(t, "webauthn-invite-mint", status, mint)
+	token, _ := mint["invite"].(map[string]any)["token"].(string)
+
+	_, opts := c.post(t, "/api/passkey-invite/register/options", map[string]any{"token": token}, nil)
+	ch, id := challengePair(opts)
+	rstatus, redeem := c.post(t, "/api/passkey-invite/register", map[string]any{
+		"token": token, "challengeId": id, "credential": json.RawMessage(fakeB(t).Register(ch)),
+	}, nil)
+	assertGolden(t, "webauthn-invite-redeem", rstatus, redeem)
+}
+
+// TestInviteConfirmFlow exercises the non-goldened tail: the redeemed
+// credential is pending until device A confirms it (step-up gated).
+func TestInviteConfirmFlow(t *testing.T) {
+	c := newCeremonyServer(t, false)
+	accountID, bearer := c.enroll(t)
+	authHdr := map[string]string{"Authorization": "Bearer " + bearer}
+
+	_, mint := c.post(t, "/api/webauthn/invite", map[string]any{}, authHdr)
+	token, _ := mint["invite"].(map[string]any)["token"].(string)
+	_, opts := c.post(t, "/api/passkey-invite/register/options", map[string]any{"token": token}, nil)
+	ch, id := challengePair(opts)
+	c.post(t, "/api/passkey-invite/register", map[string]any{
+		"token": token, "challengeId": id, "credential": json.RawMessage(fakeB(t).Register(ch)),
+	}, nil)
+
+	// The pending credential's id: find it via the store (device A would list).
+	credB := fakeB(t).CredentialID()
+	found, err := c.deps.Credentials.FindByCredentialID(context.Background(), credB)
+	if err != nil || found == nil {
+		t.Fatalf("pending credential missing: %v", err)
+	}
+	if found.State != store.CredentialStatePendingConfirmation {
+		t.Fatalf("expected pending_confirmation, got %q", found.State)
+	}
+
+	// Confirm needs a step-up token for confirm_passkey (asserted with fakeA).
+	fake := fakeA(t)
+	_, so := c.post(t, "/api/webauthn/stepup/options",
+		map[string]any{"action": webauthn.ActionConfirmPasskey}, authHdr)
+	sch, sid := challengePair(so)
+	_, sv := c.post(t, "/api/webauthn/stepup/verify", map[string]any{
+		"challengeId": sid, "action": webauthn.ActionConfirmPasskey,
+		"credential": json.RawMessage(fake.Authenticate(sch)),
+	}, authHdr)
+	stepToken, _ := sv["stepUpToken"].(string)
+
+	status, body := c.post(t, "/api/webauthn/credentials/"+found.RowID+"/confirm", map[string]any{},
+		map[string]string{"Authorization": "Bearer " + bearer, "X-Shellwatch-Stepup-Token": stepToken})
+	if status != 200 || body["status"] != "active" {
+		t.Fatalf("confirm: got %d %v", status, body)
+	}
+	after, _ := c.deps.Credentials.FindByCredentialID(context.Background(), credB)
+	if after.State != store.CredentialStateActive {
+		t.Errorf("credential not activated: %q", after.State)
+	}
+	_ = accountID
 }
 
 // TestMediatedDCR covers the /api/hydra/register policy: allowed redirect +

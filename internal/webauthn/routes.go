@@ -23,6 +23,7 @@ type Deps struct {
 	Credentials    *store.Credentials
 	Challenges     *ChallengeStore
 	StepUp         *StepUpStore
+	Invites        *InviteStore
 	RpID           string
 	TrustedOrigins []string
 	SelfRegEnabled bool
@@ -42,6 +43,10 @@ func (d *Deps) Mount(r chi.Router) {
 
 	r.Post("/api/webauthn/stepup/options", d.stepUpOptions)
 	r.Post("/api/webauthn/stepup/verify", d.stepUpVerify)
+
+	if d.Invites != nil {
+		d.mountInvite(r)
+	}
 }
 
 func (d *Deps) passkeyStatus(w http.ResponseWriter, r *http.Request) {

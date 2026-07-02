@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
@@ -74,9 +75,13 @@ type FoundCredential struct {
 	State         string
 }
 
-// FindByCredentialID looks up a credential by its base64url id.
+// FindByCredentialID looks up a credential by its base64url id (nil, nil when
+// absent).
 func (c *Credentials) FindByCredentialID(ctx context.Context, credentialID string) (*FoundCredential, error) {
 	row, err := gen.New(c.db).FindCredentialByCredentialID(ctx, credentialID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +90,42 @@ func (c *Credentials) FindByCredentialID(ctx context.Context, credentialID strin
 		PublicKeyCOSE: row.PublicKey, Counter: uint32(row.Counter),
 		Revoked: row.Revoked != 0, State: row.State,
 	}, nil
+}
+
+// PendingCredential is a credential row's confirm-relevant state.
+type PendingCredential struct {
+	RowID   string
+	State   string
+	Revoked bool
+}
+
+// FindForAccount looks up a credential by row id scoped to an account (the
+// 404-not-403 disclosure convention: nil when not owned).
+func (c *Credentials) FindForAccount(ctx context.Context, rowID, accountID string) (*PendingCredential, error) {
+	row, err := gen.New(c.db).FindCredentialByIDAndAccount(ctx, gen.FindCredentialByIDAndAccountParams{
+		ID: rowID, AccountID: accountID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &PendingCredential{RowID: row.ID, State: row.State, Revoked: row.Revoked != 0}, nil
+}
+
+// SetState flips a credential's lifecycle state (confirm: pending -> active).
+func (c *Credentials) SetState(ctx context.Context, rowID, state string) error {
+	return gen.New(c.db).SetCredentialState(ctx, gen.SetCredentialStateParams{State: state, ID: rowID})
+}
+
+// AccountName returns an account's display name.
+func (c *Credentials) AccountName(ctx context.Context, accountID string) (string, error) {
+	acc, err := gen.New(c.db).GetAccount(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	return acc.Name, nil
 }
 
 // UpdateCounter bumps a credential's signature counter + last_used_at.

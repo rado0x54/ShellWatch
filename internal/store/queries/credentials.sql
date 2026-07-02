@@ -29,3 +29,10 @@ FROM webauthn_credentials WHERE credential_id = ?;
 
 -- name: UpdateCredentialCounter :exec
 UPDATE webauthn_credentials SET counter = ?, last_used_at = ? WHERE id = ?;
+
+-- name: FindCredentialByIDAndAccount :one
+SELECT id, state, revoked FROM webauthn_credentials
+WHERE id = ? AND account_id = ?;
+
+-- name: SetCredentialState :exec
+UPDATE webauthn_credentials SET state = ? WHERE id = ?;

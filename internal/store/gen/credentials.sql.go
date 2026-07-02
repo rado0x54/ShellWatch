@@ -42,6 +42,29 @@ func (q *Queries) FindCredentialByCredentialID(ctx context.Context, credentialID
 	return i, err
 }
 
+const findCredentialByIDAndAccount = `-- name: FindCredentialByIDAndAccount :one
+SELECT id, state, revoked FROM webauthn_credentials
+WHERE id = ? AND account_id = ?
+`
+
+type FindCredentialByIDAndAccountParams struct {
+	ID        string
+	AccountID string
+}
+
+type FindCredentialByIDAndAccountRow struct {
+	ID      string
+	State   string
+	Revoked int64
+}
+
+func (q *Queries) FindCredentialByIDAndAccount(ctx context.Context, arg FindCredentialByIDAndAccountParams) (FindCredentialByIDAndAccountRow, error) {
+	row := q.db.QueryRowContext(ctx, findCredentialByIDAndAccount, arg.ID, arg.AccountID)
+	var i FindCredentialByIDAndAccountRow
+	err := row.Scan(&i.ID, &i.State, &i.Revoked)
+	return i, err
+}
+
 const hasPasskeys = `-- name: HasPasskeys :one
 
 SELECT EXISTS(SELECT 1 FROM webauthn_credentials) AS has_passkeys
@@ -175,6 +198,20 @@ func (q *Queries) ListAllActiveCredentialIDs(ctx context.Context) ([]string, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const setCredentialState = `-- name: SetCredentialState :exec
+UPDATE webauthn_credentials SET state = ? WHERE id = ?
+`
+
+type SetCredentialStateParams struct {
+	State string
+	ID    string
+}
+
+func (q *Queries) SetCredentialState(ctx context.Context, arg SetCredentialStateParams) error {
+	_, err := q.db.ExecContext(ctx, setCredentialState, arg.State, arg.ID)
+	return err
 }
 
 const updateCredentialCounter = `-- name: UpdateCredentialCounter :exec
