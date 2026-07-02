@@ -5,8 +5,11 @@
 #
 # edge, not a stable tag: webauthn-sk-* pubkey auth needs OpenSSH >= 10.3
 # (alpine 3.22 ships 10.0, which rejects the algorithm name outright —
-# "Bad key types"). Pin to the next stable alpine that carries 10.3+.
-FROM alpine:edge
+# "Bad key types"). Digest-pinned so the spike stays reproducible while on
+# the moving tag (this digest = OpenSSH 10.3_p1); bump the digest if edge
+# needs a security rebuild, and switch to the next stable alpine that
+# carries 10.3+.
+FROM alpine:edge@sha256:9a341ff2287c54b86425cbee0141114d811ae69d88a36019087be6d896cef241
 
 RUN apk add --no-cache openssh-server \
   && adduser -D -s /bin/sh spike \

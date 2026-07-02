@@ -4,6 +4,14 @@
 # docs/api/openapi.yaml must stay consumable by the pinned oapi-codegen, and
 # the generated Go REST surface must compile. Runs in CI (api-codegen job)
 # and locally via `pnpm api:codegen-check`. Requires a Go toolchain.
+#
+# Deliberately non-hermetic: the generator is pinned, but `go mod tidy` in a
+# fresh module floats the transitive deps of the generated code (chi,
+# oapi-codegen runtime), so an upstream release can redden this gate without
+# any spec change — if it goes red with no diff to docs/api/, suspect that
+# before suspecting spec drift. Hermeticity arrives with #210 Phase 1, when
+# internal/api has a committed go.sum and this script is replaced by
+# `go generate` + `git diff --exit-code`.
 set -euo pipefail
 
 OAPI_CODEGEN_VERSION="v2.7.1"

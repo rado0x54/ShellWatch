@@ -121,6 +121,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration
 
+  # Spec-lint gate for the wire contract: #225 promises the OpenAPI spec is
+  # "validated in CI" — this job is that validation (same command as the
+  # local `pnpm api:lint`).
+  api-lint:
+    name: API Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+
   # Go-codegen gate for the wire contract (#232, ahead of the #210 rewrite):
   # the OpenAPI spec must stay consumable by the pinned oapi-codegen and the
   # generated REST surface must compile. Full build/vet/test jobs for the

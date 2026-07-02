@@ -104,7 +104,7 @@ For admin accounts, auto-negotiate uses `CompositeSshAgent` (file keys + passkey
 ssh2-based implementation of `TerminalTransport`. Connects to a remote host, authenticates via private key or WebAuthn agent, allocates a PTY, and opens an interactive shell.
 
 - PTY: xterm-256color, 80x24 default
-- Connection timeout: 10 seconds
+- Connection timeout: 90 seconds — a single `readyTimeout` covering dial + auth (`WEBAUTHN_CONNECTION_TIMEOUT`, sized so a human can touch a passkey)
 - Resize via `setWindow()`
 - Handles unexpected disconnects gracefully
 

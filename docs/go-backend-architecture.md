@@ -85,7 +85,7 @@ question the architecture" record the rewrite is built on.
 | W1  | `transport/create-factory.ts` is a hidden god-function where terminal, SSH, WebAuthn, approvals, and DB meet via four sign-callback closures | Explicit `signing.Broker` interface owned by the `approval` domain; transports depend on the interface, wiring lives only in `cmd/shellwatch` (§5.8)                              |
 | W2  | `pending-action` ⇄ `webauthn` circular dependency (types one way, runtime the other)                                                         | Sign-request vocabulary moves to a leaf package `internal/signing` (pure types + wire-format functions); both `approval` and `sshx` depend downward on it (§5.8)                  |
 | W3  | Two parallel WS connection registries (`ws-handler` + `WebSocketChannel`) bridged by the `WsExtension` indirection                           | One `ws.Hub` owning all browser sockets, account-indexed; the approval layer sends through a narrow `Notifier` interface (§5.7)                                                   |
-| W4  | Module-level singleton stores (challenge, step-up, invite) with `_reset*` test hooks, unlike the class-based stores                          | One generic `ephemeral.Store[K,V]` (TTL, cap, single-use consume, injectable clock); all four ephemeral maps become instances wired in main (§5.4)                                |
+| W4  | Module-level singleton stores (challenge, step-up, invite; the latter two expose `_reset*` test hooks), unlike the class-based stores        | One generic `ephemeral.Store[K,V]` (TTL, cap, single-use consume, injectable clock); all four ephemeral maps become instances wired in main (§5.4)                                |
 | W5  | Seven independent ad-hoc timers (`unref()`'d sweeps, debounces, flushes)                                                                     | Each component runs a context-cancelled janitor goroutine on an injected `clock.Clock`; tests drive a fake clock — no sleeps, no reset hooks (§5.4)                               |
 | W6  | `OutputBuffer` is JS-string (UTF-16 char) based; offsets are string lengths; mid-rune and mid-ANSI-escape splits are patched heuristically   | Byte-oriented ring buffer with monotonic byte offsets (§5.3; parity note in §7, item K)                                                                                           |
 | W7  | Cosmetic-async repositories over synchronous better-sqlite3; DB writes on the auth hot path disguised as awaits                              | Honest synchronous store calls with `context.Context`; the last-used batching becomes an explicit write-behind flusher (§5.6)                                                     |
@@ -421,8 +421,10 @@ field check selecting the U2F wire format) — documented in `signing`.
 
 - `Transport` implements the terminal `Transport` interface over
   `x/crypto/ssh`: PTY `xterm-256color` 80×24, window-change on resize,
-  stdout+stderr → data, 10 s dial timeout, 90 s overall auth timeout when a
-  passkey touch may be required (same constants as Node).
+  stdout+stderr → data, and a **single 90 s connection timeout covering
+  dial + auth** (Node's `WEBAUTHN_CONNECTION_TIMEOUT`, used as ssh2's
+  `readyTimeout` — sized for a human passkey touch; there is deliberately
+  no separate dial timeout).
 - **Signers, not agents:** Node's agent-class hierarchy
   (`ForwardingAgent → CompositeSshAgent → WebAuthnSshAgent`) flattens into
   `ssh.Signer` implementations — `fileSigner` (admin-only file keys),
