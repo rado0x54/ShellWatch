@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/agentproxy"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
@@ -46,6 +47,8 @@ type Params struct {
 	MCP *mcp.Deps
 	// Actions mounts the pending-action resolve/deny routes (nil-able).
 	Actions *rest.Actions
+	// AgentProxy mounts /agent-proxy (nil-able; also gated on proxyEnabled).
+	AgentProxy *agentproxy.Deps
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -101,6 +104,9 @@ func New(p Params) http.Handler {
 	if p.MCP != nil {
 		r.Handle("/mcp", p.MCP.Handler())
 		r.Handle("/mcp/*", p.MCP.Handler())
+	}
+	if p.AgentProxy != nil && agentProxy {
+		r.Get("/agent-proxy", p.AgentProxy.Handler())
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.

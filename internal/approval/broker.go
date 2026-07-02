@@ -40,6 +40,9 @@ func NewBroker(store *Store, baseURL func() string, channels ...Channel) *Broker
 	return &Broker{store: store, channels: channels, baseURL: baseURL}
 }
 
+// Store exposes the pending-action store (for connection-scoped cancel).
+func (b *Broker) Store() *Store { return b.store }
+
 // RequestSign handles a passkey sign request (signing-bridge.handleSignRequest
 // + the blocking wait), returning the raw browser assertion — the caller
 // (signer) does the SSH conversion.
@@ -74,6 +77,38 @@ func (b *Broker) RequestSign(ctx context.Context, accountID string, req signing.
 		return signing.SignResponse{}, err
 	case <-ctx.Done():
 		return signing.SignResponse{}, ctx.Err()
+	}
+}
+
+// RequestKeyApproval handles a file-key sign request: creates a key-approve
+// action, dispatches, and blocks until a human approves (no silent auto-sign
+// on the agent-proxy path — the whole point is human-in-the-loop). On approval
+// the caller does the actual signing with the file key.
+func (b *Broker) RequestKeyApproval(ctx context.Context, accountID, keyLabel, keyFingerprint, connectionID string, actionCtx Context) error {
+	okCh := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+
+	action := b.store.Create(CreateParams{
+		AccountID: accountID, Type: TypeKeyApprove, Context: actionCtx,
+		ConnectionID: connectionID, KeyLabel: keyLabel, KeyFingerprint: keyFingerprint,
+		ResolveKey: func() { okCh <- struct{}{} },
+		Reject:     func(err error) { errCh <- err },
+	})
+
+	deepLink := b.baseURL() + "/sign/" + action.ID
+	for _, ch := range b.channels {
+		ch.Notify(action, deepLink)
+	}
+
+	select {
+	case <-okCh:
+		b.notifyResolved(action)
+		return nil
+	case err := <-errCh:
+		b.notifyResolved(action)
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

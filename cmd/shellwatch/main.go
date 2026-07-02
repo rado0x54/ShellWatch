@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rado0x54/shellwatch/internal/agent"
+	"github.com/rado0x54/shellwatch/internal/agentproxy"
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
@@ -160,6 +161,13 @@ func run() error {
 			Keys:      store.NewSSHKeys(db),
 		},
 		Actions: &rest.Actions{Store: actionStore},
+		AgentProxy: &agentproxy.Deps{
+			Broker:          signBroker,
+			Credentials:     credStore,
+			FileKeys:        keyDir,
+			RpID:            cfg.Security.RpID,
+			NewConnectionID: newUUID,
+		},
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
