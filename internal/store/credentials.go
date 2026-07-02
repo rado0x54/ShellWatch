@@ -64,6 +64,35 @@ func (c *Credentials) AllActiveCredentialIDs(ctx context.Context) ([]string, err
 	return gen.New(c.db).ListAllActiveCredentialIDs(ctx)
 }
 
+// AuthCredential is a passkey usable for SSH auth (the OpenSSH line is derived
+// at registration time).
+type AuthCredential struct {
+	RowID            string
+	CredentialID     string
+	PublicKeyOpenSSH string
+	Label            string
+}
+
+// ActiveCredentialsForAuth returns the account's active passkeys with their
+// OpenSSH public-key lines (the transport factory builds signers from these).
+func (c *Credentials) ActiveCredentialsForAuth(ctx context.Context, accountID string) ([]AuthCredential, error) {
+	rows, err := gen.New(c.db).ListActiveCredentialsForAuth(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AuthCredential, 0, len(rows))
+	for _, r := range rows {
+		if !r.PublicKeyOpenssh.Valid {
+			continue // no OpenSSH line (non-ES256) -> not usable for SSH
+		}
+		out = append(out, AuthCredential{
+			RowID: r.ID, CredentialID: r.CredentialID,
+			PublicKeyOpenSSH: r.PublicKeyOpenssh.String, Label: r.Label,
+		})
+	}
+	return out, nil
+}
+
 // FoundCredential is a credential row needed for assertion verification.
 type FoundCredential struct {
 	RowID         string

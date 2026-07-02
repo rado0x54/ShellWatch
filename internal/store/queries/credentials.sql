@@ -36,3 +36,7 @@ WHERE id = ? AND account_id = ?;
 
 -- name: SetCredentialState :exec
 UPDATE webauthn_credentials SET state = ? WHERE id = ?;
+
+-- name: ListActiveCredentialsForAuth :many
+SELECT id, credential_id, public_key_openssh, label FROM webauthn_credentials
+WHERE account_id = ? AND revoked = 0 AND state = 'active';

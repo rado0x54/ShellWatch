@@ -172,6 +172,46 @@ func (q *Queries) ListActiveCredentialLabelsForAccount(ctx context.Context, acco
 	return items, nil
 }
 
+const listActiveCredentialsForAuth = `-- name: ListActiveCredentialsForAuth :many
+SELECT id, credential_id, public_key_openssh, label FROM webauthn_credentials
+WHERE account_id = ? AND revoked = 0 AND state = 'active'
+`
+
+type ListActiveCredentialsForAuthRow struct {
+	ID               string
+	CredentialID     string
+	PublicKeyOpenssh sql.NullString
+	Label            string
+}
+
+func (q *Queries) ListActiveCredentialsForAuth(ctx context.Context, accountID string) ([]ListActiveCredentialsForAuthRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveCredentialsForAuth, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveCredentialsForAuthRow
+	for rows.Next() {
+		var i ListActiveCredentialsForAuthRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CredentialID,
+			&i.PublicKeyOpenssh,
+			&i.Label,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllActiveCredentialIDs = `-- name: ListAllActiveCredentialIDs :many
 SELECT credential_id FROM webauthn_credentials
 WHERE revoked = 0 AND state = 'active'

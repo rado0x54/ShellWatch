@@ -104,24 +104,35 @@ func run() error {
 
 	endpointStore := store.NewEndpoints(db, clk)
 	demoSvc := demo.NewService(cfg.DemoEndpoints)
-	// File-key SSH transport (Phase 3 slice 3). The passkey/pending-action
-	// signer path is added in Phase 4; today file keys from the key directory
-	// authenticate.
+	credStore := store.NewCredentials(db, clk)
 	keyDir := sshx.NewKeyDir(cfg.KeyDirectory)
-	manager := terminal.NewManager(sshx.NewFileKeyFactory(keyDir), clk, 0)
+
+	// Ordering: build the hub first (needs a manager) but the manager's
+	// passkey factory needs the broker which needs the hub's WS channel. Break
+	// it with a manager built on a factory closure that reads the broker set
+	// just below (all resolved before the first session opens).
+	var signBroker *approval.Broker
+	factory := sshx.NewPasskeyFactory(sshx.PasskeyFactoryParams{
+		BrokerFunc:      func() sshx.SignBroker { return signBroker },
+		Credentials:     credStore,
+		FileKeys:        keyDir,
+		RpID:            cfg.Security.RpID,
+		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
+		NewConnectionID: newUUID,
+	})
+	manager := terminal.NewManager(factory, clk, 0)
 	wsHub := ws.NewHub(manager)
 	defer wsHub.Close()
 
-	// Human-in-the-loop signing machinery (Phase 4 slice 2). The pending-action
-	// store + broker + WS channel are the approval path; the webauthn signer
-	// (proven end-to-end) wires into the transport factory + agent proxy in
-	// slice 3. sign:request/resolved reach browsers via the hub.
+	// Human-in-the-loop signing (Phase 4 slice 2/3): the pending-action store +
+	// broker + WS channel are the approval path; the webauthn signer (proven
+	// end-to-end) is what the passkey factory above invokes. sign:request /
+	// sign:resolved reach browsers via the hub.
 	actionStore := approval.NewStore(clk, newUUID)
 	go sweepActions(ctx, actionStore)
-	signBroker := approval.NewBroker(actionStore,
+	signBroker = approval.NewBroker(actionStore,
 		func() string { return cfg.Server.ExternalURL },
 		&approval.WSChannel{Hub: wsHub})
-	_ = signBroker // wired into the transport factory in slice 3
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
@@ -216,4 +227,13 @@ func sweepActions(ctx context.Context, store *approval.Store) {
 			store.Sweep()
 		}
 	}
+}
+
+// firstOrigin returns the first trusted WebAuthn origin (the ceremony origin
+// the signer records; the browser overrides it in clientDataJSON).
+func firstOrigin(origins []string) string {
+	if len(origins) > 0 {
+		return origins[0]
+	}
+	return ""
 }
