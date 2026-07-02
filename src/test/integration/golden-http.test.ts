@@ -121,5 +121,11 @@ describe("Golden: HTTP contract", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ label: "Bad", host: "h.example", userVerification: "bogus" }),
       }));
+    it("400 endpoint create missing required label/host", () =>
+      snapAuthed("err-400-endpoint-missing-fields", "/api/endpoints", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host: "no-label.example" }),
+      }));
   });
 });
