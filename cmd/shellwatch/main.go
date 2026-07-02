@@ -1,33 +1,29 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// ShellWatch Go backend — Phase 1 skeleton (#210).
-//
-// Serves the two stateless contract endpoints (GET /health, GET /api/version
-// — golden-backed) and the embedded SPA. Config load, SQLite open + goose
-// migration run on boot exactly as the Node backend does. Everything else
-// (auth plane, terminal core, MCP, agent proxy) arrives in Phases 2-5; the
+// ShellWatch Go backend (#210). Composition root: config, store, Hydra
+// resolver, HTTP server — wired here and only here
+// (docs/go-backend-architecture.md §5.1). Phase 2 in progress: the bearer
+// gate + discovery docs are live; providers/ceremonies/DCR land next. The
 // Node backend remains the production server until cutover.
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/httpserver"
+	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/web"
 )
@@ -43,7 +39,7 @@ func run() error {
 	configPath := flag.String("config", "", "config file path (default: $SHELLWATCH_CONFIG or ./config.yaml)")
 	staticDir := flag.String("static-dir", "", "serve the SPA from this directory instead of the embedded build")
 	flag.Parse()
-	// Positional config path wins, mirroring the Node CLI (`node dist/index.js config.yaml`).
+	// Positional config path wins, mirroring the Node CLI.
 	if flag.NArg() > 0 {
 		*configPath = flag.Arg(0)
 	}
@@ -67,27 +63,32 @@ func run() error {
 		return err
 	}
 
-	info := buildinfo.Load(mustGetwd())
-	r := chi.NewRouter()
-
-	// The two golden-backed stateless endpoints (health.json, /api/version).
-	r.Get("/health", jsonHandler(map[string]string{"status": "ok"}))
-	r.Get("/api/version", jsonHandler(info))
-
-	// SPA: exact static files, SPA-fallback to index.html for client routes.
-	r.NotFound(spaHandler(staticFS))
-
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	srv := &http.Server{Addr: addr, Handler: r}
-
-	// Ordered lifecycle: root context cancelled on SIGINT/SIGTERM, then an
-	// explicit reverse-order shutdown (docs/go-backend-architecture.md §5.1).
+	// Root context: cancelled on SIGINT/SIGTERM; janitors hang off it.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	clk := clock.Real{}
+	admin := hydra.NewAdminClient(cfg.Hydra.AdminURL, &http.Client{Timeout: 10 * time.Second})
+	resolve := hydra.NewResolver(admin,
+		time.Duration(*cfg.Hydra.IntrospectionCacheTtlMs)*time.Millisecond, clk)
+
+	flusher := store.NewLastUsedFlusher(db, clk)
+	go flusher.Run(ctx, time.Minute)
+
+	handler := httpserver.New(httpserver.Params{
+		Config:        cfg,
+		Resolve:       resolve,
+		TouchLastUsed: flusher.Touch,
+		StaticFS:      staticFS,
+		BuildInfo:     buildinfo.Load(mustGetwd()),
+	})
+
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	srv := &http.Server{Addr: addr, Handler: handler}
+
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("shellwatch (go) listening", "addr", addr, "build", info.Display)
+		slog.Info("shellwatch (go) listening", "addr", addr)
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -98,16 +99,11 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
+	// Ordered shutdown: HTTP first, then the final last-used flush (via
+	// flusher.Run's ctx-done path), then the DB (deferred Close).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
-}
-
-func jsonHandler(v any) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(v)
-	}
 }
 
 func staticFilesystem(dir string) (fs.FS, error) {
@@ -118,39 +114,6 @@ func staticFilesystem(dir string) (fs.FS, error) {
 		return os.DirFS(dir), nil
 	}
 	return web.Dist()
-}
-
-// spaHandler serves files from the client build; unknown non-API paths fall
-// back to index.html (adapter-static SPA routing, as @fastify/static +
-// setNotFoundHandler do in the Node backend).
-func spaHandler(staticFS fs.FS) http.HandlerFunc {
-	fileServer := http.FileServerFS(staticFS)
-	return func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path != "" {
-			if f, err := staticFS.Open(path); err == nil {
-				f.Close()
-				fileServer.ServeHTTP(w, r)
-				return
-			}
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"Not found"}`))
-			return
-		}
-		index, err := staticFS.Open("index.html")
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		defer index.Close()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if data, err := io.ReadAll(index); err == nil {
-			_, _ = w.Write(data)
-		}
-	}
 }
 
 func mustGetwd() string {

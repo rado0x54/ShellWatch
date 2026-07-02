@@ -117,42 +117,8 @@ func TestReplayStatelessGoldensAgainstLiveServer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var fixture struct {
-				Request struct {
-					Path string `json:"path"`
-				} `json:"request"`
-				Status          float64 `json:"status"`
-				WwwAuthenticate any     `json:"wwwAuthenticate"`
-				Body            any     `json:"body"`
-			}
-			if err := json.Unmarshal(raw, &fixture); err != nil {
-				t.Fatal(err)
-			}
-
-			resp, err := client.Get(base + fixture.Request.Path)
+			normalized, expected, err := ReplayGET(client, base, raw, baseURLs)
 			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			var body any
-			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-				t.Fatalf("body decode: %v", err)
-			}
-
-			var www any
-			if h := resp.Header.Get("Www-Authenticate"); h != "" {
-				www = h
-			}
-			envelope := map[string]any{
-				"request":         map[string]any{"path": fixture.Request.Path},
-				"status":          float64(resp.StatusCode),
-				"wwwAuthenticate": www,
-				"body":            body,
-			}
-			normalized := Normalize(envelope, Options{BaseURLs: baseURLs})
-
-			var expected any
-			if err := json.Unmarshal(raw, &expected); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(normalized, expected) {
