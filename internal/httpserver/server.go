@@ -71,6 +71,10 @@ func New(p Params) http.Handler {
 	r.Get("/health", jsonHandler(map[string]string{"status": "ok"}))
 	r.Get("/api/version", jsonHandler(p.BuildInfo))
 
+	// Browser bootstrap config (JS, not JSON): the SPA reads window.__OAUTH__
+	// etc. from here to start its PKCE flow (port of app.ts /config.js).
+	r.Get("/config.js", configJS(p.Config, p.BuildInfo))
+
 	hydra.MountDiscovery(r, hydra.DiscoveryParams{
 		ExternalURL:       externalURL,
 		HydraPublicURL:    p.Config.Hydra.PublicURL,
@@ -127,6 +131,37 @@ func jsonHandler(v any) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(v)
+	}
+}
+
+// configJS emits the browser bootstrap: window.__OAUTH__ (PKCE issuer/client/
+// redirect/scope), self-registration flag, VAPID key, and build info.
+func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		ext := strings.TrimRight(cfg.Server.ExternalURL, "/")
+		redirect := cfg.Hydra.Spa.RedirectURI
+		if redirect == "" {
+			redirect = ext + "/auth/callback"
+		}
+		oauth := map[string]any{
+			"issuer":      strings.TrimRight(cfg.Hydra.PublicURL, "/"),
+			"clientId":    cfg.Hydra.Spa.ClientID,
+			"redirectUri": redirect,
+			"scope":       "openid offline_access " + auth.UIScope,
+		}
+		var vapid any
+		if cfg.Vapid != nil {
+			vapid = cfg.Vapid.PublicKey
+		}
+		j := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		_, _ = w.Write([]byte(
+			"window.__SELF_REGISTRATION_ENABLED__=" + j(cfg.Security.SelfRegistrationEnabled) + ";" +
+				"window.__VAPID_PUBLIC_KEY__=" + j(vapid) + ";" +
+				"window.__BUILD_INFO__=" + j(info) + ";" +
+				"window.__OAUTH__=" + j(oauth) + ";",
+		))
 	}
 }
 
