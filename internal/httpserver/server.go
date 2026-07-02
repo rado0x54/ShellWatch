@@ -171,11 +171,18 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 		if redirect == "" {
 			redirect = ext + "/auth/callback"
 		}
-		oauth := map[string]any{
-			"issuer":      strings.TrimRight(cfg.Hydra.PublicURL, "/"),
-			"clientId":    cfg.Hydra.Spa.ClientID,
-			"redirectUri": redirect,
-			"scope":       "openid offline_access " + auth.UIScope,
+		// Ordered struct (not a map) so the emitted JS object key order matches
+		// the Node bootstrap byte-for-byte (issuer, clientId, redirectUri, scope).
+		oauth := struct {
+			Issuer      string `json:"issuer"`
+			ClientID    string `json:"clientId"`
+			RedirectURI string `json:"redirectUri"`
+			Scope       string `json:"scope"`
+		}{
+			Issuer:      strings.TrimRight(cfg.Hydra.PublicURL, "/"),
+			ClientID:    cfg.Hydra.Spa.ClientID,
+			RedirectURI: redirect,
+			Scope:       "openid offline_access " + auth.UIScope,
 		}
 		var vapid any
 		if cfg.Vapid != nil {

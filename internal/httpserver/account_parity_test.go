@@ -46,6 +46,8 @@ func authedApp(t *testing.T, demoEndpoints []config.SeedEndpoint) (*httptest.Ser
 	cfg.Server.ExternalURL = externalURL
 	cfg.Hydra.PublicURL = "http://localhost:4444"
 	cfg.Hydra.Spa.ClientID = "shellwatch-web"
+	cfg.Hydra.Dcr.AllowedScopes = []string{"mcp", "agent"}
+	cfg.Hydra.Dcr.RedirectURIPatterns = []string{`^http://(127\.0\.0\.1|localhost)(:\d+)?(/.*)?$`}
 
 	fake := hydratest.New()
 	stepUp := webauthn.NewStepUpStore(clock.Real{})
@@ -72,7 +74,7 @@ func authedApp(t *testing.T, demoEndpoints []config.SeedEndpoint) (*httptest.Ser
 		Push: &rest.Push{Store: store.NewPushSubs(db, clock.Real{}), NewID: func() string { return "11111111-2222-4333-8444-555555555555" }},
 		WebAuthn: &webauthn.Deps{
 			Credentials: credStore, Challenges: webauthn.NewChallengeStore(clock.Real{}),
-			StepUp: stepUp, RpID: "localhost",
+			StepUp: stepUp, Invites: webauthn.NewInviteStore(clock.Real{}), RpID: "localhost",
 		},
 	})
 	ts := httptest.NewServer(handler)

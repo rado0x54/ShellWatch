@@ -100,14 +100,21 @@ func TestWSSessionsChangedGolden(t *testing.T) {
 	c := dialWS(t, ts)
 	msg := readMsg(t, c) // connect-time sessions:changed
 
+	assertWSGolden(t, "ws-sessions-changed", msg)
+}
+
+// assertWSGolden compares a raw WS message (no envelope) to a golden, folding
+// sessionId to sess_<ID>.
+func assertWSGolden(t *testing.T, name string, msg map[string]any) {
+	t.Helper()
 	got := golden.Normalize(msg, golden.Options{})
-	raw, _ := os.ReadFile(filepath.Join(goldensDir, "ws-sessions-changed.json"))
+	raw, _ := os.ReadFile(filepath.Join(goldensDir, name+".json"))
 	var expected any
 	_ = json.Unmarshal(raw, &expected)
 	if !reflect.DeepEqual(got, expected) {
 		a, _ := json.MarshalIndent(expected, "", "  ")
 		b, _ := json.MarshalIndent(got, "", "  ")
-		t.Errorf("ws-sessions-changed mismatch\n--- golden ---\n%s\n--- go ---\n%s", a, b)
+		t.Errorf("%s mismatch\n--- golden ---\n%s\n--- go ---\n%s", name, a, b)
 	}
 }
 
@@ -120,13 +127,10 @@ func TestWSAttachControlOutput(t *testing.T) {
 	readMsg(t, c) // initial sessions:changed
 
 	writeMsg(t, c, map[string]any{"type": "terminal:attach", "sessionId": sess.SessionID})
-	// attach reply: status, then mode (control for UI source).
-	if m := readMsg(t, c); m["type"] != "terminal:status" || m["status"] != "open" {
-		t.Fatalf("expected status open, got %v", m)
-	}
-	if m := readMsg(t, c); m["type"] != "terminal:mode" || m["mode"] != "control" {
-		t.Fatalf("expected control mode, got %v", m)
-	}
+	// attach reply: status, then mode (control for UI source) — pinned by the
+	// ws-attach-status / ws-attach-mode goldens (sessionId folds to sess_<ID>).
+	assertWSGolden(t, "ws-attach-status", readMsg(t, c))
+	assertWSGolden(t, "ws-attach-mode", readMsg(t, c))
 
 	// Input (we have control via UI auto-control) is echoed by the mock.
 	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": sess.SessionID, "data": "hi"})

@@ -16,6 +16,8 @@ var tsKeys = map[string]bool{
 	"createdAt": true, "updatedAt": true, "lastActivityAt": true,
 	"lastUsedAt": true, "builtAt": true, "authorizedAt": true,
 	"closedAt": true, "resolvedAt": true, "expiresAt": true,
+	// DCR (RFC 7591): epoch-SECONDS number, not ISO — folded by key, not pattern.
+	"client_id_issued_at": true,
 }
 
 var redactKeys = map[string]bool{
