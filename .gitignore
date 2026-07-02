@@ -24,3 +24,8 @@ LICENSE-shellwatch-agent
 
 # Phase 0 spike throwaway key material (spike/gen-spike-env.sh)
 spike/out/
+
+# Embedded SPA placeholder must stay tracked (web/embed.go); release builds
+# overwrite this directory with client/build/* before compiling.
+!web/dist/
+!web/dist/index.html
