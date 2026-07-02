@@ -21,3 +21,6 @@ THIRD_PARTY_LICENSES
 AGENT_THIRD_PARTY_LICENSES
 LICENSE-shellwatch-agent
 .env.hydra
+
+# Phase 0 spike throwaway key material (spike/gen-spike-env.sh)
+spike/out/
