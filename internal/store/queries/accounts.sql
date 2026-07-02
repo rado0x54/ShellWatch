@@ -18,3 +18,13 @@ UPDATE accounts SET last_used_at = ? WHERE id = ?;
 
 -- name: GetAdminAccountID :one
 SELECT account_id FROM admin_account WHERE singleton = 1;
+
+-- name: ListAllAccounts :many
+SELECT id, name, enabled, max_sessions, last_used_at, created_at
+FROM accounts ORDER BY created_at, id;
+
+-- name: UpdateAccountName :exec
+UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?;
+
+-- name: UpdateAccountShowDemo :exec
+UPDATE accounts SET show_demo_endpoints = ?, updated_at = ? WHERE id = ?;

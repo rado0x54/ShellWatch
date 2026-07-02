@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const getSSHKey = `-- name: GetSSHKey :one
@@ -63,6 +64,54 @@ func (q *Queries) ListSSHKeys(ctx context.Context) ([]ListSSHKeysRow, error) {
 			&i.Label,
 			&i.Type,
 			&i.Fingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSSHKeysFull = `-- name: ListSSHKeysFull :many
+SELECT id, label, type, public_key, fingerprint, enabled, created_at, last_used_at
+FROM ssh_keys ORDER BY created_at, id
+`
+
+type ListSSHKeysFullRow struct {
+	ID          string
+	Label       string
+	Type        string
+	PublicKey   string
+	Fingerprint string
+	Enabled     int64
+	CreatedAt   string
+	LastUsedAt  sql.NullString
+}
+
+func (q *Queries) ListSSHKeysFull(ctx context.Context) ([]ListSSHKeysFullRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSSHKeysFull)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSSHKeysFullRow
+	for rows.Next() {
+		var i ListSSHKeysFullRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Label,
+			&i.Type,
+			&i.PublicKey,
+			&i.Fingerprint,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.LastUsedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -55,3 +55,7 @@ func (s *Service) List(accountID string) []store.Endpoint {
 	}
 	return out
 }
+
+// IsEmpty reports whether the operator configured no demo endpoints (drives the
+// UI's demoEndpointsAvailable flag).
+func (s *Service) IsEmpty() bool { return len(s.endpoints) == 0 }

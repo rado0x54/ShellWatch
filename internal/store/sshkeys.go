@@ -62,3 +62,32 @@ func (k *SSHKeys) Get(ctx context.Context, id string) (*SSHKeyDetail, error) {
 		PublicKey: r.PublicKey,
 	}, nil
 }
+
+// SSHKeyFull is the full REST listing shape (/api/keys).
+type SSHKeyFull struct {
+	ID          string
+	Label       string
+	Type        string
+	PublicKey   string
+	Fingerprint string
+	Enabled     bool
+	CreatedAt   string
+	LastUsedAt  *string
+}
+
+// ListFull returns all file keys with full metadata.
+func (k *SSHKeys) ListFull(ctx context.Context) ([]SSHKeyFull, error) {
+	rows, err := gen.New(k.db).ListSSHKeysFull(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SSHKeyFull, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SSHKeyFull{
+			ID: r.ID, Label: r.Label, Type: r.Type, PublicKey: r.PublicKey,
+			Fingerprint: r.Fingerprint, Enabled: r.Enabled != 0, CreatedAt: r.CreatedAt,
+			LastUsedAt: nsp(r.LastUsedAt),
+		})
+	}
+	return out, nil
+}

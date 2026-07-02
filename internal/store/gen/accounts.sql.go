@@ -86,6 +86,50 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 	return items, nil
 }
 
+const listAllAccounts = `-- name: ListAllAccounts :many
+SELECT id, name, enabled, max_sessions, last_used_at, created_at
+FROM accounts ORDER BY created_at, id
+`
+
+type ListAllAccountsRow struct {
+	ID          string
+	Name        string
+	Enabled     int64
+	MaxSessions int64
+	LastUsedAt  sql.NullString
+	CreatedAt   string
+}
+
+func (q *Queries) ListAllAccounts(ctx context.Context) ([]ListAllAccountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllAccountsRow
+	for rows.Next() {
+		var i ListAllAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Enabled,
+			&i.MaxSessions,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const touchAccountLastUsed = `-- name: TouchAccountLastUsed :exec
 UPDATE accounts SET last_used_at = ? WHERE id = ?
 `
@@ -97,5 +141,35 @@ type TouchAccountLastUsedParams struct {
 
 func (q *Queries) TouchAccountLastUsed(ctx context.Context, arg TouchAccountLastUsedParams) error {
 	_, err := q.db.ExecContext(ctx, touchAccountLastUsed, arg.LastUsedAt, arg.ID)
+	return err
+}
+
+const updateAccountName = `-- name: UpdateAccountName :exec
+UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateAccountNameParams struct {
+	Name      string
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) UpdateAccountName(ctx context.Context, arg UpdateAccountNameParams) error {
+	_, err := q.db.ExecContext(ctx, updateAccountName, arg.Name, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const updateAccountShowDemo = `-- name: UpdateAccountShowDemo :exec
+UPDATE accounts SET show_demo_endpoints = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateAccountShowDemoParams struct {
+	ShowDemoEndpoints int64
+	UpdatedAt         string
+	ID                string
+}
+
+func (q *Queries) UpdateAccountShowDemo(ctx context.Context, arg UpdateAccountShowDemoParams) error {
+	_, err := q.db.ExecContext(ctx, updateAccountShowDemo, arg.ShowDemoEndpoints, arg.UpdatedAt, arg.ID)
 	return err
 }

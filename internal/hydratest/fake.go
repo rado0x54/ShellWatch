@@ -16,12 +16,15 @@ import (
 
 // FakeAdmin implements hydra.Admin in memory.
 type FakeAdmin struct {
-	mu             sync.Mutex
-	tokens         map[string]hydra.Introspection
-	clients        map[string]hydra.OAuth2Client
-	loginChallenge map[string]bool
-	consent        map[string]hydra.ConsentRequest
-	counter        int
+	mu              sync.Mutex
+	tokens          map[string]hydra.Introspection
+	clients         map[string]hydra.OAuth2Client
+	loginChallenge  map[string]bool
+	consent         map[string]hydra.ConsentRequest
+	consentSessions map[string][]hydra.ConsentSession
+	RevokedConsent  []string
+	RevokedLogin    []string
+	counter         int
 }
 
 func New() *FakeAdmin {
@@ -115,6 +118,37 @@ func (f *FakeAdmin) AcceptConsentRequest(_ context.Context, challenge string, _ 
 		return hydra.Redirect{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown consent challenge"}
 	}
 	return hydra.Redirect{RedirectTo: "https://hydra.test/consent-callback?c=" + challenge}, nil
+}
+
+// SetConsentSessions seeds the list a subject's /api/auth/sessions returns.
+func (f *FakeAdmin) SetConsentSessions(subject string, sessions []hydra.ConsentSession) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.consentSessions == nil {
+		f.consentSessions = map[string][]hydra.ConsentSession{}
+	}
+	f.consentSessions[subject] = sessions
+}
+
+// RevokedConsent/RevokedLogin record what the revoke routes were called with.
+func (f *FakeAdmin) ListConsentSessions(_ context.Context, subject string) ([]hydra.ConsentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.consentSessions[subject], nil
+}
+
+func (f *FakeAdmin) RevokeConsentSessions(_ context.Context, subject, clientID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.RevokedConsent = append(f.RevokedConsent, subject+"/"+clientID)
+	return nil
+}
+
+func (f *FakeAdmin) RevokeLoginSessions(_ context.Context, subject string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.RevokedLogin = append(f.RevokedLogin, subject)
+	return nil
 }
 
 func (f *FakeAdmin) CreateClient(_ context.Context, client hydra.OAuth2Client) (hydra.OAuth2Client, error) {

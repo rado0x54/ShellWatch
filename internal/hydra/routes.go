@@ -208,7 +208,103 @@ func MountProviders(r chi.Router, p ProviderParams) {
 		p.handleDCR(w, r, patterns, allowed, now)
 	})
 
+	// Third-party consent JSON endpoints (account-bound passkey step-up, or the
+	// fresh-login approve shortcut). The first-party SPA auto-consents via the
+	// GET page and never reaches these.
+	r.Post("/api/hydra/consent/options", p.consentOptions)
+	r.Post("/api/hydra/consent/verify", p.consentVerify)
+	r.Post("/api/hydra/consent/approve", p.consentApprove)
+
 	mountProviderPages(r, p)
+}
+
+func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ConsentChallenge string `json:"consent_challenge"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.ConsentChallenge == "" {
+		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		return
+	}
+	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
+	if err != nil {
+		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		return
+	}
+	opts, ok, err := p.WebAuthn.ConsentOptions(r.Context(), cr.Subject)
+	if err != nil {
+		writeJSONStatus(w, 500, map[string]string{"error": "internal error"})
+		return
+	}
+	if !ok {
+		writeJSONStatus(w, 200, map[string]string{"error": "no_passkeys"})
+		return
+	}
+	writeJSONStatus(w, 200, opts)
+}
+
+func (p ProviderParams) consentVerify(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ConsentChallenge string          `json:"consent_challenge"`
+		ChallengeID      string          `json:"challengeId"`
+		Credential       json.RawMessage `json:"credential"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.ConsentChallenge == "" {
+		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		return
+	}
+	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
+	if err != nil {
+		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		return
+	}
+	var assertion struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body.Credential, &assertion)
+	res := p.WebAuthn.VerifyConsent(r.Context(), body.ChallengeID, assertion.ID, body.Credential, cr.Subject)
+	if res.Error != "" {
+		writeJSONStatus(w, res.Status, map[string]string{"error": res.Error})
+		return
+	}
+	p.acceptConsentAndRedirect(w, r, body.ConsentChallenge, cr)
+}
+
+func (p ProviderParams) consentApprove(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ConsentChallenge string `json:"consent_challenge"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.ConsentChallenge == "" {
+		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		return
+	}
+	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
+	if err != nil {
+		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		return
+	}
+	// The no-passkey approve shortcut is only valid when THIS flow's login was a
+	// fresh passkey ceremony (stamped into the login context).
+	if cr.Context["freshLogin"] != true {
+		writeJSONStatus(w, 400, map[string]string{"error": "passkey_required"})
+		return
+	}
+	p.acceptConsentAndRedirect(w, r, body.ConsentChallenge, cr)
+}
+
+func (p ProviderParams) acceptConsentAndRedirect(w http.ResponseWriter, r *http.Request, challenge string, cr ConsentRequest) {
+	redirect, err := p.Admin.AcceptConsentRequest(r.Context(), challenge, AcceptConsent{
+		GrantScope: cr.RequestedScope, GrantAccessTokenAudience: cr.RequestedAccessTokenAudience,
+		Remember: true, RememberFor: rememberFor,
+	})
+	if err != nil {
+		writeJSONStatus(w, 400, map[string]string{"error": "consent_flow_expired"})
+		return
+	}
+	writeJSONStatus(w, 200, map[string]string{"redirectTo": redirect.RedirectTo})
 }
 
 func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patterns []*regexp.Regexp, allowed map[string]bool, now func() time.Time) {

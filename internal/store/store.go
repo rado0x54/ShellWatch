@@ -82,3 +82,11 @@ func Migrate(db *sql.DB) error {
 	}
 	return goose.Up(db, "migrations")
 }
+
+// nsp maps a NULL-able string column to *string.
+func nsp(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
+	}
+	return &v.String
+}

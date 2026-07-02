@@ -156,6 +156,38 @@ func (c *AdminClient) AcceptConsentRequest(ctx context.Context, challenge string
 	return r, err
 }
 
+// ListConsentSessions lists a subject's active consent grants.
+func (c *AdminClient) ListConsentSessions(ctx context.Context, subject string) ([]ConsentSession, error) {
+	var out []ConsentSession
+	err := c.adminJSON(ctx, http.MethodGet,
+		"/admin/oauth2/auth/sessions/consent?subject="+url.QueryEscape(subject), nil, &out)
+	return out, err
+}
+
+// RevokeConsentSessions deletes a subject's consent sessions (optionally scoped
+// to one client).
+func (c *AdminClient) RevokeConsentSessions(ctx context.Context, subject, clientID string) error {
+	path := "/admin/oauth2/auth/sessions/consent?subject=" + url.QueryEscape(subject)
+	if clientID != "" {
+		path += "&client=" + url.QueryEscape(clientID)
+	}
+	err := c.adminJSON(ctx, http.MethodDelete, path, nil, nil)
+	if apiErr, ok := err.(*APIError); ok && apiErr.Status == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
+// RevokeLoginSessions deletes a subject's login (SSO) sessions.
+func (c *AdminClient) RevokeLoginSessions(ctx context.Context, subject string) error {
+	err := c.adminJSON(ctx, http.MethodDelete,
+		"/admin/oauth2/auth/sessions/login?subject="+url.QueryEscape(subject), nil, nil)
+	if apiErr, ok := err.(*APIError); ok && apiErr.Status == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
 // CreateClient registers an OAuth2 client (POST /admin/clients).
 func (c *AdminClient) CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error) {
 	var out OAuth2Client

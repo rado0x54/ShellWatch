@@ -6,10 +6,12 @@
 package webauthn
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 )
@@ -109,11 +111,16 @@ func publicKeyBlobFromLine(line string) []byte {
 	if b64 == "" {
 		return nil
 	}
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return nil
+	// Lenient like Node's Buffer.from(b64,"base64"): accept unpadded blobs (SSH
+	// key material in fixtures/logs isn't always padded) by falling back to the
+	// no-padding decoder over the stripped string.
+	if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
+		return raw
 	}
-	return raw
+	if raw, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(b64, "=")); err == nil {
+		return raw
+	}
+	return nil
 }
 
 // toSkPublicKeyBlob swaps the leading `string type` from webauthn-sk-... to
@@ -124,6 +131,11 @@ func toSkPublicKeyBlob(webauthnBlob []byte) []byte {
 		return webauthnBlob
 	}
 	typeLen := binary.BigEndian.Uint32(webauthnBlob[:4])
+	// Malformed/short blob (e.g. a non-sk key or a test fixture): hash it as-is
+	// rather than panicking — the caller only needs a stable SHA256.
+	if uint64(4)+uint64(typeLen) > uint64(len(webauthnBlob)) {
+		return webauthnBlob
+	}
 	rest := webauthnBlob[4+typeLen:]
 	return append(sshString([]byte(sshSKKeyType)), rest...)
 }
@@ -133,4 +145,16 @@ func trimEqual(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// DetectAlgorithm reads the COSE alg label (3): -7 => ES256 (P-256),
+// -8 => EdDSA (Ed25519). Port of credential-utils.ts detectAlgorithm.
+func DetectAlgorithm(coseKey []byte) string {
+	if bytes.Contains(coseKey, []byte{0x03, 0x26}) {
+		return "ES256 (P-256)"
+	}
+	if bytes.Contains(coseKey, []byte{0x03, 0x27}) {
+		return "EdDSA (Ed25519)"
+	}
+	return "unknown"
 }

@@ -54,6 +54,13 @@ type Params struct {
 	AgentProxy *agentproxy.Deps
 	// Audit mounts the audit read routes (nil-able).
 	Audit *rest.Audit
+	// Accounts, Credentials, Keys, AuthSessions, Push mount the account/auth
+	// self-service + admin REST surfaces (nil-able).
+	Accounts     *rest.Accounts
+	Credentials  *rest.Credentials
+	Keys         *rest.Keys
+	AuthSessions *rest.AuthSessions
+	Push         *rest.Push
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -112,6 +119,21 @@ func New(p Params) http.Handler {
 	}
 	if p.Audit != nil {
 		p.Audit.Mount(r)
+	}
+	if p.Accounts != nil {
+		p.Accounts.Mount(r)
+	}
+	if p.Credentials != nil {
+		p.Credentials.Mount(r)
+	}
+	if p.Keys != nil {
+		p.Keys.Mount(r)
+	}
+	if p.AuthSessions != nil {
+		p.AuthSessions.Mount(r)
+	}
+	if p.Push != nil {
+		p.Push.Mount(r)
 	}
 	if p.WSHub != nil {
 		r.Get("/ws", p.WSHub.Handler())

@@ -28,6 +28,9 @@ type OAuth2Client struct {
 	Scope                   string   `json:"scope,omitempty"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	// CreatedAt is Hydra's DCR registration timestamp (read-only; surfaced by
+	// /api/auth/sessions).
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // LoginRequest is the GET login-challenge response (subset).
@@ -64,13 +67,26 @@ type LogoutRequest struct {
 	ClientID  string `json:"client,omitempty"`
 }
 
-// Admin is the full admin surface the providers + DCR + ensureSpaClient need.
+// ConsentSession is one authorized-client grant (listConsentSessions row).
+type ConsentSession struct {
+	GrantScope     []string `json:"grant_scope"`
+	HandledAt      string   `json:"handled_at"`
+	ConsentRequest *struct {
+		Client OAuth2Client `json:"client"`
+	} `json:"consent_request"`
+}
+
+// Admin is the full admin surface the providers + DCR + ensureSpaClient + the
+// account-session routes need.
 type Admin interface {
 	Introspector
 	AcceptLoginRequest(ctx context.Context, challenge string, body AcceptLogin) (Redirect, error)
 	GetLoginRequest(ctx context.Context, challenge string) (LoginRequest, error)
 	GetConsentRequest(ctx context.Context, challenge string) (ConsentRequest, error)
 	AcceptConsentRequest(ctx context.Context, challenge string, body AcceptConsent) (Redirect, error)
+	ListConsentSessions(ctx context.Context, subject string) ([]ConsentSession, error)
+	RevokeConsentSessions(ctx context.Context, subject, clientID string) error
+	RevokeLoginSessions(ctx context.Context, subject string) error
 	CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error)
 	GetClient(ctx context.Context, clientID string) (*OAuth2Client, error)
 	UpdateClient(ctx context.Context, clientID string, client OAuth2Client) (OAuth2Client, error)

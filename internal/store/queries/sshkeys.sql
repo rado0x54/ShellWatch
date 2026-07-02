@@ -7,3 +7,7 @@ SELECT id, label, type, fingerprint FROM ssh_keys WHERE enabled = 1 ORDER BY cre
 
 -- name: GetSSHKey :one
 SELECT id, label, type, public_key, fingerprint FROM ssh_keys WHERE id = ?;
+
+-- name: ListSSHKeysFull :many
+SELECT id, label, type, public_key, fingerprint, enabled, created_at, last_used_at
+FROM ssh_keys ORDER BY created_at, id;

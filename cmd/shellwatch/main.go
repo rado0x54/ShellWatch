@@ -183,6 +183,22 @@ func run() error {
 			Sessions: audit.NewSessions(db),
 			Signings: audit.NewSignings(db),
 		},
+		Accounts: &rest.Accounts{
+			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
+			Now: func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
+		},
+		Credentials: &rest.Credentials{
+			Store: credStore, Admin: admin, StepUp: webauthnDeps.StepUp,
+		},
+		Keys: &rest.Keys{
+			Store: store.NewSSHKeys(db), Accounts: store.NewAccounts(db),
+		},
+		AuthSessions: &rest.AuthSessions{
+			Admin: admin, SPAClientID: cfg.Hydra.Spa.ClientID, StepUp: webauthnDeps.StepUp,
+		},
+		Push: &rest.Push{
+			Store: store.NewPushSubs(db, clk), AllowedEndpoint: nil, NewID: newUUID,
+		},
 		AgentProxy: &agentproxy.Deps{
 			Broker:          signBroker,
 			Credentials:     credStore,

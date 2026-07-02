@@ -40,3 +40,23 @@ UPDATE webauthn_credentials SET state = ? WHERE id = ?;
 -- name: ListActiveCredentialsForAuth :many
 SELECT id, credential_id, public_key_openssh, label FROM webauthn_credentials
 WHERE account_id = ? AND revoked = 0 AND state = 'active';
+
+-- name: ListCredentialsForAccountFull :many
+SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at
+FROM webauthn_credentials WHERE account_id = ?;
+
+-- name: UpdateCredentialLabel :exec
+UPDATE webauthn_credentials SET label = ? WHERE id = ? AND account_id = ?;
+
+-- name: LabelConflictExists :one
+SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE account_id = ? AND label = ? AND id != ?) AS has_conflict;
+
+-- name: RevokeCredentialByID :exec
+UPDATE webauthn_credentials SET revoked = 1 WHERE id = ?;
+
+-- name: CountActiveCredentials :one
+SELECT COUNT(*) AS n FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active';
+
+-- name: ExportActiveCredentials :many
+SELECT credential_id, public_key, counter, transports, label
+FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active';

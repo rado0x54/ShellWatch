@@ -36,6 +36,39 @@ func (d *Deps) LoginOptions(ctx context.Context) (options authOptions, ok bool, 
 	return opts, true, nil
 }
 
+// ConsentOptions builds assertion options scoped to one account's active
+// credentials (consent must be approved by the very subject Hydra names).
+// Returns ok=false when the account has no active passkeys.
+func (d *Deps) ConsentOptions(ctx context.Context, accountID string) (authOptions, bool, error) {
+	creds, err := d.Credentials.ActiveCredentialIDs(ctx, accountID)
+	if err != nil {
+		return authOptions{}, false, err
+	}
+	if len(creds) == 0 {
+		return authOptions{}, false, nil
+	}
+	allow := make([]map[string]any, 0, len(creds))
+	for _, id := range creds {
+		allow = append(allow, map[string]any{"id": id, "type": "public-key"})
+	}
+	opts := authOptions{
+		Challenge: randomB64URL(32), RpID: d.RpID, UserVerification: "required",
+		AllowCredentials: allow, ChallengeID: newUUID(),
+	}
+	d.Challenges.Store(opts.ChallengeID, opts.Challenge, PurposeLogin)
+	return opts, true, nil
+}
+
+// VerifyConsent verifies a login assertion and additionally requires the owning
+// account to equal expectedAccountID (the consent subject).
+func (d *Deps) VerifyConsent(ctx context.Context, challengeID, credentialID string, rawCredential []byte, expectedAccountID string) LoginResult {
+	res := d.VerifyLogin(ctx, challengeID, credentialID, rawCredential)
+	if res.Error == "" && res.AccountID != expectedAccountID {
+		return LoginResult{Status: 403, Error: "This passkey belongs to a different account"}
+	}
+	return res
+}
+
 // LoginResult is a verified login assertion.
 type LoginResult struct {
 	AccountID string

@@ -10,6 +10,59 @@ import (
 	"database/sql"
 )
 
+const countActiveCredentials = `-- name: CountActiveCredentials :one
+SELECT COUNT(*) AS n FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active'
+`
+
+func (q *Queries) CountActiveCredentials(ctx context.Context, accountID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveCredentials, accountID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+const exportActiveCredentials = `-- name: ExportActiveCredentials :many
+SELECT credential_id, public_key, counter, transports, label
+FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active'
+`
+
+type ExportActiveCredentialsRow struct {
+	CredentialID string
+	PublicKey    []byte
+	Counter      int64
+	Transports   sql.NullString
+	Label        string
+}
+
+func (q *Queries) ExportActiveCredentials(ctx context.Context, accountID string) ([]ExportActiveCredentialsRow, error) {
+	rows, err := q.db.QueryContext(ctx, exportActiveCredentials, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExportActiveCredentialsRow
+	for rows.Next() {
+		var i ExportActiveCredentialsRow
+		if err := rows.Scan(
+			&i.CredentialID,
+			&i.PublicKey,
+			&i.Counter,
+			&i.Transports,
+			&i.Label,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findCredentialByCredentialID = `-- name: FindCredentialByCredentialID :one
 SELECT id, account_id, credential_id, public_key, counter, transports, revoked, state
 FROM webauthn_credentials WHERE credential_id = ?
@@ -115,6 +168,23 @@ func (q *Queries) InsertCredential(ctx context.Context, arg InsertCredentialPara
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const labelConflictExists = `-- name: LabelConflictExists :one
+SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE account_id = ? AND label = ? AND id != ?) AS has_conflict
+`
+
+type LabelConflictExistsParams struct {
+	AccountID string
+	Label     string
+	ID        string
+}
+
+func (q *Queries) LabelConflictExists(ctx context.Context, arg LabelConflictExistsParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, labelConflictExists, arg.AccountID, arg.Label, arg.ID)
+	var has_conflict bool
+	err := row.Scan(&has_conflict)
+	return has_conflict, err
 }
 
 const listActiveCredentialIDsForAccount = `-- name: ListActiveCredentialIDsForAccount :many
@@ -240,6 +310,65 @@ func (q *Queries) ListAllActiveCredentialIDs(ctx context.Context) ([]string, err
 	return items, nil
 }
 
+const listCredentialsForAccountFull = `-- name: ListCredentialsForAccountFull :many
+SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at
+FROM webauthn_credentials WHERE account_id = ?
+`
+
+type ListCredentialsForAccountFullRow struct {
+	ID               string
+	CredentialID     string
+	PublicKey        []byte
+	PublicKeyOpenssh sql.NullString
+	Label            string
+	Revoked          int64
+	State            string
+	CreatedAt        string
+	LastUsedAt       sql.NullString
+}
+
+func (q *Queries) ListCredentialsForAccountFull(ctx context.Context, accountID string) ([]ListCredentialsForAccountFullRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCredentialsForAccountFull, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCredentialsForAccountFullRow
+	for rows.Next() {
+		var i ListCredentialsForAccountFullRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CredentialID,
+			&i.PublicKey,
+			&i.PublicKeyOpenssh,
+			&i.Label,
+			&i.Revoked,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const revokeCredentialByID = `-- name: RevokeCredentialByID :exec
+UPDATE webauthn_credentials SET revoked = 1 WHERE id = ?
+`
+
+func (q *Queries) RevokeCredentialByID(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, revokeCredentialByID, id)
+	return err
+}
+
 const setCredentialState = `-- name: SetCredentialState :exec
 UPDATE webauthn_credentials SET state = ? WHERE id = ?
 `
@@ -266,5 +395,20 @@ type UpdateCredentialCounterParams struct {
 
 func (q *Queries) UpdateCredentialCounter(ctx context.Context, arg UpdateCredentialCounterParams) error {
 	_, err := q.db.ExecContext(ctx, updateCredentialCounter, arg.Counter, arg.LastUsedAt, arg.ID)
+	return err
+}
+
+const updateCredentialLabel = `-- name: UpdateCredentialLabel :exec
+UPDATE webauthn_credentials SET label = ? WHERE id = ? AND account_id = ?
+`
+
+type UpdateCredentialLabelParams struct {
+	Label     string
+	ID        string
+	AccountID string
+}
+
+func (q *Queries) UpdateCredentialLabel(ctx context.Context, arg UpdateCredentialLabelParams) error {
+	_, err := q.db.ExecContext(ctx, updateCredentialLabel, arg.Label, arg.ID, arg.AccountID)
 	return err
 }
