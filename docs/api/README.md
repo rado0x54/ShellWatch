@@ -8,19 +8,19 @@ in [#225]. The Go server must reproduce these exactly; when a shape is wrong or
 confusing, change it here **and** in code as a deliberate, tested decision — not
 by drift.
 
-| Surface     | Artifact                                           | Source of truth                                              |
-| ----------- | -------------------------------------------------- | ------------------------------------------------------------ |
-| REST / HTTP | [`openapi.yaml`](./openapi.yaml)                   | `src/server/routes/`, `src/webauthn/`, `src/hydra/routes.ts` |
-| WebSocket   | [`websocket-protocol.md`](./websocket-protocol.md) | `src/server/ws-protocol.ts`, `ws-message-router.ts`          |
-| MCP tools   | [`mcp-tools.md`](./mcp-tools.md)                   | `src/mcp/tools/`, `src/mcp/notifications.ts`                 |
+| Surface     | Artifact                                               | Source of truth                                              |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------------------ |
+| REST / HTTP | [`openapi.yaml`](./openapi.yaml)                       | `src/server/routes/`, `src/webauthn/`, `src/hydra/routes.ts` |
+| WebSocket   | [`websocket-protocol.md`](./websocket-protocol.md)     | `src/server/ws-protocol.ts`, `ws-message-router.ts`          |
+| MCP tools   | [`mcp-tools.md`](./mcp-tools.md)                       | `src/mcp/tools/`, `src/mcp/notifications.ts`                 |
+| Agent proxy | [`agent-proxy-protocol.md`](./agent-proxy-protocol.md) | `src/agent-socket/`, `agent-client/internal/proxy/`          |
 
 Coverage: every REST route is in `openapi.yaml`, including the anonymous
 bootstrap surface (`/api/auth/passkey-status`, `/api/auth/register/options`,
 `/api/auth/register`). Deliberately **not** schema-documented here:
 
-- `/ws` and `/mcp` — non-REST protocols, in the companion docs above.
-- `/agent-proxy` WebSocket framing (the Go agent-client bridge) — tracked
-  separately; add when that surface stabilizes.
+- `/ws`, `/mcp`, and `/agent-proxy` — non-REST protocols, in the companion
+  docs above.
 - The Hydra provider **GET** pages (`/api/hydra/{login,consent,logout,error}`)
   are HTML/redirect flows; the `hydra-provider` tag documents the JSON
   options/verify endpoints and points to `src/hydra/routes.ts` for the pages.
