@@ -49,6 +49,8 @@ type Params struct {
 	Actions *rest.Actions
 	// AgentProxy mounts /agent-proxy (nil-able; also gated on proxyEnabled).
 	AgentProxy *agentproxy.Deps
+	// Audit mounts the audit read routes (nil-able).
+	Audit *rest.Audit
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -97,6 +99,9 @@ func New(p Params) http.Handler {
 	}
 	if p.Actions != nil {
 		p.Actions.Mount(r)
+	}
+	if p.Audit != nil {
+		p.Audit.Mount(r)
 	}
 	if p.WSHub != nil {
 		r.Get("/ws", p.WSHub.Handler())

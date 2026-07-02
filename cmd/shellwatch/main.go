@@ -24,6 +24,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/agent"
 	"github.com/rado0x54/shellwatch/internal/agentproxy"
 	"github.com/rado0x54/shellwatch/internal/approval"
+	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
@@ -135,6 +136,11 @@ func run() error {
 		func() string { return cfg.Server.ExternalURL },
 		&approval.WSChannel{Hub: wsHub})
 
+	// Audit writers subscribe to the manager + action store (guaranteed hooks).
+	auditWriter := audit.NewWriter(db, clk)
+	auditWriter.AttachManager(manager, manager.GetSession)
+	auditWriter.AttachStore(actionStore)
+
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
 		Resolve:       resolve,
@@ -161,6 +167,10 @@ func run() error {
 			Keys:      store.NewSSHKeys(db),
 		},
 		Actions: &rest.Actions{Store: actionStore},
+		Audit: &rest.Audit{
+			Sessions: audit.NewSessions(db),
+			Signings: audit.NewSignings(db),
+		},
 		AgentProxy: &agentproxy.Deps{
 			Broker:          signBroker,
 			Credentials:     credStore,
