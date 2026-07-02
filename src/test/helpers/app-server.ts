@@ -11,6 +11,7 @@ import type { Config } from "../../config/index.js";
 import type { SessionLifecycleRepository, SigningRequestsRepository } from "../../audit/index.js";
 import type { PendingActionStore } from "../../pending-action/index.js";
 import type { WebSocketChannel } from "../../pending-action/ws-channel.js";
+import type { PushSubscriptionRepository } from "../../db/repositories/push-subscription-repo.js";
 import { makeTestConfig } from "./test-config.js";
 import {
   StubAccountRepository,
@@ -79,6 +80,8 @@ export interface StartTestAppOptions {
    */
   actionStore?: PendingActionStore;
   wsChannel?: WebSocketChannel;
+  /** Web Push subscription repo. When set, buildApp mounts `/api/push/subscribe`. */
+  pushSubRepo?: PushSubscriptionRepository;
 }
 
 export async function startTestApp(
@@ -92,6 +95,7 @@ export async function startTestApp(
     signingRequestsRepo,
     actionStore,
     wsChannel,
+    pushSubRepo,
   } = options;
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
@@ -211,6 +215,7 @@ export async function startTestApp(
     signingRequestsRepo,
     actionStore,
     wsChannel,
+    pushSubRepo,
     options: { logger: false, skipStaticFiles: true },
   });
 
