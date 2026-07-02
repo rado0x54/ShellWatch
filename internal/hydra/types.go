@@ -30,10 +30,47 @@ type OAuth2Client struct {
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
+// LoginRequest is the GET login-challenge response (subset).
+type LoginRequest struct {
+	Challenge string `json:"challenge"`
+	Skip      bool   `json:"skip"`
+	Subject   string `json:"subject"`
+}
+
+// ConsentRequest is the GET consent-challenge response (subset).
+type ConsentRequest struct {
+	Challenge                    string         `json:"challenge"`
+	Skip                         bool           `json:"skip"`
+	Subject                      string         `json:"subject"`
+	Client                       OAuth2Client   `json:"client"`
+	RequestedScope               []string       `json:"requested_scope"`
+	RequestedAccessTokenAudience []string       `json:"requested_access_token_audience"`
+	Context                      map[string]any `json:"context"`
+}
+
+// AcceptConsent is the body for accepting a consent challenge.
+type AcceptConsent struct {
+	GrantScope               []string       `json:"grant_scope"`
+	GrantAccessTokenAudience []string       `json:"grant_access_token_audience,omitempty"`
+	Remember                 bool           `json:"remember,omitempty"`
+	RememberFor              int            `json:"remember_for,omitempty"`
+	Session                  map[string]any `json:"session,omitempty"`
+}
+
+// LogoutRequest is the GET logout-challenge response (subset).
+type LogoutRequest struct {
+	Challenge string `json:"challenge"`
+	Subject   string `json:"subject"`
+	ClientID  string `json:"client,omitempty"`
+}
+
 // Admin is the full admin surface the providers + DCR + ensureSpaClient need.
 type Admin interface {
 	Introspector
 	AcceptLoginRequest(ctx context.Context, challenge string, body AcceptLogin) (Redirect, error)
+	GetLoginRequest(ctx context.Context, challenge string) (LoginRequest, error)
+	GetConsentRequest(ctx context.Context, challenge string) (ConsentRequest, error)
+	AcceptConsentRequest(ctx context.Context, challenge string, body AcceptConsent) (Redirect, error)
 	CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error)
 	GetClient(ctx context.Context, clientID string) (*OAuth2Client, error)
 	UpdateClient(ctx context.Context, clientID string, client OAuth2Client) (OAuth2Client, error)

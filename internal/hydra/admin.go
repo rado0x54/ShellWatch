@@ -132,6 +132,30 @@ func (c *AdminClient) AcceptLoginRequest(ctx context.Context, challenge string, 
 	return r, err
 }
 
+// GetLoginRequest fetches a login challenge.
+func (c *AdminClient) GetLoginRequest(ctx context.Context, challenge string) (LoginRequest, error) {
+	var lr LoginRequest
+	err := c.adminJSON(ctx, http.MethodGet,
+		"/admin/oauth2/auth/requests/login?login_challenge="+url.QueryEscape(challenge), nil, &lr)
+	return lr, err
+}
+
+// GetConsentRequest fetches a consent challenge.
+func (c *AdminClient) GetConsentRequest(ctx context.Context, challenge string) (ConsentRequest, error) {
+	var cr ConsentRequest
+	err := c.adminJSON(ctx, http.MethodGet,
+		"/admin/oauth2/auth/requests/consent?consent_challenge="+url.QueryEscape(challenge), nil, &cr)
+	return cr, err
+}
+
+// AcceptConsentRequest accepts a consent challenge.
+func (c *AdminClient) AcceptConsentRequest(ctx context.Context, challenge string, body AcceptConsent) (Redirect, error) {
+	var r Redirect
+	err := c.adminJSON(ctx, http.MethodPut,
+		"/admin/oauth2/auth/requests/consent/accept?consent_challenge="+url.QueryEscape(challenge), body, &r)
+	return r, err
+}
+
 // CreateClient registers an OAuth2 client (POST /admin/clients).
 func (c *AdminClient) CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error) {
 	var out OAuth2Client

@@ -157,6 +157,10 @@ func run() error {
 		BuildInfo:     buildinfo.Load(mustGetwd()),
 		WebAuthn:      webauthnDeps,
 		HydraAdmin:    admin,
+		HasPasskeys: func() bool {
+			has, _ := credStore.HasPasskeys(ctx)
+			return has
+		},
 		Endpoints: &rest.Endpoints{
 			Store:    endpointStore,
 			Demo:     demoSvc,

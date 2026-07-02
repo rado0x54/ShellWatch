@@ -25,12 +25,114 @@ const rememberFor = 60 * 60 * 24 * 30
 type ProviderParams struct {
 	Admin    Admin
 	WebAuthn *webauthn.Deps
+	// SPAClientID is the first-party client that auto-consents.
+	SPAClientID string
+	// SelfRegistrationEnabled + HasPasskeys drive the login page's create-account link.
+	SelfRegistrationEnabled bool
+	HasPasskeys             func() bool
 	// DCR policy.
 	AllowedScopes       []string
 	RedirectURIPatterns []string
 	AgentProxyEnabled   bool
 	// Clock injected so the DCR client_id_issued_at is testable (Date.now()).
 	Now func() time.Time
+}
+
+// mountProviderPages registers the server-rendered GET login/consent/logout
+// pages (port of the HTML providers in routes.ts). The passkey ceremony they
+// render POSTs to the /options + /verify JSON endpoints.
+func mountProviderPages(r chi.Router, p ProviderParams) {
+	r.Get("/api/hydra/login", func(w http.ResponseWriter, r *http.Request) {
+		challenge := r.URL.Query().Get("login_challenge")
+		if challenge == "" {
+			writeHTML(w, 400, renderErrorPage("missing_login_challenge", ""))
+			return
+		}
+		lr, err := p.Admin.GetLoginRequest(r.Context(), challenge)
+		if err != nil {
+			writeHTML(w, 400, renderErrorPage("invalid_login_challenge", ""))
+			return
+		}
+		if lr.Skip {
+			// Remembered session — accept without a passkey; mark NOT fresh.
+			redir, err := p.Admin.AcceptLoginRequest(r.Context(), challenge, AcceptLogin{
+				Subject: lr.Subject, Context: map[string]any{"freshLogin": false},
+			})
+			if err != nil {
+				writeHTML(w, 400, renderErrorPage("login_flow_expired", ""))
+				return
+			}
+			http.Redirect(w, r, redir.RedirectTo, http.StatusFound)
+			return
+		}
+		passkeysExist := p.HasPasskeys == nil || p.HasPasskeys()
+		canRegister := !passkeysExist || p.SelfRegistrationEnabled
+		desc := "Authenticate with your passkey to continue."
+		if !passkeysExist {
+			desc = "No passkeys yet — create an account to get started."
+		}
+		registerURL := ""
+		if canRegister {
+			registerURL = "/register"
+		}
+		writeHTML(w, 200, renderPasskeyPage(ceremonyParams{
+			Title: "Sign in · ShellWatch", Description: desc,
+			OptionsURL: "/api/hydra/login/options", VerifyURL: "/api/hydra/login/verify",
+			Extra:      map[string]string{"login_challenge": challenge},
+			ShowButton: passkeysExist, RegisterURL: registerURL,
+		}))
+	})
+
+	r.Get("/api/hydra/consent", func(w http.ResponseWriter, r *http.Request) {
+		challenge := r.URL.Query().Get("consent_challenge")
+		if challenge == "" {
+			writeHTML(w, 400, renderErrorPage("missing_consent_challenge", ""))
+			return
+		}
+		cr, err := p.Admin.GetConsentRequest(r.Context(), challenge)
+		if err != nil {
+			writeHTML(w, 400, renderErrorPage("invalid_consent_challenge", ""))
+			return
+		}
+		// First-party SPA (and remembered sessions) auto-accept — no second passkey.
+		if cr.Client.ClientID == p.SPAClientID || cr.Skip {
+			redir, err := p.Admin.AcceptConsentRequest(r.Context(), challenge, AcceptConsent{
+				GrantScope: cr.RequestedScope, GrantAccessTokenAudience: cr.RequestedAccessTokenAudience,
+			})
+			if err != nil {
+				writeHTML(w, 400, renderErrorPage("consent_flow_expired", ""))
+				return
+			}
+			http.Redirect(w, r, redir.RedirectTo, http.StatusFound)
+			return
+		}
+		// Third-party: passkey step-up unless the login was fresh (then approve).
+		clientName := cr.Client.ClientName
+		if clientName == "" {
+			clientName = cr.Client.ClientID
+		}
+		fresh := cr.Context["freshLogin"] == true
+		if fresh {
+			writeHTML(w, 200, renderApprovePage(approveParams{
+				Title: "Authorize · ShellWatch", ApproveURL: "/api/hydra/consent/approve",
+				Extra:      map[string]string{"consent_challenge": challenge},
+				ClientName: clientName, Scopes: cr.RequestedScope,
+			}))
+			return
+		}
+		writeHTML(w, 200, renderPasskeyPage(ceremonyParams{
+			Title:      "Authorize · ShellWatch",
+			OptionsURL: "/api/hydra/consent/options", VerifyURL: "/api/hydra/consent/verify",
+			Extra:      map[string]string{"consent_challenge": challenge},
+			ShowButton: true, ClientName: clientName, Scopes: cr.RequestedScope,
+		}))
+	})
+}
+
+func writeHTML(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
 }
 
 // MountProviders registers the login-provider JSON endpoints and mediated DCR.
@@ -105,6 +207,8 @@ func MountProviders(r chi.Router, p ProviderParams) {
 	r.Post("/api/hydra/register", func(w http.ResponseWriter, r *http.Request) {
 		p.handleDCR(w, r, patterns, allowed, now)
 	})
+
+	mountProviderPages(r, p)
 }
 
 func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patterns []*regexp.Regexp, allowed map[string]bool, now func() time.Time) {

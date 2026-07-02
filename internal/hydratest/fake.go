@@ -20,6 +20,7 @@ type FakeAdmin struct {
 	tokens         map[string]hydra.Introspection
 	clients        map[string]hydra.OAuth2Client
 	loginChallenge map[string]bool
+	consent        map[string]hydra.ConsentRequest
 	counter        int
 }
 
@@ -77,6 +78,43 @@ func (f *FakeAdmin) AcceptLoginRequest(_ context.Context, challenge string, _ hy
 		return hydra.Redirect{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: acceptLoginRequest — unknown challenge"}
 	}
 	return hydra.Redirect{RedirectTo: "https://hydra.test/login-callback?c=" + challenge}, nil
+}
+
+// consent challenges seeded for the consent-provider tests.
+func (f *FakeAdmin) SetConsentRequest(challenge string, req hydra.ConsentRequest) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.consent == nil {
+		f.consent = map[string]hydra.ConsentRequest{}
+	}
+	f.consent[challenge] = req
+}
+
+func (f *FakeAdmin) GetLoginRequest(_ context.Context, challenge string) (hydra.LoginRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.loginChallenge[challenge] {
+		return hydra.LoginRequest{Challenge: challenge}, nil
+	}
+	return hydra.LoginRequest{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown login challenge"}
+}
+
+func (f *FakeAdmin) GetConsentRequest(_ context.Context, challenge string) (hydra.ConsentRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.consent[challenge]; ok {
+		return c, nil
+	}
+	return hydra.ConsentRequest{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown consent challenge"}
+}
+
+func (f *FakeAdmin) AcceptConsentRequest(_ context.Context, challenge string, _ hydra.AcceptConsent) (hydra.Redirect, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.consent[challenge]; !ok {
+		return hydra.Redirect{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown consent challenge"}
+	}
+	return hydra.Redirect{RedirectTo: "https://hydra.test/consent-callback?c=" + challenge}, nil
 }
 
 func (f *FakeAdmin) CreateClient(_ context.Context, client hydra.OAuth2Client) (hydra.OAuth2Client, error) {

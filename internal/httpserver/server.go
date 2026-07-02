@@ -37,6 +37,9 @@ type Params struct {
 	WebAuthn *webauthn.Deps
 	// HydraAdmin enables the login provider + mediated DCR (nil-able).
 	HydraAdmin hydra.Admin
+	// HasPasskeys reports whether any passkey exists (drives the login page's
+	// create-account link). nil -> assume passkeys exist.
+	HasPasskeys func() bool
 	// Endpoints mounts the endpoint CRUD routes (nil-able).
 	Endpoints *rest.Endpoints
 	// Sessions mounts the session routes (nil-able).
@@ -87,11 +90,14 @@ func New(p Params) http.Handler {
 
 	if p.HydraAdmin != nil && p.WebAuthn != nil {
 		hydra.MountProviders(r, hydra.ProviderParams{
-			Admin:               p.HydraAdmin,
-			WebAuthn:            p.WebAuthn,
-			AllowedScopes:       p.Config.Hydra.Dcr.AllowedScopes,
-			RedirectURIPatterns: p.Config.Hydra.Dcr.RedirectURIPatterns,
-			AgentProxyEnabled:   agentProxy,
+			Admin:                   p.HydraAdmin,
+			WebAuthn:                p.WebAuthn,
+			SPAClientID:             p.Config.Hydra.Spa.ClientID,
+			SelfRegistrationEnabled: p.Config.Security.SelfRegistrationEnabled,
+			HasPasskeys:             p.HasPasskeys,
+			AllowedScopes:           p.Config.Hydra.Dcr.AllowedScopes,
+			RedirectURIPatterns:     p.Config.Hydra.Dcr.RedirectURIPatterns,
+			AgentProxyEnabled:       agentProxy,
 		})
 	}
 
