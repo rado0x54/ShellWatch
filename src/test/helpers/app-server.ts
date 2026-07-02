@@ -9,6 +9,8 @@ const { utils } = ssh2;
 
 import type { Config } from "../../config/index.js";
 import type { SessionLifecycleRepository, SigningRequestsRepository } from "../../audit/index.js";
+import type { PendingActionStore } from "../../pending-action/index.js";
+import type { WebSocketChannel } from "../../pending-action/ws-channel.js";
 import { makeTestConfig } from "./test-config.js";
 import {
   StubAccountRepository,
@@ -70,6 +72,13 @@ export interface StartTestAppOptions {
    */
   sessionLifecycleRepo?: SessionLifecycleRepository;
   signingRequestsRepo?: SigningRequestsRepository;
+  /**
+   * Pending-action store + WS channel. When both are provided, buildApp mounts
+   * the `/api/actions/*` signing-approval routes (otherwise unregistered). The
+   * caller owns the store and seeds actions into it.
+   */
+  actionStore?: PendingActionStore;
+  wsChannel?: WebSocketChannel;
 }
 
 export async function startTestApp(
@@ -77,7 +86,13 @@ export async function startTestApp(
   log: TestLog,
   options: StartTestAppOptions = {},
 ): Promise<TestAppServer> {
-  const { agentProxyEnabled = true, sessionLifecycleRepo, signingRequestsRepo } = options;
+  const {
+    agentProxyEnabled = true,
+    sessionLifecycleRepo,
+    signingRequestsRepo,
+    actionStore,
+    wsChannel,
+  } = options;
   const tmpDir = mkdtempSync(join(tmpdir(), "shellwatch-test-"));
   const keyPath = join(tmpDir, "test-key.pem");
   writeFileSync(keyPath, sshServer.clientPrivateKey, { mode: 0o600 });
@@ -194,6 +209,8 @@ export async function startTestApp(
     hydraAdmin,
     sessionLifecycleRepo,
     signingRequestsRepo,
+    actionStore,
+    wsChannel,
     options: { logger: false, skipStaticFiles: true },
   });
 
