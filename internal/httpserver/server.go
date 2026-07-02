@@ -20,6 +20,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
+	"github.com/rado0x54/shellwatch/internal/ws"
 )
 
 type Params struct {
@@ -38,6 +39,8 @@ type Params struct {
 	Endpoints *rest.Endpoints
 	// Sessions mounts the session routes (nil-able).
 	Sessions *rest.Sessions
+	// WSHub mounts the /ws terminal WebSocket (nil-able).
+	WSHub *ws.Hub
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -83,6 +86,9 @@ func New(p Params) http.Handler {
 	}
 	if p.Sessions != nil {
 		p.Sessions.Mount(r)
+	}
+	if p.WSHub != nil {
+		r.Get("/ws", p.WSHub.Handler())
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.

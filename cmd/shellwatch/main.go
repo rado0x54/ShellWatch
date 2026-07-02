@@ -32,6 +32,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
+	"github.com/rado0x54/shellwatch/internal/ws"
 	"github.com/rado0x54/shellwatch/web"
 )
 
@@ -105,6 +106,8 @@ func run() error {
 	// authenticate.
 	keyDir := sshx.NewKeyDir(cfg.KeyDirectory)
 	manager := terminal.NewManager(sshx.NewFileKeyFactory(keyDir), clk, 0)
+	wsHub := ws.NewHub(manager)
+	defer wsHub.Close()
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
@@ -126,6 +129,7 @@ func run() error {
 			Demo:        demoSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
+		WSHub: wsHub,
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
