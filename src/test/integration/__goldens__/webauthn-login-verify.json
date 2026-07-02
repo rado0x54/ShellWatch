@@ -1,0 +1,6 @@
+{
+  "status": 200,
+  "body": {
+    "redirectTo": "https://hydra.test/login-callback?c=login-chal-1"
+  }
+}

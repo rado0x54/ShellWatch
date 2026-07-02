@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "body": {
+    "stepUpToken": "<REDACTED>",
+    "expiresAt": "<TS>",
+    "action": "register_passkey"
+  }
+}
