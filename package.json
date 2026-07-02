@@ -33,6 +33,7 @@
     "spdx:write": "node scripts/spdx-headers.mjs --write",
     "api:preview": "npx --yes @redocly/cli@latest build-docs docs/api/openapi.yaml -o docs/api/openapi.html && open docs/api/openapi.html",
     "api:lint": "npx --yes @redocly/cli@latest lint docs/api/openapi.yaml",
+    "api:codegen-check": "bash scripts/check-api-codegen.sh",
     "sync:fonts": "node scripts/sync-fonts.mjs",
     "prepare": "husky"
   },

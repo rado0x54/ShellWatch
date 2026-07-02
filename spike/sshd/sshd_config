@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# sshd config for the Phase 0 spike target: certificate-only auth against a
+# throwaway user CA, with the webauthn-sk algorithm family enabled.
+Port 22
+PermitRootLogin no
+AllowUsers spike
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+
+# Cert-only: no authorized_keys files — every login must present a user cert
+# signed by the spike CA (mounted by docker-compose.yml).
+AuthorizedKeysFile none
+TrustedUserCAKeys /etc/ssh/user_ca.pub
+
+# Accept the webauthn-sk signature algorithm (plain + certificate form) in
+# addition to the defaults. Same line ShellWatch documents for real targets
+# (src/webauthn/ssh-key-format.ts getSshdConfigLine()).
+PubkeyAcceptedAlgorithms +webauthn-sk-ecdsa-sha2-nistp256@openssh.com,webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com
+
+# VERBOSE logs which cert/key each auth attempt used — the spike's main
+# observability surface (`docker compose logs sshd`).
+LogLevel VERBOSE

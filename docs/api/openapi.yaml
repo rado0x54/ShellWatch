@@ -397,6 +397,7 @@ paths:
   # ---------------------------------------------------------------- meta
   /health:
     get:
+      operationId: getHealth
       tags: [meta]
       security: []
       summary: Liveness probe
@@ -411,6 +412,7 @@ paths:
 
   /api/version:
     get:
+      operationId: getVersion
       tags: [meta]
       security: []
       summary: Build info (curl-able without auth)
@@ -440,6 +442,7 @@ paths:
 
   /config.js:
     get:
+      operationId: getConfigScript
       tags: [meta]
       security: []
       summary: Browser bootstrap config (JS, not JSON)
@@ -460,6 +463,7 @@ paths:
   # yet) bootstraps the admin; afterward gated by security.selfRegistrationEnabled.
   /api/auth/passkey-status:
     get:
+      operationId: getPasskeyStatus
       tags: [meta]
       security: []
       summary: Whether any passkeys exist yet (first-run detection)
@@ -474,6 +478,7 @@ paths:
                 required: [hasPasskeys]
   /api/auth/register/options:
     post:
+      operationId: startAccountRegistration
       tags: [meta]
       security: []
       summary: Registration options for anonymous self-registration (rate-limited)
@@ -496,6 +501,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/auth/register:
     post:
+      operationId: finishAccountRegistration
       tags: [meta]
       security: []
       summary: Verify passkey + create the account (anonymous, rate-limited)
@@ -542,6 +548,7 @@ paths:
   # ------------------------------------------------------------ discovery
   /.well-known/oauth-authorization-server:
     get:
+      operationId: getAuthorizationServerMetadata
       tags: [discovery]
       security: []
       summary: Blended AS metadata (RFC 8414)
@@ -559,6 +566,7 @@ paths:
 
   /.well-known/oauth-protected-resource:
     get:
+      operationId: getProtectedResourceMetadata
       tags: [discovery]
       security: []
       summary: Protected-resource metadata — bare/default location (RFC 9728)
@@ -575,6 +583,7 @@ paths:
 
   /.well-known/oauth-protected-resource/mcp:
     get:
+      operationId: getProtectedResourceMetadataMcp
       tags: [discovery]
       security: []
       summary: Protected-resource metadata for /mcp (RFC 9728)
@@ -592,6 +601,7 @@ paths:
 
   /.well-known/oauth-protected-resource/agent-proxy:
     get:
+      operationId: getProtectedResourceMetadataAgentProxy
       tags: [discovery]
       security: []
       summary: Protected-resource metadata for /agent-proxy (only when agent proxy enabled)
@@ -606,6 +616,7 @@ paths:
 
   /api/hydra/register:
     post:
+      operationId: registerOauthClient
       tags: [discovery]
       security: []
       summary: Mediated Dynamic Client Registration (RFC 7591)
@@ -665,6 +676,7 @@ paths:
   # detail lives in src/hydra/routes.ts.
   /api/hydra/login/options:
     post:
+      operationId: startHydraLogin
       tags: [hydra-provider]
       security: []
       summary: Passkey login challenge (rate-limited)
@@ -676,6 +688,7 @@ paths:
               schema: { $ref: "#/components/schemas/WebAuthnAuthenticationOptions" }
   /api/hydra/login/verify:
     post:
+      operationId: finishHydraLogin
       tags: [hydra-provider]
       security: []
       summary: Verify login assertion, accept Hydra login request
@@ -698,6 +711,7 @@ paths:
                 properties: { redirectTo: { type: string }, error: { type: string } }
   /api/hydra/consent/options:
     post:
+      operationId: startHydraConsent
       tags: [hydra-provider]
       security: []
       summary: Passkey consent challenge
@@ -705,6 +719,7 @@ paths:
         "200": { description: "Assertion options + challengeId, or an error object." }
   /api/hydra/consent/verify:
     post:
+      operationId: finishHydraConsent
       tags: [hydra-provider]
       security: []
       summary: Verify consent assertion, accept Hydra consent request
@@ -716,6 +731,7 @@ paths:
               schema: { type: object, properties: { redirectTo: { type: string } } }
   /api/hydra/consent/approve:
     post:
+      operationId: approveHydraConsent
       tags: [hydra-provider]
       security: []
       summary: No-passkey consent grant (valid only after a fresh login in-flow)
@@ -729,6 +745,7 @@ paths:
   # -------------------------------------------------------------- account
   /api/auth/me:
     get:
+      operationId: getCurrentAccount
       tags: [account]
       summary: Current account profile
       responses:
@@ -746,6 +763,7 @@ paths:
                   demoEndpointsAvailable: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
     put:
+      operationId: updateCurrentAccount
       tags: [account]
       summary: Update current account (name, demo visibility)
       requestBody:
@@ -770,6 +788,7 @@ paths:
 
   /api/accounts:
     get:
+      operationId: listAccounts
       tags: [account]
       summary: List all accounts (admin only)
       responses:
@@ -796,6 +815,7 @@ paths:
 
   /api/accounts/{id}:
     delete:
+      operationId: deleteAccount
       tags: [account]
       summary: Hard-delete an account + cascade (admin only)
       parameters:
@@ -815,6 +835,7 @@ paths:
 
   /api/accounts/export-seed:
     get:
+      operationId: exportSeedConfig
       tags: [account]
       summary: Export passkeys + endpoints as seed config (admin only)
       responses:
@@ -853,6 +874,7 @@ paths:
   # --------------------------------------------------------- auth-sessions
   /api/auth/sessions:
     get:
+      operationId: listAuthorizedClients
       tags: [auth-sessions]
       summary: List authorized OAuth clients (one row per client_id)
       responses:
@@ -868,6 +890,7 @@ paths:
                     items: { $ref: "#/components/schemas/AuthSessionView" }
   /api/auth/sessions/{clientId}:
     delete:
+      operationId: revokeAuthorizedClient
       tags: [auth-sessions]
       summary: Revoke one client's grant (step-up gated)
       description: "Requires a step-up token for action `revoke_session`."
@@ -885,6 +908,7 @@ paths:
         "401": { $ref: "#/components/responses/StepUpRequired" }
   /api/auth/sessions/revoke-all:
     post:
+      operationId: revokeAllAuthorizedClients
       tags: [auth-sessions]
       summary: Sign out everywhere (step-up gated)
       description: "Requires a step-up token for action `revoke_all_sessions`."
@@ -903,6 +927,7 @@ paths:
   # ------------------------------------------------------------- endpoints
   /api/endpoints:
     get:
+      operationId: listEndpoints
       tags: [endpoints]
       summary: List account endpoints (+ demo endpoints if enabled)
       responses:
@@ -917,6 +942,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Endpoint" }
     post:
+      operationId: createEndpoint
       tags: [endpoints]
       summary: Create endpoint (server generates the id)
       requestBody:
@@ -947,6 +973,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/endpoints/{id}:
     put:
+      operationId: updateEndpoint
       tags: [endpoints]
       summary: Update endpoint (demo ids rejected)
       parameters:
@@ -976,6 +1003,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
     delete:
+      operationId: deleteEndpoint
       tags: [endpoints]
       summary: Delete endpoint
       parameters:
@@ -1000,6 +1028,7 @@ paths:
   # -------------------------------------------------------------- sessions
   /api/sessions:
     get:
+      operationId: listSessions
       tags: [sessions]
       summary: List the account's terminal sessions
       responses:
@@ -1014,6 +1043,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/TerminalSession" }
     post:
+      operationId: createSession
       tags: [sessions]
       summary: Open an SSH session to an endpoint
       description: >-
@@ -1050,6 +1080,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/sessions/{sessionId}/tail:
     get:
+      operationId: getSessionTail
       tags: [sessions]
       summary: Read the tail of a session's output buffer
       parameters:
@@ -1069,6 +1100,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /api/sessions/{sessionId}:
     delete:
+      operationId: closeSession
       tags: [sessions]
       summary: Close a session
       parameters:
@@ -1086,6 +1118,7 @@ paths:
   # --------------------------------------------------------------- actions
   /api/actions/{actionId}:
     get:
+      operationId: getAction
       tags: [actions]
       summary: Get a pending signing action
       parameters:
@@ -1100,6 +1133,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /api/actions/{actionId}/resolve:
     post:
+      operationId: resolveAction
       tags: [actions]
       summary: Resolve a signing action (WebAuthn signature or key-approve)
       parameters:
@@ -1136,6 +1170,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/actions/{actionId}/deny:
     post:
+      operationId: denyAction
       tags: [actions]
       summary: Deny a signing action
       parameters:
@@ -1159,6 +1194,7 @@ paths:
   # ----------------------------------------------------------------- audit
   /api/audit/sessions:
     get:
+      operationId: listAuditSessions
       tags: [audit]
       summary: Query session-lifecycle events
       parameters:
@@ -1180,6 +1216,7 @@ paths:
               schema: { $ref: "#/components/schemas/SessionLifecyclePage" }
   /api/audit/signings:
     get:
+      operationId: listAuditSignings
       tags: [audit]
       summary: Query signing-request audit
       parameters:
@@ -1215,6 +1252,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/audit/signings/{id}:
     get:
+      operationId: getAuditSigning
       tags: [audit]
       summary: Get one signing-request record
       parameters:
@@ -1234,6 +1272,7 @@ paths:
   # ------------------------------------------------------------------ keys
   /api/keys:
     get:
+      operationId: listSshKeys
       tags: [keys]
       summary: List file-based SSH keys (admin sees keys; non-admin sees empty)
       responses:
@@ -1263,6 +1302,7 @@ paths:
   # ------------------------------------------------------------------ push
   /api/push/subscribe:
     post:
+      operationId: createPushSubscription
       tags: [push]
       summary: Register a Web Push subscription
       requestBody:
@@ -1299,6 +1339,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
     delete:
+      operationId: deletePushSubscription
       tags: [push]
       summary: Unregister a Web Push subscription
       description: "NOTE the envelope — success is `{ ok: true }`, not `{ status }`."
@@ -1327,6 +1368,7 @@ paths:
   # -------------------------------------------------------------- webauthn
   /api/webauthn/register/options:
     post:
+      operationId: startPasskeyRegistration
       tags: [webauthn]
       summary: Registration options for an in-account passkey add
       requestBody:
@@ -1345,6 +1387,7 @@ paths:
               schema: { $ref: "#/components/schemas/WebAuthnRegistrationOptions" }
   /api/webauthn/register:
     post:
+      operationId: finishPasskeyRegistration
       tags: [webauthn]
       summary: Verify + store a new passkey (step-up gated — register_passkey)
       parameters:
@@ -1379,6 +1422,7 @@ paths:
         "401": { $ref: "#/components/responses/StepUpRequired" }
   /api/webauthn/credentials:
     get:
+      operationId: listPasskeys
       tags: [webauthn]
       summary: List the account's passkeys
       responses:
@@ -1407,6 +1451,7 @@ paths:
                   sshdConfig: { type: string }
   /api/webauthn/credentials/{id}/label:
     patch:
+      operationId: updatePasskeyLabel
       tags: [webauthn]
       summary: Rename a passkey (no step-up — cosmetic)
       parameters:
@@ -1438,6 +1483,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/webauthn/credentials/{id}/revoke:
     post:
+      operationId: revokePasskey
       tags: [webauthn]
       summary: Revoke a passkey (step-up gated — revoke_passkey)
       parameters:
@@ -1472,6 +1518,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/webauthn/credentials/{id}/confirm:
     post:
+      operationId: confirmPasskey
       tags: [webauthn]
       summary: Confirm a pending invite passkey (step-up gated — confirm_passkey)
       parameters:
@@ -1494,6 +1541,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /api/webauthn/invite:
     get:
+      operationId: getPasskeyInvite
       tags: [webauthn]
       summary: Get the active passkey invite (if any)
       responses:
@@ -1516,6 +1564,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
     post:
+      operationId: createPasskeyInvite
       tags: [webauthn]
       summary: Mint a passkey invite
       responses:
@@ -1534,6 +1583,7 @@ paths:
                       expiresAt: { type: string, format: date-time }
   /api/webauthn/stepup/options:
     post:
+      operationId: startStepUp
       tags: [webauthn]
       summary: Authentication options for a step-up ceremony
       requestBody:
@@ -1569,6 +1619,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/webauthn/stepup/verify:
     post:
+      operationId: finishStepUp
       tags: [webauthn]
       summary: Verify a step-up assertion, mint a single-use step-up token
       requestBody:
@@ -1613,6 +1664,7 @@ paths:
   # -------------------------------------------------- passkey-invite (anon)
   /api/passkey-invite/{token}:
     get:
+      operationId: getPasskeyInviteByToken
       tags: [passkey-invite]
       security: []
       summary: Look up an invite by token (anonymous)
@@ -1635,6 +1687,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/passkey-invite/register/options:
     post:
+      operationId: startInvitePasskeyRegistration
       tags: [passkey-invite]
       security: []
       summary: Registration options for invite enrollment (anonymous)
@@ -1664,6 +1717,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
   /api/passkey-invite/register:
     post:
+      operationId: finishInvitePasskeyRegistration
       tags: [passkey-invite]
       security: []
       summary: Verify + enroll a passkey via invite (anonymous)
