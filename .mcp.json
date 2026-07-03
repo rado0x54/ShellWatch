@@ -2,10 +2,7 @@
   "mcpServers": {
     "shellwatch-local": {
       "type": "http",
-      "url": "http://localhost:3000/mcp",
-      "headers": {
-        "Authorization": "Bearer sw_000000000000000000000000000000000000000000000000"
-      }
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
