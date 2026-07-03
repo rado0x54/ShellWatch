@@ -126,6 +126,11 @@ func run() error {
 	demoSvc := demo.NewService(cfg.DemoEndpoints)
 	credStore := store.NewCredentials(db, clk)
 	keyDir := sshx.NewKeyDir(cfg.KeyDirectory)
+	// Discover file keys into ssh_keys + watch the directory for changes so
+	// GET /api/keys lists them and file-key auth finds them.
+	go keyDir.Watch(ctx, store.NewSSHKeys(db), func() string {
+		return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	})
 
 	// Ordering: build the hub first (needs a manager) but the manager's
 	// passkey factory needs the broker which needs the hub's WS channel. Break
@@ -202,6 +207,7 @@ func run() error {
 		},
 		Keys: &rest.Keys{
 			Store: store.NewSSHKeys(db), Accounts: store.NewAccounts(db),
+			Available: keyDir.IsAvailable,
 		},
 		AuthSessions: &rest.AuthSessions{
 			Admin: admin, SPAClientID: cfg.Hydra.Spa.ClientID, StepUp: webauthnDeps.StepUp,

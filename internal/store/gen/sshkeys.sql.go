@@ -35,6 +35,32 @@ func (q *Queries) GetSSHKey(ctx context.Context, id string) (GetSSHKeyRow, error
 	return i, err
 }
 
+const insertFileKey = `-- name: InsertFileKey :exec
+INSERT INTO ssh_keys (id, label, type, public_key, fingerprint, enabled, created_at, updated_at)
+VALUES (?, ?, 'file', ?, ?, 1, ?, ?)
+`
+
+type InsertFileKeyParams struct {
+	ID          string
+	Label       string
+	PublicKey   string
+	Fingerprint string
+	CreatedAt   string
+	UpdatedAt   string
+}
+
+func (q *Queries) InsertFileKey(ctx context.Context, arg InsertFileKeyParams) error {
+	_, err := q.db.ExecContext(ctx, insertFileKey,
+		arg.ID,
+		arg.Label,
+		arg.PublicKey,
+		arg.Fingerprint,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const listSSHKeys = `-- name: ListSSHKeys :many
 
 SELECT id, label, type, fingerprint FROM ssh_keys WHERE enabled = 1 ORDER BY created_at, id
@@ -124,4 +150,15 @@ func (q *Queries) ListSSHKeysFull(ctx context.Context) ([]ListSSHKeysFullRow, er
 		return nil, err
 	}
 	return items, nil
+}
+
+const sSHKeyFingerprintExists = `-- name: SSHKeyFingerprintExists :one
+SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = ?) AS present
+`
+
+func (q *Queries) SSHKeyFingerprintExists(ctx context.Context, fingerprint string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, sSHKeyFingerprintExists, fingerprint)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
 }

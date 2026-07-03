@@ -61,14 +61,62 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 				return errResult("Endpoint not found: " + args.ID), nil
 			}
 			return jsonResult(endpointFull(*ep))
-		case "create", "update", "delete":
-			// Mutations require the account-scoped endpoint store; delegated to
-			// the REST-owning store in a later slice (create/update/delete via
-			// MCP are lower-traffic and not golden-gated). Demo ids are read-only.
+		case "create":
 			if demo.IsID(args.ID) {
 				return errResult(demoReadOnlyErr), nil
 			}
-			return errResult("endpoint mutation via MCP not yet wired"), nil
+			label, _ := args.Data["label"].(string)
+			host, _ := args.Data["host"].(string)
+			username, _ := args.Data["username"].(string)
+			if args.ID == "" || label == "" || host == "" || username == "" {
+				return errResult("id, data.label, data.host, data.username are required"), nil
+			}
+			port := int64(22)
+			if p, ok := args.Data["port"].(float64); ok {
+				port = int64(p)
+			}
+			var desc *string
+			if d, ok := args.Data["description"].(string); ok {
+				desc = &d
+			}
+			ep := store.Endpoint{
+				ID: args.ID, Label: label, Host: host, Port: port, Username: username,
+				UserVerification: "required", Description: desc,
+			}
+			if err := as.CreateEndpoint(ctx, ep); err != nil {
+				return errResult(err.Error()), nil
+			}
+			return jsonResult(map[string]any{"status": "created", "id": args.ID})
+		case "update":
+			if demo.IsID(args.ID) {
+				return errResult(demoReadOnlyErr), nil
+			}
+			if args.ID == "" || args.Data == nil {
+				return errResult("id and data are required"), nil
+			}
+			ok, err := as.UpdateEndpoint(ctx, args.ID, args.Data)
+			if err != nil {
+				return errResult(err.Error()), nil
+			}
+			if !ok {
+				return errResult("Endpoint not found: " + args.ID), nil
+			}
+			return jsonResult(map[string]any{"status": "updated", "id": args.ID})
+		case "delete":
+			if demo.IsID(args.ID) {
+				return errResult(demoReadOnlyErr), nil
+			}
+			if args.ID == "" {
+				return errResult("id is required"), nil
+			}
+			ok, err := as.DeleteEndpoint(ctx, args.ID)
+			if err != nil {
+				return errResult(err.Error()), nil
+			}
+			if !ok {
+				return errResult("Endpoint not found: " + args.ID), nil
+			}
+			return jsonResult(map[string]any{"status": "deleted", "id": args.ID})
 		}
 		return errResult("unknown action: " + args.Action), nil
 	})

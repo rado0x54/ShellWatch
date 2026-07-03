@@ -91,3 +91,21 @@ func (k *SSHKeys) ListFull(ctx context.Context) ([]SSHKeyFull, error) {
 	}
 	return out, nil
 }
+
+// UpsertFileKey inserts a discovered file key if no row with its fingerprint
+// exists yet (idempotent across restarts + re-scans). Port of the
+// key-directory-watcher's create-if-new.
+func (k *SSHKeys) UpsertFileKey(ctx context.Context, id, label, publicKey, fingerprint, now string) error {
+	q := gen.New(k.db)
+	present, err := q.SSHKeyFingerprintExists(ctx, fingerprint)
+	if err != nil {
+		return err
+	}
+	if present {
+		return nil
+	}
+	return q.InsertFileKey(ctx, gen.InsertFileKeyParams{
+		ID: id, Label: label, PublicKey: publicKey, Fingerprint: fingerprint,
+		CreatedAt: now, UpdatedAt: now,
+	})
+}

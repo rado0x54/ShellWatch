@@ -11,3 +11,10 @@ SELECT id, label, type, public_key, fingerprint FROM ssh_keys WHERE id = ?;
 -- name: ListSSHKeysFull :many
 SELECT id, label, type, public_key, fingerprint, enabled, created_at, last_used_at
 FROM ssh_keys ORDER BY created_at, id;
+
+-- name: SSHKeyFingerprintExists :one
+SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = ?) AS present;
+
+-- name: InsertFileKey :exec
+INSERT INTO ssh_keys (id, label, type, public_key, fingerprint, enabled, created_at, updated_at)
+VALUES (?, ?, 'file', ?, ?, 1, ?, ?);

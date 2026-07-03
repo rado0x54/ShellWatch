@@ -95,6 +95,55 @@ func (s *Session) GetEndpoint(ctx context.Context, id string) (*store.Endpoint, 
 	return s.deps.Endpoints.GetForAccount(ctx, id, s.accountID)
 }
 
+// CreateEndpoint creates an account-scoped endpoint (MCP path — the caller
+// supplies the id, unlike REST which mints one).
+func (s *Session) CreateEndpoint(ctx context.Context, ep store.Endpoint) error {
+	ep.AccountID = s.accountID
+	return s.deps.Endpoints.Create(ctx, ep)
+}
+
+// UpdateEndpoint read-merges a patch into an account-scoped endpoint and writes
+// it back. Returns false when no endpoint matched. Unknown keys are ignored.
+func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch map[string]any) (bool, error) {
+	existing, err := s.deps.Endpoints.GetForAccount(ctx, id, s.accountID)
+	if err != nil || existing == nil {
+		return false, err
+	}
+	merged := *existing
+	if v, ok := patch["label"].(string); ok {
+		merged.Label = v
+	}
+	if v, ok := patch["host"].(string); ok {
+		merged.Host = v
+	}
+	if v, ok := patch["username"].(string); ok {
+		merged.Username = v
+	}
+	if v, ok := patch["userVerification"].(string); ok {
+		merged.UserVerification = v
+	}
+	if v, ok := patch["port"].(float64); ok { // JSON numbers decode as float64
+		merged.Port = int64(v)
+	}
+	if v, ok := patch["agentForward"].(bool); ok {
+		merged.AgentForward = v
+	}
+	if v, ok := patch["description"]; ok {
+		if s2, isStr := v.(string); isStr {
+			merged.Description = &s2
+		} else if v == nil {
+			merged.Description = nil
+		}
+	}
+	return s.deps.Endpoints.Update(ctx, merged)
+}
+
+// DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing
+// matched.
+func (s *Session) DeleteEndpoint(ctx context.Context, id string) (bool, error) {
+	return s.deps.Endpoints.Delete(ctx, id, s.accountID)
+}
+
 // CreateSession opens a session against an endpoint owned by the account. A
 // foreign/unknown id always returns "Unknown endpoint" (no cross-account
 // probing / spurious approval prompts).
