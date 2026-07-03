@@ -11,6 +11,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/signagent"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/util"
 )
@@ -63,17 +64,13 @@ func (d *Deps) Handler() http.HandlerFunc {
 			return
 		}
 
-		ba := &brokerAgent{
-			ctx: ctx, identities: identities, broker: d.Broker,
-			accountID: principal.AccountID, connectionID: connID,
-			actionCtx: approval.Context{
-				Source:         "agent-proxy",
-				SourceIP:       clientIP(r),
-				ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
-				ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
-				ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
-			},
-		}
+		ba := signagent.New(ctx, identities, d.Broker, principal.AccountID, connID, approval.Context{
+			Source:         "agent-proxy",
+			SourceIP:       clientIP(r),
+			ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
+			ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
+			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
+		})
 
 		// Cancel stranded approvals when the connection ends.
 		defer d.Broker.Store().CancelForConnection(connID, "agent-proxy connection closed")
@@ -84,14 +81,14 @@ func (d *Deps) Handler() http.HandlerFunc {
 	}
 }
 
-func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]Identity, error) {
-	var out []Identity
+func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]signagent.Identity, error) {
+	var out []signagent.Identity
 	// File keys (admin) — offered with approval-gated signing.
 	if d.FileKeys != nil {
 		signers, err := d.FileKeys.Signers()
 		if err == nil {
 			for _, s := range signers {
-				out = append(out, Identity{Signer: s, Label: "file key"})
+				out = append(out, signagent.Identity{Signer: s, Label: "file key"})
 			}
 		}
 	}
@@ -101,7 +98,7 @@ func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]Identit
 		return nil, err
 	}
 	for _, c := range creds {
-		id, err := passkeyIdentity(c.PublicKeyOpenSSH, c.CredentialID, c.Label, d.RpID)
+		id, err := signagent.PasskeyIdentity(c.PublicKeyOpenSSH, c.CredentialID, c.Label, d.RpID)
 		if err != nil {
 			continue
 		}

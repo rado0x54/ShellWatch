@@ -20,6 +20,8 @@ import (
 // approval.Broker). Deny/expire return a sentinel error.
 type SignBroker interface {
 	RequestSign(ctx context.Context, accountID string, req signing.SignRequest, actionCtx approval.Context, redirectTo string) (signing.SignResponse, error)
+	// RequestKeyApproval gates a file-key sign — used by the forwarding agent.
+	RequestKeyApproval(ctx context.Context, accountID, keyLabel, keyFingerprint, connectionID string, actionCtx approval.Context) error
 }
 
 // WebAuthnSigner presents a passkey public key and signs via human approval.

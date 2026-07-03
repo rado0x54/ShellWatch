@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-package agentproxy
+// Package signagent is the read-only ssh/agent.Agent whose every sign — file
+// key or passkey — is routed through the pending-action broker for human
+// approval. Shared by the agent-proxy WebSocket (source="agent-proxy") and the
+// terminal SSH connection's agent forwarding (source="agent-forwarding").
+package signagent
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -16,9 +19,9 @@ import (
 	"github.com/rado0x54/shellwatch/internal/signing"
 )
 
-// Identity is one key the proxy agent offers.
+// Identity is one key the agent offers.
 type Identity struct {
-	// Signer is set for file keys (the proxy signs after approval).
+	// Signer is set for file keys (signed directly after approval).
 	Signer ssh.Signer
 	// Passkey fields (webauthn-sk): PublicKey is presented; signing goes
 	// through the broker.
@@ -29,20 +32,32 @@ type Identity struct {
 	RpID         string
 }
 
-// brokerAgent is the read-only ssh/agent.Agent served over the WS. Every sign
-// — file key or passkey — is routed through the pending-action broker.
-type brokerAgent struct {
+// Broker is the slice of the pending-action broker the agent needs (satisfied
+// by *approval.Broker and the sshx.SignBroker facade).
+type Broker interface {
+	RequestSign(ctx context.Context, accountID string, req signing.SignRequest, actionCtx approval.Context, redirectTo string) (signing.SignResponse, error)
+	RequestKeyApproval(ctx context.Context, accountID, keyLabel, keyFingerprint, connectionID string, actionCtx approval.Context) error
+}
+
+// Agent is the broker-backed read-only ssh/agent.Agent.
+type Agent struct {
 	ctx          context.Context
 	identities   []Identity
-	broker       *approval.Broker
+	broker       Broker
 	accountID    string
 	connectionID string
 	actionCtx    approval.Context
 }
 
-var _ agent.Agent = (*brokerAgent)(nil)
+// New builds a broker-backed agent. actionCtx carries the source (agent-proxy /
+// agent-forwarding) and endpoint/session metadata surfaced on the /sign page.
+func New(ctx context.Context, identities []Identity, broker Broker, accountID, connectionID string, actionCtx approval.Context) *Agent {
+	return &Agent{ctx: ctx, identities: identities, broker: broker, accountID: accountID, connectionID: connectionID, actionCtx: actionCtx}
+}
 
-func (a *brokerAgent) List() ([]*agent.Key, error) {
+var _ agent.Agent = (*Agent)(nil)
+
+func (a *Agent) List() ([]*agent.Key, error) {
 	keys := make([]*agent.Key, 0, len(a.identities))
 	for _, id := range a.identities {
 		pub := id.PublicKey
@@ -57,7 +72,7 @@ func (a *brokerAgent) List() ([]*agent.Key, error) {
 	return keys, nil
 }
 
-func (a *brokerAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	id := a.match(key)
 	if id == nil {
 		return nil, fmt.Errorf("agent: key not found")
@@ -72,7 +87,6 @@ func (a *brokerAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, erro
 		}
 		return signing.BuildSSHSignature(resp)
 	}
-	// File key: human approval, then the proxy signs.
 	fp := ssh.FingerprintSHA256(id.Signer.PublicKey())
 	if err := a.broker.RequestKeyApproval(a.ctx, a.accountID, id.Label, fp, a.connectionID, a.actionCtx); err != nil {
 		return nil, err
@@ -81,9 +95,8 @@ func (a *brokerAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, erro
 }
 
 // match finds the identity for an offered key, tolerating the OpenSSH 10.3
-// webauthn-sk -> sk-ecdsa canonicalization (the offered blob may be the sk
-// form; we compare the canonicalized bytes).
-func (a *brokerAgent) match(key ssh.PublicKey) *Identity {
+// webauthn-sk -> sk-ecdsa canonicalization (the offered blob may be the sk form).
+func (a *Agent) match(key ssh.PublicKey) *Identity {
 	want := key.Marshal()
 	for i := range a.identities {
 		id := &a.identities[i]
@@ -104,8 +117,6 @@ func (a *brokerAgent) match(key ssh.PublicKey) *Identity {
 	return nil
 }
 
-// canonicalizeSK swaps a leading webauthn-sk-* type string to sk-* so the two
-// forms compare equal (OpenSSH 10.3 sends the sk form in SIGN_REQUEST).
 func canonicalizeSK(blob []byte) []byte {
 	const wa = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
 	const sk = "sk-ecdsa-sha2-nistp256@openssh.com"
@@ -116,8 +127,7 @@ func canonicalizeSK(blob []byte) []byte {
 	if typeLen+4 > len(blob) {
 		return blob
 	}
-	typ := string(blob[4 : 4+typeLen])
-	if typ != wa {
+	if string(blob[4:4+typeLen]) != wa {
 		return blob
 	}
 	rest := blob[4+typeLen:]
@@ -128,25 +138,24 @@ func canonicalizeSK(blob []byte) []byte {
 	return out
 }
 
-func (a *brokerAgent) SignWithFlags(key ssh.PublicKey, data []byte, _ agent.SignatureFlags) (*ssh.Signature, error) {
+func (a *Agent) SignWithFlags(key ssh.PublicKey, data []byte, _ agent.SignatureFlags) (*ssh.Signature, error) {
 	return a.Sign(key, data)
 }
 
-// Read-only agent: mutation + lock operations are unsupported.
-func (a *brokerAgent) Add(agent.AddedKey) error       { return errReadOnly }
-func (a *brokerAgent) Remove(ssh.PublicKey) error     { return errReadOnly }
-func (a *brokerAgent) RemoveAll() error               { return errReadOnly }
-func (a *brokerAgent) Lock([]byte) error              { return errReadOnly }
-func (a *brokerAgent) Unlock([]byte) error            { return errReadOnly }
-func (a *brokerAgent) Signers() ([]ssh.Signer, error) { return nil, errReadOnly }
-func (a *brokerAgent) Extension(string, []byte) ([]byte, error) {
+func (a *Agent) Add(agent.AddedKey) error       { return errReadOnly }
+func (a *Agent) Remove(ssh.PublicKey) error     { return errReadOnly }
+func (a *Agent) RemoveAll() error               { return errReadOnly }
+func (a *Agent) Lock([]byte) error              { return errReadOnly }
+func (a *Agent) Unlock([]byte) error            { return errReadOnly }
+func (a *Agent) Signers() ([]ssh.Signer, error) { return nil, errReadOnly }
+func (a *Agent) Extension(string, []byte) ([]byte, error) {
 	return nil, agent.ErrExtensionUnsupported
 }
 
 var errReadOnly = fmt.Errorf("agent is read-only")
 
-// passkeyIdentity builds an Identity from a stored OpenSSH webauthn-sk line.
-func passkeyIdentity(authorizedKeysLine, credentialID, label, rpID string) (Identity, error) {
+// PasskeyIdentity builds an Identity from a stored OpenSSH webauthn-sk line.
+func PasskeyIdentity(authorizedKeysLine, credentialID, label, rpID string) (Identity, error) {
 	fields := strings.Fields(authorizedKeysLine)
 	if len(fields) < 2 {
 		return Identity{}, fmt.Errorf("invalid authorized_keys line")
@@ -161,7 +170,6 @@ func passkeyIdentity(authorizedKeysLine, credentialID, label, rpID string) (Iden
 	}, nil
 }
 
-// skPublicKey presents a stored webauthn-sk blob as an ssh.PublicKey.
 type skPublicKey struct{ blob []byte }
 
 func (k skPublicKey) Type() string    { return signing.WebAuthnSKAlgo }
@@ -169,5 +177,3 @@ func (k skPublicKey) Marshal() []byte { return k.blob }
 func (k skPublicKey) Verify([]byte, *ssh.Signature) error {
 	return fmt.Errorf("server-side verification only")
 }
-
-var _ = sha256.Sum256

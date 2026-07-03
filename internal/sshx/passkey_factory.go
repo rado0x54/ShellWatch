@@ -11,8 +11,10 @@ import (
 	"fmt"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/rado0x54/shellwatch/internal/approval"
+	"github.com/rado0x54/shellwatch/internal/signagent"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -54,9 +56,13 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		if len(signers) == 0 {
 			return nil, fmt.Errorf("no credentials available for endpoint %s", fp.Endpoint.ID)
 		}
+		var fwdAgent agent.Agent
+		if fp.Endpoint.AgentForward {
+			fwdAgent = p.buildForwardingAgent(ctx, fp, connID)
+		}
 		return Connect(ctx, ConnectParams{
 			Host: fp.Endpoint.Host, Port: fp.Endpoint.Port, Username: fp.Endpoint.Username,
-			Signers: signers, AgentForward: fp.Endpoint.AgentForward,
+			Signers: signers, AgentForward: fp.Endpoint.AgentForward, ForwardingAgent: fwdAgent,
 		})
 	}
 }
@@ -99,4 +105,37 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		}
 	}
 	return signers, nil
+}
+
+// buildForwardingAgent assembles the broker-backed agent served over the
+// remote's forwarded auth-agent channel. Same identities as connection auth
+// (passkeys + file keys), but signs carry source="agent-forwarding" + the
+// session id so the /sign page attributes forwarded signs correctly.
+func (p PasskeyFactoryParams) buildForwardingAgent(ctx context.Context, fp terminal.FactoryParams, connID string) agent.Agent {
+	var identities []signagent.Identity
+	if p.FileKeys != nil {
+		if fileSigners, err := p.FileKeys.Signers(); err == nil {
+			for _, s := range fileSigners {
+				identities = append(identities, signagent.Identity{Signer: s, Label: "file key"})
+			}
+		}
+	}
+	if creds, err := p.Credentials.ActiveCredentialsForAuth(ctx, fp.Endpoint.AccountID); err == nil {
+		for _, c := range creds {
+			id, err := signagent.PasskeyIdentity(c.PublicKeyOpenSSH, c.CredentialID, c.Label, p.RpID)
+			if err == nil {
+				identities = append(identities, id)
+			}
+		}
+	}
+	if len(identities) == 0 {
+		return nil
+	}
+	actionCtx := approval.Context{
+		Source:          "agent-forwarding",
+		EndpointLabel:   fp.Endpoint.Label,
+		EndpointAddress: fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
+		SessionID:       fp.SessionID,
+	}
+	return signagent.New(ctx, identities, p.BrokerFunc(), fp.Endpoint.AccountID, connID, actionCtx)
 }

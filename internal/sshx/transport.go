@@ -10,12 +10,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -100,7 +102,10 @@ type ConnectParams struct {
 	Port         int
 	Username     string
 	Signers      []ssh.Signer
-	AgentForward bool // reserved for Phase 4 (auth-agent@openssh.com)
+	AgentForward bool
+	// ForwardingAgent services the remote's auth-agent@openssh.com channel when
+	// AgentForward is set — every forwarded sign routes through the broker.
+	ForwardingAgent agent.Agent
 	// HostKeyCallback defaults to InsecureIgnoreHostKey (ShellWatch brokers to
 	// operator-configured hosts; host-key pinning is tracked separately).
 	HostKeyCallback ssh.HostKeyCallback
@@ -139,6 +144,18 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 		client.Close()
 		return nil, fmt.Errorf("open session on %s: %w", p.Host, err)
 	}
+
+	// Agent forwarding: register the local (broker-backed) agent for the
+	// remote's auth-agent@openssh.com channel opens, then request forwarding on
+	// this session channel — that's what makes sshd export $SSH_AUTH_SOCK.
+	if p.AgentForward && p.ForwardingAgent != nil {
+		if err := agent.ForwardToAgent(client, p.ForwardingAgent); err != nil {
+			slog.Warn("agent forwarding: ForwardToAgent failed", "host", p.Host, "err", err)
+		} else if err := agent.RequestAgentForwarding(session); err != nil {
+			slog.Warn("agent forwarding: request on session failed", "host", p.Host, "err", err)
+		}
+	}
+
 	modes := ssh.TerminalModes{ssh.ECHO: 1}
 	if err := session.RequestPty(ptyTerm, ptyRows, ptyCols, modes); err != nil {
 		session.Close()
