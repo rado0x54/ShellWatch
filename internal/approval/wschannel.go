@@ -15,13 +15,36 @@ type WSChannel struct {
 	Hub AccountSender
 }
 
-// Notify sends a sign:request toast with a deep link.
+// Notify sends a sign:request toast with a deep link. The payload carries every
+// field the browser toast renders (port of ws-channel.ts) — notably actionType
+// (which selects the webauthn-sign vs key-approve render branch) and the
+// per-type detail fields. Omitting them made the SPA read credentialId off a
+// key-approve action and crash.
 func (c *WSChannel) Notify(a *Action, deepLink string) {
-	c.Hub.SendToAccount(a.AccountID, map[string]any{
-		"type":     "sign:request",
-		"actionId": a.ID,
-		"redirect": deepLink,
-	})
+	payload := map[string]any{
+		"type":       "sign:request",
+		"actionId":   a.ID,
+		"actionType": string(a.Type),
+		"deepLink":   deepLink,
+		"source":     a.Context.Source,
+	}
+	if a.Context.EndpointLabel != "" {
+		payload["endpointLabel"] = a.Context.EndpointLabel
+	}
+	if a.Context.EndpointAddress != "" {
+		payload["endpointAddress"] = a.Context.EndpointAddress
+	}
+	switch a.Type {
+	case TypeWebAuthnSign:
+		payload["passkeyLabel"] = a.PasskeyLabel
+		payload["credentialId"] = a.CredentialID
+		payload["challenge"] = a.Challenge
+		payload["rpId"] = a.RpID
+	case TypeKeyApprove:
+		payload["keyLabel"] = a.KeyLabel
+		payload["keyFingerprint"] = a.KeyFingerprint
+	}
+	c.Hub.SendToAccount(a.AccountID, payload)
 }
 
 // Resolved clears the toast on other tabs.
