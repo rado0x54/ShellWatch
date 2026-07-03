@@ -79,6 +79,23 @@ func BuildSSHSignature(resp SignResponse) (*ssh.Signature, error) {
 	return &ssh.Signature{Format: WebAuthnSKAlgo, Blob: blob, Rest: rest}, nil
 }
 
+// SkipSignature returns a well-formed but cryptographically invalid webauthn-sk
+// signature. The SSH server rejects it (verification fails) and replies
+// USERAUTH_FAILURE, which makes x/crypto's auth loop try the NEXT offered key
+// rather than aborting the whole attempt — the equivalent of Node's
+// SKIP_IDENTITY_SIGNATURE (deny this key -> try the next). Used by the passkey
+// signer when a human denies one of several matching keys.
+func SkipSignature() *ssh.Signature {
+	one := big.NewInt(1)
+	blob := append(mpint(one), mpint(one)...)
+	rest := []byte{0}                             // flags
+	rest = binary.BigEndian.AppendUint32(rest, 0) // counter
+	rest = appendSSHString(rest, nil)             // origin
+	rest = appendSSHString(rest, []byte("{}"))    // clientDataJSON
+	rest = appendSSHString(rest, nil)             // extensions
+	return &ssh.Signature{Format: WebAuthnSKAlgo, Blob: blob, Rest: rest}
+}
+
 func parseECDSASignature(der []byte) (*big.Int, *big.Int, error) {
 	var r, s big.Int
 	input := cryptobyte.String(der)

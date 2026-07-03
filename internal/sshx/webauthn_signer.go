@@ -8,6 +8,7 @@ package sshx
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"golang.org/x/crypto/ssh"
@@ -65,6 +66,13 @@ func (s *WebAuthnSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) 
 		ConnectionID:     s.ConnectionID,
 	}, s.ActionCtx, s.RedirectTo)
 	if err != nil {
+		// A human deny should fall through to the next offered key (Node's
+		// SKIP_IDENTITY_SIGNATURE): return a server-rejectable signature so
+		// x/crypto's auth loop tries the next signer instead of aborting. Any
+		// other failure (expiry, cancelled context) aborts the attempt.
+		if errors.Is(err, approval.ErrDenied) {
+			return signing.SkipSignature(), nil
+		}
 		return nil, err
 	}
 	return signing.BuildSSHSignature(resp)

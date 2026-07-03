@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -47,6 +48,11 @@ type Agent struct {
 	accountID    string
 	connectionID string
 	actionCtx    approval.Context
+	// signMu serializes approvals: agent forwarding serves each auth-agent
+	// channel in its own goroutine (x/crypto's ForwardToAgent), so without this
+	// a remote offering several keys would pop every approval toast at once.
+	// One pending approval at a time; a deny falls through to the next key.
+	signMu sync.Mutex
 }
 
 // New builds a broker-backed agent. actionCtx carries the source (agent-proxy /
@@ -77,6 +83,9 @@ func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	if id == nil {
 		return nil, fmt.Errorf("agent: key not found")
 	}
+	// One approval prompt at a time across concurrent forwarded channels.
+	a.signMu.Lock()
+	defer a.signMu.Unlock()
 	if id.IsPasskey {
 		resp, err := a.broker.RequestSign(a.ctx, a.accountID, signing.SignRequest{
 			CredentialID: id.CredentialID, DataToSign: data, RpID: id.RpID, PasskeyLabel: id.Label,
