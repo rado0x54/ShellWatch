@@ -129,6 +129,44 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 	})
 }
 
+func mountLogoutError(r chi.Router, p ProviderParams) {
+	// Logout is forgiving: land on "/" on a missing/stale challenge, and reject
+	// an unhinted (CSRF) logout that Hydra can't attribute to a client.
+	r.Get("/api/hydra/logout", func(w http.ResponseWriter, r *http.Request) {
+		challenge := r.URL.Query().Get("logout_challenge")
+		if challenge == "" {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		lr, err := p.Admin.GetLogoutRequest(r.Context(), challenge)
+		if err != nil {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		if lr.Client == nil || lr.Client.ClientID == "" {
+			_ = p.Admin.RejectLogoutRequest(r.Context(), challenge)
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		redir, err := p.Admin.AcceptLogoutRequest(r.Context(), challenge)
+		if err != nil {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, redir.RedirectTo, http.StatusFound)
+	})
+
+	// Hydra error landing page (post_logout / flow errors surface here).
+	r.Get("/api/hydra/error", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		errMsg := q.Get("error")
+		if errMsg == "" {
+			errMsg = "error"
+		}
+		writeHTML(w, 200, renderErrorPage(errMsg, q.Get("error_description")))
+	})
+}
+
 func writeHTML(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -216,6 +254,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 	r.Post("/api/hydra/consent/approve", p.consentApprove)
 
 	mountProviderPages(r, p)
+	mountLogoutError(r, p)
 }
 
 func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {

@@ -24,6 +24,8 @@ type FakeAdmin struct {
 	consentSessions map[string][]hydra.ConsentSession
 	RevokedConsent  []string
 	RevokedLogin    []string
+	logout          map[string]hydra.LogoutRequest
+	RejectedLogout  []string
 	counter         int
 }
 
@@ -148,6 +150,41 @@ func (f *FakeAdmin) RevokeLoginSessions(_ context.Context, subject string) error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.RevokedLogin = append(f.RevokedLogin, subject)
+	return nil
+}
+
+// SetLogoutRequest seeds a logout challenge.
+func (f *FakeAdmin) SetLogoutRequest(challenge string, req hydra.LogoutRequest) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.logout == nil {
+		f.logout = map[string]hydra.LogoutRequest{}
+	}
+	f.logout[challenge] = req
+}
+
+func (f *FakeAdmin) GetLogoutRequest(_ context.Context, challenge string) (hydra.LogoutRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if lr, ok := f.logout[challenge]; ok {
+		return lr, nil
+	}
+	return hydra.LogoutRequest{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown logout challenge"}
+}
+
+func (f *FakeAdmin) AcceptLogoutRequest(_ context.Context, challenge string) (hydra.Redirect, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.logout[challenge]; !ok {
+		return hydra.Redirect{}, &hydra.APIError{Status: 404, Msg: "fake-hydra: unknown logout challenge"}
+	}
+	return hydra.Redirect{RedirectTo: "https://hydra.test/logout-callback?c=" + challenge}, nil
+}
+
+func (f *FakeAdmin) RejectLogoutRequest(_ context.Context, challenge string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.RejectedLogout = append(f.RejectedLogout, challenge)
 	return nil
 }
 

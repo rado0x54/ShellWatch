@@ -60,11 +60,13 @@ type AcceptConsent struct {
 	Session                  map[string]any `json:"session,omitempty"`
 }
 
-// LogoutRequest is the GET logout-challenge response (subset).
+// LogoutRequest is the GET logout-challenge response (subset). `client` is
+// populated only when Hydra attributes the logout to a relying party via a
+// valid id_token_hint — an unhinted (CSRF) logout has no client.
 type LogoutRequest struct {
-	Challenge string `json:"challenge"`
-	Subject   string `json:"subject"`
-	ClientID  string `json:"client,omitempty"`
+	Challenge string        `json:"challenge"`
+	Subject   string        `json:"subject"`
+	Client    *OAuth2Client `json:"client"`
 }
 
 // ConsentSession is one authorized-client grant (listConsentSessions row).
@@ -87,6 +89,9 @@ type Admin interface {
 	ListConsentSessions(ctx context.Context, subject string) ([]ConsentSession, error)
 	RevokeConsentSessions(ctx context.Context, subject, clientID string) error
 	RevokeLoginSessions(ctx context.Context, subject string) error
+	GetLogoutRequest(ctx context.Context, challenge string) (LogoutRequest, error)
+	AcceptLogoutRequest(ctx context.Context, challenge string) (Redirect, error)
+	RejectLogoutRequest(ctx context.Context, challenge string) error
 	CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error)
 	GetClient(ctx context.Context, clientID string) (*OAuth2Client, error)
 	UpdateClient(ctx context.Context, clientID string, client OAuth2Client) (OAuth2Client, error)

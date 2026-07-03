@@ -188,6 +188,28 @@ func (c *AdminClient) RevokeLoginSessions(ctx context.Context, subject string) e
 	return err
 }
 
+// GetLogoutRequest fetches a logout challenge.
+func (c *AdminClient) GetLogoutRequest(ctx context.Context, challenge string) (LogoutRequest, error) {
+	var lr LogoutRequest
+	err := c.adminJSON(ctx, http.MethodGet,
+		"/admin/oauth2/auth/requests/logout?logout_challenge="+url.QueryEscape(challenge), nil, &lr)
+	return lr, err
+}
+
+// AcceptLogoutRequest accepts a logout challenge.
+func (c *AdminClient) AcceptLogoutRequest(ctx context.Context, challenge string) (Redirect, error) {
+	var r Redirect
+	err := c.adminJSON(ctx, http.MethodPut,
+		"/admin/oauth2/auth/requests/logout/accept?logout_challenge="+url.QueryEscape(challenge), nil, &r)
+	return r, err
+}
+
+// RejectLogoutRequest rejects a logout challenge (CSRF guard).
+func (c *AdminClient) RejectLogoutRequest(ctx context.Context, challenge string) error {
+	return c.adminJSON(ctx, http.MethodPut,
+		"/admin/oauth2/auth/requests/logout/reject?logout_challenge="+url.QueryEscape(challenge), nil, nil)
+}
+
 // CreateClient registers an OAuth2 client (POST /admin/clients).
 func (c *AdminClient) CreateClient(ctx context.Context, client OAuth2Client) (OAuth2Client, error) {
 	var out OAuth2Client

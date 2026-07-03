@@ -239,3 +239,48 @@ func TestPushGoldens(t *testing.T) {
 		`{"endpoint":"https://fcm.googleapis.com/fcm/send/abc"}`, "")
 	assertEnvelope(t, "push-unsubscribe", "/api/push/subscribe", s, b)
 }
+
+// --- Hydra logout provider (HTML/redirect flow; not in the OpenAPI contract) ---
+
+func TestHydraLogout(t *testing.T) {
+	ts, _, fake, _ := authedApp(t, nil)
+	// The httptest client must NOT auto-follow redirects (we assert the Location).
+	client := ts.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	get := func(path string) (int, string) {
+		res, err := client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		return res.StatusCode, res.Header.Get("Location")
+	}
+
+	// Missing challenge -> redirect home.
+	if s, loc := get("/api/hydra/logout"); s != 302 || loc != "/" {
+		t.Errorf("missing challenge: got %d %q", s, loc)
+	}
+
+	// Client-attributed logout -> accept + redirect to Hydra's callback.
+	fake.SetLogoutRequest("lo-ok", hydra.LogoutRequest{
+		Challenge: "lo-ok", Subject: acct, Client: &hydra.OAuth2Client{ClientID: "shellwatch-web"},
+	})
+	if s, loc := get("/api/hydra/logout?logout_challenge=lo-ok"); s != 302 || loc != "https://hydra.test/logout-callback?c=lo-ok" {
+		t.Errorf("valid logout: got %d %q", s, loc)
+	}
+
+	// Unhinted (CSRF) logout — no client -> reject + redirect home.
+	fake.SetLogoutRequest("lo-csrf", hydra.LogoutRequest{Challenge: "lo-csrf", Subject: acct})
+	if s, loc := get("/api/hydra/logout?logout_challenge=lo-csrf"); s != 302 || loc != "/" {
+		t.Errorf("csrf logout: got %d %q", s, loc)
+	}
+	if len(fake.RejectedLogout) != 1 || fake.RejectedLogout[0] != "lo-csrf" {
+		t.Errorf("expected lo-csrf rejected, got %v", fake.RejectedLogout)
+	}
+
+	// Stale/unknown challenge -> forgiving redirect home.
+	if s, loc := get("/api/hydra/logout?logout_challenge=nope"); s != 302 || loc != "/" {
+		t.Errorf("stale logout: got %d %q", s, loc)
+	}
+}
