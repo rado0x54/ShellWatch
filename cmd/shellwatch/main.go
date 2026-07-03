@@ -33,6 +33,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/mcp"
 	"github.com/rado0x54/shellwatch/internal/rest"
+	"github.com/rado0x54/shellwatch/internal/seed"
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
@@ -94,9 +95,12 @@ func run() error {
 	flusher := store.NewLastUsedFlusher(db, clk)
 	go flusher.Run(ctx, time.Minute)
 
-	// First-run seeding (admin endpoints from config) + inactive-account cleanup.
-	if _, err := store.SeedAdminEndpoints(ctx, db, clk, cfg.SeedAdminEndpoints, newUUID); err != nil {
-		slog.Warn("seed admin endpoints failed", "err", err)
+	// First-run seeding (admin account + passkeys + endpoints) + inactive-account
+	// cleanup.
+	if res, err := seed.FromConfig(ctx, db, cfg, newUUID, clk.Now()); err != nil {
+		slog.Warn("first-run seeding failed", "err", err)
+	} else if res.SeededAdminAccount || res.SeededAdminPasskey {
+		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
 	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
 		slog.Info("cleaned up inactive accounts", "count", len(ids))
