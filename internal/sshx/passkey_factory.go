@@ -111,7 +111,15 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 // remote's forwarded auth-agent channel. Same identities as connection auth
 // (passkeys + file keys), but signs carry source="agent-forwarding" + the
 // session id so the /sign page attributes forwarded signs correctly.
-func (p PasskeyFactoryParams) buildForwardingAgent(ctx context.Context, fp terminal.FactoryParams, connID string) agent.Agent {
+//
+// NOTE: the sign-wait context is context.Background(), NOT the passed ctx.
+// Forwarded signs happen long after the connection handshake — whenever the
+// remote uses the agent — but ctx here is the session-create (request) context,
+// which is already cancelled by then. Using it made every forwarded sign fail
+// immediately with "context canceled". Stranded approvals are bounded by the
+// 60s action TTL (and the per-connection cancel when the session tears down).
+func (p PasskeyFactoryParams) buildForwardingAgent(_ context.Context, fp terminal.FactoryParams, connID string) agent.Agent {
+	ctx := context.Background()
 	var identities []signagent.Identity
 	if p.FileKeys != nil {
 		if fileSigners, err := p.FileKeys.Signers(); err == nil {
