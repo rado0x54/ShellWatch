@@ -70,7 +70,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 	}
 	actionCtx := approval.Context{
 		Source:          "endpoint-auth",
-		EndpointLabel:   fp.Endpoint.ID,
+		EndpointLabel:   fp.Endpoint.Label,
 		EndpointAddress: fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
 		TriggerKind:     string(fp.Trigger.Kind),
 		SourceIP:        fp.Trigger.SourceIP,

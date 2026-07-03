@@ -132,7 +132,7 @@ func (s *Session) resolveRef(ctx context.Context, id string) (*terminal.Endpoint
 		return nil, err
 	}
 	ref := terminal.EndpointRef{
-		ID: ep.ID, AccountID: ep.AccountID, Host: ep.Host, Port: int(ep.Port),
+		ID: ep.ID, Label: ep.Label, AccountID: ep.AccountID, Host: ep.Host, Port: int(ep.Port),
 		Username: ep.Username, UserVerification: ep.UserVerification, AgentForward: ep.AgentForward,
 	}
 	return &ref, nil

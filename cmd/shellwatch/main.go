@@ -13,11 +13,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -56,6 +58,10 @@ func run() error {
 	// Positional config path wins, mirroring the Node CLI.
 	if flag.NArg() > 0 {
 		*configPath = flag.Arg(0)
+	}
+
+	if err := setupLogging(); err != nil {
+		return err
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -236,6 +242,43 @@ func run() error {
 	err = srv.Shutdown(shutdownCtx)
 	manager.Destroy()
 	return err
+}
+
+// setupLogging installs the default slog handler. Controlled by env:
+//
+//	SHELLWATCH_LOG_LEVEL   debug | info (default) | warn | error
+//	SHELLWATCH_LOG_FORMAT  text (default) | json
+//	SHELLWATCH_LOG_FILE    path to also append logs to (in addition to stdout)
+//
+// Logs go to stdout so `pnpm dev` / a terminal shows them; a file sink is added
+// for persistent debugging when SHELLWATCH_LOG_FILE is set.
+func setupLogging() error {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("SHELLWATCH_LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+
+	var out io.Writer = os.Stdout
+	if path := os.Getenv("SHELLWATCH_LOG_FILE"); path != "" {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("open log file: %w", err)
+		}
+		out = io.MultiWriter(os.Stdout, f)
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var h slog.Handler = slog.NewTextHandler(out, opts)
+	if strings.ToLower(os.Getenv("SHELLWATCH_LOG_FORMAT")) == "json" {
+		h = slog.NewJSONHandler(out, opts)
+	}
+	slog.SetDefault(slog.New(h))
+	return nil
 }
 
 func staticFilesystem(dir string) (fs.FS, error) {

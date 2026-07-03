@@ -7,6 +7,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/rest"
+	"github.com/rado0x54/shellwatch/internal/signing"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
@@ -259,5 +261,46 @@ func TestMetaConfigJSGolden(t *testing.T) {
 	}
 	if buf.String() != golden.Body {
 		t.Errorf("config.js body mismatch\n--- golden ---\n%s\n--- go ---\n%s", golden.Body, buf.String())
+	}
+}
+
+// --- webauthn-sign resolve: clientDataJSON is a raw string, not base64url ---
+
+func TestWebAuthnSignResolveBodyShape(t *testing.T) {
+	ts, as := actionsGoldenServer(t)
+	resolved := make(chan struct{}, 1)
+	seed := func(uv string) *approval.Action {
+		return as.Create(approval.CreateParams{
+			AccountID: acct, Type: approval.TypeWebAuthnSign, RedirectTo: "/sign/approved",
+			CredentialID: "cred-1", Challenge: "Y2g=", RpID: "localhost", UserVerification: uv,
+			Context:     approval.Context{Source: "endpoint-auth"},
+			ResolveSign: func(_ signing.SignResponse) { resolved <- struct{}{} },
+		})
+	}
+
+	// authenticatorData with the UV bit (byte 32 = 0x04) set, base64url; a raw
+	// clientDataJSON JSON string (the browser sends TextDecoder().decode(...)).
+	authDataUV := base64.RawURLEncoding.EncodeToString(append(make([]byte, 32), 0x04))
+	sig := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+	body := `{"authenticatorData":"` + authDataUV + `","signature":"` + sig +
+		`","clientDataJSON":"{\"type\":\"webauthn.get\",\"challenge\":\"Y2g\"}"}`
+
+	a := seed("required")
+	s, resp := doJSON(t, ts, "POST", "/api/actions/"+a.ID+"/resolve", body)
+	if s != 200 || resp["redirectTo"] != "/sign/approved" {
+		t.Fatalf("resolve failed: %d %v", s, resp)
+	}
+	select {
+	case <-resolved:
+	default:
+		t.Fatal("resolveSign callback not invoked — the signature never reached the SSH signer")
+	}
+
+	// Missing clientDataJSON -> 400.
+	a2 := seed("preferred")
+	s, resp = doJSON(t, ts, "POST", "/api/actions/"+a2.ID+"/resolve",
+		`{"authenticatorData":"`+authDataUV+`","signature":"`+sig+`"}`)
+	if s != 400 || resp["error"] != "Missing required fields: authenticatorData, signature, clientDataJSON" {
+		t.Errorf("missing clientDataJSON: got %d %v", s, resp)
 	}
 }

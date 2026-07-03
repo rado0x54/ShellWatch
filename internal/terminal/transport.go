@@ -34,6 +34,7 @@ type FactoryParams struct {
 // store.Endpoint to avoid an import cycle).
 type EndpointRef struct {
 	ID               string
+	Label            string
 	AccountID        string
 	Host             string
 	Port             int

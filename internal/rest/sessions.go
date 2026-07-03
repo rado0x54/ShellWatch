@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -94,6 +95,11 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 		Kind: terminal.SourceUI, SourceIP: clientIP(r),
 	})
 	if err != nil {
+		// The SSH connect (incl. passkey signing handshake) failed — log the
+		// reason server-side; the 400 body alone is easy to miss in the browser.
+		slog.Warn("session create failed",
+			"endpointId", ref.ID, "endpointLabel", ref.Label, "address",
+			ref.Username+"@"+ref.Host, "err", err)
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -118,7 +124,7 @@ func (s *Sessions) resolveEndpoint(ctx context.Context, id, accountID string) (t
 
 func toRef(e store.Endpoint) terminal.EndpointRef {
 	return terminal.EndpointRef{
-		ID: e.ID, AccountID: e.AccountID, Host: e.Host, Port: int(e.Port),
+		ID: e.ID, Label: e.Label, AccountID: e.AccountID, Host: e.Host, Port: int(e.Port),
 		Username: e.Username, UserVerification: e.UserVerification, AgentForward: e.AgentForward,
 	}
 }

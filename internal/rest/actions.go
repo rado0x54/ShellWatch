@@ -61,7 +61,10 @@ func (a *Actions) resolve(w http.ResponseWriter, r *http.Request) {
 		body := readRawBody(r)
 		authData := b64urlField(body, "authenticatorData")
 		sig := b64urlField(body, "signature")
-		cdj := b64urlField(body, "clientDataJSON")
+		// clientDataJSON arrives as the raw JSON string (the browser sends
+		// TextDecoder().decode(...)), NOT base64url — it's parsed as JSON and
+		// spliced verbatim into the OpenSSH webauthn-sk signature blob.
+		cdj := rawStringField(body, "clientDataJSON")
 		if authData == nil || sig == nil || cdj == nil {
 			writeErr(w, 400, "Missing required fields: authenticatorData, signature, clientDataJSON")
 			return
@@ -140,4 +143,18 @@ func b64urlField(body map[string]json.RawMessage, key string) []byte {
 		return nil
 	}
 	return d
+}
+
+// rawStringField returns a string body field's bytes verbatim (nil if missing
+// or empty) — used for clientDataJSON, which is a raw JSON string, not base64url.
+func rawStringField(body map[string]json.RawMessage, key string) []byte {
+	raw, ok := body[key]
+	if !ok {
+		return nil
+	}
+	s := jsonString(raw)
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
 }

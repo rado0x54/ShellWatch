@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/clock"
+
 	"github.com/rado0x54/shellwatch/internal/agentproxy"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
@@ -70,6 +72,9 @@ func New(p Params) http.Handler {
 	agentProxy := p.Config.AgentSocket.ProxyEnabled
 
 	r := chi.NewRouter()
+	// Outermost: log every request (method/path/status/duration) so 4xx/5xx are
+	// visible in stdout / the log file, not just the response body.
+	r.Use(requestLogger(clock.Real{}))
 	r.Use(auth.Gate(auth.GateParams{
 		Resolve:           p.Resolve,
 		ExternalURL:       externalURL,
