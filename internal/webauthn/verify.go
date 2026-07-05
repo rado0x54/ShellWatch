@@ -81,7 +81,17 @@ func VerifyAssertion(rawCredential []byte, challenge, rpID string, origins []str
 		protocol.TopOriginDefaultVerificationMode, false, true, true, storedCOSE); err != nil {
 		return nil, fmt.Errorf("verification failed: %w", err)
 	}
-	_ = storedCounter // counter regression is enforced inside Verify
+	// Clone detection (protocol.Verify is signature-level only and never sees
+	// the stored counter): when either side reports a counter, the response
+	// counter must strictly increase — a regression means a cloned/replayed
+	// authenticator. Same rule + wording as @simplewebauthn (assertion.ts).
+	responseCounter := pca.Response.AuthenticatorData.Counter
+	if responseCounter > 0 || storedCounter > 0 {
+		if responseCounter <= storedCounter {
+			return nil, fmt.Errorf("verification failed: response counter value %d was lower than expected %d",
+				responseCounter, storedCounter)
+		}
+	}
 	return &AssertionResult{
 		CredentialID: base64.RawURLEncoding.EncodeToString(pca.RawID),
 		NewCounter:   pca.Response.AuthenticatorData.Counter,
