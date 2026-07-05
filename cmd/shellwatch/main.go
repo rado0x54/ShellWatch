@@ -183,6 +183,7 @@ func run() error {
 		Keys:           store.NewSSHKeys(db),
 		NewID:          newUUID,
 		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
+		MaxOwned:       store.NewAccounts(db).MaxSessions,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close

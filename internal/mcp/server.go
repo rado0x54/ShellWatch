@@ -27,7 +27,9 @@ import (
 type Deps struct {
 	AgentDeps agent.Deps
 	Keys      *store.SSHKeys
-	MaxOwned  int
+	// MaxOwned resolves the account's concurrent-session cap (accounts.
+	// max_sessions, http-transport.ts:113-124). nil/miss -> agent default (5).
+	MaxOwned func(ctx context.Context, accountID string) (int, bool)
 	// NewID mints Mcp-Session-Ids (Node uses randomUUID); nil falls back to a
 	// local v4 generator.
 	NewID func() string
@@ -87,7 +89,13 @@ func (d *Deps) Handler() http.Handler {
 		if !ok {
 			return nil
 		}
-		as := agent.New(d.AgentDeps, principal.AccountID, realip.FromRequest(r), d.MaxOwned)
+		maxOwned := 0 // agent.New defaults to 5
+		if d.MaxOwned != nil {
+			if m, ok := d.MaxOwned(r.Context(), principal.AccountID); ok {
+				maxOwned = m
+			}
+		}
+		as := agent.New(d.AgentDeps, principal.AccountID, realip.FromRequest(r), maxOwned)
 		return d.buildServer(as, principal.AccountID)
 	}, &mcpsdk.StreamableHTTPOptions{
 		// go-sdk's DNS-rebinding protection 403s a loopback local address with

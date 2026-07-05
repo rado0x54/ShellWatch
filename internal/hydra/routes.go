@@ -94,10 +94,13 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 			writeHTML(w, 400, renderErrorPage("invalid_consent_challenge", ""))
 			return
 		}
-		// First-party SPA (and remembered sessions) auto-accept — no second passkey.
+		// First-party SPA (and remembered sessions) auto-accept — no second
+		// passkey. remember/remember_for keep the SPA client in "Authorized
+		// clients" and renew remembered skips (routes.ts:360-370, M13).
 		if cr.Client.ClientID == p.SPAClientID || cr.Skip {
 			redir, err := p.Admin.AcceptConsentRequest(r.Context(), challenge, AcceptConsent{
 				GrantScope: cr.RequestedScope, GrantAccessTokenAudience: cr.RequestedAccessTokenAudience,
+				Remember: true, RememberFor: rememberFor,
 			})
 			if err != nil {
 				writeHTML(w, 400, renderErrorPage("consent_flow_expired", ""))
