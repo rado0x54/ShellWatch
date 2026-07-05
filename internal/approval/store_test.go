@@ -69,8 +69,8 @@ func TestStoreCancelForConnectionDoesNotReject(t *testing.T) {
 	s.Create(CreateParams{AccountID: "acc", Type: TypeWebAuthnSign, ConnectionID: "c1",
 		Reject: func(error) { rejected = true }})
 
-	if n := s.CancelForConnection("c1", "connection closed"); n != 1 {
-		t.Fatalf("cancelled %d", n)
+	if cancelled := s.CancelForConnection("c1", "connection closed"); len(cancelled) != 1 {
+		t.Fatalf("cancelled %d", len(cancelled))
 	}
 	// The reject closure is NOT called on cancel (awaiter already gone), but
 	// the audit outcome is "cancelled".

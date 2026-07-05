@@ -112,6 +112,19 @@ func (b *Broker) RequestKeyApproval(ctx context.Context, accountID, keyLabel, ke
 	}
 }
 
+// CancelForConnection cancels a dead connection's pending actions AND clears
+// their toasts on every channel — the broker's blocking selects never fire
+// for a cancel (the reject closure isn't called), so without this the
+// sign:resolved broadcast is skipped and stale toasts linger on other tabs
+// (index.ts:112-114, M9).
+func (b *Broker) CancelForConnection(connectionID, reason string) int {
+	cancelled := b.store.CancelForConnection(connectionID, reason)
+	for _, a := range cancelled {
+		b.notifyResolved(a)
+	}
+	return len(cancelled)
+}
+
 func (b *Broker) notifyResolved(a *Action) {
 	for _, ch := range b.channels {
 		ch.Resolved(a)

@@ -146,6 +146,16 @@ func run() error {
 		RpID:            cfg.Security.RpID,
 		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
 		NewConnectionID: newUUID,
+		// Dead terminal connection -> cancel its stranded sign prompts and
+		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
+		OnConnectionEnded: func(connID, reason string) {
+			if signBroker == nil {
+				return
+			}
+			if n := signBroker.CancelForConnection(connID, reason); n > 0 {
+				slog.Info("cancelled pending sign prompts for dead connection", "connection", connID, "count", n)
+			}
+		},
 	})
 	manager := terminal.NewManager(factory, clk, 0)
 	// Idle janitor: auto-close sessions idle >30 min (Node parity, H6).
