@@ -194,8 +194,8 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	go t.pipe(stdout, &wg)
 	go t.pipe(stderr, &wg)
 	go func() {
-		wg.Wait()                 // both streams EOF
-		werr := session.Wait()    // reap the remote command
+		wg.Wait()              // both streams EOF
+		werr := session.Wait() // reap the remote command
 		t.mu.Lock()
 		already := t.closed
 		t.closed = true

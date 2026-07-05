@@ -276,38 +276,43 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	return mg.transport.Resize(cols, rows)
 }
 
-// ListSessions returns a snapshot of all sessions.
+// ListSessions returns a snapshot of all non-closed sessions. Closed sessions
+// are retained in the registry (post-mortem tail/re-attach) but hidden from
+// lists; errored ones stay visible (listSessions filter, terminal-manager.ts).
 func (m *Manager) ListSessions() []Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Session, 0, len(m.terminals))
 	for _, mg := range m.terminals {
+		if mg.session.Status == StatusClosed {
+			continue
+		}
 		out = append(out, *mg.session)
 	}
 	return out
 }
 
-// ListForAccount returns an account's sessions.
+// ListForAccount returns an account's non-closed sessions.
 func (m *Manager) ListForAccount(accountID string) []Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Session, 0)
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			out = append(out, *mg.session)
 		}
 	}
 	return out
 }
 
-// EndpointIDsForAccount lists endpoint ids an account has open sessions on
-// (satisfies rest.SessionLister for the endpoint-delete guard).
+// EndpointIDsForAccount lists endpoint ids an account has non-closed sessions
+// on (satisfies rest.SessionLister for the endpoint-delete guard).
 func (m *Manager) EndpointIDsForAccount(accountID string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var ids []string
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			ids = append(ids, mg.session.EndpointID)
 		}
 	}
@@ -326,22 +331,36 @@ func (m *Manager) GetSession(sessionID string) *Session {
 	return &s
 }
 
-// Close closes a session with a reason.
+// Close explicitly closes a session: transport down, buffer cleared, removed
+// from the registry (terminal-manager.ts close()). No-op when already
+// closed/closing — a retained post-mortem session stays readable until the
+// process ends, mirroring Node.
 func (m *Manager) Close(sessionID string, reason CloseReason) {
 	mg, err := m.get(sessionID)
 	if err != nil {
 		return
 	}
+	m.mu.Lock()
+	st := mg.session.Status
+	m.mu.Unlock()
+	if st == StatusClosed || st == StatusClosing {
+		return
+	}
 	m.setStatus(mg, StatusClosing, reason)
 	_ = mg.transport.Close()
+	mg.output.Clear()
+	m.setStatus(mg, StatusClosed, reason)
+	m.mu.Lock()
+	delete(m.terminals, sessionID)
+	m.mu.Unlock()
 }
 
-// CloseAllForAccount closes an account's sessions (returns count).
+// CloseAllForAccount closes an account's non-closed sessions (returns count).
 func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 	m.mu.Lock()
 	ids := make([]string, 0)
 	for id, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			ids = append(ids, id)
 		}
 	}
@@ -376,8 +395,9 @@ func (m *Manager) get(sessionID string) (*managed, error) {
 }
 
 // setStatus transitions a session and fires guaranteed status hooks. Terminal
-// states remove the session from the registry (after the hook, so subscribers
-// see the final transition).
+// transitions do NOT remove the session — transport-driven closes/errors keep
+// it registered (with its buffer) so the final output stays readable; only an
+// explicit Close() removes it (setStatus in terminal-manager.ts, M6).
 func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	m.mu.Lock()
 	prev := mg.session.Status
@@ -388,11 +408,6 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	mg.session.Status = status
 	if reason != "" && mg.session.CloseReason == "" {
 		mg.session.CloseReason = reason
-	}
-	terminal := status == StatusClosed || status == StatusError
-	if terminal {
-		delete(m.terminals, mg.session.SessionID)
-		mg.output.Clear()
 	}
 	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
 	for _, fn := range m.statusSubs {

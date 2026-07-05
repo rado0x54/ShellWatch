@@ -156,12 +156,14 @@ func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) 
 		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
 	}
 	s.mu.Lock()
-	// Prune ids the manager no longer knows (idle-timeout janitor, server
-	// hangup, account cleanup) before enforcing the cap. Deliberate divergence
-	// from Node, which counts the raw set: there, N externally-closed sessions
+	// Prune ids that are no longer live (idle-timeout janitor, server hangup,
+	// account cleanup — including post-mortem sessions the manager retains in
+	// closed/error state) before enforcing the cap. Deliberate divergence from
+	// Node, which counts the raw set: there, N externally-closed sessions
 	// permanently starve the cap until the agent reconnects.
 	for id := range s.owned {
-		if s.deps.Manager.GetSession(id) == nil {
+		sess := s.deps.Manager.GetSession(id)
+		if sess == nil || sess.Status == terminal.StatusClosed || sess.Status == terminal.StatusError {
 			delete(s.owned, id)
 		}
 	}
