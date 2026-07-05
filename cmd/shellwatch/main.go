@@ -146,6 +146,8 @@ func run() error {
 		NewConnectionID: newUUID,
 	})
 	manager := terminal.NewManager(factory, clk, 0)
+	// Idle janitor: auto-close sessions idle >30 min (Node parity, H6).
+	go manager.RunIdleJanitor(ctx, terminal.DefaultIdleSweepInterval)
 	wsHub := ws.NewHub(manager)
 	defer wsHub.Close()
 

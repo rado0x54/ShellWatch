@@ -33,6 +33,12 @@ type StatusEvent struct {
 	CreatedAt time.Time
 }
 
+// DefaultIdleTimeout matches Node's DEFAULT_IDLE_TIMEOUT (terminal-manager.ts).
+const DefaultIdleTimeout = 30 * time.Minute
+
+// DefaultIdleSweepInterval matches Node's DEFAULT_CLEANUP_INTERVAL.
+const DefaultIdleSweepInterval = time.Minute
+
 // Manager owns all sessions.
 type Manager struct {
 	mu            sync.Mutex
@@ -40,6 +46,7 @@ type Manager struct {
 	factory       TransportFactory
 	clk           clock.Clock
 	maxBufferSize int
+	idleTimeout   time.Duration
 
 	statusSubs map[int]func(StatusEvent)
 	outputSubs map[int]func(sessionID string, offset int64)
@@ -54,8 +61,59 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 	return &Manager{
 		terminals: map[string]*managed{}, factory: factory, clk: clk,
 		maxBufferSize: maxBufferSize,
+		idleTimeout:   DefaultIdleTimeout,
 		statusSubs:    map[int]func(StatusEvent){},
 		outputSubs:    map[int]func(string, int64){},
+	}
+}
+
+// SetIdleTimeout overrides the idle timeout (tests; <=0 disables the sweep).
+func (m *Manager) SetIdleTimeout(d time.Duration) {
+	m.mu.Lock()
+	m.idleTimeout = d
+	m.mu.Unlock()
+}
+
+// RunIdleJanitor sweeps idle-open sessions on interval until ctx is done
+// (port of cleanupIdleTerminals + its setInterval).
+func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultIdleSweepInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.SweepIdle()
+		}
+	}
+}
+
+// SweepIdle closes open sessions whose last activity is older than the idle
+// timeout (reason idle-timeout).
+func (m *Manager) SweepIdle() {
+	m.mu.Lock()
+	timeout := m.idleTimeout
+	if timeout <= 0 {
+		m.mu.Unlock()
+		return
+	}
+	now := m.clk.Now()
+	var ids []string
+	for id, mg := range m.terminals {
+		if mg.session.Status != StatusOpen {
+			continue
+		}
+		if now.Sub(mg.session.LastActivityAt) > timeout {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Close(id, CloseIdleTimeout)
 	}
 }
 
@@ -164,7 +222,13 @@ func (m *Manager) SendInput(sessionID, input string) error {
 	if mg.session.Status != StatusOpen {
 		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, mg.session.Status)
 	}
-	return mg.transport.Write([]byte(input))
+	if err := mg.transport.Write([]byte(input)); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	mg.session.LastActivityAt = m.clk.Now()
+	m.mu.Unlock()
+	return nil
 }
 
 // SendKeys resolves named keys and writes them.
