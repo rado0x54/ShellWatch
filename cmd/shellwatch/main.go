@@ -108,10 +108,6 @@ func run() error {
 	} else if res.SeededAdminAccount || res.SeededAdminPasskey {
 		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
-	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
-		slog.Info("cleaned up inactive accounts", "count", len(ids))
-	})
-
 	webauthnDeps := &webauthn.Deps{
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),
@@ -166,6 +162,40 @@ func run() error {
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
+	mcpDeps := &mcp.Deps{
+		AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
+		Keys:      store.NewSSHKeys(db),
+	}
+
+	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
+	// the account's live terminal sessions, drop its MCP transports, and revoke
+	// its Hydra login/consent sessions so live grants die with the account.
+	// Fired by the admin DELETE route and the 90-day inactivity cleanup alike.
+	accountDeleted := func(accountID string) {
+		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
+			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
+		}
+		if n := mcpDeps.DropAccount(accountID); n > 0 {
+			slog.Info("tore down MCP transports for deleted account", "account", accountID, "count", n)
+		}
+		go func() {
+			rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := admin.RevokeLoginSessions(rctx, accountID); err != nil {
+				slog.Warn("failed to revoke Hydra login sessions for deleted account", "account", accountID, "err", err)
+			}
+			if err := admin.RevokeConsentSessions(rctx, accountID, ""); err != nil {
+				slog.Warn("failed to revoke Hydra consent sessions for deleted account", "account", accountID, "err", err)
+			}
+		}()
+	}
+	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
+		slog.Info("cleaned up inactive accounts", "count", len(ids))
+		for _, id := range ids {
+			accountDeleted(id)
+		}
+	})
+
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
 		Resolve:       resolve,
@@ -191,10 +221,7 @@ func run() error {
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
 		WSHub: wsHub,
-		MCP: &mcp.Deps{
-			AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
-			Keys:      store.NewSSHKeys(db),
-		},
+		MCP:   mcpDeps,
 		Actions: &rest.Actions{Store: actionStore},
 		Audit: &rest.Audit{
 			Sessions: audit.NewSessions(db),
@@ -202,7 +229,8 @@ func run() error {
 		},
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
-			Now: func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
+			Now:       func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
+			OnDeleted: accountDeleted,
 		},
 		Credentials: &rest.Credentials{
 			Store: credStore, Admin: admin, StepUp: webauthnDeps.StepUp,

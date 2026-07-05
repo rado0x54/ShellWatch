@@ -28,10 +28,46 @@ type Deps struct {
 	Keys      *store.SSHKeys
 	MaxOwned  int
 
-	// owners maps a live Mcp-Session-Id -> owning accountID. Populated when a
+	// owners maps a live Mcp-Session-Id -> *ownedSession. Populated when a
 	// session id is minted (GetSessionID), removed when the session closes.
-	// Backs the cross-account hijack guard below (http-transport.ts #128).
+	// Backs the cross-account hijack guard below (http-transport.ts #128) and
+	// account-deletion teardown (DropAccount).
 	owners sync.Map
+}
+
+// ownedSession tracks one live MCP session's owner + handles for teardown.
+type ownedSession struct {
+	accountID string
+	as        *agent.Session
+
+	mu sync.Mutex
+	ss *mcpsdk.ServerSession // set once initialized; nil before
+}
+
+// DropAccount tears down every live MCP session owned by accountID (account
+// deleted): closes the go-sdk session (which destroys the AgentSession via the
+// Wait hook) or, for never-initialized sessions, destroys the AgentSession
+// directly. Returns the number of sessions dropped (http-transport.ts:58-72).
+func (d *Deps) DropAccount(accountID string) int {
+	dropped := 0
+	d.owners.Range(func(key, value any) bool {
+		os := value.(*ownedSession)
+		if os.accountID != accountID {
+			return true
+		}
+		d.owners.Delete(key)
+		os.mu.Lock()
+		ss := os.ss
+		os.mu.Unlock()
+		if ss != nil {
+			_ = ss.Close() // Wait hook destroys the AgentSession
+		} else {
+			os.as.Destroy()
+		}
+		dropped++
+		return true
+	})
+	return dropped
 }
 
 // Handler returns the /mcp streamable-HTTP handler. Each new session gets a
@@ -54,7 +90,7 @@ func (d *Deps) Handler() http.Handler {
 		if id := r.Header.Get("Mcp-Session-Id"); id != "" {
 			owner, known := d.owners.Load(id)
 			principal, ok := auth.PrincipalFrom(r.Context())
-			if known && (!ok || owner.(string) != principal.AccountID) {
+			if known && (!ok || owner.(*ownedSession).accountID != principal.AccountID) {
 				sendSessionNotFound(w)
 				return
 			}
@@ -76,7 +112,7 @@ func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
 		// id ever reaches a client (no initialize/first-use race).
 		GetSessionID: func() string {
 			id := newSessionUUID()
-			d.owners.Store(id, accountID)
+			d.owners.Store(id, &ownedSession{accountID: accountID, as: as})
 			return id
 		},
 		// On initialized: capture the client's advertised name/version for the
@@ -88,6 +124,12 @@ func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
 			ss := req.Session
 			if params := ss.InitializeParams(); params != nil && params.ClientInfo != nil {
 				as.SetClientInfo(params.ClientInfo.Name, params.ClientInfo.Version)
+			}
+			if v, ok := d.owners.Load(ss.ID()); ok {
+				os := v.(*ownedSession)
+				os.mu.Lock()
+				os.ss = ss
+				os.mu.Unlock()
 			}
 			go func() {
 				_ = ss.Wait()
