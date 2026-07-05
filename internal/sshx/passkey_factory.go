@@ -24,6 +24,18 @@ type CredentialSource interface {
 	ActiveCredentialsForAuth(ctx context.Context, accountID string) ([]store.AuthCredential, error)
 }
 
+// FileKeyProvider yields the on-disk private key for a fingerprint (the
+// PrivateKeyProvider half of Node's file-key selection; *KeyDir satisfies it).
+type FileKeyProvider interface {
+	SignerFor(fingerprint string) (ssh.Signer, bool)
+}
+
+// SSHKeyLister reads the ssh_keys metadata (labels + the enabled toggle;
+// *store.SSHKeys satisfies it).
+type SSHKeyLister interface {
+	ListFull(ctx context.Context) ([]store.SSHKeyFull, error)
+}
+
 // PasskeyFactoryParams configure the passkey-capable factory.
 type PasskeyFactoryParams struct {
 	// BrokerFunc yields the sign broker lazily — the broker depends on the WS
@@ -31,14 +43,48 @@ type PasskeyFactoryParams struct {
 	// broker is resolved at session-open time, not at construction.
 	BrokerFunc  func() SignBroker
 	Credentials CredentialSource
-	FileKeys    SignerSource // optional (admin-only file keys)
-	RpID        string
+	// FileKeys + Keys + IsAdmin drive file-key selection, Node parity
+	// (ssh-transport-factory.ts:65-88): admin accounts only, DB rows with
+	// type=file AND enabled, private key present on disk. All three must be
+	// set for file keys to be offered at all.
+	FileKeys FileKeyProvider
+	Keys     SSHKeyLister
+	IsAdmin  func(ctx context.Context, accountID string) bool
+	RpID     string
 	// Origin placed in the WebAuthn ceremony; the browser overrides it, but
 	// the signer records it for the clientDataJSON the assertion carries.
 	Origin string
 	// NewConnectionID mints per-connection ids so a dead connection's stranded
 	// approvals can be cancelled (broker.CancelForConnection).
 	NewConnectionID func() string
+}
+
+// labeledFileKey is one admin file key selected for a connection.
+type labeledFileKey struct {
+	signer ssh.Signer
+	label  string
+}
+
+// fileKeysFor returns the file keys offered to this account: admin-only,
+// enabled in ssh_keys, and present on disk.
+func (p PasskeyFactoryParams) fileKeysFor(ctx context.Context, accountID string) []labeledFileKey {
+	if p.FileKeys == nil || p.Keys == nil || p.IsAdmin == nil || !p.IsAdmin(ctx, accountID) {
+		return nil
+	}
+	rows, err := p.Keys.ListFull(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []labeledFileKey
+	for _, row := range rows {
+		if row.Type != "file" || !row.Enabled {
+			continue
+		}
+		if signer, ok := p.FileKeys.SignerFor(row.Fingerprint); ok {
+			out = append(out, labeledFileKey{signer: signer, label: row.Label})
+		}
+	}
+	return out
 }
 
 // NewPasskeyFactory builds a TransportFactory that authenticates with the
@@ -84,6 +130,17 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		MCPClientName:   fp.Trigger.MCPClientName,
 		MCPClientVer:    fp.Trigger.MCPClientVer,
 	}
+	// File keys first, then passkeys (composite-ssh-agent.ts:94-103): when the
+	// server accepts both, the user sees a key-approve prompt, not a WebAuthn
+	// ceremony. Every file-key sign is approval-gated (H2) and the set is
+	// admin-only + enabled + on-disk (H3, fileKeysFor).
+	for _, fk := range p.fileKeysFor(ctx, fp.Endpoint.AccountID) {
+		signers = append(signers, &approvedFileKeySigner{
+			signer: fk.signer, broker: p.BrokerFunc(), accountID: fp.Endpoint.AccountID,
+			label: fk.label, connectionID: connID, actionCtx: actionCtx, ctx: ctx,
+		})
+	}
+
 	for _, c := range creds {
 		pub, err := parseWebauthnPublicKey(c.PublicKeyOpenSSH)
 		if err != nil {
@@ -95,14 +152,6 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 			UVPolicy: fp.Endpoint.UserVerification, PasskeyLabel: c.Label,
 			ConnectionID: connID, ActionCtx: actionCtx, Ctx: ctx,
 		})
-	}
-
-	// File keys (admin) are offered after passkeys.
-	if p.FileKeys != nil {
-		fileSigners, err := p.FileKeys.Signers()
-		if err == nil {
-			signers = append(signers, fileSigners...)
-		}
 	}
 	return signers, nil
 }
@@ -121,12 +170,10 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 func (p PasskeyFactoryParams) buildForwardingAgent(_ context.Context, fp terminal.FactoryParams, connID string) agent.Agent {
 	ctx := context.Background()
 	var identities []signagent.Identity
-	if p.FileKeys != nil {
-		if fileSigners, err := p.FileKeys.Signers(); err == nil {
-			for _, s := range fileSigners {
-				identities = append(identities, signagent.Identity{Signer: s, Label: "file key"})
-			}
-		}
+	// Same admin-only + enabled + on-disk selection as connection auth (H3);
+	// signagent gates each file-key sign behind a key-approve action.
+	for _, fk := range p.fileKeysFor(ctx, fp.Endpoint.AccountID) {
+		identities = append(identities, signagent.Identity{Signer: fk.signer, Label: fk.label})
 	}
 	if creds, err := p.Credentials.ActiveCredentialsForAuth(ctx, fp.Endpoint.AccountID); err == nil {
 		for _, c := range creds {

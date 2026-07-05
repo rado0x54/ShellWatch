@@ -137,6 +137,8 @@ func run() error {
 		BrokerFunc:      func() sshx.SignBroker { return signBroker },
 		Credentials:     credStore,
 		FileKeys:        keyDir,
+		Keys:            store.NewSSHKeys(db),
+		IsAdmin:         store.NewAccounts(db).IsAdmin,
 		RpID:            cfg.Security.RpID,
 		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
 		NewConnectionID: newUUID,
