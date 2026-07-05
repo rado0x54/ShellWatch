@@ -188,10 +188,12 @@ func run() error {
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
+	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
 		Keys:           store.NewSSHKeys(db),
 		NewID:          newUUID,
+		Version:        buildInfo.Display,
 		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
 		MaxOwned:       store.NewAccounts(db).MaxSessions,
 	}
@@ -230,7 +232,7 @@ func run() error {
 		Resolve:       resolve,
 		TouchLastUsed: flusher.Touch,
 		StaticFS:      staticFS,
-		BuildInfo:     buildinfo.Load(mustGetwd()),
+		BuildInfo:     buildInfo,
 		WebAuthn:      webauthnDeps,
 		HydraAdmin:    admin,
 		HasPasskeys: func() bool {
