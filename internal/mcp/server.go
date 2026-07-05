@@ -8,8 +8,11 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"sync"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,27 +27,89 @@ type Deps struct {
 	AgentDeps agent.Deps
 	Keys      *store.SSHKeys
 	MaxOwned  int
+
+	// owners maps a live Mcp-Session-Id -> owning accountID. Populated when a
+	// session id is minted (GetSessionID), removed when the session closes.
+	// Backs the cross-account hijack guard below (http-transport.ts #128).
+	owners sync.Map
 }
 
 // Handler returns the /mcp streamable-HTTP handler. Each new session gets a
 // fresh Server bound to a fresh AgentSession scoped to the request's account.
+//
+// The wrapper enforces session ownership BEFORE the go-sdk handler sees the
+// request: a foreign account replaying another account's Mcp-Session-Id gets
+// the same 404 as a missing session — never a disclosure that the id exists
+// (port of the onRequest hook in src/mcp/http-transport.ts:87-102).
 func (d *Deps) Handler() http.Handler {
-	return mcpsdk.NewStreamableHTTPHandler(func(r *http.Request) *mcpsdk.Server {
+	inner := mcpsdk.NewStreamableHTTPHandler(func(r *http.Request) *mcpsdk.Server {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
 			return nil
 		}
 		as := agent.New(d.AgentDeps, principal.AccountID, clientIP(r), d.MaxOwned)
-		return d.buildServer(as)
+		return d.buildServer(as, principal.AccountID)
 	}, nil)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := r.Header.Get("Mcp-Session-Id"); id != "" {
+			owner, known := d.owners.Load(id)
+			principal, ok := auth.PrincipalFrom(r.Context())
+			if known && (!ok || owner.(string) != principal.AccountID) {
+				sendSessionNotFound(w)
+				return
+			}
+		}
+		inner.ServeHTTP(w, r)
+	})
 }
 
-func (d *Deps) buildServer(as *agent.Session) *mcpsdk.Server {
-	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "shellwatch", Version: "1.0.0"}, nil)
+// sendSessionNotFound matches Node's uniform stale/foreign-session response.
+func sendSessionNotFound(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found"},"id":null}`))
+}
+
+func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "shellwatch", Version: "1.0.0"}, &mcpsdk.ServerOptions{
+		// Mint the session id ourselves so ownership is registered before the
+		// id ever reaches a client (no initialize/first-use race).
+		GetSessionID: func() string {
+			id := newSessionUUID()
+			d.owners.Store(id, accountID)
+			return id
+		},
+		// On initialized: capture the client's advertised name/version for the
+		// approval UI, and arm the disconnect teardown — when this MCP session
+		// closes (client DELETE, server shutdown), destroy the AgentSession so
+		// its owned terminal sessions close with reason agent-disconnect
+		// (http-transport.ts:144, agent-session.ts:167-176).
+		InitializedHandler: func(_ context.Context, req *mcpsdk.InitializedRequest) {
+			ss := req.Session
+			if params := ss.InitializeParams(); params != nil && params.ClientInfo != nil {
+				as.SetClientInfo(params.ClientInfo.Name, params.ClientInfo.Version)
+			}
+			go func() {
+				_ = ss.Wait()
+				d.owners.Delete(ss.ID())
+				as.Destroy()
+			}()
+		},
+	})
 	registerSessionTools(srv, as)
 	registerEndpointTools(srv, as)
 	registerKeyTools(srv, as, d.Keys)
 	return srv
+}
+
+// newSessionUUID mints a v4 UUID (Node uses randomUUID() for MCP session ids).
+func newSessionUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
 // --- helpers for the Node-compatible text-JSON result shape ---
