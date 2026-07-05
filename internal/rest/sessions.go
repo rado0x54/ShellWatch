@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -92,7 +93,7 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.Manager.Create(r.Context(), ref, acc, terminal.Trigger{
-		Kind: terminal.SourceUI, SourceIP: clientIP(r),
+		Kind: terminal.SourceUI, SourceIP: realip.FromRequest(r),
 	})
 	if err != nil {
 		// The SSH connect (incl. passkey signing handshake) failed — log the

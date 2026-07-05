@@ -67,7 +67,7 @@ func (d *Deps) Handler() http.HandlerFunc {
 
 		ba := signagent.New(ctx, identities, d.Broker, principal.AccountID, connID, approval.Context{
 			Source:         "agent-proxy",
-			SourceIP:       clientIP(r),
+			SourceIP:       realip.FromRequest(r),
 			ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
 			ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
 			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
@@ -107,9 +107,3 @@ func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]signage
 	}
 	return out, nil
 }
-
-func clientIP(r *http.Request) string {
-	return realip.FromRequest(r)
-}
-
-var _ = context.Background

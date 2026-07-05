@@ -3,8 +3,9 @@
 // action (port of composite-ssh-agent.ts:136-152 / onFileKeySignRequest): a
 // terminal connection authenticating with an admin file key must surface a
 // human approval prompt + audit row, exactly like the agent-proxy and
-// agent-forwarding paths already do. A human deny falls through to the next
-// offered key (skip signature); any other rejection aborts the attempt.
+// agent-forwarding paths already do. Any rejection — deny, TTL expiry,
+// connection-cancel — falls through to the next offered key (skip signature,
+// composite-ssh-agent.ts:146-151); only a dead dial context aborts.
 package sshx
 
 import (
@@ -39,10 +40,14 @@ func (s *approvedFileKeySigner) Sign(rand io.Reader, data []byte) (*ssh.Signatur
 	}
 	fp := ssh.FingerprintSHA256(s.signer.PublicKey())
 	if err := s.broker.RequestKeyApproval(ctx, s.accountID, s.label, fp, s.connectionID, s.actionCtx); err != nil {
-		if errors.Is(err, approval.ErrDenied) {
-			return signing.SkipSignature(), nil
+		// x/crypto/ssh treats a signer error as fatal to the whole publickey
+		// method — a hard error here would stop the passkey offered after this
+		// key from ever being tried. Node skips on every rejection (deny,
+		// expiry, store destroy); only context death aborts.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
-		return nil, err
+		return signing.SkipSignature(), nil
 	}
 	return s.signer.Sign(rand, data)
 }

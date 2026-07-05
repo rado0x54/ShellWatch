@@ -14,6 +14,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/signing"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -78,7 +79,7 @@ func endpointFP() terminal.FactoryParams {
 func TestFileKeysNotOfferedToNonAdmin(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, false, actionStore)
-	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1")
+	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestFileKeysNotOfferedToNonAdmin(t *testing.T) {
 func TestFileKeySelectionAdminEnabledOnDisk(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, true, actionStore)
-	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1")
+	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestFileKeySelectionAdminEnabledOnDisk(t *testing.T) {
 func TestFileKeySignRequiresApproval(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, signer := fileKeyParams(t, true, actionStore)
-	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1")
+	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
 	fk := signers[0].(*approvedFileKeySigner)
 
 	// Approve path: the pending key-approve action resolves -> real signature.
@@ -140,10 +141,45 @@ func TestFileKeySignRequiresApproval(t *testing.T) {
 	}
 }
 
+// stubKeyBroker rejects every request with a fixed error.
+type stubKeyBroker struct{ err error }
+
+func (s stubKeyBroker) RequestSign(context.Context, string, signing.SignRequest, approval.Context, string) (signing.SignResponse, error) {
+	return signing.SignResponse{}, s.err
+}
+func (s stubKeyBroker) RequestKeyApproval(context.Context, string, string, string, string, approval.Context) error {
+	return s.err
+}
+
+// An unanswered prompt (60s TTL expiry) must skip to the next key, not abort
+// the whole publickey method — with file keys ordered before passkeys, a hard
+// error here would make an ignored prompt kill connections that should
+// proceed via passkey (composite-ssh-agent.ts:146-151).
+func TestFileKeyExpiryFallsThroughAsSkip(t *testing.T) {
+	signer := newTestSigner(t)
+	fk := &approvedFileKeySigner{signer: signer, broker: stubKeyBroker{err: approval.ErrExpired}, label: "k"}
+	data := []byte("payload")
+	sig, err := fk.Sign(rand.Reader, data)
+	if err != nil {
+		t.Fatalf("expiry must skip, not error: %v", err)
+	}
+	if err := signer.PublicKey().Verify(data, sig); err == nil {
+		t.Fatal("expiry produced a valid signature")
+	}
+}
+
+func TestFileKeyContextDeathAborts(t *testing.T) {
+	signer := newTestSigner(t)
+	fk := &approvedFileKeySigner{signer: signer, broker: stubKeyBroker{err: context.Canceled}, label: "k"}
+	if _, err := fk.Sign(rand.Reader, []byte("payload")); err == nil {
+		t.Fatal("cancelled dial context must abort, not skip")
+	}
+}
+
 func TestFileKeyDenyFallsThroughAsSkip(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, signer := fileKeyParams(t, true, actionStore)
-	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1")
+	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
 	fk := signers[0].(*approvedFileKeySigner)
 
 	go func() {

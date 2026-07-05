@@ -16,14 +16,20 @@ import (
 	"github.com/rado0x54/shellwatch/internal/realip"
 )
 
+// maxBuckets caps per-limiter memory under a source-address flood (Node's
+// @fastify/rate-limit uses a 5000-entry LRU for the same reason). Evicting a
+// live bucket resets that key's window — the same trade-off the LRU makes.
+const maxBuckets = 5000
+
 // Limiter is one route's fixed-window counter set (one bucket per client IP).
 type Limiter struct {
 	max    int
 	window time.Duration
 	clk    clock.Clock
 
-	mu      sync.Mutex
-	buckets map[string]*bucket
+	mu        sync.Mutex
+	buckets   map[string]*bucket
+	lastPrune time.Time
 }
 
 type bucket struct {
@@ -50,11 +56,24 @@ func (l *Limiter) Allow(key string) (ok bool, remaining int, reset time.Duration
 	defer l.mu.Unlock()
 	b := l.buckets[key]
 	if b == nil || now.Sub(b.start) >= l.window {
-		// Opportunistic prune: drop expired buckets so memory stays bounded.
-		if len(l.buckets) > 10_000 {
-			for k, old := range l.buckets {
-				if now.Sub(old.start) >= l.window {
+		if b == nil && len(l.buckets) >= maxBuckets {
+			// At capacity: prune expired buckets, but at most once per second —
+			// under a sustained flood every bucket is in-window and a per-insert
+			// O(n) scan would find nothing while holding the lock.
+			if now.Sub(l.lastPrune) >= time.Second {
+				l.lastPrune = now
+				for k, old := range l.buckets {
+					if now.Sub(old.start) >= l.window {
+						delete(l.buckets, k)
+					}
+				}
+			}
+			// Still full: evict one arbitrary entry (O(1)) so the flood is
+			// memory-bounded rather than the limiter failing open or closed.
+			if len(l.buckets) >= maxBuckets {
+				for k := range l.buckets {
 					delete(l.buckets, k)
+					break
 				}
 			}
 		}

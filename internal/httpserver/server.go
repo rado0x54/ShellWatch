@@ -192,7 +192,9 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 		// selfRegister bucket (self-register.ts).
 		{Method: "POST", Path: "/api/auth/register/options", Limiter: selfReg()},
 		{Method: "POST", Path: "/api/auth/register", Limiter: selfReg()},
-		// passkeyRegister bucket (invite.ts).
+		// passkeyRegister bucket (registration.ts + invite.ts).
+		{Method: "POST", Path: "/api/webauthn/register/options", Limiter: passkeyReg()},
+		{Method: "POST", Path: "/api/webauthn/register", Limiter: passkeyReg()},
 		{Method: "POST", Path: "/api/webauthn/invite", Limiter: passkeyReg()},
 		{Method: "POST", Path: "/api/passkey-invite/register/options", Limiter: passkeyReg()},
 		{Method: "POST", Path: "/api/passkey-invite/register", Limiter: passkeyReg()},

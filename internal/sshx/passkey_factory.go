@@ -95,7 +95,10 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		if p.NewConnectionID != nil {
 			connID = p.NewConnectionID()
 		}
-		signers, err := p.buildSigners(ctx, fp, connID)
+		// One file-key selection per connection, shared by connection auth and
+		// the forwarding agent (Node gathers the list once too).
+		fileKeys := p.fileKeysFor(ctx, fp.Endpoint.AccountID)
+		signers, err := p.buildSigners(ctx, fp, connID, fileKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +107,7 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		}
 		var fwdAgent agent.Agent
 		if fp.Endpoint.AgentForward {
-			fwdAgent = p.buildForwardingAgent(ctx, fp, connID)
+			fwdAgent = p.buildForwardingAgent(fp, connID, fileKeys)
 		}
 		return Connect(ctx, ConnectParams{
 			Host: fp.Endpoint.Host, Port: fp.Endpoint.Port, Username: fp.Endpoint.Username,
@@ -113,7 +116,7 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 	}
 }
 
-func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string) ([]ssh.Signer, error) {
+func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
 
 	creds, err := p.Credentials.ActiveCredentialsForAuth(ctx, fp.Endpoint.AccountID)
@@ -134,7 +137,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 	// server accepts both, the user sees a key-approve prompt, not a WebAuthn
 	// ceremony. Every file-key sign is approval-gated (H2) and the set is
 	// admin-only + enabled + on-disk (H3, fileKeysFor).
-	for _, fk := range p.fileKeysFor(ctx, fp.Endpoint.AccountID) {
+	for _, fk := range fileKeys {
 		signers = append(signers, &approvedFileKeySigner{
 			signer: fk.signer, broker: p.BrokerFunc(), accountID: fp.Endpoint.AccountID,
 			label: fk.label, connectionID: connID, actionCtx: actionCtx, ctx: ctx,
@@ -161,18 +164,18 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 // (passkeys + file keys), but signs carry source="agent-forwarding" + the
 // session id so the /sign page attributes forwarded signs correctly.
 //
-// NOTE: the sign-wait context is context.Background(), NOT the passed ctx.
+// NOTE: the sign-wait context is context.Background(), NOT the dial context.
 // Forwarded signs happen long after the connection handshake — whenever the
-// remote uses the agent — but ctx here is the session-create (request) context,
-// which is already cancelled by then. Using it made every forwarded sign fail
+// remote uses the agent — but the session-create (request) context is already
+// cancelled by then. Using it made every forwarded sign fail
 // immediately with "context canceled". Stranded approvals are bounded by the
 // 60s action TTL (and the per-connection cancel when the session tears down).
-func (p PasskeyFactoryParams) buildForwardingAgent(_ context.Context, fp terminal.FactoryParams, connID string) agent.Agent {
+func (p PasskeyFactoryParams) buildForwardingAgent(fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey) agent.Agent {
 	ctx := context.Background()
 	var identities []signagent.Identity
 	// Same admin-only + enabled + on-disk selection as connection auth (H3);
 	// signagent gates each file-key sign behind a key-approve action.
-	for _, fk := range p.fileKeysFor(ctx, fp.Endpoint.AccountID) {
+	for _, fk := range fileKeys {
 		identities = append(identities, signagent.Identity{Signer: fk.signer, Label: fk.label})
 	}
 	if creds, err := p.Credentials.ActiveCredentialsForAuth(ctx, fp.Endpoint.AccountID); err == nil {

@@ -178,6 +178,7 @@ func run() error {
 	mcpDeps := &mcp.Deps{
 		AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
 		Keys:      store.NewSSHKeys(db),
+		NewID:     newUUID,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
@@ -233,8 +234,8 @@ func run() error {
 			Demo:        demoSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
-		WSHub: wsHub,
-		MCP:   mcpDeps,
+		WSHub:   wsHub,
+		MCP:     mcpDeps,
 		Actions: &rest.Actions{Store: actionStore},
 		Audit: &rest.Audit{
 			Sessions: audit.NewSessions(db),

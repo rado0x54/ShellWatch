@@ -131,6 +131,23 @@ func TestMCPCrossAccountSessionIDIsUniform404(t *testing.T) {
 	if _, err := sessA.ListTools(context.Background(), nil); err != nil {
 		t.Fatalf("owner's session broken after replay: %v", err)
 	}
+
+	// An unknown/stale id gets the SAME envelope — not go-sdk's plain-text 404.
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req2.Header.Set("Authorization", "Bearer tok-a")
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Accept", "application/json, text/event-stream")
+	req2.Header.Set("Mcp-Session-Id", "00000000-0000-4000-8000-000000000000")
+	res2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	body2, _ := io.ReadAll(res2.Body)
+	if res2.StatusCode != http.StatusNotFound || !strings.Contains(string(body2), `"code":-32001`) {
+		t.Fatalf("stale session id: got %d %q, want uniform JSON-RPC 404", res2.StatusCode, body2)
+	}
 }
 
 func TestMCPDisconnectClosesOwnedSessions(t *testing.T) {

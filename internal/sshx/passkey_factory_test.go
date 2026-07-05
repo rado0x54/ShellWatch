@@ -51,7 +51,7 @@ func TestPasskeyFactoryBuildsApprovalGatedSigners(t *testing.T) {
 			Username: "ubuntu", UserVerification: "required"},
 		Trigger: terminal.Trigger{Kind: terminal.SourceMCP, Reason: "deploy", SourceIP: "1.2.3.4"},
 	}
-	signers, err := p.buildSigners(context.Background(), fp, "conn-1")
+	signers, err := p.buildSigners(context.Background(), fp, "conn-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
