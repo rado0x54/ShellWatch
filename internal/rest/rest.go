@@ -3,23 +3,19 @@ package rest
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/realip"
 )
 
 // isoMillis matches Node's new Date().toISOString().
 const isoMillis = "2006-01-02T15:04:05.000Z"
 
-// clientIP is the request peer (Node request.ip; trust-proxy handling lands
-// with the middleware stack).
+// clientIP is the effective client IP (Node request.ip): the trust-proxy
+// resolver's verdict, falling back to the socket peer.
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return realip.FromRequest(r)
 }
 
 // accountID returns the authenticated account (the gate guarantees one on

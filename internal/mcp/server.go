@@ -18,6 +18,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/agent"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -85,7 +86,13 @@ func (d *Deps) Handler() http.Handler {
 		}
 		as := agent.New(d.AgentDeps, principal.AccountID, clientIP(r), d.MaxOwned)
 		return d.buildServer(as, principal.AccountID)
-	}, nil)
+	}, &mcpsdk.StreamableHTTPOptions{
+		// go-sdk's DNS-rebinding protection 403s a loopback local address with
+		// a non-loopback Host — which is exactly a reverse-proxy deployment
+		// (proxy -> 127.0.0.1 with Host: shellwatch.example.com). Node has no
+		// such check; /mcp is already gated by OAuth scope + the IP allowlist.
+		DisableLocalhostProtection: true,
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id := r.Header.Get("Mcp-Session-Id"); id != "" {
 			owner, known := d.owners.Load(id)
@@ -189,21 +196,7 @@ func decodeArgs(req *mcpsdk.CallToolRequest, v any) error {
 }
 
 func clientIP(r *http.Request) string {
-	// Best-effort peer; the trust-proxy handling lands with the middleware.
-	host := r.RemoteAddr
-	if i := lastColon(host); i >= 0 {
-		host = host[:i]
-	}
-	return host
-}
-
-func lastColon(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ':' {
-			return i
-		}
-	}
-	return -1
+	return realip.FromRequest(r)
 }
 
 // isoMillis matches Node's Date.toISOString().

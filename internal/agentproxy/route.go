@@ -11,6 +11,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/signagent"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/util"
@@ -108,13 +109,7 @@ func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]signage
 }
 
 func clientIP(r *http.Request) string {
-	host := r.RemoteAddr
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			return host[:i]
-		}
-	}
-	return host
+	return realip.FromRequest(r)
 }
 
 var _ = context.Background
