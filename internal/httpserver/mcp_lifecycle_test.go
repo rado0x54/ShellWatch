@@ -30,8 +30,8 @@ import (
 )
 
 // mcpLifecycleServer is like mcpServer but with two principals and the
-// terminal manager exposed.
-func mcpLifecycleServer(t *testing.T) (*httptest.Server, *terminal.Manager) {
+// terminal manager exposed. sessionTimeout 0 = sessions never expire.
+func mcpLifecycleServer(t *testing.T, sessionTimeout time.Duration) (*httptest.Server, *terminal.Manager) {
 	t.Helper()
 	db, err := store.Open("sqlite::memory:")
 	if err != nil {
@@ -67,8 +67,9 @@ func mcpLifecycleServer(t *testing.T) (*httptest.Server, *terminal.Manager) {
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		MCP: &mcp.Deps{
-			AgentDeps: agent.Deps{Manager: mgr, Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)},
-			Keys:      store.NewSSHKeys(db),
+			AgentDeps:      agent.Deps{Manager: mgr, Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)},
+			Keys:           store.NewSSHKeys(db),
+			SessionTimeout: sessionTimeout,
 		},
 	})
 	ts := httptest.NewServer(handler)
@@ -90,7 +91,7 @@ func mcpConnectAs(t *testing.T, ts *httptest.Server, token string) *mcpsdk.Clien
 }
 
 func TestMCPCrossAccountSessionIDIsUniform404(t *testing.T) {
-	ts, _ := mcpLifecycleServer(t)
+	ts, _ := mcpLifecycleServer(t, 0)
 	sessA := mcpConnectAs(t, ts, "tok-a")
 	defer sessA.Close()
 	sid := sessA.ID()
@@ -151,7 +152,7 @@ func TestMCPCrossAccountSessionIDIsUniform404(t *testing.T) {
 }
 
 func TestMCPDisconnectClosesOwnedSessions(t *testing.T) {
-	ts, mgr := mcpLifecycleServer(t)
+	ts, mgr := mcpLifecycleServer(t, 0)
 	sess := mcpConnectAs(t, ts, "tok-a")
 
 	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
@@ -178,4 +179,77 @@ func TestMCPDisconnectClosesOwnedSessions(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("terminal session still alive after MCP disconnect: %+v", mgr.ListForAccount("acc-a"))
+}
+
+// rawMCPPost drives /mcp without the go-sdk client — the client keeps a
+// hanging SSE GET open, which suspends the sdk's idle timer, so expiry can
+// only be exercised with bare request/response POSTs.
+func rawMCPPost(t *testing.T, ts *httptest.Server, token, sessionID, body string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// A client that vanishes without DELETE must not leak: after SessionTimeout
+// of no HTTP activity, the sdk session expires, the Wait teardown destroys
+// the AgentSession (owned SSH sessions close with agent-disconnect), and the
+// stale Mcp-Session-Id answers with the uniform 404.
+func TestMCPIdleSessionExpiryClosesEverything(t *testing.T) {
+	const timeout = 500 * time.Millisecond
+	ts, mgr := mcpLifecycleServer(t, timeout)
+
+	// initialize -> session id.
+	res := rawMCPPost(t, ts, "tok-a", "",
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"vanisher","version":"1"}}}`)
+	sid := res.Header.Get("Mcp-Session-Id")
+	io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || sid == "" {
+		t.Fatalf("initialize: status=%d sid=%q", res.StatusCode, sid)
+	}
+
+	res = rawMCPPost(t, ts, "tok-a", sid, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+
+	res = rawMCPPost(t, ts, "tok-a", sid,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shellwatch_create_session","arguments":{"endpointId":"ep-a","reason":"idle expiry test"}}}`)
+	io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("create_session: status=%d", res.StatusCode)
+	}
+	if n := len(mgr.ListForAccount("acc-a")); n != 1 {
+		t.Fatalf("expected 1 live terminal session, got %d", n)
+	}
+
+	// Vanish. No DELETE, no further requests. Everything must unwind.
+	deadline := time.Now().Add(timeout + 5*time.Second)
+	for time.Now().Before(deadline) {
+		if len(mgr.ListForAccount("acc-a")) == 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if n := len(mgr.ListForAccount("acc-a")); n != 0 {
+		t.Fatalf("terminal session still alive after MCP idle expiry: %d", n)
+	}
+
+	// The expired id is gone from the owners registry -> uniform JSON 404.
+	res = rawMCPPost(t, ts, "tok-a", sid, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound || !strings.Contains(string(body), `"code":-32001`) {
+		t.Fatalf("expired session id: got %d %q, want uniform JSON-RPC 404", res.StatusCode, body)
+	}
 }

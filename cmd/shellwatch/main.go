@@ -176,9 +176,10 @@ func run() error {
 	auditWriter.AttachStore(actionStore)
 
 	mcpDeps := &mcp.Deps{
-		AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
-		Keys:      store.NewSSHKeys(db),
-		NewID:     newUUID,
+		AgentDeps:      agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
+		Keys:           store.NewSSHKeys(db),
+		NewID:          newUUID,
+		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -30,27 +31,34 @@ type Deps struct {
 	// NewID mints Mcp-Session-Ids (Node uses randomUUID); nil falls back to a
 	// local v4 generator.
 	NewID func() string
+	// SessionTimeout closes MCP sessions with no in-flight HTTP activity for
+	// this long (0 = never, the Node behavior). Wired from
+	// mcp.sessionTimeoutMinutes; the sdk timer is suspended while any request
+	// (including a held SSE GET stream) is active, so only clients that
+	// actually vanished expire. Expiry runs the full Wait teardown below —
+	// the AgentSession and all its SSH sessions close too.
+	SessionTimeout time.Duration
 
-	// owners maps a live Mcp-Session-Id -> *ownedSession. Populated when a
-	// session id is minted (GetSessionID), removed when the session closes.
-	// Backs the cross-account hijack guard below (http-transport.ts #128) and
+	// owners maps a live Mcp-Session-Id -> *ownedSession. Populated while the
+	// session's first message (initialize) is handled — before the client
+	// ever learns the id — and removed when the session closes. Backs the
+	// cross-account hijack guard below (http-transport.ts #128) and
 	// account-deletion teardown (DropAccount).
 	owners sync.Map
 }
 
 // ownedSession tracks one live MCP session's owner + handles for teardown.
+// Immutable after insertion into owners.
 type ownedSession struct {
 	accountID string
 	as        *agent.Session
-
-	mu sync.Mutex
-	ss *mcpsdk.ServerSession // set once initialized; nil before
+	ss        *mcpsdk.ServerSession
 }
 
 // DropAccount tears down every live MCP session owned by accountID (account
-// deleted): closes the go-sdk session (which destroys the AgentSession via the
-// Wait hook) or, for never-initialized sessions, destroys the AgentSession
-// directly. Returns the number of sessions dropped (http-transport.ts:58-72).
+// deleted): closes the go-sdk session, which destroys the AgentSession via
+// the Wait hook. Returns the number of sessions dropped
+// (http-transport.ts:58-72).
 func (d *Deps) DropAccount(accountID string) int {
 	dropped := 0
 	d.owners.Range(func(key, value any) bool {
@@ -59,14 +67,7 @@ func (d *Deps) DropAccount(accountID string) int {
 			return true
 		}
 		d.owners.Delete(key)
-		os.mu.Lock()
-		ss := os.ss
-		os.mu.Unlock()
-		if ss != nil {
-			_ = ss.Close() // Wait hook destroys the AgentSession
-		} else {
-			os.as.Destroy()
-		}
+		_ = os.ss.Close() // Wait hook destroys the AgentSession
 		dropped++
 		return true
 	})
@@ -94,6 +95,7 @@ func (d *Deps) Handler() http.Handler {
 		// (proxy -> 127.0.0.1 with Host: shellwatch.example.com). Node has no
 		// such check; /mcp is already gated by OAuth scope + the IP allowlist.
 		DisableLocalhostProtection: true,
+		SessionTimeout:             d.SessionTimeout,
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id := r.Header.Get("Mcp-Session-Id"); id != "" {
@@ -120,13 +122,7 @@ func sendSessionNotFound(w http.ResponseWriter) {
 
 func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "shellwatch", Version: "1.0.0"}, &mcpsdk.ServerOptions{
-		// Mint the session id ourselves so ownership is registered before the
-		// id ever reaches a client (no initialize/first-use race).
-		GetSessionID: func() string {
-			id := d.newSessionID()
-			d.owners.Store(id, &ownedSession{accountID: accountID, as: as})
-			return id
-		},
+		GetSessionID: d.newSessionID,
 		// On initialized: capture the client's advertised name/version for the
 		// approval UI (agent-session clientInfo, M4).
 		InitializedHandler: func(_ context.Context, req *mcpsdk.InitializedRequest) {
@@ -135,23 +131,20 @@ func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
 			}
 		},
 	})
-	// Disconnect teardown, armed on the FIRST message the session processes
-	// (the initialize request itself) — not on notifications/initialized,
-	// which a misbehaving client may never send, leaking the AgentSession and
-	// the owners entry. When the session closes (client DELETE, init failure,
-	// server shutdown), destroy the AgentSession so its owned terminals close
-	// with reason agent-disconnect (http-transport.ts:144).
+	// Ownership registration + disconnect teardown, armed on the FIRST message
+	// the session processes — the initialize request itself, still before the
+	// client learns the id, so the hijack pre-check has no window. Registering
+	// here (not in GetSessionID) means an entry exists only for sessions that
+	// actually bound — a server.Connect failure can't strand one. When the
+	// session closes (client DELETE, idle expiry, init failure, shutdown),
+	// destroy the AgentSession so its owned terminals close with reason
+	// agent-disconnect (http-transport.ts:144).
 	var armOnce sync.Once
 	srv.AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
 			if ss, ok := req.GetSession().(*mcpsdk.ServerSession); ok {
 				armOnce.Do(func() {
-					if v, ok := d.owners.Load(ss.ID()); ok {
-						os := v.(*ownedSession)
-						os.mu.Lock()
-						os.ss = ss
-						os.mu.Unlock()
-					}
+					d.owners.Store(ss.ID(), &ownedSession{accountID: accountID, as: as, ss: ss})
 					go func() {
 						_ = ss.Wait()
 						d.owners.Delete(ss.ID())

@@ -107,6 +107,14 @@ security:
     - 127.0.0.1/32
     - "::1/128"
 
+# MCP surface lifecycle (Go backend only; the Node backend ignores this section).
+# mcp:
+#   sessionTimeoutMinutes: 30       # Close MCP sessions after this long with no HTTP
+#                                   # activity (client vanished without DELETE). Expiry
+#                                   # also closes the agent's SSH sessions. A live client
+#                                   # holding its SSE stream never expires. 0 disables.
+#                                   # Default: 30 (aligned with the SSH idle timeout).
+
 # Web Push notifications — send push notifications for sign requests
 # so users don't need the browser tab open. Requires VAPID keys.
 # Generate keys: npx web-push generate-vapid-keys
