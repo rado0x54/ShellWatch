@@ -102,11 +102,14 @@ func run() error {
 	flusher := store.NewLastUsedFlusher(db, clk)
 	go flusher.Run(ctx, time.Minute)
 
-	// First-run seeding (admin account + passkeys + endpoints) + inactive-account
-	// cleanup.
-	if res, err := seed.FromConfig(ctx, db, cfg, newUUID, clk.Now()); err != nil {
-		slog.Warn("first-run seeding failed", "err", err)
-	} else if res.SeededAdminAccount || res.SeededAdminPasskey {
+	// First-run seeding (admin account + passkeys + endpoints). Fatal on
+	// failure like the Node boot (index.ts:43) — continuing without an admin
+	// account leaves a fresh deployment silently un-loginable.
+	res, err := seed.FromConfig(ctx, db, cfg, newUUID, clk.Now())
+	if err != nil {
+		return fmt.Errorf("first-run seeding failed: %w", err)
+	}
+	if res.SeededAdminAccount || res.SeededAdminPasskey {
 		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
 	webauthnDeps := &webauthn.Deps{
