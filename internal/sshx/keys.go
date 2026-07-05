@@ -67,6 +67,21 @@ func (k *KeyDir) IsAvailable(fingerprint string) bool {
 	return ok
 }
 
+// SignerFor returns the on-disk signer for a fingerprint (the disk-side half
+// of the DB-driven key selection: ssh-transport-factory.ts getPrivateKey).
+func (k *KeyDir) SignerFor(fingerprint string) (ssh.Signer, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !k.loaded {
+		k.scanLocked()
+	}
+	sk, ok := k.available[fingerprint]
+	if !ok {
+		return nil, false
+	}
+	return sk.signer, true
+}
+
 // Reload forces a re-scan of availability (no DB upsert).
 func (k *KeyDir) Reload() error {
 	k.mu.Lock()

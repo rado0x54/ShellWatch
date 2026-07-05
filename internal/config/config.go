@@ -78,6 +78,16 @@ type Notifications struct {
 	} `yaml:"mcp"`
 }
 
+// Mcp holds MCP-surface lifecycle settings. Go-only section: Node's zod
+// schema is non-strict and ignores it in a shared config.yaml.
+type Mcp struct {
+	// SessionTimeoutMinutes closes MCP sessions with no HTTP activity for this
+	// long (idle-session janitor for the MCP layer; expiry also closes the
+	// agent's SSH sessions). Pointer so an explicit 0 (= never expire) is
+	// distinguishable from absent (= default 30).
+	SessionTimeoutMinutes *int `yaml:"sessionTimeoutMinutes"`
+}
+
 type AgentSocket struct {
 	ProxyEnabled bool `yaml:"proxyEnabled"`
 }
@@ -114,6 +124,7 @@ type Config struct {
 	Server             Server             `yaml:"server"`
 	Security           Security           `yaml:"security"`
 	Notifications      Notifications      `yaml:"notifications"`
+	Mcp                Mcp                `yaml:"mcp"`
 	AgentSocket        AgentSocket        `yaml:"agentSocket"`
 	Hydra              Hydra              `yaml:"hydra"`
 	Vapid              *Vapid             `yaml:"vapid"`
@@ -136,6 +147,9 @@ var (
 )
 
 const defaultIntrospectionCacheTtlMs = 60_000
+
+// defaultMcpSessionTimeoutMinutes aligns with the terminal idle janitor.
+const defaultMcpSessionTimeoutMinutes = 30
 
 // Load reads, parses, defaults, validates, and derives — the equivalent of
 // loadConfig in src/config/loader.ts. Resolution order for the path:
@@ -208,6 +222,10 @@ func (c *Config) applyDefaults() {
 	fillRule(&rl.LoginVerify, defaultRateLimit.LoginVerify)
 	if c.Notifications.Mcp.DebounceMs == 0 {
 		c.Notifications.Mcp.DebounceMs = 100
+	}
+	if c.Mcp.SessionTimeoutMinutes == nil {
+		v := defaultMcpSessionTimeoutMinutes
+		c.Mcp.SessionTimeoutMinutes = &v
 	}
 	if c.Hydra.Spa.ClientID == "" {
 		c.Hydra.Spa.ClientID = "shellwatch-web"
@@ -290,6 +308,10 @@ func (c *Config) validate() []string {
 
 	if d := c.Notifications.Mcp.DebounceMs; d < 10 || d > 5000 {
 		add("notifications.mcp.debounceMs: must be between 10 and 5000")
+	}
+
+	if v := *c.Mcp.SessionTimeoutMinutes; v < 0 || v > 1440 {
+		add("mcp.sessionTimeoutMinutes: must be between 0 (disabled) and 1440")
 	}
 
 	if !isURL(c.Hydra.PublicURL) {

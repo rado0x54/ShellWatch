@@ -66,14 +66,15 @@ func (s *WebAuthnSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) 
 		ConnectionID:     s.ConnectionID,
 	}, s.ActionCtx, s.RedirectTo)
 	if err != nil {
-		// A human deny should fall through to the next offered key (Node's
-		// SKIP_IDENTITY_SIGNATURE): return a server-rejectable signature so
-		// x/crypto's auth loop tries the next signer instead of aborting. Any
-		// other failure (expiry, cancelled context) aborts the attempt.
-		if errors.Is(err, approval.ErrDenied) {
-			return signing.SkipSignature(), nil
+		// Any rejection — deny, TTL expiry, store destroy — falls through to
+		// the next offered key (Node's SKIP_IDENTITY_SIGNATURE for every
+		// reject, ssh-agent.ts:24-36; closes M11): return a server-rejectable
+		// signature so x/crypto's auth loop tries the next signer instead of
+		// aborting the whole publickey method. Only a dead dial context aborts.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
-		return nil, err
+		return signing.SkipSignature(), nil
 	}
 	return signing.BuildSSHSignature(resp)
 }

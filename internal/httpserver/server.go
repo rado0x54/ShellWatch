@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -22,6 +23,8 @@ import (
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/mcp"
+	"github.com/rado0x54/shellwatch/internal/ratelimit"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -75,6 +78,14 @@ func New(p Params) http.Handler {
 	// Outermost: log every request (method/path/status/duration) so 4xx/5xx are
 	// visible in stdout / the log file, not just the response body.
 	r.Use(requestLogger(clock.Real{}))
+	// server.trustProxy: resolve the effective client IP once; every consumer
+	// (audit sourceIp, /mcp allowlist, rate limits) reads it from the context.
+	r.Use(realip.New(p.Config.Server.TrustProxy).Middleware)
+	// CORS before the bearer gate so cross-origin preflights don't 401.
+	r.Use(corsMiddleware)
+	// Rate limits on the unauthenticated surfaces, before the gate (they're
+	// exempt from it) — port of the per-route @fastify/rate-limit configs.
+	r.Use(ratelimit.Middleware(rateLimitRules(p.Config)))
 	r.Use(auth.Gate(auth.GateParams{
 		Resolve:           p.Resolve,
 		ExternalURL:       externalURL,
@@ -158,6 +169,51 @@ func New(p Params) http.Handler {
 	// SPA: exact static files, fallback to index.html for client routes.
 	r.NotFound(spaHandler(p.StaticFS))
 	return r
+}
+
+// rateLimitRules maps security.rateLimit onto the exact routes Node limits
+// (self-register, invites, hydra provider options/verify, step-up, DCR). Each
+// route gets its own counter, mirroring per-route @fastify/rate-limit stores.
+func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
+	rl := cfg.Security.RateLimit
+	clk := clock.Real{}
+	mk := func(rule config.RateLimitRule) func() *ratelimit.Limiter {
+		return func() *ratelimit.Limiter {
+			return ratelimit.New(rule.Max, time.Duration(rule.WindowMinutes)*time.Minute, clk)
+		}
+	}
+	selfReg := mk(rl.SelfRegister)
+	passkeyReg := mk(rl.PasskeyRegister)
+	loginOpts := mk(rl.LoginOptions)
+	loginVerify := mk(rl.LoginVerify)
+	dcr := func() *ratelimit.Limiter { return ratelimit.New(10, 15*time.Minute, clk) }
+
+	return []ratelimit.Rule{
+		// selfRegister bucket (self-register.ts).
+		{Method: "POST", Path: "/api/auth/register/options", Limiter: selfReg()},
+		{Method: "POST", Path: "/api/auth/register", Limiter: selfReg()},
+		// passkeyRegister bucket (registration.ts + invite.ts).
+		{Method: "POST", Path: "/api/webauthn/register/options", Limiter: passkeyReg()},
+		{Method: "POST", Path: "/api/webauthn/register", Limiter: passkeyReg()},
+		{Method: "POST", Path: "/api/webauthn/invite", Limiter: passkeyReg()},
+		{Method: "POST", Path: "/api/passkey-invite/register/options", Limiter: passkeyReg()},
+		{Method: "POST", Path: "/api/passkey-invite/register", Limiter: passkeyReg()},
+		{Method: "GET", Path: "/api/passkey-invite/", Prefix: true, Limiter: passkeyReg()},
+		// loginOptions bucket (hydra provider pages/options, routes.ts).
+		{Method: "GET", Path: "/api/hydra/login", Limiter: loginOpts()},
+		{Method: "POST", Path: "/api/hydra/login/options", Limiter: loginOpts()},
+		{Method: "GET", Path: "/api/hydra/consent", Limiter: loginOpts()},
+		{Method: "POST", Path: "/api/hydra/consent/options", Limiter: loginOpts()},
+		{Method: "POST", Path: "/api/hydra/consent/approve", Limiter: loginOpts()},
+		{Method: "GET", Path: "/api/hydra/logout", Limiter: loginOpts()},
+		// loginVerify bucket (assertion crypto: login/consent verify, step-up).
+		{Method: "POST", Path: "/api/hydra/login/verify", Limiter: loginVerify()},
+		{Method: "POST", Path: "/api/hydra/consent/verify", Limiter: loginVerify()},
+		{Method: "POST", Path: "/api/webauthn/stepup/options", Limiter: loginVerify()},
+		{Method: "POST", Path: "/api/webauthn/stepup/verify", Limiter: loginVerify()},
+		// Mediated DCR: fixed 10/15min (routes.ts:186).
+		{Method: "POST", Path: "/api/hydra/register", Limiter: dcr()},
+	}
 }
 
 func jsonHandler(v any) http.HandlerFunc {

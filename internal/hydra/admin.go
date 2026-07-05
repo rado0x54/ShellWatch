@@ -165,11 +165,14 @@ func (c *AdminClient) ListConsentSessions(ctx context.Context, subject string) (
 }
 
 // RevokeConsentSessions deletes a subject's consent sessions (optionally scoped
-// to one client).
+// to one client). Hydra v2 requires `client` or `all=true` — omitting both is a
+// 400 (admin-client.ts revokeConsentSessions).
 func (c *AdminClient) RevokeConsentSessions(ctx context.Context, subject, clientID string) error {
 	path := "/admin/oauth2/auth/sessions/consent?subject=" + url.QueryEscape(subject)
 	if clientID != "" {
 		path += "&client=" + url.QueryEscape(clientID)
+	} else {
+		path += "&all=true"
 	}
 	err := c.adminJSON(ctx, http.MethodDelete, path, nil, nil)
 	if apiErr, ok := err.(*APIError); ok && apiErr.Status == http.StatusNotFound {

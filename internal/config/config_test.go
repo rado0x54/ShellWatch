@@ -129,3 +129,31 @@ func TestParseEndpointAddressForms(t *testing.T) {
 		t.Errorf("format explicit port: %q", got)
 	}
 }
+
+func TestMcpSessionTimeoutConfig(t *testing.T) {
+	// Absent -> default 30.
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *cfg.Mcp.SessionTimeoutMinutes; got != 30 {
+		t.Errorf("default sessionTimeoutMinutes: got %d, want 30", got)
+	}
+
+	// Explicit 0 -> disabled (kept, not replaced by the default).
+	cfg, err = Load(writeConfig(t, minimalConfig+"\nmcp:\n  sessionTimeoutMinutes: 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *cfg.Mcp.SessionTimeoutMinutes; got != 0 {
+		t.Errorf("explicit 0: got %d, want 0", got)
+	}
+
+	// Out of range rejected.
+	for _, bad := range []string{"-1", "1441"} {
+		_, err := Load(writeConfig(t, minimalConfig+"\nmcp:\n  sessionTimeoutMinutes: "+bad+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "mcp.sessionTimeoutMinutes") {
+			t.Errorf("value %s: expected validation error, got %v", bad, err)
+		}
+	}
+}

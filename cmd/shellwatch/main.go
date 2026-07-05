@@ -34,6 +34,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/mcp"
+	"github.com/rado0x54/shellwatch/internal/push"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/seed"
 	"github.com/rado0x54/shellwatch/internal/sshx"
@@ -108,10 +109,6 @@ func run() error {
 	} else if res.SeededAdminAccount || res.SeededAdminPasskey {
 		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
-	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
-		slog.Info("cleaned up inactive accounts", "count", len(ids))
-	})
-
 	webauthnDeps := &webauthn.Deps{
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),
@@ -141,11 +138,15 @@ func run() error {
 		BrokerFunc:      func() sshx.SignBroker { return signBroker },
 		Credentials:     credStore,
 		FileKeys:        keyDir,
+		Keys:            store.NewSSHKeys(db),
+		IsAdmin:         store.NewAccounts(db).IsAdmin,
 		RpID:            cfg.Security.RpID,
 		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
 		NewConnectionID: newUUID,
 	})
 	manager := terminal.NewManager(factory, clk, 0)
+	// Idle janitor: auto-close sessions idle >30 min (Node parity, H6).
+	go manager.RunIdleJanitor(ctx, terminal.DefaultIdleSweepInterval)
 	wsHub := ws.NewHub(manager)
 	defer wsHub.Close()
 
@@ -155,14 +156,60 @@ func run() error {
 	// sign:resolved reach browsers via the hub.
 	actionStore := approval.NewStore(clk, newUUID)
 	go sweepActions(ctx, actionStore)
+	pushSubs := store.NewPushSubs(db, clk)
+	channels := []approval.Channel{&approval.WSChannel{Hub: wsHub}}
+	if cfg.Vapid != nil {
+		// Web Push delivery (H7): approval prompts reach subscribed browsers
+		// without an open tab (index.ts:78-86).
+		channels = append(channels, push.NewChannel(pushSubs, push.Vapid{
+			Subject: cfg.Vapid.Subject, PublicKey: cfg.Vapid.PublicKey, PrivateKey: cfg.Vapid.PrivateKey,
+		}))
+		slog.Info("web push notifications enabled (VAPID configured)")
+	}
 	signBroker = approval.NewBroker(actionStore,
 		func() string { return cfg.Server.ExternalURL },
-		&approval.WSChannel{Hub: wsHub})
+		channels...)
 
 	// Audit writers subscribe to the manager + action store (guaranteed hooks).
 	auditWriter := audit.NewWriter(db, clk)
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
+
+	mcpDeps := &mcp.Deps{
+		AgentDeps:      agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
+		Keys:           store.NewSSHKeys(db),
+		NewID:          newUUID,
+		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
+	}
+
+	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
+	// the account's live terminal sessions, drop its MCP transports, and revoke
+	// its Hydra login/consent sessions so live grants die with the account.
+	// Fired by the admin DELETE route and the 90-day inactivity cleanup alike.
+	accountDeleted := func(accountID string) {
+		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
+			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
+		}
+		if n := mcpDeps.DropAccount(accountID); n > 0 {
+			slog.Info("tore down MCP transports for deleted account", "account", accountID, "count", n)
+		}
+		go func() {
+			rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := admin.RevokeLoginSessions(rctx, accountID); err != nil {
+				slog.Warn("failed to revoke Hydra login sessions for deleted account", "account", accountID, "err", err)
+			}
+			if err := admin.RevokeConsentSessions(rctx, accountID, ""); err != nil {
+				slog.Warn("failed to revoke Hydra consent sessions for deleted account", "account", accountID, "err", err)
+			}
+		}()
+	}
+	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
+		slog.Info("cleaned up inactive accounts", "count", len(ids))
+		for _, id := range ids {
+			accountDeleted(id)
+		}
+	})
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
@@ -188,11 +235,8 @@ func run() error {
 			Demo:        demoSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
-		WSHub: wsHub,
-		MCP: &mcp.Deps{
-			AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
-			Keys:      store.NewSSHKeys(db),
-		},
+		WSHub:   wsHub,
+		MCP:     mcpDeps,
 		Actions: &rest.Actions{Store: actionStore},
 		Audit: &rest.Audit{
 			Sessions: audit.NewSessions(db),
@@ -200,7 +244,8 @@ func run() error {
 		},
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
-			Now: func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
+			Now:       func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
+			OnDeleted: accountDeleted,
 		},
 		Credentials: &rest.Credentials{
 			Store: credStore, Admin: admin, StepUp: webauthnDeps.StepUp,
@@ -212,9 +257,9 @@ func run() error {
 		AuthSessions: &rest.AuthSessions{
 			Admin: admin, SPAClientID: cfg.Hydra.Spa.ClientID, StepUp: webauthnDeps.StepUp,
 		},
-		Push: &rest.Push{
-			Store: store.NewPushSubs(db, clk), AllowedEndpoint: nil, NewID: newUUID,
-		},
+		// Push routes mount only when VAPID is configured (Node 404s them
+		// otherwise); the endpoint allowlist is the SSRF guard (H8).
+		Push: pushDeps(cfg, pushSubs),
 		AgentProxy: &agentproxy.Deps{
 			Broker:          signBroker,
 			Credentials:     credStore,
@@ -326,6 +371,15 @@ func sweepActions(ctx context.Context, store *approval.Store) {
 			store.Sweep()
 		}
 	}
+}
+
+// pushDeps returns the push REST deps, or nil when VAPID is unconfigured
+// (Node registers the routes only under config.vapid — index.ts:78-86).
+func pushDeps(cfg *config.Config, subs *store.PushSubs) *rest.Push {
+	if cfg.Vapid == nil {
+		return nil
+	}
+	return &rest.Push{Store: subs, AllowedEndpoint: push.IsAllowedEndpoint, NewID: newUUID}
 }
 
 // firstOrigin returns the first trusted WebAuthn origin (the ceremony origin

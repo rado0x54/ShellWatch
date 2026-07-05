@@ -11,6 +11,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/signagent"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/util"
@@ -66,7 +67,7 @@ func (d *Deps) Handler() http.HandlerFunc {
 
 		ba := signagent.New(ctx, identities, d.Broker, principal.AccountID, connID, approval.Context{
 			Source:         "agent-proxy",
-			SourceIP:       clientIP(r),
+			SourceIP:       realip.FromRequest(r),
 			ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
 			ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
 			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
@@ -106,15 +107,3 @@ func (d *Deps) buildIdentities(ctx context.Context, accountID string) ([]signage
 	}
 	return out, nil
 }
-
-func clientIP(r *http.Request) string {
-	host := r.RemoteAddr
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			return host[:i]
-		}
-	}
-	return host
-}
-
-var _ = context.Background

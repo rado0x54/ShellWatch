@@ -156,6 +156,15 @@ func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) 
 		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
 	}
 	s.mu.Lock()
+	// Prune ids the manager no longer knows (idle-timeout janitor, server
+	// hangup, account cleanup) before enforcing the cap. Deliberate divergence
+	// from Node, which counts the raw set: there, N externally-closed sessions
+	// permanently starve the cap until the agent reconnects.
+	for id := range s.owned {
+		if s.deps.Manager.GetSession(id) == nil {
+			delete(s.owned, id)
+		}
+	}
 	if len(s.owned) >= s.maxOwned {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("maximum concurrent sessions (%d) reached", s.maxOwned)

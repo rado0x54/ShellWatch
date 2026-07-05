@@ -8,6 +8,8 @@ package auth
 import (
 	"net"
 	"net/http"
+
+	"github.com/rado0x54/shellwatch/internal/realip"
 )
 
 // IPChecker reports whether a peer IP is in the allowlist.
@@ -40,14 +42,12 @@ func (c *IPChecker) Allowed(ip string) bool {
 	return false
 }
 
-// Middleware rejects requests whose peer IP isn't allowed (403). Apply to /mcp.
+// Middleware rejects requests whose client IP isn't allowed (403). Apply to
+// /mcp. The IP comes from the trust-proxy resolver (realip), so a deployment
+// behind a reverse proxy checks the real client, not the proxy's 127.0.0.1.
 func (c *IPChecker) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if !c.Allowed(host) {
+		if !c.Allowed(realip.FromRequest(r)) {
 			http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 			return
 		}
