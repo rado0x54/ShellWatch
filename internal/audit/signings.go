@@ -111,7 +111,7 @@ func (s *Signings) List(ctx context.Context, accountID string, f SigningFilters,
 		return Page[SigningRow]{}, err
 	}
 	defer rows.Close()
-	var out []SigningRow
+	out := []SigningRow{} // non-nil: empty pages serialize as "rows": []
 	for rows.Next() {
 		r, err := scanSigning(rows)
 		if err != nil {
@@ -122,7 +122,7 @@ func (s *Signings) List(ctx context.Context, accountID string, f SigningFilters,
 	if err := rows.Err(); err != nil {
 		return Page[SigningRow]{}, err
 	}
-	next := paginate(&out, limit, func(r SigningRow) cursor { return cursor{CreatedAt: r.CreatedAt, ID: r.ID} })
+	next := paginate(&out, limit, func(r SigningRow) any { return cursor{CreatedAt: r.CreatedAt, ID: r.ID} })
 	return Page[SigningRow]{Rows: out, NextCursor: next}, nil
 }
 

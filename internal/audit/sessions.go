@@ -16,7 +16,7 @@ import (
 
 const (
 	pageLimitDefault = 50
-	pageLimitMax     = 200
+	pageLimitMax     = 500 // PAGE_LIMIT_MAX, session-lifecycle-repo.ts:61
 )
 
 // SessionRow is one session-lifecycle audit record (audit_session_lifecycle).
@@ -77,9 +77,9 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 		conds = append(conds, "created_at <= ?")
 		args = append(args, f.To)
 	}
-	if c := decodeCursor(cursorStr); c != nil {
+	if c := decodeSessionCursor(cursorStr); c != nil {
 		conds = append(conds, "(created_at < ? OR (created_at = ? AND session_id < ?))")
-		args = append(args, c.CreatedAt, c.CreatedAt, c.ID)
+		args = append(args, c.CreatedAt, c.CreatedAt, c.SessionID)
 	}
 
 	query := `SELECT session_id, account_id, endpoint_id, source, status, created_at,
@@ -95,7 +95,7 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 	}
 	defer rows.Close()
 
-	var out []SessionRow
+	out := []SessionRow{} // non-nil: empty pages serialize as "rows": []
 	for rows.Next() {
 		var r SessionRow
 		var closedAt, sourceIP, mcpReason, mcpName, mcpVer, cHost, cOS, cVer, closeReason sql.NullString
@@ -121,11 +121,20 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 		return Page[SessionRow]{}, err
 	}
 
-	next := paginate(&out, limit, func(r SessionRow) cursor { return cursor{CreatedAt: r.CreatedAt, ID: r.SessionID} })
+	next := paginate(&out, limit, func(r SessionRow) any {
+		return sessionCursor{CreatedAt: r.CreatedAt, SessionID: r.SessionID}
+	})
 	return Page[SessionRow]{Rows: out, NextCursor: next}, nil
 }
 
 // --- cursor + helpers ---
+
+// sessionCursor matches Node's sessions cursor payload {createdAt, sessionId}
+// (session-lifecycle-repo.ts:166-168); signings use {createdAt, id}.
+type sessionCursor struct {
+	CreatedAt string `json:"createdAt"`
+	SessionID string `json:"sessionId"`
+}
 
 type cursor struct {
 	CreatedAt string `json:"createdAt"`
@@ -142,7 +151,7 @@ func clampLimit(n int) int {
 	return n
 }
 
-func encodeCursor(c cursor) string {
+func encodeCursor(c any) string {
 	raw, _ := json.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
@@ -162,8 +171,23 @@ func decodeCursor(raw string) *cursor {
 	return &c
 }
 
+func decodeSessionCursor(raw string) *sessionCursor {
+	if raw == "" {
+		return nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	var c sessionCursor
+	if json.Unmarshal(data, &c) != nil || c.CreatedAt == "" || c.SessionID == "" {
+		return nil
+	}
+	return &c
+}
+
 // paginate trims an over-fetched slice to limit and returns the next cursor.
-func paginate[T any](rows *[]T, limit int, key func(T) cursor) *string {
+func paginate[T any](rows *[]T, limit int, key func(T) any) *string {
 	if len(*rows) <= limit {
 		return nil
 	}
