@@ -68,3 +68,30 @@ func (p *PushSubs) Delete(ctx context.Context, accountID, endpoint string) error
 		AccountID: accountID, Endpoint: endpoint,
 	})
 }
+
+// PushSubscription is one deliverable subscription (the sender's view).
+type PushSubscription struct {
+	Endpoint string
+	P256dh   string
+	Auth     string
+}
+
+// ListForAccount returns an account's subscriptions (push-subscription-repo.ts
+// findByAccountId).
+func (p *PushSubs) ListForAccount(ctx context.Context, accountID string) ([]PushSubscription, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE account_id = ?`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSubscription
+	for rows.Next() {
+		var s PushSubscription
+		if err := rows.Scan(&s.Endpoint, &s.P256dh, &s.Auth); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

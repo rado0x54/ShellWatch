@@ -34,6 +34,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/mcp"
+	"github.com/rado0x54/shellwatch/internal/push"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/seed"
 	"github.com/rado0x54/shellwatch/internal/sshx"
@@ -155,9 +156,19 @@ func run() error {
 	// sign:resolved reach browsers via the hub.
 	actionStore := approval.NewStore(clk, newUUID)
 	go sweepActions(ctx, actionStore)
+	pushSubs := store.NewPushSubs(db, clk)
+	channels := []approval.Channel{&approval.WSChannel{Hub: wsHub}}
+	if cfg.Vapid != nil {
+		// Web Push delivery (H7): approval prompts reach subscribed browsers
+		// without an open tab (index.ts:78-86).
+		channels = append(channels, push.NewChannel(pushSubs, push.Vapid{
+			Subject: cfg.Vapid.Subject, PublicKey: cfg.Vapid.PublicKey, PrivateKey: cfg.Vapid.PrivateKey,
+		}))
+		slog.Info("web push notifications enabled (VAPID configured)")
+	}
 	signBroker = approval.NewBroker(actionStore,
 		func() string { return cfg.Server.ExternalURL },
-		&approval.WSChannel{Hub: wsHub})
+		channels...)
 
 	// Audit writers subscribe to the manager + action store (guaranteed hooks).
 	auditWriter := audit.NewWriter(db, clk)
@@ -244,9 +255,9 @@ func run() error {
 		AuthSessions: &rest.AuthSessions{
 			Admin: admin, SPAClientID: cfg.Hydra.Spa.ClientID, StepUp: webauthnDeps.StepUp,
 		},
-		Push: &rest.Push{
-			Store: store.NewPushSubs(db, clk), AllowedEndpoint: nil, NewID: newUUID,
-		},
+		// Push routes mount only when VAPID is configured (Node 404s them
+		// otherwise); the endpoint allowlist is the SSRF guard (H8).
+		Push: pushDeps(cfg, pushSubs),
 		AgentProxy: &agentproxy.Deps{
 			Broker:          signBroker,
 			Credentials:     credStore,
@@ -358,6 +369,15 @@ func sweepActions(ctx context.Context, store *approval.Store) {
 			store.Sweep()
 		}
 	}
+}
+
+// pushDeps returns the push REST deps, or nil when VAPID is unconfigured
+// (Node registers the routes only under config.vapid — index.ts:78-86).
+func pushDeps(cfg *config.Config, subs *store.PushSubs) *rest.Push {
+	if cfg.Vapid == nil {
+		return nil
+	}
+	return &rest.Push{Store: subs, AllowedEndpoint: push.IsAllowedEndpoint, NewID: newUUID}
 }
 
 // firstOrigin returns the first trusted WebAuthn origin (the ceremony origin
