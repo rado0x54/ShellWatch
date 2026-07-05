@@ -23,11 +23,14 @@ type managed struct {
 }
 
 // StatusEvent is emitted on every status transition (guaranteed, ordered).
+// CreatedAt is carried so close-side subscribers (audit duration_ms) still see
+// it after a terminal transition removed the session from the registry.
 type StatusEvent struct {
 	SessionID string
 	Status    Status
 	Previous  Status
 	Reason    CloseReason
+	CreatedAt time.Time
 }
 
 // Manager owns all sessions.
@@ -331,7 +334,7 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	for _, fn := range m.statusSubs {
 		subs = append(subs, fn)
 	}
-	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
 	m.mu.Unlock()
 
 	for _, fn := range subs {

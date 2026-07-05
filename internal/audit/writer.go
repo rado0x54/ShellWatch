@@ -67,9 +67,10 @@ func (w *Writer) recordClose(e terminal.StatusEvent) {
 	// Idempotent on closed_at: a session re-traversing a terminal state must not
 	// have its first-close timing rewritten.
 	_, err := w.db.Exec(
-		`UPDATE audit_session_lifecycle SET status = ?, closed_at = ?, close_reason = ?
+		`UPDATE audit_session_lifecycle SET status = ?, closed_at = ?, duration_ms = ?, close_reason = ?
 		 WHERE session_id = ? AND closed_at IS NULL`,
-		string(e.Status), now.Format(isoMillis), nz(string(e.Reason)), e.SessionID)
+		string(e.Status), now.Format(isoMillis), now.Sub(e.CreatedAt.UTC()).Milliseconds(),
+		nz(string(e.Reason)), e.SessionID)
 	if err != nil {
 		slog.Warn("audit: record session-close failed", "session", e.SessionID, "err", err)
 	}
