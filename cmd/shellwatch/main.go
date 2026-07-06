@@ -206,6 +206,11 @@ func run() error {
 		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
 			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
 		}
+		// Purge retained post-mortem sessions too — a deleted account's
+		// terminal output must not stay readable in memory.
+		if n := manager.RemoveForAccount(accountID); n > 0 {
+			slog.Info("purged retained sessions for deleted account", "account", accountID, "count", n)
+		}
 		if n := mcpDeps.DropAccount(accountID); n > 0 {
 			slog.Info("tore down MCP transports for deleted account", "account", accountID, "count", n)
 		}

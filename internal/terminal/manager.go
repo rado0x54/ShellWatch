@@ -183,10 +183,10 @@ func (m *Manager) pump(mg *managed) {
 	for ev := range mg.transport.Events() {
 		switch {
 		case ev.Err != nil:
-			m.setStatus(mg, StatusError, reasonOr(mg, CloseTransportError))
+			m.setStatus(mg, StatusError, m.reasonOr(mg, CloseTransportError))
 			return
 		case ev.Closed:
-			m.setStatus(mg, StatusClosed, reasonOr(mg, CloseServerHangup))
+			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 			return
 		default:
 			mg.output.Append(ev.Data)
@@ -203,10 +203,15 @@ func (m *Manager) pump(mg *managed) {
 			}
 		}
 	}
-	m.setStatus(mg, StatusClosed, reasonOr(mg, CloseServerHangup))
+	m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 }
 
-func reasonOr(mg *managed, fallback CloseReason) CloseReason {
+// reasonOr reads the stamped close reason under the lock (setStatus /
+// beginClosing write it under the same lock — the pump calls this
+// concurrently with an explicit Close).
+func (m *Manager) reasonOr(mg *managed, fallback CloseReason) CloseReason {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if mg.session.CloseReason != "" {
 		return mg.session.CloseReason
 	}
@@ -340,19 +345,44 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	if err != nil {
 		return
 	}
-	m.mu.Lock()
-	st := mg.session.Status
-	m.mu.Unlock()
-	if st == StatusClosed || st == StatusClosing {
+	// The guard and the closing transition must be one atomic step: a
+	// transport-driven Closed from the pump racing this call must either win
+	// (we bail) or lose (it becomes the normal closing->closed step) — never
+	// interleave into a closed->closing regression.
+	if !m.beginClosing(mg, reason) {
 		return
 	}
-	m.setStatus(mg, StatusClosing, reason)
 	_ = mg.transport.Close()
 	mg.output.Clear()
 	m.setStatus(mg, StatusClosed, reason)
 	m.mu.Lock()
 	delete(m.terminals, sessionID)
 	m.mu.Unlock()
+}
+
+// beginClosing atomically checks the status and transitions to closing,
+// firing status hooks; false when the session is already closing/closed.
+func (m *Manager) beginClosing(mg *managed, reason CloseReason) bool {
+	m.mu.Lock()
+	prev := mg.session.Status
+	if prev == StatusClosed || prev == StatusClosing {
+		m.mu.Unlock()
+		return false
+	}
+	mg.session.Status = StatusClosing
+	if reason != "" && mg.session.CloseReason == "" {
+		mg.session.CloseReason = reason
+	}
+	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
+	for _, fn := range m.statusSubs {
+		subs = append(subs, fn)
+	}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: StatusClosing, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
+	m.mu.Unlock()
+	for _, fn := range subs {
+		fn(ev)
+	}
+	return true
 }
 
 // CloseAllForAccount closes an account's non-closed sessions (returns count).
@@ -369,6 +399,28 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 		m.Close(id, reason)
 	}
 	return len(ids)
+}
+
+// RemoveForAccount drops an account's retained post-mortem (closed/errored)
+// sessions from the registry and releases their buffers. Account deletion
+// must not leave a deleted account's terminal output readable in memory —
+// CloseAllForAccount skips already-closed sessions, so the H1 teardown calls
+// this afterwards. Returns the number removed.
+func (m *Manager) RemoveForAccount(accountID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, mg := range m.terminals {
+		if mg.session.AccountID != accountID {
+			continue
+		}
+		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
+			mg.output.Clear()
+			delete(m.terminals, id)
+			n++
+		}
+	}
+	return n
 }
 
 // Destroy closes all sessions (shutdown).

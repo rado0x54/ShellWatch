@@ -92,7 +92,7 @@ func (d *Deps) Handler() http.Handler {
 		if !ok {
 			return nil
 		}
-		maxOwned := 0 // agent.New defaults to 5
+		maxOwned := -1 // unresolved -> agent.New defaults to 5; explicit 0 blocks
 		if d.MaxOwned != nil {
 			if m, ok := d.MaxOwned(r.Context(), principal.AccountID); ok {
 				maxOwned = m

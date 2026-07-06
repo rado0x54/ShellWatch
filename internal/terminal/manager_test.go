@@ -162,3 +162,28 @@ func TestExplicitCloseRemovesSession(t *testing.T) {
 		t.Fatal("explicitly closed session still in registry")
 	}
 }
+
+// Account deletion must purge retained post-mortem sessions (their buffers
+// hold the deleted account's terminal output).
+func TestRemoveForAccountPurgesRetainedSessions(t *testing.T) {
+	mgr, mock := mockManager(t)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mock.Close() // server hangup -> retained post-mortem
+	waitFor(t, func() bool {
+		s := mgr.GetSession(sess.SessionID)
+		return s != nil && s.Status == StatusClosed
+	})
+	if n := mgr.CloseAllForAccount("acc", CloseAccountDeleted); n != 0 {
+		t.Fatalf("CloseAllForAccount touched retained session: %d", n)
+	}
+	if n := mgr.RemoveForAccount("acc"); n != 1 {
+		t.Fatalf("RemoveForAccount: got %d, want 1", n)
+	}
+	if mgr.GetSession(sess.SessionID) != nil {
+		t.Fatal("retained session survived account purge")
+	}
+}

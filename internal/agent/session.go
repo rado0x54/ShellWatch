@@ -39,9 +39,11 @@ type Session struct {
 }
 
 // New builds an AgentSession for an account. maxOwned caps concurrent owned
-// sessions (default 5).
+// sessions: negative means "unresolved, use the default 5"; an explicit 0
+// blocks all creation (Node honors a stored max_sessions of 0, and so does
+// the REST cap check — MCP must not silently upgrade 0 to 5).
 func New(deps Deps, accountID, sourceIP string, maxOwned int) *Session {
-	if maxOwned <= 0 {
+	if maxOwned < 0 {
 		maxOwned = 5
 	}
 	return &Session{deps: deps, accountID: accountID, sourceIP: sourceIP, maxOwned: maxOwned, owned: map[string]bool{}}
@@ -156,18 +158,24 @@ func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) 
 		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
 	}
 	s.mu.Lock()
-	// Prune ids that are no longer live (idle-timeout janitor, server hangup,
-	// account cleanup — including post-mortem sessions the manager retains in
-	// closed/error state) before enforcing the cap. Deliberate divergence from
-	// Node, which counts the raw set: there, N externally-closed sessions
-	// permanently starve the cap until the agent reconnects.
+	// The cap counts only LIVE sessions — deliberate divergence from Node,
+	// which counts its raw owned set and so lets N externally-closed sessions
+	// (idle janitor, server hangup) starve the cap until the agent reconnects.
+	// Dead-but-retained ids (post-mortem closed/error sessions, M6) stay in
+	// owned so read_output/close_session keep working on them; only ids the
+	// manager has forgotten entirely are dropped.
+	live := 0
 	for id := range s.owned {
 		sess := s.deps.Manager.GetSession(id)
-		if sess == nil || sess.Status == terminal.StatusClosed || sess.Status == terminal.StatusError {
+		if sess == nil {
 			delete(s.owned, id)
+			continue
+		}
+		if sess.Status != terminal.StatusClosed && sess.Status != terminal.StatusError {
+			live++
 		}
 	}
-	if len(s.owned) >= s.maxOwned {
+	if live >= s.maxOwned {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("maximum concurrent sessions (%d) reached", s.maxOwned)
 	}

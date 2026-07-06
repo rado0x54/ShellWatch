@@ -19,6 +19,8 @@ var (
 	ErrDenied = errors.New("signing request denied")
 	// ErrExpired is returned when the action TTL elapses.
 	ErrExpired = errors.New("signing request expired")
+	// ErrCancelled is returned when the owning connection died.
+	ErrCancelled = errors.New("signing request cancelled")
 )
 
 // Channel delivers an action to a notification surface (WS toast, push).
@@ -113,10 +115,9 @@ func (b *Broker) RequestKeyApproval(ctx context.Context, accountID, keyLabel, ke
 }
 
 // CancelForConnection cancels a dead connection's pending actions AND clears
-// their toasts on every channel — the broker's blocking selects never fire
-// for a cancel (the reject closure isn't called), so without this the
-// sign:resolved broadcast is skipped and stale toasts linger on other tabs
-// (index.ts:112-114, M9).
+// their toasts on every channel (index.ts:112-114, M9). An awaiter unblocked
+// by the cancel's reject may also notify — a duplicate sign:resolved for the
+// same action id is an idempotent toast removal client-side.
 func (b *Broker) CancelForConnection(connectionID, reason string) int {
 	cancelled := b.store.CancelForConnection(connectionID, reason)
 	for _, a := range cancelled {
