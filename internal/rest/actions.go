@@ -107,7 +107,9 @@ func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
 func actionView(a *approval.Action) map[string]any {
 	v := map[string]any{
 		"id": a.ID, "accountId": a.AccountID, "type": string(a.Type), "status": string(a.Status),
-		"createdAt": a.CreatedAt.UTC().Format(isoMillis), "expiresAt": a.ExpiresAt.UTC().Format(isoMillis),
+		// Epoch-ms integers (contract + store.ts:46-47) — countdown clients do
+		// arithmetic on these.
+		"createdAt": a.CreatedAt.UnixMilli(), "expiresAt": a.ExpiresAt.UnixMilli(),
 		"context": a.Context,
 	}
 	if a.RedirectTo != "" {

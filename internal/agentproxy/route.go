@@ -73,8 +73,8 @@ func (d *Deps) Handler() http.HandlerFunc {
 			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
 		})
 
-		// Cancel stranded approvals when the connection ends.
-		defer d.Broker.Store().CancelForConnection(connID, "agent-proxy connection closed")
+		// Cancel stranded approvals when the connection ends (+ clear toasts).
+		defer d.Broker.CancelForConnection(connID, "agent-proxy connection closed")
 
 		rw := newWSReadWriter(ctx, wsc)
 		_ = agent.ServeAgent(ba, rw) // returns on I/O error (client disconnect)

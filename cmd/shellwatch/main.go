@@ -102,11 +102,14 @@ func run() error {
 	flusher := store.NewLastUsedFlusher(db, clk)
 	go flusher.Run(ctx, time.Minute)
 
-	// First-run seeding (admin account + passkeys + endpoints) + inactive-account
-	// cleanup.
-	if res, err := seed.FromConfig(ctx, db, cfg, newUUID, clk.Now()); err != nil {
-		slog.Warn("first-run seeding failed", "err", err)
-	} else if res.SeededAdminAccount || res.SeededAdminPasskey {
+	// First-run seeding (admin account + passkeys + endpoints). Fatal on
+	// failure like the Node boot (index.ts:43) — continuing without an admin
+	// account leaves a fresh deployment silently un-loginable.
+	res, err := seed.FromConfig(ctx, db, cfg, newUUID, clk.Now())
+	if err != nil {
+		return fmt.Errorf("first-run seeding failed: %w", err)
+	}
+	if res.SeededAdminAccount || res.SeededAdminPasskey {
 		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
 	webauthnDeps := &webauthn.Deps{
@@ -143,6 +146,16 @@ func run() error {
 		RpID:            cfg.Security.RpID,
 		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
 		NewConnectionID: newUUID,
+		// Dead terminal connection -> cancel its stranded sign prompts and
+		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
+		OnConnectionEnded: func(connID, reason string) {
+			if signBroker == nil {
+				return
+			}
+			if n := signBroker.CancelForConnection(connID, reason); n > 0 {
+				slog.Info("cancelled pending sign prompts for dead connection", "connection", connID, "count", n)
+			}
+		},
 	})
 	manager := terminal.NewManager(factory, clk, 0)
 	// Idle janitor: auto-close sessions idle >30 min (Node parity, H6).
@@ -175,11 +188,14 @@ func run() error {
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
+	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
 		Keys:           store.NewSSHKeys(db),
 		NewID:          newUUID,
+		Version:        buildInfo.Display,
 		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
+		MaxOwned:       store.NewAccounts(db).MaxSessions,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
@@ -189,6 +205,11 @@ func run() error {
 	accountDeleted := func(accountID string) {
 		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
 			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
+		}
+		// Purge retained post-mortem sessions too — a deleted account's
+		// terminal output must not stay readable in memory.
+		if n := manager.RemoveForAccount(accountID); n > 0 {
+			slog.Info("purged retained sessions for deleted account", "account", accountID, "count", n)
 		}
 		if n := mcpDeps.DropAccount(accountID); n > 0 {
 			slog.Info("tore down MCP transports for deleted account", "account", accountID, "count", n)
@@ -216,7 +237,7 @@ func run() error {
 		Resolve:       resolve,
 		TouchLastUsed: flusher.Touch,
 		StaticFS:      staticFS,
-		BuildInfo:     buildinfo.Load(mustGetwd()),
+		BuildInfo:     buildInfo,
 		WebAuthn:      webauthnDeps,
 		HydraAdmin:    admin,
 		HasPasskeys: func() bool {

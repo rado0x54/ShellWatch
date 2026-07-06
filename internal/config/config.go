@@ -181,8 +181,11 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config at %s:\n  - %s", resolved, strings.Join(errs, "\n  - "))
 	}
 
-	// Post-load derivations (loader.ts):
-	cfg.KeyDirectory = filepath.Join(filepath.Dir(resolved), cfg.KeyDirectory)
+	// Post-load derivations (loader.ts). path.resolve semantics: an absolute
+	// keyDirectory wins; a relative one resolves against the config file's dir.
+	if !filepath.IsAbs(cfg.KeyDirectory) {
+		cfg.KeyDirectory = filepath.Join(filepath.Dir(resolved), cfg.KeyDirectory)
+	}
 	if abs, err := filepath.Abs(cfg.KeyDirectory); err == nil {
 		cfg.KeyDirectory = abs
 	}

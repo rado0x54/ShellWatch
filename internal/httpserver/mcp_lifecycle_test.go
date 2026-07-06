@@ -253,3 +253,24 @@ func TestMCPIdleSessionExpiryClosesEverything(t *testing.T) {
 		t.Fatalf("expired session id: got %d %q, want uniform JSON-RPC 404", res.StatusCode, body)
 	}
 }
+
+// M3: initialize returns live-endpoint instructions.
+func TestMCPServerInstructions(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t, 0)
+	sess := mcpConnectAs(t, ts, "tok-a")
+	defer sess.Close()
+	res := sess.InitializeResult()
+	if res == nil {
+		t.Fatal("no initialize result")
+	}
+	for _, want := range []string{
+		"ShellWatch is an SSH session broker",
+		"- ep-a: Box A (u@127.0.0.1:22)",
+		"shellwatch_create_session",
+		"sudo:",
+	} {
+		if !strings.Contains(res.Instructions, want) {
+			t.Errorf("instructions missing %q\n%s", want, res.Instructions)
+		}
+	}
+}

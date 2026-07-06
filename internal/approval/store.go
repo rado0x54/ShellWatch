@@ -261,9 +261,15 @@ func (s *Store) Deny(id string) bool {
 }
 
 // CancelForConnection denies every pending action for a dead SSH connection
-// (fix for #91: stranded prompts don't outlive the session). The reject
-// closure is NOT called — the awaiter is already gone.
-func (s *Store) CancelForConnection(connectionID, reason string) int {
+// (fix for #91: stranded prompts don't outlive the session). Unlike Node —
+// where an unresolved promise is simply garbage-collected — the reject
+// closure MUST be called here: a terminal-path forwarding awaiter blocks on
+// the broker with context.Background() (passkey_factory.go), so a cancel
+// that never rejects would strand that goroutine forever. The error channels
+// are buffered, so rejecting an awaiter that already left (agent-proxy's
+// request context cancelled first) is harmless. Returns the cancelled
+// actions so the caller can clear their toasts (Broker.CancelForConnection).
+func (s *Store) CancelForConnection(connectionID, reason string) []*Action {
 	s.mu.Lock()
 	var cancelled []*Action
 	for _, a := range s.actions {
@@ -274,20 +280,32 @@ func (s *Store) CancelForConnection(connectionID, reason string) int {
 	}
 	s.mu.Unlock()
 	for _, a := range cancelled {
+		if a.reject != nil {
+			a.reject(ErrCancelled)
+		}
 		s.emitResolved(a, OutcomeCancelled, reason)
 	}
-	return len(cancelled)
+	return cancelled
 }
 
-// Sweep expires overdue pending actions (janitor).
+// cleanupGrace keeps terminal-state actions fetchable for status polling
+// before Sweep deletes them (store.ts:143-145).
+const cleanupGrace = 120 * time.Second
+
+// Sweep expires overdue pending actions and deletes terminal-state actions
+// older than the grace window (janitor) — without the delete the store grows
+// forever and resolved actions stay fetchable indefinitely.
 func (s *Store) Sweep() {
 	now := s.clk.Now()
 	s.mu.Lock()
 	var expired []*Action
-	for _, a := range s.actions {
+	for id, a := range s.actions {
 		if a.Status == StatusPending && !a.ExpiresAt.After(now) {
 			a.Status = StatusExpired
 			expired = append(expired, a)
+		}
+		if a.Status != StatusPending && now.Sub(a.ExpiresAt) > cleanupGrace {
+			delete(s.actions, id)
 		}
 	}
 	s.mu.Unlock()

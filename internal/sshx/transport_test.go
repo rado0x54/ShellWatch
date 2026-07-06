@@ -156,7 +156,10 @@ func TestServerHangupClosesSession(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for mgr.GetSession(sess.SessionID) != nil {
+	for {
+		if s := mgr.GetSession(sess.SessionID); s != nil && s.Status == terminal.StatusClosed {
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("session not closed on server hangup")
 		}
@@ -164,6 +167,11 @@ func TestServerHangupClosesSession(t *testing.T) {
 	}
 	if lastStatus != terminal.StatusClosed {
 		t.Errorf("final status: %v", lastStatus)
+	}
+	// Node parity (M6): a transport-driven close RETAINS the session for
+	// post-mortem reads but hides it from lists; explicit Close removes it.
+	if len(mgr.ListSessions()) != 0 {
+		t.Errorf("hung-up session still listed: %+v", mgr.ListSessions())
 	}
 }
 

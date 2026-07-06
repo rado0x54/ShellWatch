@@ -57,6 +57,10 @@ type PasskeyFactoryParams struct {
 	// NewConnectionID mints per-connection ids so a dead connection's stranded
 	// approvals can be cancelled (broker.CancelForConnection).
 	NewConnectionID func() string
+	// OnConnectionEnded fires once when a connection dies — on connect failure
+	// or when the established transport ends — so stranded sign prompts don't
+	// linger the full TTL (#91; create-factory.ts:147-156 -> index.ts:102-115).
+	OnConnectionEnded func(connectionID, reason string)
 }
 
 // labeledFileKey is one admin file key selected for a connection.
@@ -109,12 +113,46 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		if fp.Endpoint.AgentForward {
 			fwdAgent = p.buildForwardingAgent(fp, connID, fileKeys)
 		}
-		return Connect(ctx, ConnectParams{
+		transport, err := Connect(ctx, ConnectParams{
 			Host: fp.Endpoint.Host, Port: fp.Endpoint.Port, Username: fp.Endpoint.Username,
 			Signers: signers, AgentForward: fp.Endpoint.AgentForward, ForwardingAgent: fwdAgent,
 		})
+		if p.OnConnectionEnded == nil {
+			return transport, err
+		}
+		if err != nil {
+			// Failed auth can leave prompts pending (e.g. an ignored key-approve
+			// while the passkey ceremony timed out) — cancel them now.
+			p.OnConnectionEnded(connID, "SSH connection closed")
+			return nil, err
+		}
+		return watchTransportEnd(transport, func() {
+			p.OnConnectionEnded(connID, "SSH connection closed")
+		}), nil
 	}
 }
+
+// watchTransportEnd forwards a transport's events unchanged and invokes onEnd
+// exactly once when the underlying event stream ends (any close/error path —
+// the transport closes its channel in all of them).
+func watchTransportEnd(t terminal.Transport, onEnd func()) terminal.Transport {
+	w := &endWatchTransport{Transport: t, events: make(chan terminal.Event, 16)}
+	go func() {
+		for ev := range t.Events() {
+			w.events <- ev
+		}
+		close(w.events)
+		onEnd()
+	}()
+	return w
+}
+
+type endWatchTransport struct {
+	terminal.Transport
+	events chan terminal.Event
+}
+
+func (w *endWatchTransport) Events() <-chan terminal.Event { return w.events }
 
 func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey) ([]ssh.Signer, error) {
 	var signers []ssh.Signer

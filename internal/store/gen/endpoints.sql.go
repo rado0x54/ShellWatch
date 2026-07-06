@@ -11,16 +11,19 @@ import (
 )
 
 const deleteEndpointForAccount = `-- name: DeleteEndpointForAccount :execrows
-DELETE FROM endpoints WHERE id = ? AND account_id = ?
+UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ?
 `
 
 type DeleteEndpointForAccountParams struct {
+	UpdatedAt string
 	ID        string
 	AccountID string
 }
 
+// Soft delete (endpoint-repo.ts:146-152): history keeps its endpoint rows and
+// a shared-data-dir cutover can't resurrect Node-era deletions.
 func (q *Queries) DeleteEndpointForAccount(ctx context.Context, arg DeleteEndpointForAccountParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteEndpointForAccount, arg.ID, arg.AccountID)
+	result, err := q.db.ExecContext(ctx, deleteEndpointForAccount, arg.UpdatedAt, arg.ID, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}
@@ -118,7 +121,7 @@ func (q *Queries) InsertEndpoint(ctx context.Context, arg InsertEndpointParams) 
 const listEndpointsForAccount = `-- name: ListEndpointsForAccount :many
 
 SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward
-FROM endpoints WHERE account_id = ? ORDER BY created_at, id
+FROM endpoints WHERE account_id = ? AND enabled = 1 ORDER BY created_at, id
 `
 
 type ListEndpointsForAccountRow struct {
@@ -136,6 +139,9 @@ type ListEndpointsForAccountRow struct {
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Endpoint queries (Phase 3). Every account-owned query takes account_id in
 // SQL (W13). Keep pure ASCII (sqlc offset bug on multi-byte chars).
+// enabled filter matches Node (findAllForAccount, endpoint-repo.ts:87): a
+// soft-deleted endpoint is hidden from lists. Get-by-id deliberately does NOT
+// filter (Node parity: post-delete session create / PUT by id still work).
 func (q *Queries) ListEndpointsForAccount(ctx context.Context, accountID string) ([]ListEndpointsForAccountRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEndpointsForAccount, accountID)
 	if err != nil {

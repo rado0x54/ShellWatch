@@ -27,10 +27,15 @@ import (
 type Deps struct {
 	AgentDeps agent.Deps
 	Keys      *store.SSHKeys
-	MaxOwned  int
+	// MaxOwned resolves the account's concurrent-session cap (accounts.
+	// max_sessions, http-transport.ts:113-124). nil/miss -> agent default (5).
+	MaxOwned func(ctx context.Context, accountID string) (int, bool)
 	// NewID mints Mcp-Session-Ids (Node uses randomUUID); nil falls back to a
 	// local v4 generator.
 	NewID func() string
+	// Version is the serverInfo version (Node uses buildInfo.display; "" falls
+	// back to "1.0.0").
+	Version string
 	// SessionTimeout closes MCP sessions with no in-flight HTTP activity for
 	// this long (0 = never, the Node behavior). Wired from
 	// mcp.sessionTimeoutMinutes; the sdk timer is suspended while any request
@@ -87,8 +92,19 @@ func (d *Deps) Handler() http.Handler {
 		if !ok {
 			return nil
 		}
-		as := agent.New(d.AgentDeps, principal.AccountID, realip.FromRequest(r), d.MaxOwned)
-		return d.buildServer(as, principal.AccountID)
+		maxOwned := -1 // unresolved -> agent.New defaults to 5; explicit 0 blocks
+		if d.MaxOwned != nil {
+			if m, ok := d.MaxOwned(r.Context(), principal.AccountID); ok {
+				maxOwned = m
+			}
+		}
+		as := agent.New(d.AgentDeps, principal.AccountID, realip.FromRequest(r), maxOwned)
+		// Instructions carry the account's live endpoint list (server.ts:32-73).
+		instructions := ""
+		if eps, err := as.ListEndpoints(r.Context()); err == nil {
+			instructions = buildInstructions(eps)
+		}
+		return d.buildServer(as, principal.AccountID, instructions)
 	}, &mcpsdk.StreamableHTTPOptions{
 		// go-sdk's DNS-rebinding protection 403s a loopback local address with
 		// a non-loopback Host — which is exactly a reverse-proxy deployment
@@ -120,8 +136,13 @@ func sendSessionNotFound(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found"},"id":null}`))
 }
 
-func (d *Deps) buildServer(as *agent.Session, accountID string) *mcpsdk.Server {
-	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "shellwatch", Version: "1.0.0"}, &mcpsdk.ServerOptions{
+func (d *Deps) buildServer(as *agent.Session, accountID, instructions string) *mcpsdk.Server {
+	version := d.Version
+	if version == "" {
+		version = "1.0.0"
+	}
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "shellwatch", Version: version}, &mcpsdk.ServerOptions{
+		Instructions: instructions,
 		GetSessionID: d.newSessionID,
 		// On initialized: capture the client's advertised name/version for the
 		// approval UI (agent-session clientInfo, M4).

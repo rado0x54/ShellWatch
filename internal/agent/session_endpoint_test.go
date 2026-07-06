@@ -57,7 +57,12 @@ func TestSessionEndpointMutations(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("delete: ok=%v err=%v", ok, err)
 	}
-	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep != nil {
-		t.Error("endpoint still present after delete")
+	// Soft delete (Node parity): hidden from the list, but get-by-id still
+	// resolves — endpoint-repo.ts filters enabled only in findAllForAccount.
+	if eps, _ := sess.ListEndpoints(ctx); len(eps) != 0 {
+		t.Errorf("deleted endpoint still listed: %+v", eps)
+	}
+	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep == nil {
+		t.Error("get-by-id must still resolve a soft-deleted endpoint (Node parity)")
 	}
 }

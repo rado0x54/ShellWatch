@@ -2,6 +2,7 @@
 package approval
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -60,24 +61,55 @@ func TestStoreExpireRejectsAndEmits(t *testing.T) {
 	}
 }
 
-func TestStoreCancelForConnectionDoesNotReject(t *testing.T) {
+// Deliberate divergence from Node: cancel MUST reject. Node can drop the
+// resolver (the pending promise is garbage-collected); in Go a forwarding
+// awaiter blocks on the broker with context.Background(), so a cancel that
+// never rejects strands that goroutine forever.
+func TestStoreCancelForConnectionRejectsWithCancelled(t *testing.T) {
 	s, _ := newStore(t)
 	var outcome Outcome
 	var cancelReason string
 	s.OnResolved(func(e ResolvedEvent) { outcome = e.Outcome; cancelReason = e.CancelReason })
-	rejected := false
+	var rejectedWith error
 	s.Create(CreateParams{AccountID: "acc", Type: TypeWebAuthnSign, ConnectionID: "c1",
-		Reject: func(error) { rejected = true }})
+		Reject: func(err error) { rejectedWith = err }})
 
-	if n := s.CancelForConnection("c1", "connection closed"); n != 1 {
-		t.Fatalf("cancelled %d", n)
+	if cancelled := s.CancelForConnection("c1", "connection closed"); len(cancelled) != 1 {
+		t.Fatalf("cancelled %d", len(cancelled))
 	}
-	// The reject closure is NOT called on cancel (awaiter already gone), but
-	// the audit outcome is "cancelled".
-	if rejected {
-		t.Error("reject should not be called on cancel")
+	if rejectedWith != ErrCancelled {
+		t.Errorf("reject: got %v, want ErrCancelled", rejectedWith)
 	}
 	if outcome != OutcomeCancelled || cancelReason != "connection closed" {
 		t.Fatalf("outcome %s reason %q", outcome, cancelReason)
+	}
+}
+
+// The leak scenario end-to-end: an awaiter blocked with a non-cancellable
+// context (terminal-path agent forwarding) must be released by a
+// connection-cancel, not stranded until process exit.
+func TestBrokerCancelUnblocksBackgroundAwaiter(t *testing.T) {
+	s, _ := newStore(t)
+	b := NewBroker(s, func() string { return "https://sw.example" })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- b.RequestKeyApproval(context.Background(), "acc", "key", "SHA256:fp", "c1", Context{Source: "agent-forwarding"})
+	}()
+	// Wait for the action to exist, then cancel the connection.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(s.CancelForConnection("c1", "SSH connection closed")) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		if err != ErrCancelled {
+			t.Fatalf("awaiter returned %v, want ErrCancelled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("awaiter still blocked after connection cancel — goroutine leak")
 	}
 }

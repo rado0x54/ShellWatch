@@ -91,3 +91,99 @@ func TestManagerSessionLimitHelper(t *testing.T) {
 		t.Error("account scoping leaked")
 	}
 }
+
+// M6 (Node parity): a transport-driven close retains the session — buffer
+// readable, hidden from lists — while an explicit Close removes it; errored
+// sessions stay visible in lists.
+func TestTerminalStateRetention(t *testing.T) {
+	mgr, mock := mockManager(t)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SendInput(sess.SessionID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { r, _ := mgr.ReadOutput(sess.SessionID, 0, 100); return len(r.Data) > 0 })
+
+	// Server hangup: transport dies underneath the manager.
+	_ = mock.Close()
+	waitFor(t, func() bool {
+		s := mgr.GetSession(sess.SessionID)
+		return s != nil && s.Status == StatusClosed
+	})
+
+	// Retained: post-mortem output stays readable, but lists hide it.
+	if r, err := mgr.ReadOutput(sess.SessionID, 0, 100); err != nil || string(r.Data) != "hello" {
+		t.Fatalf("post-mortem read: %q err=%v", r.Data, err)
+	}
+	if got := mgr.ListSessions(); len(got) != 0 {
+		t.Fatalf("closed session listed: %+v", got)
+	}
+	if got := mgr.ListForAccount("acc"); len(got) != 0 {
+		t.Fatalf("closed session in account list: %+v", got)
+	}
+	// Explicit Close on an already-closed session is a no-op (Node close()
+	// early-return): the post-mortem record survives.
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if mgr.GetSession(sess.SessionID) == nil {
+		t.Fatal("post-mortem session dropped by no-op Close")
+	}
+
+	// Errored sessions stay VISIBLE in lists (status filter is closed-only).
+	mock2 := NewMockTransport()
+	mgr2 := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock2, nil }, clock.Real{}, 0)
+	sess2, err := mgr2.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock2.events <- Event{Err: context.DeadlineExceeded}
+	waitFor(t, func() bool {
+		s := mgr2.GetSession(sess2.SessionID)
+		return s != nil && s.Status == StatusError
+	})
+	got := mgr2.ListSessions()
+	if len(got) != 1 || got[0].Status != StatusError {
+		t.Fatalf("errored session not listed: %+v", got)
+	}
+}
+
+// An explicit Close removes the session entirely (registry + buffer).
+func TestExplicitCloseRemovesSession(t *testing.T) {
+	mgr, _ := mockManager(t)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if mgr.GetSession(sess.SessionID) != nil {
+		t.Fatal("explicitly closed session still in registry")
+	}
+}
+
+// Account deletion must purge retained post-mortem sessions (their buffers
+// hold the deleted account's terminal output).
+func TestRemoveForAccountPurgesRetainedSessions(t *testing.T) {
+	mgr, mock := mockManager(t)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mock.Close() // server hangup -> retained post-mortem
+	waitFor(t, func() bool {
+		s := mgr.GetSession(sess.SessionID)
+		return s != nil && s.Status == StatusClosed
+	})
+	if n := mgr.CloseAllForAccount("acc", CloseAccountDeleted); n != 0 {
+		t.Fatalf("CloseAllForAccount touched retained session: %d", n)
+	}
+	if n := mgr.RemoveForAccount("acc"); n != 1 {
+		t.Fatalf("RemoveForAccount: got %d, want 1", n)
+	}
+	if mgr.GetSession(sess.SessionID) != nil {
+		t.Fatal("retained session survived account purge")
+	}
+}

@@ -183,10 +183,10 @@ func (m *Manager) pump(mg *managed) {
 	for ev := range mg.transport.Events() {
 		switch {
 		case ev.Err != nil:
-			m.setStatus(mg, StatusError, reasonOr(mg, CloseTransportError))
+			m.setStatus(mg, StatusError, m.reasonOr(mg, CloseTransportError))
 			return
 		case ev.Closed:
-			m.setStatus(mg, StatusClosed, reasonOr(mg, CloseServerHangup))
+			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 			return
 		default:
 			mg.output.Append(ev.Data)
@@ -203,10 +203,15 @@ func (m *Manager) pump(mg *managed) {
 			}
 		}
 	}
-	m.setStatus(mg, StatusClosed, reasonOr(mg, CloseServerHangup))
+	m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 }
 
-func reasonOr(mg *managed, fallback CloseReason) CloseReason {
+// reasonOr reads the stamped close reason under the lock (setStatus /
+// beginClosing write it under the same lock — the pump calls this
+// concurrently with an explicit Close).
+func (m *Manager) reasonOr(mg *managed, fallback CloseReason) CloseReason {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if mg.session.CloseReason != "" {
 		return mg.session.CloseReason
 	}
@@ -276,38 +281,43 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	return mg.transport.Resize(cols, rows)
 }
 
-// ListSessions returns a snapshot of all sessions.
+// ListSessions returns a snapshot of all non-closed sessions. Closed sessions
+// are retained in the registry (post-mortem tail/re-attach) but hidden from
+// lists; errored ones stay visible (listSessions filter, terminal-manager.ts).
 func (m *Manager) ListSessions() []Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Session, 0, len(m.terminals))
 	for _, mg := range m.terminals {
+		if mg.session.Status == StatusClosed {
+			continue
+		}
 		out = append(out, *mg.session)
 	}
 	return out
 }
 
-// ListForAccount returns an account's sessions.
+// ListForAccount returns an account's non-closed sessions.
 func (m *Manager) ListForAccount(accountID string) []Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Session, 0)
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			out = append(out, *mg.session)
 		}
 	}
 	return out
 }
 
-// EndpointIDsForAccount lists endpoint ids an account has open sessions on
-// (satisfies rest.SessionLister for the endpoint-delete guard).
+// EndpointIDsForAccount lists endpoint ids an account has non-closed sessions
+// on (satisfies rest.SessionLister for the endpoint-delete guard).
 func (m *Manager) EndpointIDsForAccount(accountID string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var ids []string
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			ids = append(ids, mg.session.EndpointID)
 		}
 	}
@@ -326,22 +336,61 @@ func (m *Manager) GetSession(sessionID string) *Session {
 	return &s
 }
 
-// Close closes a session with a reason.
+// Close explicitly closes a session: transport down, buffer cleared, removed
+// from the registry (terminal-manager.ts close()). No-op when already
+// closed/closing — a retained post-mortem session stays readable until the
+// process ends, mirroring Node.
 func (m *Manager) Close(sessionID string, reason CloseReason) {
 	mg, err := m.get(sessionID)
 	if err != nil {
 		return
 	}
-	m.setStatus(mg, StatusClosing, reason)
+	// The guard and the closing transition must be one atomic step: a
+	// transport-driven Closed from the pump racing this call must either win
+	// (we bail) or lose (it becomes the normal closing->closed step) — never
+	// interleave into a closed->closing regression.
+	if !m.beginClosing(mg, reason) {
+		return
+	}
 	_ = mg.transport.Close()
+	mg.output.Clear()
+	m.setStatus(mg, StatusClosed, reason)
+	m.mu.Lock()
+	delete(m.terminals, sessionID)
+	m.mu.Unlock()
 }
 
-// CloseAllForAccount closes an account's sessions (returns count).
+// beginClosing atomically checks the status and transitions to closing,
+// firing status hooks; false when the session is already closing/closed.
+func (m *Manager) beginClosing(mg *managed, reason CloseReason) bool {
+	m.mu.Lock()
+	prev := mg.session.Status
+	if prev == StatusClosed || prev == StatusClosing {
+		m.mu.Unlock()
+		return false
+	}
+	mg.session.Status = StatusClosing
+	if reason != "" && mg.session.CloseReason == "" {
+		mg.session.CloseReason = reason
+	}
+	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
+	for _, fn := range m.statusSubs {
+		subs = append(subs, fn)
+	}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: StatusClosing, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
+	m.mu.Unlock()
+	for _, fn := range subs {
+		fn(ev)
+	}
+	return true
+}
+
+// CloseAllForAccount closes an account's non-closed sessions (returns count).
 func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 	m.mu.Lock()
 	ids := make([]string, 0)
 	for id, mg := range m.terminals {
-		if mg.session.AccountID == accountID {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
 			ids = append(ids, id)
 		}
 	}
@@ -350,6 +399,28 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 		m.Close(id, reason)
 	}
 	return len(ids)
+}
+
+// RemoveForAccount drops an account's retained post-mortem (closed/errored)
+// sessions from the registry and releases their buffers. Account deletion
+// must not leave a deleted account's terminal output readable in memory —
+// CloseAllForAccount skips already-closed sessions, so the H1 teardown calls
+// this afterwards. Returns the number removed.
+func (m *Manager) RemoveForAccount(accountID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, mg := range m.terminals {
+		if mg.session.AccountID != accountID {
+			continue
+		}
+		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
+			mg.output.Clear()
+			delete(m.terminals, id)
+			n++
+		}
+	}
+	return n
 }
 
 // Destroy closes all sessions (shutdown).
@@ -376,8 +447,9 @@ func (m *Manager) get(sessionID string) (*managed, error) {
 }
 
 // setStatus transitions a session and fires guaranteed status hooks. Terminal
-// states remove the session from the registry (after the hook, so subscribers
-// see the final transition).
+// transitions do NOT remove the session — transport-driven closes/errors keep
+// it registered (with its buffer) so the final output stays readable; only an
+// explicit Close() removes it (setStatus in terminal-manager.ts, M6).
 func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	m.mu.Lock()
 	prev := mg.session.Status
@@ -388,11 +460,6 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	mg.session.Status = status
 	if reason != "" && mg.session.CloseReason == "" {
 		mg.session.CloseReason = reason
-	}
-	terminal := status == StatusClosed || status == StatusError
-	if terminal {
-		delete(m.terminals, mg.session.SessionID)
-		mg.output.Clear()
 	}
 	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
 	for _, fn := range m.statusSubs {

@@ -8,6 +8,7 @@ package sshx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -193,18 +194,37 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	go t.pipe(stdout, &wg)
 	go t.pipe(stderr, &wg)
 	go func() {
-		wg.Wait()          // both streams EOF
-		_ = session.Wait() // reap the remote command
+		wg.Wait()              // both streams EOF
+		werr := session.Wait() // reap the remote command
 		t.mu.Lock()
 		already := t.closed
 		t.closed = true
 		t.mu.Unlock()
 		if !already {
-			t.events <- terminal.Event{Closed: true}
+			// Distinguish a broken transport from a normal end (ssh2 parity:
+			// client "error" vs "close", ssh-transport.ts:42-44). A nonzero
+			// remote exit or a close without exit-status are still normal
+			// closes (shell exit, server hangup); anything else — reset,
+			// protocol error — surfaces as an error event so the manager
+			// records status=error / transport-error.
+			if werr != nil && !isNormalSessionEnd(werr) {
+				t.events <- terminal.Event{Err: werr}
+			} else {
+				t.events <- terminal.Event{Closed: true}
+			}
 		}
 		close(t.events)
 		_ = client.Close()
 	}()
 
 	return t, nil
+}
+
+func isNormalSessionEnd(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	var exitErr *ssh.ExitError
+	var missingErr *ssh.ExitMissingError
+	return errors.As(err, &exitErr) || errors.As(err, &missingErr)
 }
