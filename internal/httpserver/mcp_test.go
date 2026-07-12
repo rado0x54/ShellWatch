@@ -176,10 +176,9 @@ func TestMCPToolGoldens(t *testing.T) {
 	assertToolGolden(t, "mcp-close-session", "shellwatch_close_session", sess, map[string]any{"sessionId": sid})
 }
 
-// Full endpoint editability via MCP (deliberate divergence from Node, whose
-// zod schema strips userVerification/agentForward): create + update accept
-// every REST-editable field, with the same validation. Not golden-pinned —
-// Node can't produce these captures.
+// Full endpoint editability via MCP: create + update accept every
+// REST-editable field, with the same validation as REST. Not golden-pinned —
+// these flows postdate the golden freeze (both backends changed together).
 func TestMCPEndpointFullEdit(t *testing.T) {
 	ts := mcpServer(t)
 	sess := mcpConnect(t, ts)

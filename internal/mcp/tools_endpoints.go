@@ -2,10 +2,10 @@
 // Endpoint + key management tools (port of src/mcp/tools/endpoints.ts, keys.ts).
 // manage_endpoints list omits userVerification/agentForward/isDemo (contract
 // item C); read returns the full row. create requires a caller-supplied id
-// (item C — opposite of REST). Deliberate divergence from Node: create/update
-// accept userVerification and agentForward (Node's zod schema strips them) —
-// full endpoint editability via MCP is the intended contract
-// (docs/api/mcp-tools.md).
+// (item C — opposite of REST). create/update accept userVerification and
+// agentForward — full endpoint editability via MCP is the contract
+// (docs/api/mcp-tools.md); Node's zod schema stripped them until the same
+// change landed there.
 package mcp
 
 import (
