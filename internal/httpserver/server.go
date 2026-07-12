@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Package httpserver assembles the chi router: middleware stack (bearer
 // gate, IP allowlist for /mcp), the stateless meta endpoints, discovery
-// docs, and SPA static serving. Handlers implementing the generated
-// api.StrictServerInterface mount here as later Phase 2-5 slices land.
+// docs, and SPA static serving. The hand-written REST handlers
+// (internal/rest, marshaling internal/api model types) mount here.
 package httpserver
 
 import (
