@@ -104,38 +104,50 @@ func (s *Session) CreateEndpoint(ctx context.Context, ep store.Endpoint) error {
 	return s.deps.Endpoints.Create(ctx, ep)
 }
 
-// UpdateEndpoint read-merges a patch into an account-scoped endpoint and writes
-// it back. Returns false when no endpoint matched. Unknown keys are ignored.
-func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch map[string]any) (bool, error) {
+// EndpointPatch is a typed partial endpoint update; nil fields keep the
+// stored value. Description carries an explicit set flag so a JSON null can
+// clear it.
+type EndpointPatch struct {
+	Label            *string
+	Host             *string
+	Port             *int64
+	Username         *string
+	UserVerification *string
+	AgentForward     *bool
+	Description      *string // applied only when DescriptionSet; nil clears
+	DescriptionSet   bool
+}
+
+// UpdateEndpoint read-merges a typed patch into an account-scoped endpoint and
+// writes it back. Returns false when no endpoint matched. Wire-shape decoding
+// and field validation (userVerification enum, description cap) happen at the
+// caller (internal/mcp).
+func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointPatch) (bool, error) {
 	existing, err := s.deps.Endpoints.GetForAccount(ctx, id, s.accountID)
 	if err != nil || existing == nil {
 		return false, err
 	}
 	merged := *existing
-	if v, ok := patch["label"].(string); ok {
-		merged.Label = v
+	if patch.Label != nil {
+		merged.Label = *patch.Label
 	}
-	if v, ok := patch["host"].(string); ok {
-		merged.Host = v
+	if patch.Host != nil {
+		merged.Host = *patch.Host
 	}
-	if v, ok := patch["username"].(string); ok {
-		merged.Username = v
+	if patch.Port != nil {
+		merged.Port = *patch.Port
 	}
-	if v, ok := patch["userVerification"].(string); ok {
-		merged.UserVerification = v
+	if patch.Username != nil {
+		merged.Username = *patch.Username
 	}
-	if v, ok := patch["port"].(float64); ok { // JSON numbers decode as float64
-		merged.Port = int64(v)
+	if patch.UserVerification != nil {
+		merged.UserVerification = *patch.UserVerification
 	}
-	if v, ok := patch["agentForward"].(bool); ok {
-		merged.AgentForward = v
+	if patch.AgentForward != nil {
+		merged.AgentForward = *patch.AgentForward
 	}
-	if v, ok := patch["description"]; ok {
-		if s2, isStr := v.(string); isStr {
-			merged.Description = &s2
-		} else if v == nil {
-			merged.Description = nil
-		}
+	if patch.DescriptionSet {
+		merged.Description = patch.Description
 	}
 	return s.deps.Endpoints.Update(ctx, merged)
 }

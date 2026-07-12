@@ -95,6 +95,12 @@ Same logical operation, opposite id semantics. Also, MCP `list` omits
 `userVerification`, `agentForward`, and `isDemo` that REST returns. Two clients
 build different mental models of "an endpoint."
 
+Related, now resolved in both backends: Node's MCP tool schema used to
+silently strip `userVerification`/`agentForward` from create/update `data`, so
+endpoints were not fully editable via MCP. That was a bug, not the contract —
+create/update accept and validate both fields (see
+[`mcp-tools.md`](./mcp-tools.md)).
+
 ### D. Near-identical WS message names differ by one character / tense
 
 `terminal:close` (client→server, _do close_) vs. `terminal:closed`
