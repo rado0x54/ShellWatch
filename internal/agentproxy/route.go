@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/realip"
@@ -44,7 +45,9 @@ func (d *Deps) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
-			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			// Defensive: the bearer gate 401s unauthenticated upgrades before
+			// this handler runs.
+			apierr.Write(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
 		wsc, err := websocket.Accept(w, r, nil)

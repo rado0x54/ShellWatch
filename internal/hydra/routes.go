@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
@@ -199,11 +200,11 @@ func MountProviders(r chi.Router, p ProviderParams) {
 	r.Post("/api/hydra/login/options", func(w http.ResponseWriter, r *http.Request) {
 		opts, ok, err := p.WebAuthn.LoginOptions(r.Context())
 		if err != nil {
-			writeJSONStatus(w, 500, map[string]string{"error": "internal error"})
+			apierr.Write(w, 500, "internal error")
 			return
 		}
 		if !ok {
-			writeJSONStatus(w, 200, map[string]string{"error": "no_passkeys"})
+			apierr.Write(w, 200, "no_passkeys")
 			return
 		}
 		writeJSONStatus(w, 200, opts)
@@ -217,7 +218,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.LoginChallenge == "" {
-			writeJSONStatus(w, 400, map[string]string{"error": "missing login_challenge"})
+			apierr.Write(w, 400, "missing login_challenge")
 			return
 		}
 		var assertion struct {
@@ -227,7 +228,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 
 		res := p.WebAuthn.VerifyLogin(r.Context(), body.ChallengeID, assertion.ID, body.Credential)
 		if res.Error != "" {
-			writeJSONStatus(w, res.Status, map[string]string{"error": res.Error})
+			apierr.Write(w, res.Status, res.Error)
 			return
 		}
 		redirect, err := p.Admin.AcceptLoginRequest(r.Context(), body.LoginChallenge, AcceptLogin{
@@ -239,7 +240,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 		if err != nil {
 			// A stale challenge after a burned assertion is a clean restart,
 			// not a 500 (guarded-admin behavior in routes.ts).
-			writeJSONStatus(w, 400, map[string]string{"error": "login_flow_expired"})
+			apierr.Write(w, 400, "login_flow_expired")
 			return
 		}
 		writeJSONStatus(w, 200, map[string]string{"redirectTo": redirect.RedirectTo})
@@ -266,21 +267,21 @@ func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.ConsentChallenge == "" {
-		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		apierr.Write(w, 400, "missing consent_challenge")
 		return
 	}
 	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
 	if err != nil {
-		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		apierr.Write(w, 400, "invalid consent_challenge")
 		return
 	}
 	opts, ok, err := p.WebAuthn.ConsentOptions(r.Context(), cr.Subject)
 	if err != nil {
-		writeJSONStatus(w, 500, map[string]string{"error": "internal error"})
+		apierr.Write(w, 500, "internal error")
 		return
 	}
 	if !ok {
-		writeJSONStatus(w, 200, map[string]string{"error": "no_passkeys"})
+		apierr.Write(w, 200, "no_passkeys")
 		return
 	}
 	writeJSONStatus(w, 200, opts)
@@ -294,12 +295,12 @@ func (p ProviderParams) consentVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.ConsentChallenge == "" {
-		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		apierr.Write(w, 400, "missing consent_challenge")
 		return
 	}
 	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
 	if err != nil {
-		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		apierr.Write(w, 400, "invalid consent_challenge")
 		return
 	}
 	var assertion struct {
@@ -308,7 +309,7 @@ func (p ProviderParams) consentVerify(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body.Credential, &assertion)
 	res := p.WebAuthn.VerifyConsent(r.Context(), body.ChallengeID, assertion.ID, body.Credential, cr.Subject)
 	if res.Error != "" {
-		writeJSONStatus(w, res.Status, map[string]string{"error": res.Error})
+		apierr.Write(w, res.Status, res.Error)
 		return
 	}
 	p.acceptConsentAndRedirect(w, r, body.ConsentChallenge, cr)
@@ -320,18 +321,18 @@ func (p ProviderParams) consentApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.ConsentChallenge == "" {
-		writeJSONStatus(w, 400, map[string]string{"error": "missing consent_challenge"})
+		apierr.Write(w, 400, "missing consent_challenge")
 		return
 	}
 	cr, err := p.Admin.GetConsentRequest(r.Context(), body.ConsentChallenge)
 	if err != nil {
-		writeJSONStatus(w, 400, map[string]string{"error": "invalid consent_challenge"})
+		apierr.Write(w, 400, "invalid consent_challenge")
 		return
 	}
 	// The no-passkey approve shortcut is only valid when THIS flow's login was a
 	// fresh passkey ceremony (stamped into the login context).
 	if cr.Context["freshLogin"] != true {
-		writeJSONStatus(w, 400, map[string]string{"error": "passkey_required"})
+		apierr.Write(w, 400, "passkey_required")
 		return
 	}
 	p.acceptConsentAndRedirect(w, r, body.ConsentChallenge, cr)
@@ -343,7 +344,7 @@ func (p ProviderParams) acceptConsentAndRedirect(w http.ResponseWriter, r *http.
 		Remember: true, RememberFor: rememberFor,
 	})
 	if err != nil {
-		writeJSONStatus(w, 400, map[string]string{"error": "consent_flow_expired"})
+		apierr.Write(w, 400, "consent_flow_expired")
 		return
 	}
 	writeJSONStatus(w, 200, map[string]string{"redirectTo": redirect.RedirectTo})
@@ -358,12 +359,12 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	if len(body.RedirectURIs) == 0 {
-		writeDCRErr(w, 400, "invalid_redirect_uri", "redirect_uris is required")
+		apierr.WriteOAuth(w, 400, "invalid_redirect_uri", "redirect_uris is required")
 		return
 	}
 	for _, uri := range body.RedirectURIs {
 		if !matchAny(patterns, uri) {
-			writeDCRErr(w, 400, "invalid_redirect_uri", "redirect_uri not allowed by policy: "+uri)
+			apierr.WriteOAuth(w, 400, "invalid_redirect_uri", "redirect_uri not allowed by policy: "+uri)
 			return
 		}
 	}
@@ -379,7 +380,7 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 		}
 	}
 	if len(granted) == 0 {
-		writeDCRErr(w, 400, "invalid_scope", "scope must be a subset of: "+strings.Join(keys(allowed), " "))
+		apierr.WriteOAuth(w, 400, "invalid_scope", "scope must be a subset of: "+strings.Join(keys(allowed), " "))
 		return
 	}
 
@@ -397,7 +398,7 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 		TokenEndpointAuthMethod: "none",
 	})
 	if err != nil {
-		writeDCRErr(w, 502, "server_error", "client registration failed")
+		apierr.WriteOAuth(w, 502, "server_error", "client registration failed")
 		return
 	}
 	redirectURIs := created.RedirectURIs
@@ -437,12 +438,10 @@ func keys(m map[string]bool) []string {
 	return out
 }
 
+// writeJSONStatus renders success payloads; error envelopes go through
+// internal/apierr.
 func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeDCRErr(w http.ResponseWriter, status int, code, desc string) {
-	writeJSONStatus(w, status, map[string]string{"error": code, "error_description": desc})
 }

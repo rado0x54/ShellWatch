@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/realip"
 )
 
@@ -48,7 +49,7 @@ func (c *IPChecker) Allowed(ip string) bool {
 func (c *IPChecker) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !c.Allowed(realip.FromRequest(r)) {
-			http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+			apierr.Write(w, http.StatusForbidden, "Forbidden")
 			return
 		}
 		next.ServeHTTP(w, r)

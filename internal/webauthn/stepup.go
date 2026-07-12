@@ -9,10 +9,10 @@ package webauthn
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/ephemeral"
@@ -129,17 +129,14 @@ func (s *StepUpStore) RequireStepUp(action string) func(http.Handler) http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal, ok := auth.PrincipalFrom(r.Context())
 			if !ok {
-				http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+				// Defensive: the bearer gate runs first on every gated route,
+				// so this branch is unreachable through the real mux.
+				apierr.Write(w, http.StatusUnauthorized, "unauthenticated")
 				return
 			}
 			reason := s.Consume(r.Header.Get(stepUpHeader), principal.AccountID, action)
 			if reason != ReasonOK {
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				w.WriteHeader(http.StatusUnauthorized)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"error": stepUpErrorMessage[reason],
-					"code":  stepUpErrorCode[reason],
-				})
+				apierr.WriteCode(w, http.StatusUnauthorized, stepUpErrorMessage[reason], stepUpErrorCode[reason])
 				return
 			}
 			next.ServeHTTP(w, r)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
 )
 
@@ -17,7 +18,9 @@ func (h *Hub) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
 		if !ok {
-			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			// Defensive: the bearer gate 401s unauthenticated /ws upgrades
+			// before this handler runs.
+			apierr.Write(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{

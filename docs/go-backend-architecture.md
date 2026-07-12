@@ -299,13 +299,15 @@ constraint is now one greppable package.
   scoped, `/mcp`) → bearer gate (§5.9) → handlers. `/ws`, `/mcp`,
   `/agent-proxy`, Hydra provider pages, and static files mount beside the
   REST routes on the same chi mux.
-- **Error envelopes:** today's three wire shapes render via per-surface
-  helpers — `rest.writeErr` for the standard `{error}`, the step-up gate's
-  `{error, code}` (`internal/webauthn/stepup.go`), and mediated DCR's
-  `{error, error_description}` (`internal/hydra/routes.go`). (The planned
-  unified `apierr.E` type was never needed; flipping everything to
-  `{error, code}` later — contract item F — is still a change to three
-  helpers, not a hunt through handlers.)
+- **Error envelopes:** `internal/apierr` owns all three wire shapes — the
+  standard `{error}` (`apierr.Write`), the step-up gate's `{error, code}`
+  (`apierr.WriteCode`, contract item F), and mediated DCR's
+  `{error, error_description}` (`apierr.WriteOAuth`). Every surface (rest,
+  webauthn, hydra, the bearer gate, the IP allowlist, the ws/agent-proxy
+  upgrade handlers) renders through it; per-surface `writeJSON` helpers keep
+  success payloads only. Flipping everything to `{error, code}` post-cutover
+  (item F) is a change to one package. (MCP tool errors are protocol-level
+  text blocks — `mcp.errResult` — and stay separate by design.)
 
 ### 5.6 Persistence (`internal/store`) (W7–W9, W13)
 
