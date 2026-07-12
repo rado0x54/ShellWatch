@@ -34,6 +34,16 @@ export function registerEndpointTools(mcpServer: McpServer, deps: EndpointToolDe
           host: z.string().optional(),
           port: z.number().optional(),
           username: z.string().optional(),
+          userVerification: z
+            .enum(["required", "preferred", "discouraged"])
+            .optional()
+            .describe(
+              "WebAuthn user-verification policy for passkey signing (create default: required)",
+            ),
+          agentForward: z
+            .boolean()
+            .optional()
+            .describe("Offer SSH agent forwarding to the remote host (create default: true)"),
           description: z
             .string()
             .max(ENDPOINT_DESCRIPTION_MAX_LENGTH)
@@ -101,6 +111,8 @@ export function registerEndpointTools(mcpServer: McpServer, deps: EndpointToolDe
               host: data.host,
               port: data.port ?? 22,
               username: data.username,
+              userVerification: data.userVerification,
+              agentForward: data.agentForward,
               description: data.description ?? null,
             });
             return { content: [{ type: "text", text: JSON.stringify({ status: "created", id }) }] };

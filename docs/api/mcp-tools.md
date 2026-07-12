@@ -36,9 +36,9 @@ Manage SSH endpoints. Input:
 Every REST-editable field is editable here too. `create` defaults:
 `userVerification: "required"`, `agentForward: true`, `port: 22`. Invalid
 values (unknown `userVerification`, wrong types, over-long `description`)
-return `isError`. _(Deliberate divergence, shipped in the Go backend: Node's
-tool schema silently strips `userVerification`/`agentForward` — that
-restriction was a Node bug, not the contract.)_
+are rejected without writing. _(Node's tool schema used to silently strip
+`userVerification`/`agentForward` — that was a bug, not the contract; both
+backends now accept them.)_
 
 Per-action success payload (JSON in the text block):
 

@@ -112,6 +112,60 @@ describe("MCP Server Tools", () => {
       expect(parsed.endpoints[0].id).toBe("dev-box");
       expect(parsed.endpoints[0].privateKeyPath).toBeUndefined();
     });
+
+    // Full editability: userVerification/agentForward are settable on create
+    // and update (they used to be stripped by the tool schema).
+    it("creates and updates userVerification/agentForward", async () => {
+      const client = await setupClient(mockManager);
+      const create = await client.callTool({
+        name: "shellwatch_manage_endpoints",
+        arguments: {
+          action: "create",
+          id: "edit-me",
+          data: {
+            label: "Edit Me",
+            host: "10.0.0.1",
+            username: "ops",
+            userVerification: "preferred",
+            agentForward: false,
+          },
+        },
+      });
+      expect(create.isError).toBeFalsy();
+
+      const update = await client.callTool({
+        name: "shellwatch_manage_endpoints",
+        arguments: {
+          action: "update",
+          id: "edit-me",
+          data: { userVerification: "discouraged", agentForward: true },
+        },
+      });
+      expect(update.isError).toBeFalsy();
+
+      const read = await client.callTool({
+        name: "shellwatch_manage_endpoints",
+        arguments: { action: "read", id: "edit-me" },
+      });
+      const ep = JSON.parse((read.content as { type: string; text: string }[])[0].text);
+      expect(ep.userVerification).toBe("discouraged");
+      expect(ep.agentForward).toBe(true);
+
+      // Unknown enum values are rejected (schema validation), not written.
+      const bad = await client
+        .callTool({
+          name: "shellwatch_manage_endpoints",
+          arguments: { action: "update", id: "edit-me", data: { userVerification: "none" } },
+        })
+        .catch(() => ({ isError: true }));
+      expect(bad.isError).toBe(true);
+      const reread = await client.callTool({
+        name: "shellwatch_manage_endpoints",
+        arguments: { action: "read", id: "edit-me" },
+      });
+      const ep2 = JSON.parse((reread.content as { type: string; text: string }[])[0].text);
+      expect(ep2.userVerification).toBe("discouraged");
+    });
   });
 
   // Demo-endpoint visibility/mutation behavior via MCP. Locks in the contract
