@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/api"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
@@ -37,15 +38,6 @@ func (a *AuthSessions) Mount(r chi.Router) {
 		Post("/api/auth/sessions/revoke-all", a.revokeAll)
 }
 
-type authSessionView struct {
-	ClientID     string   `json:"clientId"`
-	ClientName   string   `json:"clientName"`
-	Scopes       []string `json:"scopes"`
-	AuthorizedAt *string  `json:"authorizedAt"`
-	CreatedAt    *string  `json:"createdAt"`
-	Current      bool     `json:"current"`
-}
-
 func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	sessions, err := a.Admin.ListConsentSessions(r.Context(), acct)
@@ -54,7 +46,7 @@ func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Collapse to one row per client_id, keeping the most recently handled grant.
-	byClient := map[string]authSessionView{}
+	byClient := map[string]api.AuthSessionView{}
 	for _, s := range sessions {
 		if s.ConsentRequest == nil {
 			continue
@@ -77,13 +69,13 @@ func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 		if scopes == nil {
 			scopes = []string{}
 		}
-		byClient[client.ClientID] = authSessionView{
-			ClientID: client.ClientID, ClientName: name, Scopes: scopes,
+		byClient[client.ClientID] = api.AuthSessionView{
+			ClientId: client.ClientID, ClientName: name, Scopes: scopes,
 			AuthorizedAt: handledAt, CreatedAt: nzp(client.CreatedAt),
 			Current: client.ClientID == a.SPAClientID,
 		}
 	}
-	list := make([]authSessionView, 0, len(byClient))
+	list := make([]api.AuthSessionView, 0, len(byClient))
 	for _, v := range byClient {
 		list = append(list, v)
 	}
