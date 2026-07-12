@@ -18,6 +18,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/golden"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -60,7 +61,7 @@ func endpointsServer(t *testing.T) (*httptest.Server, string) {
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		Endpoints: &rest.Endpoints{
-			Store: store.NewEndpoints(db, clock.Real{}),
+			Svc:   &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})},
 			NewID: func() string { return "11111111-2222-4333-8444-555555555555" },
 		},
 	})

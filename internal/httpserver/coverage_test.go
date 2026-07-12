@@ -27,6 +27,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/hydratest"
 	"github.com/rado0x54/shellwatch/internal/mcp"
 	"github.com/rado0x54/shellwatch/internal/rest"
@@ -60,6 +61,7 @@ func fullHandler(t *testing.T) chi.Router {
 	credStore := store.NewCredentials(db, clk)
 	endpointStore := store.NewEndpoints(db, clk)
 	demoSvc := demo.NewService(nil)
+	epSvc := &endpointsvc.Service{Endpoints: endpointStore, Demo: demoSvc}
 	manager := terminal.NewManager(func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
 		return terminal.NewMockTransport(), nil
 	}, clk, 0)
@@ -75,10 +77,10 @@ func fullHandler(t *testing.T) chi.Router {
 		Config: cfg, Resolve: auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
 		StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WebAuthn: waDeps, HydraAdmin: fake, HasPasskeys: func() bool { return true },
-		Endpoints:    &rest.Endpoints{Store: endpointStore, Demo: demoSvc, Sessions: manager, NewID: func() string { return "id" }},
-		Sessions:     &rest.Sessions{Manager: manager, Endpoints: endpointStore, Demo: demoSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
+		Endpoints:    &rest.Endpoints{Svc: epSvc, Sessions: manager, NewID: func() string { return "id" }},
+		Sessions:     &rest.Sessions{Manager: manager, Svc: epSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
 		WSHub:        hub,
-		MCP:          &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc}, Keys: store.NewSSHKeys(db)},
+		MCP:          &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
 		Actions:      &rest.Actions{Store: actionStore},
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db)},
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},

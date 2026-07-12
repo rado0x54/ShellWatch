@@ -20,6 +20,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/signing"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -85,7 +86,7 @@ func sessionGoldenServer(t *testing.T) *httptest.Server {
 	})
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		Sessions: &rest.Sessions{Manager: mgr, Endpoints: store.NewEndpoints(db, clock.Real{})},
+		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}},
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)

@@ -16,25 +16,11 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/agent"
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
 
 const demoReadOnlyErr = "Demo endpoints are read-only"
-
-// Same limits the REST handlers enforce (rest/endpoints.go); duplicated until
-// a shared endpoint service exists.
-const endpointDescriptionMaxLen = 1000
-
-var userVerificationValues = []string{"required", "preferred", "discouraged"}
-
-func isUserVerification(v string) bool {
-	for _, u := range userVerificationValues {
-		if u == v {
-			return true
-		}
-	}
-	return false
-}
 
 // endpointPatchFromWire converts the tool's raw data object into a typed
 // patch, validating field types, the userVerification enum, and the
@@ -73,8 +59,8 @@ func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
 	}
 	if v, ok := data["userVerification"]; ok {
 		s, isStr := v.(string)
-		if !isStr || !isUserVerification(s) {
-			return p, "data.userVerification must be one of: " + strings.Join(userVerificationValues, ", ")
+		if !isStr || !endpointsvc.IsUserVerification(s) {
+			return p, "data.userVerification must be one of: " + strings.Join(endpointsvc.UserVerificationValues, ", ")
 		}
 		p.UserVerification = &s
 	}
@@ -89,7 +75,7 @@ func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
 		p.DescriptionSet = true
 		if v != nil {
 			s, isStr := v.(string)
-			if !isStr || len(s) > endpointDescriptionMaxLen {
+			if !isStr || len(s) > endpointsvc.DescriptionMaxLen {
 				return p, "data.description must be a string up to 1000 characters (pass null to clear)"
 			}
 			p.Description = &s
@@ -121,7 +107,7 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 					"port":     map[string]any{"type": "number"},
 					"username": map[string]any{"type": "string"},
 					"userVerification": map[string]any{
-						"type": "string", "enum": userVerificationValues,
+						"type": "string", "enum": endpointsvc.UserVerificationValues,
 						"description": "WebAuthn user-verification policy for passkey signing (create default: required)",
 					},
 					"agentForward": map[string]any{
