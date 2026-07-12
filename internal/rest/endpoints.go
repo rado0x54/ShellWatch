@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Package rest holds the account-scoped REST handlers (port of
-// src/server/routes/). Slice 1 is endpoints CRUD; sessions/keys follow.
-// Validation, error wording, and response envelopes match Node exactly
-// (pinned by endpoints-* and err-400-endpoint-* goldens). Handlers are
-// hand-mounted on chi; the generated api.StrictServerInterface is adopted as
-// a later refactor once every surface exists (a converge-later item, like the
-// A-J inconsistencies).
+// src/server/routes/). Validation, error wording, and response envelopes
+// match Node exactly (pinned by endpoints-* and err-400-endpoint-* goldens).
+// Handlers are hand-mounted on chi and marshal the generated model types
+// (internal/api) where the spec models the body, so response shapes are
+// compile-checked against the frozen contract; goldens remain the value-level
+// oracle.
 package rest
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/api"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
@@ -55,23 +56,11 @@ func (e *Endpoints) Mount(r chi.Router) {
 	r.Delete("/api/endpoints/{id}", e.delete)
 }
 
-type endpointDTO struct {
-	ID               string  `json:"id"`
-	Label            string  `json:"label"`
-	Host             string  `json:"host"`
-	Port             int64   `json:"port"`
-	Username         string  `json:"username"`
-	UserVerification string  `json:"userVerification"`
-	AgentForward     bool    `json:"agentForward"`
-	Description      *string `json:"description"`
-	IsDemo           bool    `json:"isDemo"`
-}
-
-func toDTO(ep store.Endpoint, isDemo bool) endpointDTO {
-	return endpointDTO{
-		ID: ep.ID, Label: ep.Label, Host: ep.Host, Port: ep.Port, Username: ep.Username,
-		UserVerification: ep.UserVerification, AgentForward: ep.AgentForward,
-		Description: ep.Description, IsDemo: isDemo,
+func toDTO(ep store.Endpoint, isDemo bool) api.Endpoint {
+	return api.Endpoint{
+		Id: ep.ID, Label: ep.Label, Host: ep.Host, Port: int(ep.Port), Username: ep.Username,
+		UserVerification: api.EndpointUserVerification(ep.UserVerification),
+		AgentForward:     ep.AgentForward, Description: ep.Description, IsDemo: isDemo,
 	}
 }
 
@@ -82,7 +71,7 @@ func (e *Endpoints) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "internal error")
 		return
 	}
-	out := make([]endpointDTO, 0, len(own))
+	out := make([]api.Endpoint, 0, len(own))
 	for _, ep := range own {
 		out = append(out, toDTO(ep, false))
 	}
@@ -143,7 +132,7 @@ func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "created", "id": id})
+	writeJSON(w, 200, api.StatusCreated{Status: api.Created, Id: id})
 }
 
 func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +196,7 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "updated"})
+	writeJSON(w, 200, api.StatusUpdated{Status: api.Updated})
 }
 
 func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +217,7 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "deleted"})
+	writeJSON(w, 200, api.StatusDeleted{Status: api.Deleted})
 }
 
 // normalizeDescription mirrors normalizeDescription in endpoints.ts: tri-state

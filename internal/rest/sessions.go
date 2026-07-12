@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rado0x54/shellwatch/internal/api"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -35,36 +36,20 @@ func (s *Sessions) Mount(r chi.Router) {
 	r.Delete("/api/sessions/{sessionId}", s.close)
 }
 
-// sessionDTO is the bare TerminalSession wire shape. Optional fields omit
-// when empty (matching the conditional spread in terminal-manager.ts).
-type sessionDTO struct {
-	SessionID      string  `json:"sessionId"`
-	EndpointID     string  `json:"endpointId"`
-	AccountID      string  `json:"accountId"`
-	Status         string  `json:"status"`
-	CreatedAt      string  `json:"createdAt"`
-	LastActivityAt string  `json:"lastActivityAt"`
-	Source         string  `json:"source"`
-	CloseReason    *string `json:"closeReason,omitempty"`
-	SourceIP       *string `json:"sourceIp,omitempty"`
-	MCPReason      *string `json:"mcpReason,omitempty"`
-	MCPClientName  *string `json:"mcpClientName,omitempty"`
-	MCPClientVer   *string `json:"mcpClientVersion,omitempty"`
-}
-
-func toSessionDTO(s terminal.Session) sessionDTO {
-	d := sessionDTO{
-		SessionID: s.SessionID, EndpointID: s.EndpointID, AccountID: s.AccountID,
-		Status: string(s.Status), Source: string(s.Source),
-		CreatedAt:      s.CreatedAt.UTC().Format(isoMillis),
-		LastActivityAt: s.LastActivityAt.UTC().Format(isoMillis),
+// toSessionDTO builds the bare TerminalSession wire shape. Optional fields
+// omit when empty (matching the conditional spread in terminal-manager.ts).
+func toSessionDTO(s terminal.Session) api.TerminalSession {
+	return api.TerminalSession{
+		SessionId: s.SessionID, EndpointId: s.EndpointID, AccountId: s.AccountID,
+		Status: api.TerminalStatus(s.Status), Source: api.TerminalSource(s.Source),
+		CreatedAt:        s.CreatedAt.UTC().Format(isoMillis),
+		LastActivityAt:   s.LastActivityAt.UTC().Format(isoMillis),
+		CloseReason:      strPtrIf(string(s.CloseReason)),
+		SourceIp:         strPtrIf(s.SourceIP),
+		McpReason:        strPtrIf(s.MCPReason),
+		McpClientName:    strPtrIf(s.MCPClientName),
+		McpClientVersion: strPtrIf(s.MCPClientVer),
 	}
-	d.CloseReason = strPtrIf(string(s.CloseReason))
-	d.SourceIP = strPtrIf(s.SourceIP)
-	d.MCPReason = strPtrIf(s.MCPReason)
-	d.MCPClientName = strPtrIf(s.MCPClientName)
-	d.MCPClientVer = strPtrIf(s.MCPClientVer)
-	return d
 }
 
 func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +117,7 @@ func toRef(e store.Endpoint) terminal.EndpointRef {
 
 func (s *Sessions) list(w http.ResponseWriter, r *http.Request) {
 	sessions := s.Manager.ListForAccount(accountID(r))
-	out := make([]sessionDTO, 0, len(sessions))
+	out := make([]api.TerminalSession, 0, len(sessions))
 	for _, sess := range sessions {
 		out = append(out, toSessionDTO(sess))
 	}
