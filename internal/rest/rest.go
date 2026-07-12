@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
 )
 
@@ -54,5 +55,5 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	apierr.Write(w, status, msg)
 }

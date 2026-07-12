@@ -11,6 +11,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/rado0x54/shellwatch/internal/apierr"
 )
 
 const (
@@ -188,7 +190,5 @@ func send401(w http.ResponseWriter, p GateParams, scope, message, kind string) {
 		parts = append(parts, `error="insufficient_scope"`)
 	}
 	w.Header().Set("WWW-Authenticate", strings.Join(parts, ", "))
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))
+	apierr.Write(w, status, message)
 }
