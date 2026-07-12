@@ -27,8 +27,18 @@ Manage SSH endpoints. Input:
 ```ts
 { action: "list" | "read" | "create" | "update" | "delete";
   id?: string;                       // required for read/update/delete
-  data?: { label?; host?; port?; username?; description?: string|null } }
+  data?: { label?; host?; port?; username?;
+           userVerification?: "required" | "preferred" | "discouraged";
+           agentForward?: boolean;
+           description?: string|null /* ≤1000 chars; null clears */ } }
 ```
+
+Every REST-editable field is editable here too. `create` defaults:
+`userVerification: "required"`, `agentForward: true`, `port: 22`. Invalid
+values (unknown `userVerification`, wrong types, over-long `description`)
+return `isError`. _(Deliberate divergence, shipped in the Go backend: Node's
+tool schema silently strips `userVerification`/`agentForward` — that
+restriction was a Node bug, not the contract.)_
 
 Per-action success payload (JSON in the text block):
 

@@ -33,7 +33,8 @@ func TestSessionEndpointMutations(t *testing.T) {
 	}
 
 	// Update (partial patch merges).
-	ok, err := sess.UpdateEndpoint(ctx, "ep1", map[string]any{"label": "Renamed", "port": float64(2222), "agentForward": true})
+	label, port, fwd := "Renamed", int64(2222), true
+	ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{Label: &label, Port: &port, AgentForward: &fwd})
 	if err != nil || !ok {
 		t.Fatalf("update: ok=%v err=%v", ok, err)
 	}
@@ -42,8 +43,25 @@ func TestSessionEndpointMutations(t *testing.T) {
 		t.Fatalf("update merge wrong: %+v", ep)
 	}
 
+	// Full editability: userVerification and description are patchable too.
+	uv, desc := "discouraged", "jump host"
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{UserVerification: &uv, Description: &desc, DescriptionSet: true}); err != nil || !ok {
+		t.Fatalf("uv/desc update: ok=%v err=%v", ok, err)
+	}
+	ep, _ = sess.GetEndpoint(ctx, "ep1")
+	if ep.UserVerification != "discouraged" || ep.Description == nil || *ep.Description != "jump host" {
+		t.Fatalf("uv/desc merge wrong: %+v", ep)
+	}
+	// DescriptionSet with nil clears; unset leaves it alone.
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{DescriptionSet: true}); err != nil || !ok {
+		t.Fatalf("desc clear: ok=%v err=%v", ok, err)
+	}
+	if ep, _ = sess.GetEndpoint(ctx, "ep1"); ep.Description != nil {
+		t.Fatalf("description should be cleared: %+v", ep)
+	}
+
 	// Update a missing endpoint -> false.
-	if ok, _ := sess.UpdateEndpoint(ctx, "nope", map[string]any{"label": "x"}); ok {
+	if ok, _ := sess.UpdateEndpoint(ctx, "nope", EndpointPatch{Label: &label}); ok {
 		t.Error("update of missing endpoint should return false")
 	}
 	// Cross-account isolation: another account can't touch ep1.

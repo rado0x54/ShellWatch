@@ -175,3 +175,80 @@ func TestMCPToolGoldens(t *testing.T) {
 		map[string]any{"sessionId": sid, "keys": []string{"text:echo hi", "enter"}})
 	assertToolGolden(t, "mcp-close-session", "shellwatch_close_session", sess, map[string]any{"sessionId": sid})
 }
+
+// Full endpoint editability via MCP (deliberate divergence from Node, whose
+// zod schema strips userVerification/agentForward): create + update accept
+// every REST-editable field, with the same validation. Not golden-pinned —
+// Node can't produce these captures.
+func TestMCPEndpointFullEdit(t *testing.T) {
+	ts := mcpServer(t)
+	sess := mcpConnect(t, ts)
+
+	text, isErr := callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{
+		"action": "create", "id": "edit-me",
+		"data": map[string]any{
+			"label": "Edit Me", "host": "10.0.0.1", "username": "ops",
+			"userVerification": "preferred", "agentForward": false, "description": "staging box",
+		},
+	})
+	if isErr {
+		t.Fatalf("create: %s", text)
+	}
+
+	text, isErr = callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{
+		"action": "update", "id": "edit-me",
+		"data": map[string]any{"userVerification": "discouraged", "agentForward": true, "description": nil},
+	})
+	if isErr {
+		t.Fatalf("update: %s", text)
+	}
+
+	text, isErr = callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{"action": "read", "id": "edit-me"})
+	if isErr {
+		t.Fatalf("read: %s", text)
+	}
+	var ep struct {
+		UserVerification string  `json:"userVerification"`
+		AgentForward     bool    `json:"agentForward"`
+		Description      *string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(text), &ep); err != nil {
+		t.Fatal(err)
+	}
+	if ep.UserVerification != "discouraged" || !ep.AgentForward || ep.Description != nil {
+		t.Fatalf("update not applied: %+v", ep)
+	}
+
+	// Invalid enum is rejected — whether by the tool handler (isError) or by
+	// SDK-side schema validation (protocol error), the write must not land.
+	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "shellwatch_manage_endpoints",
+		Arguments: map[string]any{
+			"action": "update", "id": "edit-me",
+			"data": map[string]any{"userVerification": "none"},
+		},
+	})
+	if err == nil && !res.IsError {
+		t.Error("invalid userVerification was accepted")
+	}
+	text, _ = callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{"action": "read", "id": "edit-me"})
+	_ = json.Unmarshal([]byte(text), &ep)
+	if ep.UserVerification != "discouraged" {
+		t.Errorf("invalid update mutated the row: %+v", ep)
+	}
+
+	// Create defaults match REST/Node: userVerification required, agentForward true.
+	if text, isErr := callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{
+		"action": "create", "id": "defaults",
+		"data": map[string]any{"label": "D", "host": "10.0.0.2", "username": "ops"},
+	}); isErr {
+		t.Fatalf("create defaults: %s", text)
+	}
+	text, _ = callTool(t, sess, "shellwatch_manage_endpoints", map[string]any{"action": "read", "id": "defaults"})
+	if err := json.Unmarshal([]byte(text), &ep); err != nil {
+		t.Fatal(err)
+	}
+	if ep.UserVerification != "required" || !ep.AgentForward {
+		t.Errorf("create defaults wrong: %+v", ep)
+	}
+}
