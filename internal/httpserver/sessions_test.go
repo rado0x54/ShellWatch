@@ -16,6 +16,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/golden"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -53,7 +54,7 @@ func sessionsServer(t *testing.T) (*httptest.Server, *terminal.MockTransport) {
 	})
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		Sessions: &rest.Sessions{Manager: mgr, Endpoints: endpoints},
+		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: endpoints}},
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
