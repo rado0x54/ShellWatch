@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// ISOMillis matches Node's new Date().toISOString() rendering — the wire and
+// database timestamp format everywhere (one definition instead of a copy per
+// package).
+const ISOMillis = "2006-01-02T15:04:05.000Z"
+
 type Clock interface {
 	Now() time.Time
 }

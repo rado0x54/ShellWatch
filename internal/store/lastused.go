@@ -17,7 +17,7 @@ import (
 )
 
 // isoMillis matches Node's new Date().toISOString() rendering.
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis
 
 type LastUsedFlusher struct {
 	mu    sync.Mutex

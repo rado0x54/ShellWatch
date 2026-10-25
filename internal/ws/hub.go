@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
@@ -159,4 +160,4 @@ func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) 
 	}
 }
 
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis

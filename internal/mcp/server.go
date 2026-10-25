@@ -9,8 +9,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -19,6 +17,8 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/rado0x54/shellwatch/internal/agent"
+	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/ids"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
 
@@ -111,14 +111,7 @@ func (d *Deps) newSessionID() string {
 // newSessionUUID mints a v4 UUID (Node uses randomUUID() for MCP session ids).
 // Fallback only — production injects Deps.NewID (the composition root's
 // generator), matching the rest of the codebase's NewID pattern.
-func newSessionUUID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	h := hex.EncodeToString(b[:])
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
-}
+func newSessionUUID() string { return ids.NewUUID() }
 
 // --- helpers for the Node-compatible text-JSON result shape ---
 
@@ -155,4 +148,4 @@ func decodeArgs(req *mcpsdk.CallToolRequest, v any) error {
 }
 
 // isoMillis matches Node's Date.toISOString().
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis

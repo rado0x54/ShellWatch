@@ -7,10 +7,11 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/clock"
 )
 
 // isoMillis matches Node's new Date().toISOString().
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis
 
 // accountID returns the authenticated account (the gate guarantees one on
 // /api/* routes; "" is never seen by these handlers).

@@ -16,6 +16,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
 
@@ -162,8 +163,10 @@ func (d *Deps) selfRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	res, err := d.Credentials.SelfRegister(r.Context(), body.Name, toStoreCred(dec),
-		d.SelfRegEnabled, newUUID(), newUUID())
+	res, err := d.Credentials.SelfRegister(r.Context(), store.SelfRegisterParams{
+		Name: body.Name, Credential: toStoreCred(dec), SelfRegEnabled: d.SelfRegEnabled,
+		NewAccountID: newUUID(), NewCredID: newUUID(),
+	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -297,8 +300,10 @@ func (d *Deps) stepUpVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := VerifyAssertion(body.Credential, challenge, d.RpID, d.TrustedOrigins,
-		stored.PublicKeyCOSE, stored.Counter)
+	res, err := VerifyAssertion(AssertionParams{
+		RawCredential: body.Credential, Challenge: challenge, RpID: d.RpID, Origins: d.TrustedOrigins,
+		StoredCOSE: stored.PublicKeyCOSE, StoredCounter: stored.Counter,
+	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -319,7 +324,7 @@ func (d *Deps) stepUpVerify(w http.ResponseWriter, r *http.Request) {
 
 // --- helpers ---
 
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis
 
 func toStoreCred(d *DecodedRegistration) store.DecodedCredential {
 	return store.DecodedCredential{

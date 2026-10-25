@@ -16,11 +16,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis
 
 // Result reports what the seed created (mirrors SeedResult).
 type Result struct {
