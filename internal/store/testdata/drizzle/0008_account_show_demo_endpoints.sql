@@ -1,0 +1,1 @@
+ALTER TABLE `accounts` ADD `show_demo_endpoints` integer DEFAULT true NOT NULL;

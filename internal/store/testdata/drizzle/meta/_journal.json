@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1775921985655,
+      "tag": "0000_silly_maggott",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776111494874,
+      "tag": "0001_tired_lilith",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776114332204,
+      "tag": "0002_vengeful_squadron_sinister",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1776300000000,
+      "tag": "0003_fingerprint_standard_base64",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1777480895677,
+      "tag": "0004_credential_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1777743199117,
+      "tag": "0005_audit_session_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1777783781140,
+      "tag": "0006_audit_signing_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779047498048,
+      "tag": "0007_endpoint_agent_forward",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779052745016,
+      "tag": "0008_account_show_demo_endpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1779052745017,
+      "tag": "0009_hydra_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1781446167747,
+      "tag": "0010_drop_audit_api_key_columns",
+      "breakpoints": true
+    }
+  ]
+}

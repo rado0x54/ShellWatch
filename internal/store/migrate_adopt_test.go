@@ -13,8 +13,10 @@ import (
 	"testing"
 )
 
-// nodeDatabase builds a real Node-backend database by replaying the actual
-// drizzle migrations (drizzle/*.sql) and journal bookkeeping.
+// nodeDatabase builds a real Node-backend database by replaying the frozen
+// drizzle migrations (testdata/drizzle/*.sql — the Node backend's migration
+// history, kept as a fixture after the Node server was removed) and journal
+// bookkeeping.
 func nodeDatabase(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := Open("sqlite::memory:")
@@ -23,7 +25,7 @@ func nodeDatabase(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	dir := filepath.Join("..", "..", "drizzle")
+	dir := filepath.Join("testdata", "drizzle")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -95,7 +95,7 @@ func Migrate(db *sql.DB) error {
 }
 
 // drizzleHeadMillis is the `when` of the newest drizzle migration
-// (drizzle/meta/_journal.json idx 10, 0010_drop_audit_api_key_columns). The
+// (testdata/drizzle/meta/_journal.json idx 10, 0010_drop_audit_api_key_columns). The
 // Node migration set is frozen ahead of the rewrite, so this constant is the
 // cutover watermark in both directions.
 const drizzleHeadMillis = 1781446167747
