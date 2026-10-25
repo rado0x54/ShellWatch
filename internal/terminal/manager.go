@@ -166,11 +166,13 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	m.terminals[sess.SessionID] = mg
 	m.mu.Unlock()
 
-	go m.pump(mg)
-
+	// Open BEFORE the pump starts (and snapshot before it can touch the
+	// session): a transport that dies immediately finalizes the session from
+	// the pump, and a terminal state must never be flipped back to open —
+	// setStatus guards that too, this ordering just makes it impossible here.
 	m.setStatus(mg, StatusOpen, "")
 	out := *sess
-	out.Status = StatusOpen
+	go m.pump(mg)
 	return &out, nil
 }
 
@@ -469,7 +471,10 @@ func (m *Manager) get(sessionID string) (*managed, error) {
 func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	m.mu.Lock()
 	prev := mg.session.Status
-	if prev == status {
+	// Same-status no-op; closed/error are absorbing — a late transition from
+	// the create or close path must not resurrect a session the pump already
+	// finalized (zombie "open" session with no pump behind it).
+	if prev == status || prev == StatusClosed || prev == StatusError {
 		m.mu.Unlock()
 		return
 	}
@@ -488,5 +493,3 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 		fn(ev)
 	}
 }
-
-var _ = time.Now

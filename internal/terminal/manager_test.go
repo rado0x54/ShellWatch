@@ -187,3 +187,36 @@ func TestRemoveForAccountPurgesRetainedSessions(t *testing.T) {
 		t.Fatal("retained session survived account purge")
 	}
 }
+
+// Regression: the pump used to start before the Open transition, so a
+// transport dying immediately could finalize the session closed and then be
+// flipped back to "open" by Create — a zombie session with no pump behind it
+// (and an audit trail recording close-then-open). Open now happens before the
+// pump starts, and terminal states are absorbing in setStatus.
+func TestImmediateTransportDeathNeverReopens(t *testing.T) {
+	mock := NewMockTransport()
+	m := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		_ = mock.Close() // dead before Create finishes its bookkeeping
+		return mock, nil
+	}, clock.Real{}, 0)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+
+	sess, err := m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		s := m.GetSession(sess.SessionID)
+		return s != nil && s.Status == StatusClosed
+	})
+
+	// Terminal states are absorbing: no late transition resurrects the session.
+	mg, err := m.get(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.setStatus(mg, StatusOpen, "")
+	if s := m.GetSession(sess.SessionID); s.Status != StatusClosed {
+		t.Fatalf("terminal state overwritten back to %s", s.Status)
+	}
+}

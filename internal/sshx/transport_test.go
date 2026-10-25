@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,8 +148,13 @@ func TestServerHangupClosesSession(t *testing.T) {
 
 	kd := writeTestKeyDir(t)
 	mgr := terminal.NewManager(NewFileKeyFactory(kd), clock.Real{}, 0)
+	var statusMu sync.Mutex
 	var lastStatus terminal.Status
-	mgr.SubscribeStatus(func(e terminal.StatusEvent) { lastStatus = e.Status })
+	mgr.SubscribeStatus(func(e terminal.StatusEvent) {
+		statusMu.Lock()
+		lastStatus = e.Status
+		statusMu.Unlock()
+	})
 
 	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "127.0.0.1", Port: addr.Port, Username: "u"}
 	sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
@@ -165,8 +171,11 @@ func TestServerHangupClosesSession(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if lastStatus != terminal.StatusClosed {
-		t.Errorf("final status: %v", lastStatus)
+	statusMu.Lock()
+	finalStatus := lastStatus
+	statusMu.Unlock()
+	if finalStatus != terminal.StatusClosed {
+		t.Errorf("final status: %v", finalStatus)
 	}
 	// Node parity (M6): a transport-driven close RETAINS the session for
 	// post-mortem reads but hides it from lists; explicit Close removes it.
