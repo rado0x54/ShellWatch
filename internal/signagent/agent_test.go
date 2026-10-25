@@ -154,4 +154,9 @@ func TestSignWithFlagsRefusesUnhonorableRsaSha2(t *testing.T) {
 	if _, err := a.SignWithFlags(signer.PublicKey(), []byte("data"), agent.SignatureFlagRsaSha256); err == nil {
 		t.Fatal("flagged sign on a flags-incapable signer must fail, not downgrade to SHA-1")
 	}
+	// The capability check runs BEFORE the approval: the human is never
+	// prompted (and no approval is audited) for a sign that cannot happen.
+	if fb.approved {
+		t.Fatal("incapable signer raised an approval before failing")
+	}
 }
