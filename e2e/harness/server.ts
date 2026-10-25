@@ -12,14 +12,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { writeServerConfig, type ServerConfigOptions } from "./config.js";
 import { OUT_DIR, REPO_ROOT, SERVER_PORT, SERVER_URL } from "./env.js";
-import { generateFileKey, type FileKeyIdentity } from "./identity.js";
+import { generateFileKey, type FileKeyIdentity, type FileKeyType } from "./identity.js";
 import { sleep, waitFor } from "./util.js";
 
 export interface StartServerOptions extends Omit<ServerConfigOptions, "keyDirectory"> {
   /** Scenario name — names the log file under e2e/out/<scenario>/. */
   scenario: string;
-  /** Generate an ed25519 file key into the key directory before boot. Default true. */
+  /** Generate a file key into the key directory before boot. Default true. */
   withFileKey?: boolean;
+  /** Key type for the generated file key. Default ed25519. */
+  fileKeyType?: FileKeyType;
 }
 
 export interface RunningServer {
@@ -61,7 +63,10 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const dataDir = mkdtempSync(join(tmpdir(), `shellwatch-e2e-${opts.scenario}-`));
   const keyDirectory = join(dataDir, "keys");
   mkdirSync(keyDirectory, { mode: 0o700 });
-  const fileKey = (opts.withFileKey ?? true) ? generateFileKey(keyDirectory) : null;
+  const fileKey =
+    (opts.withFileKey ?? true)
+      ? generateFileKey(keyDirectory, "e2e-filekey", opts.fileKeyType ?? "ed25519")
+      : null;
   const configPath = writeServerConfig(dataDir, { ...opts, keyDirectory });
 
   const chunks: string[] = [];

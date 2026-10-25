@@ -136,10 +136,18 @@ export interface FileKeyIdentity {
   fingerprint: string;
 }
 
-/** `ssh-keygen -t ed25519` into the key directory (the server scans `*.pem`). */
-export function generateFileKey(keyDirectory: string, name = "e2e-filekey"): FileKeyIdentity {
+export type FileKeyType = "ed25519" | "rsa";
+
+/** `ssh-keygen` into the key directory (the server scans `*.pem`). */
+export function generateFileKey(
+  keyDirectory: string,
+  name = "e2e-filekey",
+  type: FileKeyType = "ed25519",
+): FileKeyIdentity {
   const privateKeyPath = join(keyDirectory, `${name}.pem`);
-  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", name, "-f", privateKeyPath]);
+  const args = ["-q", "-t", type, "-N", "", "-C", name, "-f", privateKeyPath];
+  if (type === "rsa") args.splice(3, 0, "-b", "3072");
+  execFileSync("ssh-keygen", args);
   const publicKeyLine = readFileSync(`${privateKeyPath}.pub`, "utf8").trim();
   const fingerprint = execFileSync("ssh-keygen", ["-lf", `${privateKeyPath}.pub`], {
     encoding: "utf8",
