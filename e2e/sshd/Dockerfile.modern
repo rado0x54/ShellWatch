@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# e2e target: webauthn-sk capable OpenSSH (#244). Derived from spike/sshd/Dockerfile
+# (#232 item 4) — same digest-pinned alpine:edge base (webauthn-sk-* pubkey auth
+# needs OpenSSH >= 10.3; stable alpine ships 10.0 which rejects the algorithm
+# name outright) — but WITHOUT the cert-only TrustedUserCAKeys setup: plain
+# authorized_keys for two users, installed at test time by the harness
+# (e2e/harness/sshd.ts) via `docker compose exec`.
+#
+#   filekey   — ed25519 file key generated per run into the server's keyDirectory
+#   passkey   — the fake authenticator's webauthn-sk-ecdsa-sha2-nistp256 key
+#
+# The client side (`ssh`, `ssh-add`) is installed too: the agent-forwarding
+# scenario performs a second hop from inside this container.
+FROM alpine:edge@sha256:9a341ff2287c54b86425cbee0141114d811ae69d88a36019087be6d896cef241
+
+# Alpine creates accounts locked ("!" in shadow) and sshd refuses locked
+# accounts; "*" = no password, usable with pubkey auth.
+RUN apk add --no-cache openssh \
+  && for u in filekey passkey; do \
+       adduser -D -s /bin/sh "$u" && sed -i "s/^$u:!/$u:*/" /etc/shadow; \
+     done
+
+COPY sshd_config /etc/ssh/sshd_config
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# entrypoint.sh drops the PubkeyAcceptedAlgorithms=+webauthn-sk-… line into
+# sshd_config.d when this is set (the same line ShellWatch documents for real
+# targets — src/webauthn/ssh-key-format.ts getSshdConfigLine()).
+ENV SSHD_WEBAUTHN_SK=1
+
+EXPOSE 22
+ENTRYPOINT ["/entrypoint.sh"]

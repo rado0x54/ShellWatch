@@ -160,6 +160,28 @@ export const VapidSchema = z.object({
     .min(1, "vapid.privateKey is required (base64url-encoded VAPID private key)"),
 });
 
+/**
+ * Terminal-session housekeeping (#244). `idleTimeoutMinutes` is how long a
+ * session may sit without input/output before the janitor closes it
+ * (`closeReason: "idle-timeout"`); `cleanupIntervalSeconds` is how often the
+ * janitor runs. Fractional values are allowed so test deployments can exercise
+ * the idle path quickly; production should leave the defaults.
+ */
+export const sessionsDefaults = { idleTimeoutMinutes: 30, cleanupIntervalSeconds: 60 };
+
+export const SessionsSchema = z.object({
+  idleTimeoutMinutes: z
+    .number()
+    .positive()
+    .max(24 * 60)
+    .default(sessionsDefaults.idleTimeoutMinutes),
+  cleanupIntervalSeconds: z
+    .number()
+    .positive()
+    .max(3600)
+    .default(sessionsDefaults.cleanupIntervalSeconds),
+});
+
 export const AgentSocketSchema = z.object({
   /** Enable the WebSocket agent proxy endpoint (/agent-proxy) */
   proxyEnabled: z.boolean().default(false),
@@ -255,6 +277,7 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  sessions: SessionsSchema.default(sessionsDefaults),
   /**
    * Ory Hydra is a hard runtime dependency (#217) — the OAuth2/OIDC authority
    * for the web UI, MCP clients, and the agent-client, all via mediated DCR +

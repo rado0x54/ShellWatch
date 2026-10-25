@@ -11,6 +11,12 @@ an OpenSSH server with `TrustedUserCAKeys`, a throwaway user CA, and a
 
 Everything under `out/` is generated, throwaway, and git-ignored.
 
+> **Superseded for ongoing testing:** the black-box e2e suite ([#244],
+> [`docs/testing.md`](../docs/testing.md)) runs the real server against a real
+> OpenSSH `sshd` built from the same digest-pinned base (`e2e/sshd/Dockerfile.modern`,
+> plain `authorized_keys` instead of the cert-only CA setup here) on every
+> PR. This directory stays as the record of the cert spike.
+
 ## Usage
 
 ```bash
@@ -66,3 +72,4 @@ is the crux of #210's Phase 0.
 
 [#210]: https://github.com/rado0x54/ShellWatch/issues/210
 [#232]: https://github.com/rado0x54/ShellWatch/issues/232
+[#244]: https://github.com/rado0x54/ShellWatch/issues/244

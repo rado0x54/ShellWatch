@@ -42,6 +42,19 @@ Exempt (no token): `/health`, `/api/version`, `/config.js`, `/manifest.json`,
 `/api/hydra/`, `/api/passkey-invite/`, `/passkey-invite/`, `/.well-known/`,
 `/_app/`.
 
+## Conformance over the wire (e2e)
+
+The black-box e2e suite in [`e2e/`](../../e2e) ([#244], [`docs/testing.md`](../testing.md))
+is an additional conformance check of this contract: it runs the built server
+against a real `sshd` and a real Hydra and asserts REST bodies, WebSocket
+frames, MCP tool payloads and the agent-proxy path **as the contract documents
+them** (e.g. the bare `TerminalSession` from `POST /api/sessions`, the
+`{ status }` envelopes, `terminal:closed` alongside `sessions:changed`). It must
+not assert anything the contract leaves unspecified — a scenario that needs an
+undocumented detail is a signal to document it here first. Discovery documents
+are compared against the committed goldens in
+`src/test/integration/__goldens__/`.
+
 ## Regenerating / validating
 
 The spec is **hand-authored** (Fastify routes carry no JSON schema today). To
@@ -157,3 +170,4 @@ method-selection logic has to special-case it.
 
 [#210]: https://github.com/rado0x54/ShellWatch/issues/210
 [#225]: https://github.com/rado0x54/ShellWatch/issues/225
+[#244]: https://github.com/rado0x54/ShellWatch/issues/244

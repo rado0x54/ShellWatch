@@ -115,7 +115,10 @@ try {
     },
   });
 
-  const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params));
+  const terminalManager = new TerminalManager((params) => sshTransportFactory.create(params), {
+    idleTimeoutMs: config.sessions.idleTimeoutMinutes * 60_000,
+    cleanupIntervalMs: config.sessions.cleanupIntervalSeconds * 1_000,
+  });
 
   // Session-lifecycle audit writer (#184). Subscribes to TerminalManager
   // status transitions and persists open/close events to audit_session_lifecycle.

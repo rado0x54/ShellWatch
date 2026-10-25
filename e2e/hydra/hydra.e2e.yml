@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# Ory Hydra config for the e2e suite (#244). Mirrors the dev hydra.yml at the
+# repo root, with the issuer on the e2e port (4544) and the login/consent
+# providers pointed at the server under test, which the harness always starts
+# on 127.0.0.1:3100 (e2e/harness/env.ts). Storage is `DSN=memory` (compose),
+# so every `pnpm e2e:up` starts from an empty Hydra.
+serve:
+  cookies:
+    same_site_mode: Lax
+  public:
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://127.0.0.1:3100
+
+urls:
+  self:
+    issuer: http://127.0.0.1:4544
+    public: http://127.0.0.1:4544
+  login: http://127.0.0.1:3100/api/hydra/login
+  consent: http://127.0.0.1:3100/api/hydra/consent
+  logout: http://127.0.0.1:3100/api/hydra/logout
+  error: http://127.0.0.1:3100/api/hydra/error
+  post_logout_redirect: http://127.0.0.1:3100/
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+  # Mediated DCR only — ShellWatch's /api/hydra/register provisions clients.
+  dynamic_client_registration:
+    enabled: false
+
+strategies:
+  access_token: opaque
+
+ttl:
+  access_token: 30m
+  refresh_token: 720h
+  id_token: 30m
+  auth_code: 10m
+
+oauth2:
+  pkce:
+    enforced: false
+
+log:
+  level: info
+  format: text

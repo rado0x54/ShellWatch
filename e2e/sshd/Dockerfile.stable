@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# e2e target: current stable distro OpenSSH (#244). No webauthn-sk support —
+# runs the file-key scenario set only, to catch negotiation differences across
+# OpenSSH versions. Same users / layout as Dockerfile.modern.
+FROM debian:stable-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssh-server openssh-client \
+  && rm -rf /var/lib/apt/lists/* \
+  && for u in filekey passkey; do useradd -m -s /bin/bash -p '*' "$u"; done
+
+COPY sshd_config /etc/ssh/sshd_config
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 22
+ENTRYPOINT ["/entrypoint.sh"]

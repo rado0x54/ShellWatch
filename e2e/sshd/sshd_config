@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# sshd config for the e2e targets (#244). Pubkey-only auth from authorized_keys
+# for two unprivileged users; VERBOSE logging so each test can assert on the
+# exact auth line sshd emitted ("Accepted publickey for passkey … ECDSA-SK …").
+# Drop-ins (the webauthn-sk algorithm line on the modern image) land in
+# /etc/ssh/sshd_config.d via entrypoint.sh.
+Include /etc/ssh/sshd_config.d/*.conf
+
+Port 22
+ListenAddress 0.0.0.0
+PermitRootLogin no
+AllowUsers filekey passkey
+
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+
+# Agent forwarding is the point of one scenario set (second hop from inside the
+# container); keep the rest of the forwarding surface off.
+AllowAgentForwarding yes
+AllowTcpForwarding no
+X11Forwarding no
+
+# Longer than the 60 s PendingAction TTL so the "signing request expired"
+# scenario can assert that ShellWatch — not sshd's grace timer — ended the
+# authentication attempt.
+LoginGraceTime 120
+
+LogLevel VERBOSE
+PrintMotd no
+PrintLastLog no
