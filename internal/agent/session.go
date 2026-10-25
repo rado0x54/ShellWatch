@@ -259,6 +259,14 @@ func (s *Session) Destroy() {
 	}
 }
 
+// Owns reports whether sessionID is one of this agent's sessions (the MCP
+// notifier filters the manager's fan-out with it).
+func (s *Session) Owns(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owned[sessionID]
+}
+
 func (s *Session) assertOwned(sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

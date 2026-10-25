@@ -202,6 +202,7 @@ func run() error {
 		NewID:          newUUID,
 		Version:        buildInfo.Display,
 		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
+		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
 		MaxOwned:       store.NewAccounts(db).MaxSessions,
 	}
 
