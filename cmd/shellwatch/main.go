@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// ShellWatch Go backend (#210). Composition root: config, store, Hydra
-// resolver, HTTP server — wired here and only here
-// (docs/go-backend-architecture.md §5.1). Auth plane (Phase 2) + endpoints
-// REST (Phase 3 slice 1) are live; terminal core / SSH / WS follow. The Node
-// backend remains the production server until cutover.
+// ShellWatch server. Composition root: config, store, Hydra resolver, HTTP
+// server — wired here and only here (docs/go-backend-architecture.md §5.1).
 package main
 
 import (
@@ -16,9 +13,11 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -56,10 +55,15 @@ func main() {
 func run() error {
 	configPath := flag.String("config", "", "config file path (default: $SHELLWATCH_CONFIG or ./config.yaml)")
 	staticDir := flag.String("static-dir", "", "serve the SPA from this directory instead of the embedded build")
+	healthcheck := flag.Bool("healthcheck", false, "probe the running server's /health and exit (container HEALTHCHECK)")
 	flag.Parse()
-	// Positional config path wins, mirroring the Node CLI.
+	// A positional config path wins over the flag and the env var.
 	if flag.NArg() > 0 {
 		*configPath = flag.Arg(0)
+	}
+
+	if *healthcheck {
+		return probeHealth(*configPath)
 	}
 
 	if err := setupLogging(); err != nil {
@@ -160,8 +164,9 @@ func run() error {
 		},
 	})
 	manager := terminal.NewManager(factory, clk, 0)
-	// Idle janitor: auto-close sessions idle >30 min (Node parity, H6).
-	go manager.RunIdleJanitor(ctx, terminal.DefaultIdleSweepInterval)
+	// Idle janitor: auto-close sessions idle longer than sessions.idleTimeoutMinutes.
+	manager.SetIdleTimeout(cfg.Sessions.IdleTimeout())
+	go manager.RunIdleJanitor(ctx, cfg.Sessions.CleanupInterval())
 	wsHub := ws.NewHub(manager)
 	defer wsHub.Close()
 
@@ -290,12 +295,12 @@ func run() error {
 		},
 	})
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := net.JoinHostPort(bindHost(), strconv.Itoa(cfg.Server.Port))
 	srv := &http.Server{Addr: addr, Handler: handler}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("shellwatch (go) listening", "addr", addr)
+		slog.Info("shellwatch listening", "addr", addr, "mcp", "http://"+addr+"/mcp")
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -350,6 +355,34 @@ func setupLogging() error {
 		h = slog.NewJSONHandler(out, opts)
 	}
 	slog.SetDefault(slog.New(h))
+	return nil
+}
+
+// bindHost is the listen address: $HOST, default 0.0.0.0 (all interfaces).
+func bindHost() string {
+	if h := os.Getenv("HOST"); h != "" {
+		return h
+	}
+	return "0.0.0.0"
+}
+
+// probeHealth implements `shellwatch -healthcheck`: GET /health on the port
+// the config names (loopback) and exit non-zero unless it answers 2xx. The
+// runtime image has no shell or curl, so the binary is its own health probe.
+func probeHealth(configPath string) error {
+	port := 3000
+	if cfg, err := config.Load(configPath); err == nil {
+		port = cfg.Server.Port
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("/health returned %s", res.Status)
+	}
 	return nil
 }
 

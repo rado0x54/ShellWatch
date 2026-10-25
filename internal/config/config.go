@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
@@ -67,9 +68,30 @@ type Security struct {
 type Server struct {
 	Port        int    `yaml:"port"`
 	ExternalURL string `yaml:"externalUrl"`
-	// TrustProxy is bool | int | string | []string, passed through to the
-	// HTTP layer (Fastify semantics documented in schema.ts).
+	// TrustProxy is bool | string | []string (false = never trust
+	// X-Forwarded-For; true = trust every hop; CIDR string/list = trust only
+	// those proxies). A numeric hop count is rejected at load time: it cannot
+	// validate the immediate peer, so it is unsafe rather than merely unusual.
 	TrustProxy any `yaml:"trustProxy"`
+}
+
+// Sessions is terminal-session housekeeping (#244): how long a session may sit
+// without input/output before the idle janitor closes it (closeReason
+// "idle-timeout"), and how often that janitor runs. Fractional values are
+// allowed so test deployments can exercise the idle path quickly.
+type Sessions struct {
+	IdleTimeoutMinutes     float64 `yaml:"idleTimeoutMinutes"`
+	CleanupIntervalSeconds float64 `yaml:"cleanupIntervalSeconds"`
+}
+
+// IdleTimeout returns idleTimeoutMinutes as a duration.
+func (s Sessions) IdleTimeout() time.Duration {
+	return time.Duration(s.IdleTimeoutMinutes * float64(time.Minute))
+}
+
+// CleanupInterval returns cleanupIntervalSeconds as a duration.
+func (s Sessions) CleanupInterval() time.Duration {
+	return time.Duration(s.CleanupIntervalSeconds * float64(time.Second))
 }
 
 type Notifications struct {
@@ -126,6 +148,7 @@ type Config struct {
 	Notifications      Notifications      `yaml:"notifications"`
 	Mcp                Mcp                `yaml:"mcp"`
 	AgentSocket        AgentSocket        `yaml:"agentSocket"`
+	Sessions           Sessions           `yaml:"sessions"`
 	Hydra              Hydra              `yaml:"hydra"`
 	Vapid              *Vapid             `yaml:"vapid"`
 }
@@ -147,6 +170,13 @@ var (
 )
 
 const defaultIntrospectionCacheTtlMs = 60_000
+
+// Session housekeeping defaults (sessionsDefaults in the original schema):
+// 30 min idle timeout, janitor every 60 s.
+const (
+	defaultIdleTimeoutMinutes     = 30
+	defaultCleanupIntervalSeconds = 60
+)
 
 // defaultMcpSessionTimeoutMinutes aligns with the terminal idle janitor.
 const defaultMcpSessionTimeoutMinutes = 30
@@ -230,6 +260,12 @@ func (c *Config) applyDefaults() {
 		v := defaultMcpSessionTimeoutMinutes
 		c.Mcp.SessionTimeoutMinutes = &v
 	}
+	if c.Sessions.IdleTimeoutMinutes == 0 {
+		c.Sessions.IdleTimeoutMinutes = defaultIdleTimeoutMinutes
+	}
+	if c.Sessions.CleanupIntervalSeconds == 0 {
+		c.Sessions.CleanupIntervalSeconds = defaultCleanupIntervalSeconds
+	}
 	if c.Hydra.Spa.ClientID == "" {
 		c.Hydra.Spa.ClientID = "shellwatch-web"
 	}
@@ -273,11 +309,9 @@ func (c *Config) validate() []string {
 		add("server.externalUrl: must be a valid URL (e.g., 'http://localhost:3000')")
 	}
 	switch tp := c.Server.TrustProxy.(type) {
-	case bool, string, uint64:
-	case int:
-		if tp < 0 {
-			add("server.trustProxy: hop count must be >= 0")
-		}
+	case bool, string:
+	case int, int64, uint64, float64:
+		add("server.trustProxy: a hop count is not supported (it cannot validate the immediate peer); use true, false, a CIDR/IP string, or a list of them")
 	case []any:
 		for _, e := range tp {
 			if _, ok := e.(string); !ok {
@@ -286,7 +320,7 @@ func (c *Config) validate() []string {
 			}
 		}
 	default:
-		add("server.trustProxy: must be a boolean, number, string, or array of strings")
+		add("server.trustProxy: must be a boolean, string, or array of strings")
 	}
 
 	if c.Security.RpID == "" {
@@ -315,6 +349,13 @@ func (c *Config) validate() []string {
 
 	if v := *c.Mcp.SessionTimeoutMinutes; v < 0 || v > 1440 {
 		add("mcp.sessionTimeoutMinutes: must be between 0 (disabled) and 1440")
+	}
+
+	if v := c.Sessions.IdleTimeoutMinutes; v <= 0 || v > 24*60 {
+		add("sessions.idleTimeoutMinutes: must be > 0 and <= 1440")
+	}
+	if v := c.Sessions.CleanupIntervalSeconds; v <= 0 || v > 3600 {
+		add("sessions.cleanupIntervalSeconds: must be > 0 and <= 3600")
 	}
 
 	if !isURL(c.Hydra.PublicURL) {

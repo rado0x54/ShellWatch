@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const minimalConfig = `
@@ -155,5 +156,55 @@ func TestMcpSessionTimeoutConfig(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "mcp.sessionTimeoutMinutes") {
 			t.Errorf("value %s: expected validation error, got %v", bad, err)
 		}
+	}
+}
+
+func TestSessionsConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sessions.IdleTimeout() != 30*time.Minute || cfg.Sessions.CleanupInterval() != time.Minute {
+		t.Errorf("defaults: got idle=%v cleanup=%v", cfg.Sessions.IdleTimeout(), cfg.Sessions.CleanupInterval())
+	}
+
+	// Fractional values are accepted (test deployments drive the idle path fast).
+	cfg, err = Load(writeConfig(t, minimalConfig+"\nsessions:\n  idleTimeoutMinutes: 0.05\n  cleanupIntervalSeconds: 0.5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sessions.IdleTimeout() != 3*time.Second || cfg.Sessions.CleanupInterval() != 500*time.Millisecond {
+		t.Errorf("fractional: got idle=%v cleanup=%v", cfg.Sessions.IdleTimeout(), cfg.Sessions.CleanupInterval())
+	}
+
+	for _, bad := range []string{
+		"idleTimeoutMinutes: -1", "idleTimeoutMinutes: 1441",
+		"cleanupIntervalSeconds: -5", "cleanupIntervalSeconds: 3601",
+	} {
+		_, err := Load(writeConfig(t, minimalConfig+"\nsessions:\n  "+bad+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "sessions.") {
+			t.Errorf("sessions %q: expected validation error, got %v", bad, err)
+		}
+	}
+}
+
+func TestTrustProxyForms(t *testing.T) {
+	// minimalConfig already has a server block (duplicate keys are a YAML
+	// error), so rebuild it with a trustProxy entry.
+	noServer := strings.Replace(minimalConfig, "server:\n  externalUrl: http://localhost:3000\n", "", 1)
+	base := noServer + "\nserver:\n  externalUrl: http://localhost:3000\n  trustProxy: "
+
+	cfg, err := Load(writeConfig(t, base+"\n    - 10.0.0.0/8\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list, ok := cfg.Server.TrustProxy.([]any); !ok || len(list) != 1 || list[0] != "10.0.0.0/8" {
+		t.Errorf("CIDR list: got %#v", cfg.Server.TrustProxy)
+	}
+
+	// Hop counts are rejected at load (they cannot validate the immediate peer).
+	_, err = Load(writeConfig(t, base+"1\n"))
+	if err == nil || !strings.Contains(err.Error(), "trustProxy") {
+		t.Errorf("hop count: expected a trustProxy validation error, got %v", err)
 	}
 }

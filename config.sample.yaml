@@ -106,7 +106,7 @@ security:
     - 127.0.0.1/32
     - "::1/128"
 
-# MCP surface lifecycle (Go backend only; the Node backend ignores this section).
+# MCP surface lifecycle.
 # mcp:
 #   sessionTimeoutMinutes: 30       # Close MCP sessions after this long with no HTTP
 #                                   # activity (client vanished without DELETE). Expiry
