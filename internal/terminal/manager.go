@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
@@ -24,6 +25,11 @@ type managed struct {
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
 	// Closed broadcast always sees every event the transport delivered.
 	pumpDone chan struct{}
+	// abandoned is set when Close gave up joining the pump (wedged transport):
+	// the still-running pump must discard events instead of refilling a
+	// buffer the close already cleared (memory for a session that is gone —
+	// possibly a deleted account's).
+	abandoned atomic.Bool
 }
 
 // StatusEvent is emitted on every status transition (guaranteed, ordered).
@@ -125,9 +131,22 @@ func (m *Manager) SweepIdle() {
 		}
 	}
 	m.mu.Unlock()
+	m.closeAll(ids, CloseIdleTimeout)
+}
+
+// closeAll closes sessions concurrently: each Close's pump join is bounded by
+// closeJoinTimeout, and closing serially would stack those bounds (20 wedged
+// transports = 20x the bound stalling shutdown or a janitor sweep).
+func (m *Manager) closeAll(ids []string, reason CloseReason) {
+	var wg sync.WaitGroup
 	for _, id := range ids {
-		m.Close(id, CloseIdleTimeout)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Close(id, reason)
+		}()
 	}
+	wg.Wait()
 }
 
 // SubscribeStatus registers a guaranteed status hook; returns an unsubscribe.
@@ -150,8 +169,6 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
 }
 
-// Create opens a session against an endpoint. expectedAccountID guards
-// cross-account creation (terminal-manager.ts:62, #130).
 // SubscribeRemoved registers a hook fired after a session is removed from
 // the registry (explicit close, account purge). The WS hub uses it to sweep
 // connections whose attach raced the removal: the Closed broadcast happens
@@ -170,6 +187,8 @@ func (m *Manager) SubscribeRemoved(fn func(sessionID string)) func() {
 	}
 }
 
+// Create opens a session against an endpoint. expectedAccountID guards
+// cross-account creation (terminal-manager.ts:62, #130).
 func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID string, trigger Trigger) (*Session, error) {
 	if ep.AccountID != expectedAccountID {
 		return nil, fmt.Errorf("unknown endpoint: %s", ep.ID)
@@ -238,6 +257,9 @@ func (m *Manager) pump(mg *managed) {
 			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 			return
 		default:
+			if mg.abandoned.Load() {
+				continue // close timed out and moved on; drop, don't refill
+			}
 			mg.output.Append(ev.Data)
 			m.mu.Lock()
 			mg.session.LastActivityAt = m.clk.Now()
@@ -425,27 +447,36 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// broadcast also happens BEFORE Clear below: clearing first made the
 	// drain observe the offset rewinding and emit a reset frame that blanked
 	// the client's terminal on every explicit close.
+	joinTimeout, stopTimer := m.clk.After(m.closeJoinTimeout)
 	select {
 	case <-mg.pumpDone:
-	case <-time.After(m.closeJoinTimeout):
+		stopTimer()
+	case <-joinTimeout:
 		// Liveness over completeness: the transport broke its contract
-		// (Close must terminate Events). Proceed — the tail may be
-		// incomplete and the pump goroutine leaks, but the janitor,
-		// shutdown, and every other close stay unblocked.
+		// (Close must terminate Events). Mark the pump abandoned so it
+		// discards further events instead of refilling the cleared buffer,
+		// and proceed — the tail may be incomplete and the goroutine leaks,
+		// but the janitor, shutdown, and every other close stay unblocked.
+		mg.abandoned.Store(true)
 		slog.Warn("terminal close: pump did not drain in time; proceeding", "session", sessionID)
 	}
 	// On the join path the pump finalized Closed itself; on the timeout path
 	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
 	// Clear and remove in one critical section: no reader can observe a
-	// cleared-but-still-listed session. The removed hooks fire after, letting
-	// the WS hub sweep any connection whose attach raced this removal.
+	// cleared-but-still-listed session. The removed hooks fire only when THIS
+	// call performed the delete — a concurrent RemoveForAccount may have won,
+	// and each removal must notify exactly once (the WS hub sweep keys on it).
 	m.mu.Lock()
-	mg.output.Clear()
-	delete(m.terminals, sessionID)
-	removed := make([]func(string), 0, len(m.removedSubs))
-	for _, fn := range m.removedSubs {
-		removed = append(removed, fn)
+	_, present := m.terminals[sessionID]
+	var removed []func(string)
+	if present {
+		mg.output.Clear()
+		delete(m.terminals, sessionID)
+		removed = make([]func(string), 0, len(m.removedSubs))
+		for _, fn := range m.removedSubs {
+			removed = append(removed, fn)
+		}
 	}
 	m.mu.Unlock()
 	for _, fn := range removed {
@@ -488,9 +519,7 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 		}
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
-		m.Close(id, reason)
-	}
+	m.closeAll(ids, reason)
 	return len(ids)
 }
 
@@ -537,9 +566,7 @@ func (m *Manager) Destroy() {
 		ids = append(ids, id)
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
-		m.Close(id, CloseShutdown)
-	}
+	m.closeAll(ids, CloseShutdown)
 }
 
 func (m *Manager) get(sessionID string) (*managed, error) {

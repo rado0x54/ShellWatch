@@ -3,6 +3,7 @@ package terminal
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -359,10 +360,15 @@ func (w *wedgedTransport) Events() <-chan Event  { return w.events }
 
 func TestCloseJoinIsBounded(t *testing.T) {
 	wedged := &wedgedTransport{events: make(chan Event)}
-	m := NewManager(func(context.Context, FactoryParams) (Transport, error) { return wedged, nil }, clock.Real{}, 0)
-	m.closeJoinTimeout = 50 * time.Millisecond
+	clk := clock.NewFake(time.Unix(1000, 0))
+	m := NewManager(func(context.Context, FactoryParams) (Transport, error) { return wedged, nil }, clk, 0)
+	m.closeJoinTimeout = 5 * time.Second
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
 	sess, err := m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mg, err := m.get(sess.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,15 +377,126 @@ func TestCloseJoinIsBounded(t *testing.T) {
 		m.Close(sess.SessionID, CloseClientUI)
 		close(done)
 	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Close wedged behind a transport that never terminates Events")
+	// Fire the fake-clock join timer (poll: Close's After registers from the
+	// goroutine above; repeated advances are harmless).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		clk.Advance(m.closeJoinTimeout)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("Close wedged behind a transport that never terminates Events")
+			}
+			continue
+		}
+		break
 	}
 	if m.GetSession(sess.SessionID) != nil {
 		t.Fatal("wedged session not removed")
 	}
-	close(wedged.events) // release the leaked pump for a clean -race exit
+
+	// The abandoned pump must DISCARD late events, not refill the cleared
+	// buffer of a session that is gone (possibly a deleted account's).
+	off := mg.output.CurrentOffset()
+	wedged.events <- Event{Data: []byte("late data for a dead session")}
+	close(wedged.events) // pump drains the event, then exits
+	<-mg.pumpDone
+	if got := mg.output.CurrentOffset(); got != off {
+		t.Fatalf("abandoned pump refilled the buffer: offset %d -> %d", off, got)
+	}
+}
+
+// Destroy / sweeps close sessions concurrently: with N wedged transports the
+// total stall is one closeJoinTimeout, not N of them.
+func TestDestroyBoundsWedgedClosesConcurrently(t *testing.T) {
+	const n = 5
+	clk := clock.NewFake(time.Unix(1000, 0))
+	transports := make([]*wedgedTransport, 0, n)
+	m := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		w := &wedgedTransport{events: make(chan Event)}
+		transports = append(transports, w)
+		return w, nil
+	}, clk, 0)
+	m.closeJoinTimeout = 5 * time.Second
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sessions := make([]*Session, 0, n)
+	for i := 0; i < n; i++ {
+		sess, err := m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, sess)
+	}
+	var mgs []*managed
+	for _, sess := range sessions {
+		mg, err := m.get(sess.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mgs = append(mgs, mg)
+	}
+	done := make(chan struct{})
+	go func() {
+		m.Destroy()
+		close(done)
+	}()
+	// A single advance of one timeout must release ALL joins: serial closes
+	// would register each waiter only after the previous one fired and need n
+	// advances of a monotonically later deadline.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		clk.Advance(m.closeJoinTimeout)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("Destroy did not complete")
+			}
+			continue
+		}
+		break
+	}
+	if len(m.ListSessions()) != 0 {
+		t.Fatal("sessions survived Destroy")
+	}
+	for _, w := range transports {
+		close(w.events)
+	}
+	for _, mg := range mgs {
+		<-mg.pumpDone
+	}
+}
+
+// Removed hooks fire exactly once per session even when an explicit Close
+// races RemoveForAccount: the delete under m.mu decides the winner.
+func TestRemovedHookFiresOnceUnderCloseRemoveRace(t *testing.T) {
+	mgr, _ := mockManager(t)
+	var fires atomic.Int32
+	unsubRemoved := mgr.SubscribeRemoved(func(string) { fires.Add(1) })
+	defer unsubRemoved()
+	// The pump broadcasts Closed while Close is parked on the join; purging
+	// the account from inside that broadcast deletes the session before Close
+	// resumes — the classic double-fire interleaving, now deterministic.
+	unsubStatus := mgr.SubscribeStatus(func(e StatusEvent) {
+		if e.Status == StatusClosed {
+			mgr.RemoveForAccount("acc")
+		}
+	})
+	defer unsubStatus()
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if got := fires.Load(); got != 1 {
+		t.Fatalf("removed hook fired %d times, want exactly 1", got)
+	}
+	if mgr.GetSession(sess.SessionID) != nil {
+		t.Fatal("session survived")
+	}
 }
 
 // The removed hook fires once per removal, on explicit close and on the
