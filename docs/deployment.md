@@ -208,6 +208,29 @@ services:
     user: "1001:1001"
 ```
 
+## Upgrading from the Node server
+
+The Go server adopts a Node-created database **automatically and in place** —
+same image name, same volumes, no flags. On first boot it recognizes the
+drizzle-managed schema (which is byte-identical to the Go baseline), stamps
+its own migration table instead of re-running anything, and records the
+drizzle journal head so a rollback to the Node image applies nothing either.
+
+Still, treat the first Go boot like any schema-touching upgrade:
+
+1. **Back up `./data` before the first Go boot.** Adoption is in-place; the
+   backup is your escape hatch, not part of the procedure.
+2. **Rollback window:** rolling back to the last Node image is safe only
+   while the Go schema still equals the frozen drizzle head — i.e. until the
+   first ShellWatch release that ships a new database migration. After such a
+   release has booted, the Node server no longer understands the schema;
+   restore the pre-cutover backup instead.
+3. **Half-migrated databases fail fast.** If boot stops with
+   `existing database is missing table …` or
+   `existing database has N of 11 Node migrations applied`, the Node server
+   never finished its own migrations: run the last Node image once against
+   the same data directory, let it migrate, then cut over.
+
 ## Standalone tarball
 
 For deployments without Docker. Each release ships one tarball per Linux
