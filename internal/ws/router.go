@@ -73,6 +73,14 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 	// Output appended between the buffer read above and the attach becoming
 	// visible fired its onOutput before we were attached — pick it up now.
 	c.flushOutput(h.mgr, msg.SessionID)
+	// Re-check after the attach is visible: an explicit close that broadcast
+	// terminal:closed before this attach landed has already notified every
+	// attached connection — this one would stay attached to a deleted session
+	// forever and never get the closed frame. (An attach to a closed-but-
+	// retained post-mortem session is legitimate and keeps GetSession non-nil.)
+	if h.mgr.GetSession(msg.SessionID) == nil {
+		c.closeSession(h.mgr, msg.SessionID)
+	}
 }
 
 func marshalFrame(msg any) []byte {
