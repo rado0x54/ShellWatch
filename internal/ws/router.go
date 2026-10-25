@@ -75,9 +75,11 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 	c.flushOutput(h.mgr, msg.SessionID)
 	// Re-check after the attach is visible: an explicit close that broadcast
 	// terminal:closed before this attach landed has already notified every
-	// attached connection — this one would stay attached to a deleted session
-	// forever and never get the closed frame. (An attach to a closed-but-
-	// retained post-mortem session is legitimate and keeps GetSession non-nil.)
+	// attached connection. This catches an attach completing after the
+	// registry delete; one completing between the broadcast and the delete is
+	// swept by the Manager's removed hook (hub.onRemoved) instead. (An attach
+	// to a closed-but-retained post-mortem session is legitimate and keeps
+	// GetSession non-nil.)
 	if h.mgr.GetSession(msg.SessionID) == nil {
 		c.closeSession(h.mgr, msg.SessionID)
 	}

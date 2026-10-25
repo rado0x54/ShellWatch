@@ -385,3 +385,43 @@ func TestExplicitCloseDrainsTailWithoutReset(t *testing.T) {
 	h.mgr.Close(h.sess.SessionID, terminal.CloseClientUI)
 	h.expectTailThenClosed(t, "logout")
 }
+
+// The Manager's removed hook sweeps a connection whose attach raced the
+// registry delete: it gets terminal:closed and is detached; a sweep of an
+// unattached connection is a no-op (no spurious closed frame).
+func TestRemovedSweepClosesRacedAttach(t *testing.T) {
+	h := newDrainHarness(t)
+	hub := NewHub(h.mgr)
+	t.Cleanup(hub.Close)
+	hub.add(h.c)
+	t.Cleanup(func() { hub.remove(h.c) })
+
+	// Simulate the raced attach: the conn is attached while the session is
+	// already gone from the registry (hub.onRemoved fires right after the
+	// delete in Manager.Close).
+	hub.onRemoved(h.sess.SessionID)
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case f, ok := <-h.frames:
+			if !ok {
+				t.Fatal("websocket closed before terminal:closed arrived")
+			}
+			if f.Type == "terminal:closed" {
+				if h.c.isAttached(h.sess.SessionID) {
+					t.Fatal("conn still attached after the removal sweep")
+				}
+				hub.onRemoved(h.sess.SessionID) // second sweep: no-op
+				select {
+				case f2 := <-h.frames:
+					t.Fatalf("second sweep sent a frame: %+v", f2)
+				case <-time.After(100 * time.Millisecond):
+				}
+				return
+			}
+		case <-timeout:
+			t.Fatal("removal sweep never delivered terminal:closed")
+		}
+	}
+}
