@@ -264,6 +264,13 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 // spaHandler serves files from the client build; unknown non-API paths fall
 // back to index.html (adapter-static SPA routing, mirroring @fastify/static
 // + setNotFoundHandler in the Node backend).
+//
+// Caching: embedded files carry a zero modtime, so the file server can never
+// answer If-Modified-Since — without explicit headers every reload would
+// re-download the full bundle. SvelteKit content-hashes everything under
+// _app/immutable/, so those are cached forever; every other static path
+// (index.html, service-worker.js, favicon, manifest) must revalidate so a new
+// deploy is picked up immediately.
 func spaHandler(staticFS fs.FS) http.HandlerFunc {
 	fileServer := http.FileServerFS(staticFS)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -271,6 +278,7 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 		if path != "" {
 			if f, err := staticFS.Open(path); err == nil {
 				f.Close()
+				w.Header().Set("Cache-Control", staticCacheControl(path))
 				fileServer.ServeHTTP(w, r)
 				return
 			}
@@ -288,8 +296,18 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 		}
 		defer index.Close()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		if data, err := io.ReadAll(index); err == nil {
 			_, _ = w.Write(data)
 		}
 	}
+}
+
+// staticCacheControl picks the Cache-Control for a client-build file: the
+// content-hashed bundle is immutable, everything else revalidates on each use.
+func staticCacheControl(path string) string {
+	if strings.HasPrefix(path, "_app/immutable/") {
+		return "public, max-age=31536000, immutable"
+	}
+	return "no-cache"
 }
