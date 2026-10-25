@@ -19,9 +19,21 @@ done
 
 if [ "${SSHD_WEBAUTHN_SK:-0}" = "1" ]; then
   # Same directive ShellWatch shows users for their own servers
-  # (src/webauthn/ssh-key-format.ts getSshdConfigLine()).
+  # (the OpenSSH authorized_keys/sshd_config line for a webauthn-sk key).
   echo 'PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com' \
     > /etc/ssh/sshd_config.d/10-webauthn-sk.conf
+fi
+
+# OpenSSH >= 9.8 penalises a source IP after failed authentications
+# (PerSourcePenalties, on by default). Every ShellWatch connection offers the
+# admin file key (ed25519) before the passkey, and sshd rejects that probe for
+# the passkey-only user — harmless on its own, but back-to-back scenarios
+# accumulate enough "failed authentication" penalties that sshd starts dropping
+# the harness's connections mid-suite (flaky passkey-signing). Disable it where
+# the directive exists (the OpenSSH 10.3 modern image); the debian-stable image
+# (9.2) neither knows the directive nor penalises, so the probe skips it there.
+if /usr/sbin/sshd -T 2>/dev/null | grep -qi '^persourcepenalties'; then
+  echo 'PerSourcePenalties no' > /etc/ssh/sshd_config.d/20-no-penalties.conf
 fi
 
 for u in filekey passkey; do

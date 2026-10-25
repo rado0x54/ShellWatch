@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+#
+# OpenAPI Overlay applied by oapi-codegen (docs/api/oapi-codegen.yaml) before
+# generating internal/api. Go-binding concerns only — this file must never
+# change the wire contract, which lives exclusively in openapi.yaml.
+#
+# Why: Go's time.Time marshals as RFC3339Nano (variable fractional digits),
+# but Node emits Date.toISOString() — always exactly ".000Z" millis. The
+# goldens fold timestamps to placeholders by key, so a format drift would be
+# invisible to the parity oracle. Binding date-time properties to plain Go
+# strings forces handlers to format explicitly (rest.isoMillis), keeping the
+# wire bytes identical to Node.
+overlay: 1.0.0
+info:
+  title: Go type bindings for the frozen ShellWatch wire contract
+  version: 1.0.0
+actions:
+  - target: $..[?(@.format == "date-time")]
+    description: Bind all date-time properties to plain strings (see header).
+    update:
+      x-go-type: string

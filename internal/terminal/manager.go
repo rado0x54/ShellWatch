@@ -1,0 +1,499 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+// Manager is the central session registry (port of terminal-manager.ts,
+// docs/go-backend-architecture.md §5.2): source-agnostic, owns session
+// lifecycle, one pump goroutine per session. Subscribers get guaranteed
+// status hooks (audit) + coalesced output wake-ups (WS/MCP) — the coalesced
+// side lands with the WS hub (slice 4); slice 2 provides the core + a
+// status-event fan-out.
+package terminal
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/rado0x54/shellwatch/internal/clock"
+)
+
+type managed struct {
+	session   *Session
+	transport Transport
+	output    *OutputBuffer
+}
+
+// StatusEvent is emitted on every status transition (guaranteed, ordered).
+// CreatedAt is carried so close-side subscribers (audit duration_ms) still see
+// it after a terminal transition removed the session from the registry.
+type StatusEvent struct {
+	SessionID string
+	Status    Status
+	Previous  Status
+	Reason    CloseReason
+	CreatedAt time.Time
+}
+
+// DefaultIdleTimeout matches Node's DEFAULT_IDLE_TIMEOUT (terminal-manager.ts).
+const DefaultIdleTimeout = 30 * time.Minute
+
+// DefaultIdleSweepInterval matches Node's DEFAULT_CLEANUP_INTERVAL.
+const DefaultIdleSweepInterval = time.Minute
+
+// Manager owns all sessions.
+type Manager struct {
+	mu            sync.Mutex
+	terminals     map[string]*managed
+	factory       TransportFactory
+	clk           clock.Clock
+	maxBufferSize int
+	idleTimeout   time.Duration
+
+	statusSubs map[int]func(StatusEvent)
+	outputSubs map[int]func(sessionID string, offset int64)
+	nextSub    int
+}
+
+// NewManager builds a Manager. factory establishes transports.
+func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *Manager {
+	if clk == nil {
+		clk = clock.Real{}
+	}
+	return &Manager{
+		terminals: map[string]*managed{}, factory: factory, clk: clk,
+		maxBufferSize: maxBufferSize,
+		idleTimeout:   DefaultIdleTimeout,
+		statusSubs:    map[int]func(StatusEvent){},
+		outputSubs:    map[int]func(string, int64){},
+	}
+}
+
+// SetIdleTimeout overrides the idle timeout (tests; <=0 disables the sweep).
+func (m *Manager) SetIdleTimeout(d time.Duration) {
+	m.mu.Lock()
+	m.idleTimeout = d
+	m.mu.Unlock()
+}
+
+// RunIdleJanitor sweeps idle-open sessions on interval until ctx is done
+// (port of cleanupIdleTerminals + its setInterval).
+func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultIdleSweepInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.SweepIdle()
+		}
+	}
+}
+
+// SweepIdle closes open sessions whose last activity is older than the idle
+// timeout (reason idle-timeout).
+func (m *Manager) SweepIdle() {
+	m.mu.Lock()
+	timeout := m.idleTimeout
+	if timeout <= 0 {
+		m.mu.Unlock()
+		return
+	}
+	now := m.clk.Now()
+	var ids []string
+	for id, mg := range m.terminals {
+		if mg.session.Status != StatusOpen {
+			continue
+		}
+		if now.Sub(mg.session.LastActivityAt) > timeout {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Close(id, CloseIdleTimeout)
+	}
+}
+
+// SubscribeStatus registers a guaranteed status hook; returns an unsubscribe.
+func (m *Manager) SubscribeStatus(fn func(StatusEvent)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.statusSubs[id] = fn
+	return func() { m.mu.Lock(); delete(m.statusSubs, id); m.mu.Unlock() }
+}
+
+// SubscribeOutput registers an output notifier (sessionID, currentOffset).
+func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.outputSubs[id] = fn
+	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
+}
+
+// Create opens a session against an endpoint. expectedAccountID guards
+// cross-account creation (terminal-manager.ts:62, #130).
+func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID string, trigger Trigger) (*Session, error) {
+	if ep.AccountID != expectedAccountID {
+		return nil, fmt.Errorf("unknown endpoint: %s", ep.ID)
+	}
+	now := m.clk.Now()
+	sess := &Session{
+		SessionID: GenerateSessionID(), EndpointID: ep.ID, AccountID: ep.AccountID,
+		Status: StatusOpening, CreatedAt: now, LastActivityAt: now, Source: trigger.Kind,
+		SourceIP: trigger.SourceIP,
+	}
+	if trigger.Kind == SourceMCP {
+		sess.MCPReason = trigger.Reason
+		sess.MCPClientName = trigger.MCPClientName
+		sess.MCPClientVer = trigger.MCPClientVer
+	}
+
+	transport, err := m.factory(ctx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
+	if err != nil {
+		sess.Status = StatusError
+		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
+	}
+
+	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize)}
+	m.mu.Lock()
+	m.terminals[sess.SessionID] = mg
+	m.mu.Unlock()
+
+	// Open BEFORE the pump starts (and snapshot before it can touch the
+	// session): a transport that dies immediately finalizes the session from
+	// the pump, and a terminal state must never be flipped back to open —
+	// setStatus guards that too, this ordering just makes it impossible here.
+	m.setStatus(mg, StatusOpen, "")
+	// Snapshot under the lock: the open broadcast above can prompt a client
+	// to close the session from another goroutine before Create returns.
+	m.mu.Lock()
+	out := *sess
+	m.mu.Unlock()
+	go m.pump(mg)
+	return &out, nil
+}
+
+// pump ranges over transport events until it ends (one goroutine per session).
+// An explicit Err/Closed event drives the terminal state; if the channel just
+// closes (the client-initiated close path, where transport.Close suppresses a
+// duplicate Closed event), the session is still finalized here — reasonOr
+// preserves the reason Close() already stamped (e.g. client.ui).
+func (m *Manager) pump(mg *managed) {
+	for ev := range mg.transport.Events() {
+		switch {
+		case ev.Err != nil:
+			m.setStatus(mg, StatusError, m.reasonOr(mg, CloseTransportError))
+			return
+		case ev.Closed:
+			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
+			return
+		default:
+			mg.output.Append(ev.Data)
+			m.mu.Lock()
+			mg.session.LastActivityAt = m.clk.Now()
+			offset := mg.output.CurrentOffset()
+			subs := make([]func(string, int64), 0, len(m.outputSubs))
+			for _, fn := range m.outputSubs {
+				subs = append(subs, fn)
+			}
+			m.mu.Unlock()
+			for _, fn := range subs {
+				fn(mg.session.SessionID, offset)
+			}
+		}
+	}
+	m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
+}
+
+// reasonOr reads the stamped close reason under the lock (setStatus /
+// beginClosing write it under the same lock — the pump calls this
+// concurrently with an explicit Close).
+func (m *Manager) reasonOr(mg *managed, fallback CloseReason) CloseReason {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mg.session.CloseReason != "" {
+		return mg.session.CloseReason
+	}
+	return fallback
+}
+
+// SendInput writes raw input to an open session.
+func (m *Manager) SendInput(sessionID, input string) error {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return err
+	}
+	if mg.session.Status != StatusOpen {
+		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, mg.session.Status)
+	}
+	if err := mg.transport.Write([]byte(input)); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	mg.session.LastActivityAt = m.clk.Now()
+	m.mu.Unlock()
+	return nil
+}
+
+// SendKeys resolves named keys and writes them.
+func (m *Manager) SendKeys(sessionID string, keys []string) error {
+	resolved, err := ResolveKeys(keys)
+	if err != nil {
+		return err
+	}
+	return m.SendInput(sessionID, resolved)
+}
+
+// ReadOutput reads up to limit bytes after afterOffset.
+func (m *Manager) ReadOutput(sessionID string, afterOffset int64, limit int) (ReadResult, error) {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return ReadResult{}, err
+	}
+	return mg.output.Read(afterOffset, limit), nil
+}
+
+// ReadOutputFrom returns the tail from afterOffset with a reset flag.
+func (m *Manager) ReadOutputFrom(sessionID string, afterOffset *int64) (FromResult, error) {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return FromResult{}, err
+	}
+	return mg.output.ReadFrom(afterOffset), nil
+}
+
+// ReadOutputTail returns up to limit trailing bytes.
+func (m *Manager) ReadOutputTail(sessionID string, limit int) []byte {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return nil
+	}
+	return mg.output.Tail(limit)
+}
+
+// Resize changes the PTY size of an open session.
+func (m *Manager) Resize(sessionID string, cols, rows int) error {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return err
+	}
+	return mg.transport.Resize(cols, rows)
+}
+
+// ListSessions returns a snapshot of all non-closed sessions. Closed sessions
+// are retained in the registry (post-mortem tail/re-attach) but hidden from
+// lists; errored ones stay visible (listSessions filter, terminal-manager.ts).
+func (m *Manager) ListSessions() []Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Session, 0, len(m.terminals))
+	for _, mg := range m.terminals {
+		if mg.session.Status == StatusClosed {
+			continue
+		}
+		out = append(out, *mg.session)
+	}
+	return out
+}
+
+// ListForAccount returns an account's non-closed sessions.
+func (m *Manager) ListForAccount(accountID string) []Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Session, 0)
+	for _, mg := range m.terminals {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
+			out = append(out, *mg.session)
+		}
+	}
+	return out
+}
+
+// CountOpenForAccount counts the account's status-open sessions — the REST
+// session-cap semantics: account-wide, UI and MCP sessions alike. (The MCP
+// cap in agent.Session deliberately differs: it counts only that agent's own
+// live sessions.)
+func (m *Manager) CountOpenForAccount(accountID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, mg := range m.terminals {
+		if mg.session.AccountID == accountID && mg.session.Status == StatusOpen {
+			n++
+		}
+	}
+	return n
+}
+
+// EndpointIDsForAccount lists endpoint ids an account has non-closed sessions
+// on (satisfies rest.SessionLister for the endpoint-delete guard).
+func (m *Manager) EndpointIDsForAccount(accountID string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []string
+	for _, mg := range m.terminals {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
+			ids = append(ids, mg.session.EndpointID)
+		}
+	}
+	return ids
+}
+
+// GetSession returns a session snapshot, or nil.
+func (m *Manager) GetSession(sessionID string) *Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mg, ok := m.terminals[sessionID]
+	if !ok {
+		return nil
+	}
+	s := *mg.session
+	return &s
+}
+
+// Close explicitly closes a session: transport down, buffer cleared, removed
+// from the registry (terminal-manager.ts close()). No-op when already
+// closed/closing — a retained post-mortem session stays readable until the
+// process ends, mirroring Node.
+func (m *Manager) Close(sessionID string, reason CloseReason) {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return
+	}
+	// The guard and the closing transition must be one atomic step: a
+	// transport-driven Closed from the pump racing this call must either win
+	// (we bail) or lose (it becomes the normal closing->closed step) — never
+	// interleave into a closed->closing regression.
+	if !m.beginClosing(mg, reason) {
+		return
+	}
+	_ = mg.transport.Close()
+	mg.output.Clear()
+	m.setStatus(mg, StatusClosed, reason)
+	m.mu.Lock()
+	delete(m.terminals, sessionID)
+	m.mu.Unlock()
+}
+
+// beginClosing atomically checks the status and transitions to closing,
+// firing status hooks; false when the session is already closing/closed.
+func (m *Manager) beginClosing(mg *managed, reason CloseReason) bool {
+	m.mu.Lock()
+	prev := mg.session.Status
+	if prev == StatusClosed || prev == StatusClosing {
+		m.mu.Unlock()
+		return false
+	}
+	mg.session.Status = StatusClosing
+	if reason != "" && mg.session.CloseReason == "" {
+		mg.session.CloseReason = reason
+	}
+	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
+	for _, fn := range m.statusSubs {
+		subs = append(subs, fn)
+	}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: StatusClosing, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
+	m.mu.Unlock()
+	for _, fn := range subs {
+		fn(ev)
+	}
+	return true
+}
+
+// CloseAllForAccount closes an account's non-closed sessions (returns count).
+func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
+	m.mu.Lock()
+	ids := make([]string, 0)
+	for id, mg := range m.terminals {
+		if mg.session.AccountID == accountID && mg.session.Status != StatusClosed {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Close(id, reason)
+	}
+	return len(ids)
+}
+
+// RemoveForAccount drops an account's retained post-mortem (closed/errored)
+// sessions from the registry and releases their buffers. Account deletion
+// must not leave a deleted account's terminal output readable in memory —
+// CloseAllForAccount skips already-closed sessions, so the H1 teardown calls
+// this afterwards. Returns the number removed.
+func (m *Manager) RemoveForAccount(accountID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, mg := range m.terminals {
+		if mg.session.AccountID != accountID {
+			continue
+		}
+		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
+			mg.output.Clear()
+			delete(m.terminals, id)
+			n++
+		}
+	}
+	return n
+}
+
+// Destroy closes all sessions (shutdown).
+func (m *Manager) Destroy() {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.terminals))
+	for id := range m.terminals {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Close(id, CloseShutdown)
+	}
+}
+
+func (m *Manager) get(sessionID string) (*managed, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mg, ok := m.terminals[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("terminal %s not found", sessionID)
+	}
+	return mg, nil
+}
+
+// setStatus transitions a session and fires guaranteed status hooks. Terminal
+// transitions do NOT remove the session — transport-driven closes/errors keep
+// it registered (with its buffer) so the final output stays readable; only an
+// explicit Close() removes it (setStatus in terminal-manager.ts, M6).
+func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
+	m.mu.Lock()
+	prev := mg.session.Status
+	// Same-status no-op; closed/error are absorbing — a late transition from
+	// the create or close path must not resurrect a session the pump already
+	// finalized (zombie "open" session with no pump behind it).
+	if prev == status || prev == StatusClosed || prev == StatusError {
+		m.mu.Unlock()
+		return
+	}
+	mg.session.Status = status
+	if reason != "" && mg.session.CloseReason == "" {
+		mg.session.CloseReason = reason
+	}
+	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
+	for _, fn := range m.statusSubs {
+		subs = append(subs, fn)
+	}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
+	m.mu.Unlock()
+
+	for _, fn := range subs {
+		fn(ev)
+	}
+}

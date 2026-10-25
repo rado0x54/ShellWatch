@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+package agent
+
+import (
+	"context"
+	"testing"
+
+	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
+	"github.com/rado0x54/shellwatch/internal/store"
+)
+
+func TestSessionEndpointMutations(t *testing.T) {
+	db, err := store.Open("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db.ExecContext(ctx, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('acc','A','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+
+	sess := New(Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, "acc", "1.2.3.4", 5)
+
+	// Create.
+	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
+		t.Fatal(err)
+	}
+	ep, _ := sess.GetEndpoint(ctx, "ep1")
+	if ep == nil || ep.Label != "Box" || ep.AccountID != "acc" {
+		t.Fatalf("create: %+v", ep)
+	}
+
+	// Update (partial patch merges).
+	label, port, fwd := "Renamed", int64(2222), true
+	ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{Label: &label, Port: &port, AgentForward: &fwd})
+	if err != nil || !ok {
+		t.Fatalf("update: ok=%v err=%v", ok, err)
+	}
+	ep, _ = sess.GetEndpoint(ctx, "ep1")
+	if ep.Label != "Renamed" || ep.Port != 2222 || !ep.AgentForward || ep.Host != "h" {
+		t.Fatalf("update merge wrong: %+v", ep)
+	}
+
+	// Full editability: userVerification and description are patchable too.
+	uv, desc := "discouraged", "jump host"
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{UserVerification: &uv, Description: &desc, DescriptionSet: true}); err != nil || !ok {
+		t.Fatalf("uv/desc update: ok=%v err=%v", ok, err)
+	}
+	ep, _ = sess.GetEndpoint(ctx, "ep1")
+	if ep.UserVerification != "discouraged" || ep.Description == nil || *ep.Description != "jump host" {
+		t.Fatalf("uv/desc merge wrong: %+v", ep)
+	}
+	// DescriptionSet with nil clears; unset leaves it alone.
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{DescriptionSet: true}); err != nil || !ok {
+		t.Fatalf("desc clear: ok=%v err=%v", ok, err)
+	}
+	if ep, _ = sess.GetEndpoint(ctx, "ep1"); ep.Description != nil {
+		t.Fatalf("description should be cleared: %+v", ep)
+	}
+
+	// Update a missing endpoint -> false.
+	if ok, _ := sess.UpdateEndpoint(ctx, "nope", EndpointPatch{Label: &label}); ok {
+		t.Error("update of missing endpoint should return false")
+	}
+	// Cross-account isolation: another account can't touch ep1.
+	other := New(Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, "acc2", "", 5)
+	if ok, _ := other.DeleteEndpoint(ctx, "ep1"); ok {
+		t.Error("cross-account delete should not match")
+	}
+
+	// Delete.
+	ok, err = sess.DeleteEndpoint(ctx, "ep1")
+	if err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+	// Soft delete (Node parity): hidden from the list, but get-by-id still
+	// resolves — endpoint-repo.ts filters enabled only in findAllForAccount.
+	if eps, _ := sess.ListEndpoints(ctx); len(eps) != 0 {
+		t.Errorf("deleted endpoint still listed: %+v", eps)
+	}
+	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep == nil {
+		t.Error("get-by-id must still resolve a soft-deleted endpoint (Node parity)")
+	}
+}

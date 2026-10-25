@@ -3,15 +3,15 @@
  * Wire clients for the e2e suite (#244): a bearer-authenticated REST wrapper,
  * a WebSocket client that keeps every frame (so output can be accumulated per
  * session while sign requests are watched concurrently), the official MCP SDK
- * client (via the reusable test helper), and the human-in-the-loop approval
+ * client (e2e/lib/mcp-client.ts), and the human-in-the-loop approval
  * helpers that stand in for the /sign/:id page.
  */
 import WebSocket from "ws";
-import { createTestLog, type TestLog } from "../../src/test/helpers/test-log.js";
-import { createTestMcpClient, type TestMcpClient } from "../../src/test/helpers/mcp-client.js";
+import { createTestLog, type TestLog } from "../lib/test-log.js";
+import { createTestMcpClient, type TestMcpClient } from "../lib/mcp-client.js";
 import { SERVER_URL } from "./env.js";
 import { signSshChallenge, type PasskeyIdentity } from "./identity.js";
-import type { CeremonyOverrides } from "../../src/test/helpers/fake-authenticator.js";
+import type { CeremonyOverrides } from "../lib/fake-authenticator.js";
 import { stripAnsi, waitFor } from "./util.js";
 
 // ---------------------------------------------------------------------------

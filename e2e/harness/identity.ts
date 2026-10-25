@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
- * Identities for the e2e suite (#244) — the only thing the suite borrows from
- * the server's own test code is the fake WebAuthn authenticator (#162), which
- * produces real P-256 assertions. Everything derived from it here (COSE key,
+ * Identities for the e2e suite (#244) — built on the fake WebAuthn
+ * authenticator (e2e/lib/fake-authenticator.ts, #162), which produces real
+ * P-256 assertions. Everything derived from it here (COSE key,
  * OpenSSH `webauthn-sk-*` line) is re-implemented from the public wire formats
- * so the suite stays independent of `src/webauthn/*` — and so a mismatch with
- * what the server derives shows up as a test failure, not a shared bug.
+ * so the suite stays independent of the server's `internal/webauthn` — and so
+ * a mismatch with what the server derives shows up as a test failure, not a
+ * shared bug.
  */
 import { execFileSync } from "node:child_process";
 import { createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
@@ -15,7 +16,7 @@ import {
   createFakeAuthenticator,
   type CeremonyOverrides,
   type FakeAuthenticator,
-} from "../../src/test/helpers/fake-authenticator.js";
+} from "../lib/fake-authenticator.js";
 import { RP_ID, WEBAUTHN_ORIGIN } from "./env.js";
 import { b64ToB64url } from "./util.js";
 
@@ -135,10 +136,28 @@ export interface FileKeyIdentity {
   fingerprint: string;
 }
 
-/** `ssh-keygen -t ed25519` into the key directory (the server scans `*.pem`). */
-export function generateFileKey(keyDirectory: string, name = "e2e-filekey"): FileKeyIdentity {
+export type FileKeyType = "ed25519" | "rsa";
+
+/** `ssh-keygen` into the key directory (the server scans `*.pem`). */
+export function generateFileKey(
+  keyDirectory: string,
+  name = "e2e-filekey",
+  type: FileKeyType = "ed25519",
+): FileKeyIdentity {
   const privateKeyPath = join(keyDirectory, `${name}.pem`);
-  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", name, "-f", privateKeyPath]);
+  const sizeArgs = type === "rsa" ? ["-b", "3072"] : [];
+  execFileSync("ssh-keygen", [
+    "-q",
+    "-t",
+    type,
+    ...sizeArgs,
+    "-N",
+    "",
+    "-C",
+    name,
+    "-f",
+    privateKeyPath,
+  ]);
   const publicKeyLine = readFileSync(`${privateKeyPath}.pub`, "utf8").trim();
   const fingerprint = execFileSync("ssh-keygen", ["-lf", `${privateKeyPath}.pub`], {
     encoding: "utf8",

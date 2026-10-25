@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-# e2e target: webauthn-sk capable OpenSSH (#244). Derived from spike/sshd/Dockerfile
-# (#232 item 4) — same digest-pinned alpine:edge base (webauthn-sk-* pubkey auth
-# needs OpenSSH >= 10.3; stable alpine ships 10.0 which rejects the algorithm
-# name outright) — but WITHOUT the cert-only TrustedUserCAKeys setup: plain
-# authorized_keys for two users, installed at test time by the harness
-# (e2e/harness/sshd.ts) via `docker compose exec`.
+# e2e target: webauthn-sk capable OpenSSH (#244). Digest-pinned alpine:edge
+# base (webauthn-sk-* pubkey auth needs OpenSSH >= 10.3; stable alpine ships
+# 10.0 which rejects the algorithm name outright); plain authorized_keys for
+# two users, installed at test time by the harness (e2e/harness/sshd.ts) via
+# `docker compose exec`. Descends from the Phase 0 spike's sshd image (#232
+# item 4, removed post-cutover — see git history for the cert-only variant).
 #
 #   filekey   — ed25519 file key generated per run into the server's keyDirectory
 #   passkey   — the fake authenticator's webauthn-sk-ecdsa-sha2-nistp256 key

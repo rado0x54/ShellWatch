@@ -23,12 +23,27 @@
 services:
   shellwatch:
     image: ghcr.io/rado0x54/shellwatch:latest
+    # Local source build: `docker compose up -d --build shellwatch` builds the
+    # image from this checkout (and tags it as the name above — `docker compose
+    # pull shellwatch` restores the registry copy). A plain `up` keeps using
+    # whatever image is present.
+    #
+    # NOTE when running the app in a container next to the `hydra` service:
+    # hydra.adminUrl in the mounted config must be http://hydra:4445 (container
+    # DNS), not localhost. Keep a separate config for that and point
+    # SHELLWATCH_CONFIG_FILE at it, e.g.
+    #   SHELLWATCH_CONFIG_FILE=./config.docker.yaml docker compose --profile hydra up -d --build
+    build:
+      context: .
+      args:
+        GIT_SHA: local
+        GIT_REF: compose
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
       - ./keys:/app/keys
-      - ./config.yaml:/app/config.yaml:ro
+      - ${SHELLWATCH_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
     environment:
       - HOST=0.0.0.0
     # Image defaults to UID:GID 1000:1000. Override if your host user differs

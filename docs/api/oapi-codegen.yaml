@@ -4,8 +4,18 @@
 # spec stays consumable by the pinned generator; the Go module (Phase 1,
 # internal/api) reuses the same config so CI and codegen cannot drift.
 # The generator version is pinned in scripts/check-api-codegen.sh.
+#
+# Models only: internal/rest hand-writes the chi handlers and marshals these
+# generated types, so response shapes are compile-checked against the frozen
+# spec while goldens + the route-coverage test remain the value-level oracle.
+# If the spec unfreezes post-cutover and strict-server becomes worth its
+# routing rewrite, re-enable chi-server/strict-server here.
 package: api
 generate:
   models: true
-  chi-server: true
-  strict-server: true
+output-options:
+  # Go-binding overlay (date-time -> string; see that file's header). Path is
+  # relative to the go:generate working directory (internal/api).
+  overlay:
+    path: ../../docs/api/openapi-go-overlay.yaml
+    strict: true

@@ -1,0 +1,277 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+// Package agent is per-agent session isolation (port of src/agent/): an
+// AgentSession owns the terminal sessions created by one agent connection
+// (MCP today, SSH server later) so each agent only sees its own sessions.
+// Endpoint listing/lookup is account-scoped; on disconnect all owned sessions
+// close.
+package agent
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
+	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/util"
+)
+
+// Deps are the collaborators an AgentSession needs.
+type Deps struct {
+	Manager *terminal.Manager
+	Svc     *endpointsvc.Service
+}
+
+// Session isolates one agent connection's terminal sessions.
+type Session struct {
+	deps      Deps
+	accountID string
+	sourceIP  string
+	maxOwned  int
+
+	mu    sync.Mutex
+	owned map[string]bool
+
+	clientName string
+	clientVer  string
+}
+
+// New builds an AgentSession for an account. maxOwned caps concurrent owned
+// sessions: negative means "unresolved, use the default 5"; an explicit 0
+// blocks all creation (Node honors a stored max_sessions of 0, and so does
+// the REST cap check — MCP must not silently upgrade 0 to 5).
+func New(deps Deps, accountID, sourceIP string, maxOwned int) *Session {
+	if maxOwned < 0 {
+		maxOwned = 5
+	}
+	return &Session{deps: deps, accountID: accountID, sourceIP: sourceIP, maxOwned: maxOwned, owned: map[string]bool{}}
+}
+
+// SetClientInfo records the MCP client's advertised name/version (sanitized).
+func (s *Session) SetClientInfo(name, version string) {
+	s.clientName = util.SanitizeClientReported(name)
+	s.clientVer = util.SanitizeClientReported(version)
+}
+
+// EndpointInfo is the subset the MCP list tool returns (contract item C: MCP
+// list omits userVerification/agentForward/isDemo).
+type EndpointInfo struct {
+	ID          string
+	Label       string
+	Host        string
+	Port        int64
+	Username    string
+	Description *string
+}
+
+// ListEndpoints returns the account's endpoints (+ demo when visible).
+func (s *Session) ListEndpoints(ctx context.Context) ([]EndpointInfo, error) {
+	merged, err := s.deps.Svc.ListForAccount(ctx, s.accountID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EndpointInfo, 0, len(merged))
+	for _, e := range merged {
+		out = append(out, EndpointInfo{ID: e.ID, Label: e.Label, Host: e.Host, Port: e.Port, Username: e.Username, Description: e.Description})
+	}
+	return out, nil
+}
+
+// GetEndpoint returns a full endpoint scoped to the account (nil when absent).
+func (s *Session) GetEndpoint(ctx context.Context, id string) (*store.Endpoint, error) {
+	ep, err := s.deps.Svc.GetForAccount(ctx, id, s.accountID)
+	if err != nil || ep == nil {
+		return nil, err
+	}
+	return &ep.Endpoint, nil
+}
+
+// CreateEndpoint creates an account-scoped endpoint (MCP path — the caller
+// supplies the id, unlike REST which mints one).
+func (s *Session) CreateEndpoint(ctx context.Context, ep store.Endpoint) error {
+	ep.AccountID = s.accountID
+	return s.deps.Svc.Endpoints.Create(ctx, ep)
+}
+
+// EndpointPatch is a typed partial endpoint update; nil fields keep the
+// stored value. Description carries an explicit set flag so a JSON null can
+// clear it.
+type EndpointPatch struct {
+	Label            *string
+	Host             *string
+	Port             *int64
+	Username         *string
+	UserVerification *string
+	AgentForward     *bool
+	Description      *string // applied only when DescriptionSet; nil clears
+	DescriptionSet   bool
+}
+
+// UpdateEndpoint read-merges a typed patch into an account-scoped endpoint and
+// writes it back. Returns false when no endpoint matched. Wire-shape decoding
+// and field validation (userVerification enum, description cap) happen at the
+// caller (internal/mcp).
+func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointPatch) (bool, error) {
+	existing, err := s.deps.Svc.Endpoints.GetForAccount(ctx, id, s.accountID)
+	if err != nil || existing == nil {
+		return false, err
+	}
+	merged := *existing
+	if patch.Label != nil {
+		merged.Label = *patch.Label
+	}
+	if patch.Host != nil {
+		merged.Host = *patch.Host
+	}
+	if patch.Port != nil {
+		merged.Port = *patch.Port
+	}
+	if patch.Username != nil {
+		merged.Username = *patch.Username
+	}
+	if patch.UserVerification != nil {
+		merged.UserVerification = *patch.UserVerification
+	}
+	if patch.AgentForward != nil {
+		merged.AgentForward = *patch.AgentForward
+	}
+	if patch.DescriptionSet {
+		merged.Description = patch.Description
+	}
+	return s.deps.Svc.Endpoints.Update(ctx, merged)
+}
+
+// DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing
+// matched.
+func (s *Session) DeleteEndpoint(ctx context.Context, id string) (bool, error) {
+	return s.deps.Svc.Endpoints.Delete(ctx, id, s.accountID)
+}
+
+// CreateSession opens a session against an endpoint owned by the account. A
+// foreign/unknown id always returns "Unknown endpoint" (no cross-account
+// probing / spurious approval prompts).
+func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) (*terminal.Session, error) {
+	ep, err := s.deps.Svc.RefForAccount(ctx, endpointID, s.accountID)
+	if err != nil {
+		return nil, err
+	}
+	if ep == nil {
+		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
+	}
+	s.mu.Lock()
+	// The cap counts only LIVE sessions — deliberate divergence from Node,
+	// which counts its raw owned set and so lets N externally-closed sessions
+	// (idle janitor, server hangup) starve the cap until the agent reconnects.
+	// Dead-but-retained ids (post-mortem closed/error sessions, M6) stay in
+	// owned so read_output/close_session keep working on them; only ids the
+	// manager has forgotten entirely are dropped.
+	live := 0
+	for id := range s.owned {
+		sess := s.deps.Manager.GetSession(id)
+		if sess == nil {
+			delete(s.owned, id)
+			continue
+		}
+		if sess.Status != terminal.StatusClosed && sess.Status != terminal.StatusError {
+			live++
+		}
+	}
+	if live >= s.maxOwned {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("maximum concurrent sessions (%d) reached", s.maxOwned)
+	}
+	s.mu.Unlock()
+
+	sess, err := s.deps.Manager.Create(ctx, *ep, s.accountID, terminal.Trigger{
+		Kind: terminal.SourceMCP, Reason: reason, SourceIP: s.sourceIP,
+		MCPClientName: s.clientName, MCPClientVer: s.clientVer,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.owned[sess.SessionID] = true
+	s.mu.Unlock()
+	return sess, nil
+}
+
+// ListSessions returns this agent's owned sessions.
+func (s *Session) ListSessions() []terminal.Session {
+	s.mu.Lock()
+	owned := make(map[string]bool, len(s.owned))
+	for k := range s.owned {
+		owned[k] = true
+	}
+	s.mu.Unlock()
+	var out []terminal.Session
+	for _, sess := range s.deps.Manager.ListSessions() {
+		if owned[sess.SessionID] {
+			out = append(out, sess)
+		}
+	}
+	return out
+}
+
+// SendKeys resolves and sends keys to an owned session.
+func (s *Session) SendKeys(sessionID string, keys []string) error {
+	if err := s.assertOwned(sessionID); err != nil {
+		return err
+	}
+	data, err := terminal.ResolveKeys(keys)
+	if err != nil {
+		return err
+	}
+	return s.deps.Manager.SendInput(sessionID, data)
+}
+
+// ReadOutput reads owned-session output.
+func (s *Session) ReadOutput(sessionID string, afterOffset int64, limit int) (terminal.ReadResult, error) {
+	if err := s.assertOwned(sessionID); err != nil {
+		return terminal.ReadResult{}, err
+	}
+	return s.deps.Manager.ReadOutput(sessionID, afterOffset, limit)
+}
+
+// CloseSession closes an owned session.
+func (s *Session) CloseSession(sessionID string) error {
+	if err := s.assertOwned(sessionID); err != nil {
+		return err
+	}
+	s.deps.Manager.Close(sessionID, terminal.CloseClientMCP)
+	s.mu.Lock()
+	delete(s.owned, sessionID)
+	s.mu.Unlock()
+	return nil
+}
+
+// Destroy closes all owned sessions (agent disconnect).
+func (s *Session) Destroy() {
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.owned))
+	for id := range s.owned {
+		ids = append(ids, id)
+	}
+	s.owned = map[string]bool{}
+	s.mu.Unlock()
+	for _, id := range ids {
+		s.deps.Manager.Close(id, terminal.CloseAgentDisconnect)
+	}
+}
+
+// Owns reports whether sessionID is one of this agent's sessions (the MCP
+// notifier filters the manager's fan-out with it).
+func (s *Session) Owns(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owned[sessionID]
+}
+
+func (s *Session) assertOwned(sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.owned[sessionID] {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	return nil
+}

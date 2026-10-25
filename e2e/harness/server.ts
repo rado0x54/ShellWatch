@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
- * Launches the server under test as a child process from the built artifact
- * (`node dist/index.js`) with a generated config and a fresh SQLite file, waits
- * for `/health`, and collects stdout/stderr (#244). Nothing here imports the
- * server's code — swapping the launch command is the one knob a future
- * implementation would turn.
+ * Launches the server under test as a child process from the built binary
+ * (`shellwatch`, see e2e/scripts/ensure-build.mjs) with a generated config and
+ * a fresh SQLite file, waits for `/health`, and collects stdout/stderr (#244).
+ * Nothing here imports the server's code — the launch command is the only
+ * implementation-specific knob.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -12,14 +12,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { writeServerConfig, type ServerConfigOptions } from "./config.js";
 import { OUT_DIR, REPO_ROOT, SERVER_PORT, SERVER_URL } from "./env.js";
-import { generateFileKey, type FileKeyIdentity } from "./identity.js";
+import { generateFileKey, type FileKeyIdentity, type FileKeyType } from "./identity.js";
 import { sleep, waitFor } from "./util.js";
 
 export interface StartServerOptions extends Omit<ServerConfigOptions, "keyDirectory"> {
   /** Scenario name — names the log file under e2e/out/<scenario>/. */
   scenario: string;
-  /** Generate an ed25519 file key into the key directory before boot. Default true. */
+  /** Generate a file key into the key directory before boot. Default true. */
   withFileKey?: boolean;
+  /** Key type for the generated file key. Default ed25519. */
+  fileKeyType?: FileKeyType;
 }
 
 export interface RunningServer {
@@ -28,11 +30,22 @@ export interface RunningServer {
   keyDirectory: string;
   configPath: string;
   fileKey: FileKeyIdentity | null;
-  /** Everything the process wrote so far (pino JSON lines + stderr). */
+  /** Everything the process wrote so far (slog lines + stderr). */
   output(): string;
   /** Persist the captured output to e2e/out/<scenario>/server.log. */
   flushLog(): string;
   stop(): Promise<void>;
+}
+
+/**
+ * The server binary: `E2E_SERVER_BIN`, else what ensure-build.mjs produces
+ * (`e2e/out/bin/shellwatch`), else a root `shellwatch` from `pnpm build`.
+ */
+export function serverBinary(): string {
+  if (process.env.E2E_SERVER_BIN) return resolve(REPO_ROOT, process.env.E2E_SERVER_BIN);
+  const built = resolve(OUT_DIR, "bin", "shellwatch");
+  if (existsSync(built)) return built;
+  return resolve(REPO_ROOT, "shellwatch");
 }
 
 export function outDirFor(scenario: string): string {
@@ -42,26 +55,27 @@ export function outDirFor(scenario: string): string {
 }
 
 export async function startServer(opts: StartServerOptions): Promise<RunningServer> {
-  const dist = resolve(REPO_ROOT, "dist/index.js");
-  if (!existsSync(dist) || !existsSync(resolve(REPO_ROOT, "dist/client/index.html"))) {
-    throw new Error(`dist/ is missing or incomplete — run \`pnpm build\` first (${dist})`);
+  const bin = serverBinary();
+  if (!existsSync(bin)) {
+    throw new Error(`server binary missing — run \`pnpm build\` first (${bin})`);
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), `shellwatch-e2e-${opts.scenario}-`));
   const keyDirectory = join(dataDir, "keys");
   mkdirSync(keyDirectory, { mode: 0o700 });
-  const fileKey = (opts.withFileKey ?? true) ? generateFileKey(keyDirectory) : null;
+  const fileKey =
+    (opts.withFileKey ?? true)
+      ? generateFileKey(keyDirectory, "e2e-filekey", opts.fileKeyType ?? "ed25519")
+      : null;
   const configPath = writeServerConfig(dataDir, { ...opts, keyDirectory });
 
   const chunks: string[] = [];
-  const child: ChildProcess = spawn(process.execPath, [dist], {
+  const child: ChildProcess = spawn(bin, ["-config", configPath], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
       HOST: "127.0.0.1",
-      SHELLWATCH_CONFIG: configPath,
       SHELLWATCH_DB: `sqlite:${join(dataDir, "shellwatch.db")}`,
-      NODE_ENV: "production",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

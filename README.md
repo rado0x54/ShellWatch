@@ -51,15 +51,18 @@ ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first a
 
 ## Quick start
 
+Requirements: Go 1.27+, Node 22+ with pnpm (for the web UI), Docker (for Ory Hydra).
+
 ```bash
 git clone https://github.com/rado0x54/ShellWatch.git
 cd ShellWatch
 pnpm install
 cp config.sample.yaml config.yaml
+pnpm hydra:migrate && docker compose up -d hydra   # OAuth authority (see docs/deployment.md)
 pnpm dev
 ```
 
-`pnpm dev` runs Fastify on `:3000` (API, WebSocket, MCP, agent-proxy) and a Vite dev server on `:3001` for the SvelteKit UI with hot reload — open <http://localhost:3001> in dev. Vite proxies WS/API/MCP traffic to Fastify, so everything works on the one URL.
+`pnpm dev` runs the Go server on `:3000` (API, WebSocket, MCP, agent-proxy) and a Vite dev server on `:3001` for the SvelteKit UI with hot reload — open <http://localhost:3001> in dev. Vite proxies WS/API/MCP traffic to the server, so everything works on the one URL.
 
 See `config.sample.yaml` for all options. Endpoints, keys, and passkeys are managed in the web UI; the config file only handles initial seeding and security settings.
 
@@ -82,11 +85,11 @@ security:
 ## Production
 
 ```bash
-pnpm build   # tsc + SvelteKit
-pnpm start   # serves the pre-built client from dist/client/
+pnpm build   # SvelteKit → web/dist, then go build → ./shellwatch (client embedded)
+pnpm start   # ./shellwatch
 ```
 
-Then open <http://localhost:3000> — Fastify auto-detects `dist/client/` and serves the built UI off the same port as the API, WebSocket, MCP, and agent-proxy.
+Then open <http://localhost:3000> — the single binary serves the built UI off the same port as the API, WebSocket, MCP, and agent-proxy. Docker images and release tarballs are described in [docs/deployment.md](./docs/deployment.md).
 
 ### Endpoints
 
@@ -112,7 +115,7 @@ server:
     - 10.0.0.0/8
 ```
 
-> **Do not set `trustProxy: true` in production.** That trusts `X-Forwarded-For` from any source, letting clients spoof their IP. Pin to the CIDR of the proxy you actually run. Make sure the proxy itself sets `X-Forwarded-For`. See [Fastify's docs](https://fastify.dev/docs/latest/Reference/Server/#trustproxy) for the full grammar.
+> **Do not set `trustProxy: true` in production.** That trusts `X-Forwarded-For` from any source, letting clients spoof their IP. Pin to the CIDR of the proxy you actually run. Make sure the proxy itself sets `X-Forwarded-For`. Accepted values: `false` (default), `true`, a CIDR/IP string, or a list of them (`loopback`, `linklocal`, `uniquelocal` presets work too); hop counts are rejected.
 
 ## MCP
 

@@ -46,6 +46,8 @@ export default ts.config(
   {
     ignores: [
       "dist/",
+      "web/dist/",
+      "e2e/out/",
       "node_modules/",
       "client/.svelte-kit/",
       "coverage/",

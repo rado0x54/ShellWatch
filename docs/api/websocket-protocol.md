@@ -4,8 +4,7 @@
 
 Language-agnostic contract for the browser ↔ server terminal WebSocket, frozen
 ahead of the Go rewrite (#210, #225). Source of truth in the Node backend:
-[`src/server/ws-protocol.ts`](../../src/server/ws-protocol.ts) (message shapes)
-and [`src/server/ws-message-router.ts`](../../src/server/ws-message-router.ts)
+[`internal/ws/`](../../internal/ws/) (message shapes and the router)
 (routing + control semantics).
 
 ## Transport & auth

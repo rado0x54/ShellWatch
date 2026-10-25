@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    # go-backend is the long-lived base branch for the #210 rewrite; its
+    # pushes and the PRs targeting it need the same gates as develop.
+    branches: [develop, main, go-backend]
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, go-backend]
   workflow_call:
 
 concurrency:
@@ -89,63 +91,46 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:svelte
 
-  unit-tests:
-    name: Unit Tests (Node ${{ matrix.node-version }})
+  client-tests:
+    name: Client Unit Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  integration-tests:
-    name: Integration Tests (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22, 24]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:integration
-
-  # Black-box end-to-end suite (#244): the built server (dist/) launched as a
+  # Black-box end-to-end suite (#244): the built server binary launched as a
   # child process against a real OpenSSH sshd + a real Ory Hydra in compose,
   # driven only over the wire (REST, WS, MCP, agent-proxy via the Go agent).
   # One leg per sshd image; the modern leg also runs the webauthn-sk scenarios.
   # See docs/testing.md.
   e2e:
-    name: E2E (Node ${{ matrix.node-version }} / sshd ${{ matrix.sshd }})
+    name: E2E (sshd ${{ matrix.sshd }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: [24]
         sshd: [modern, stable]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
       - uses: actions/setup-go@v6
         with:
-          go-version-file: agent-client/go.mod
-          cache-dependency-path: agent-client/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            agent-client/go.sum
       - run: pnpm install --frozen-lockfile
+      # Client into web/dist, then the server binary with it embedded.
       - run: pnpm build
       - name: Build agent-client
         working-directory: agent-client
@@ -156,6 +141,7 @@ jobs:
         env:
           E2E_SSHD: ${{ matrix.sshd }}
           E2E_SKIP_BUILD: "1"
+          E2E_SERVER_BIN: ./shellwatch
         run: pnpm test:e2e
       - name: Collect compose logs
         if: failure()
@@ -163,7 +149,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-${{ matrix.sshd }}-node${{ matrix.node-version }}
+          name: e2e-${{ matrix.sshd }}
           path: e2e/out/**
           if-no-files-found: ignore
       - name: Tear down
@@ -183,18 +169,32 @@ jobs:
           node-version: 24
       - run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 
-  # Go-codegen gate for the wire contract (#232, ahead of the #210 rewrite):
-  # the OpenAPI spec must stay consumable by the pinned oapi-codegen and the
-  # generated REST surface must compile. Full build/vet/test jobs for the
-  # root Go module arrive with Phase 1.
-  api-codegen:
-    name: API Codegen (Go)
+  # The server (root Go module): build, vet, test — includes the golden parity
+  # suites against testdata/goldens and the operationId coverage guard.
+  go:
+    name: Go (build/vet/test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # Codegen drift gate: committed internal/api (oapi-codegen from the frozen
+  # OpenAPI spec) and internal/store/gen (sqlc) must match their sources.
+  api-codegen:
+    name: Codegen Drift (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: bash scripts/check-api-codegen.sh
 
   # Agent build matrix — catches windows/unix build-tag breakage at PR time

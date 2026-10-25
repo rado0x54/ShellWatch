@@ -160,12 +160,15 @@ components:
       properties:
         status: { type: string, enum: [created] }
         id: { type: string }
+      required: [status, id]
     StatusUpdated:
       type: object
       properties: { status: { type: string, enum: [updated] } }
+      required: [status]
     StatusDeleted:
       type: object
       properties: { status: { type: string, enum: [deleted] } }
+      required: [status]
 
     TerminalStatus:
       type: string
@@ -193,7 +196,9 @@ components:
         mcpReason: { type: string }
         mcpClientName: { type: string }
         mcpClientVersion: { type: string }
-      required: [sessionId, endpointId, accountId, status, createdAt, source]
+      # lastActivityAt is always emitted: types.ts TerminalSession declares it
+      # non-optional and the manager sets it at create time.
+      required: [sessionId, endpointId, accountId, status, createdAt, lastActivityAt, source]
 
     Endpoint:
       type: object
@@ -227,6 +232,9 @@ components:
         current:
           type: boolean
           description: True for the first-party web-UI client.
+      # All keys are always emitted (auth-sessions.ts AuthSessionView declares
+      # every field non-optional; the two dates are explicit nulls when absent).
+      required: [clientId, clientName, scopes, authorizedAt, createdAt, current]
 
     PendingActionView:
       type: object

@@ -1,5 +1,5 @@
 node_modules/
-dist/
+/dist/
 data/
 coverage/
 .idea/
@@ -9,6 +9,7 @@ coverage/
 logs/*
 !logs/.gitkeep
 config.yaml
+config.docker.yaml
 .env
 client/.svelte-kit/
 agent-client/shellwatch-agent
@@ -22,8 +23,13 @@ AGENT_THIRD_PARTY_LICENSES
 LICENSE-shellwatch-agent
 .env.hydra
 
-# Phase 0 spike throwaway key material (spike/gen-spike-env.sh)
-spike/out/
+# SvelteKit build output, embedded into the server binary (web/embed.go).
+# Only the .gitkeep is tracked so `go build` works before the first client build.
+web/dist/*
+!web/dist/.gitkeep
+
+# Compiled server binary (local `pnpm build` / `go build`)
+/shellwatch
 
 # Black-box e2e suite artifacts (server logs, compose logs, built agent binary)
 e2e/out/

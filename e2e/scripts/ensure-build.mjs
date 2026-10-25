@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Build dist/ (server + client) when it is missing or older than the sources,
-// so `pnpm test:e2e` always runs against the current tree. Skip with
-// E2E_SKIP_BUILD=1 (CI builds explicitly in its own step).
+// Build what `pnpm test:e2e` runs against: the SvelteKit client into web/dist
+// (only when missing or older than client/src — it is the slow part) and the
+// server binary into e2e/out/bin/shellwatch (always; `go build` is incremental
+// and embeds web/dist). Skip everything with E2E_SKIP_BUILD=1 (CI builds in
+// its own steps and points the harness at the binary via E2E_SERVER_BIN).
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,19 +29,16 @@ function newest(dir, exts) {
 
 if (process.env.E2E_SKIP_BUILD === "1") process.exit(0);
 
-const serverOut = join(root, "dist/index.js");
-const clientOut = join(root, "dist/client/index.html");
-const serverSrc = newest(join(root, "src"), [".ts", ".json"]);
+const clientOut = join(root, "web/dist/index.html");
 const clientSrc = newest(join(root, "client/src"), [".ts", ".svelte", ".css", ".html"]);
-const stale =
-  !existsSync(serverOut) ||
-  !existsSync(clientOut) ||
-  statSync(serverOut).mtimeMs < serverSrc ||
-  statSync(clientOut).mtimeMs < clientSrc;
-
-if (stale) {
-  console.log("[e2e] dist/ is missing or stale — running `pnpm build`");
-  execSync("pnpm build", { cwd: root, stdio: "inherit" });
+if (!existsSync(clientOut) || statSync(clientOut).mtimeMs < clientSrc) {
+  console.log("[e2e] web/dist is missing or stale — running `pnpm build:client`");
+  execSync("pnpm build:client", { cwd: root, stdio: "inherit" });
 } else {
-  console.log("[e2e] dist/ is up to date");
+  console.log("[e2e] web/dist is up to date");
 }
+
+const bin = join(root, "e2e/out/bin/shellwatch");
+mkdirSync(dirname(bin), { recursive: true });
+console.log("[e2e] go build ./cmd/shellwatch");
+execSync(`go build -o ${JSON.stringify(bin)} ./cmd/shellwatch`, { cwd: root, stdio: "inherit" });

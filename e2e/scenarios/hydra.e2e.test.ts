@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { normalizeGolden } from "../../src/test/helpers/golden.js";
+import { normalizeGolden } from "../lib/golden.js";
 import { HYDRA_PUBLIC_URL, REPO_ROOT, SPA_CLIENT_ID } from "../harness/env.js";
 import { bootScenario, type Scenario } from "../harness/scenario.js";
 import { Api, rawMcpPing } from "../harness/clients.js";
@@ -25,7 +25,7 @@ import {
 } from "../harness/oauth.js";
 import { recordScenario } from "../harness/out.js";
 
-const GOLDENS = resolve(REPO_ROOT, "src/test/integration/__goldens__");
+const GOLDENS = resolve(REPO_ROOT, "testdata/goldens");
 /** The goldens pin the dev Hydra issuer; fold the e2e issuer onto it before comparing. */
 const GOLDEN_HYDRA_URL = "http://localhost:4444";
 

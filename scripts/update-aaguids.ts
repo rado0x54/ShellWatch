@@ -18,7 +18,7 @@ const COMBINED_URL =
 const OUTPUT = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
-  "src",
+  "internal",
   "webauthn",
   "aaguid-names.json",
 );

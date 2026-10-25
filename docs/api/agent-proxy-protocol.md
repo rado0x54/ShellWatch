@@ -5,7 +5,7 @@
 Wire contract for the SSH-agent bridge between the `shellwatch-agent` client
 (`agent-client/`, Go) and the ShellWatch server. Frozen for the Go rewrite
 ([#210]/[#232]) from the current implementation:
-`src/agent-socket/agent-proxy-route.ts` + `socket-agent-handler.ts` (server)
+`internal/agentproxy/` + `internal/signagent/` (server)
 and `agent-client/internal/proxy/proxy.go` (client). Documented **as-is**;
 divergences must change code + this doc together.
 
@@ -43,7 +43,7 @@ ssh(1) ──unix socket──▶ shellwatch-agent ──WSS /agent-proxy──�
 
 Server-side each value is sanitized — ASCII control characters
 (`0x00–0x1F`, `0x7F`) stripped, clamped to **128 chars**, empty → absent
-(`src/util/sanitize-client-info.ts`) — and surfaced on `/sign/:id` in a
+(`internal/util/sanitize.go`) — and surfaced on `/sign/:id` in a
 separate "self-reported" block so approvers don't mistake spoofable data for
 authoritative identity. Absent headers are fine; the UI hides them.
 
@@ -90,7 +90,7 @@ Every `SIGN_REQUEST` — passkey **and** file key — creates a `PendingAction`
 `/sign/:id` deep link; there is no silent auto-sign on this surface.
 
 - Approved passkey sign → WebAuthn assertion converted to the PROTOCOL.u2f
-  wire signature (`src/webauthn/signature-format.ts`) → `SIGN_RESPONSE`.
+  wire signature (`internal/signing`) → `SIGN_RESPONSE`.
 - Approved file-key sign → server signs with the file key → `SIGN_RESPONSE`.
 - Denied / expired (60 s) / cancelled → `SSH_AGENT_FAILURE`. The WebSocket
   **stays open**; the SSH client simply tries its next identity.

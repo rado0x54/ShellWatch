@@ -8,12 +8,12 @@ in [#225]. The Go server must reproduce these exactly; when a shape is wrong or
 confusing, change it here **and** in code as a deliberate, tested decision — not
 by drift.
 
-| Surface     | Artifact                                               | Source of truth                                              |
-| ----------- | ------------------------------------------------------ | ------------------------------------------------------------ |
-| REST / HTTP | [`openapi.yaml`](./openapi.yaml)                       | `src/server/routes/`, `src/webauthn/`, `src/hydra/routes.ts` |
-| WebSocket   | [`websocket-protocol.md`](./websocket-protocol.md)     | `src/server/ws-protocol.ts`, `ws-message-router.ts`          |
-| MCP tools   | [`mcp-tools.md`](./mcp-tools.md)                       | `src/mcp/tools/`, `src/mcp/notifications.ts`                 |
-| Agent proxy | [`agent-proxy-protocol.md`](./agent-proxy-protocol.md) | `src/agent-socket/`, `agent-client/internal/proxy/`          |
+| Surface     | Artifact                                               | Implementation                                                                                   |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| REST / HTTP | [`openapi.yaml`](./openapi.yaml)                       | `internal/rest/`, `internal/webauthn/`, `internal/hydra/` (+ generated models in `internal/api`) |
+| WebSocket   | [`websocket-protocol.md`](./websocket-protocol.md)     | `internal/ws/`                                                                                   |
+| MCP tools   | [`mcp-tools.md`](./mcp-tools.md)                       | `internal/mcp/`                                                                                  |
+| Agent proxy | [`agent-proxy-protocol.md`](./agent-proxy-protocol.md) | `internal/agentproxy/`, `agent-client/internal/proxy/`                                           |
 
 Coverage: every REST route is in `openapi.yaml`, including the anonymous
 bootstrap surface (`/api/auth/passkey-status`, `/api/auth/register/options`,
@@ -23,11 +23,11 @@ bootstrap surface (`/api/auth/passkey-status`, `/api/auth/register/options`,
   docs above.
 - The Hydra provider **GET** pages (`/api/hydra/{login,consent,logout,error}`)
   are HTML/redirect flows; the `hydra-provider` tag documents the JSON
-  options/verify endpoints and points to `src/hydra/routes.ts` for the pages.
+  options/verify endpoints and points to `internal/hydra` for the pages.
 
 ## Auth model (all surfaces)
 
-One gate ([`src/server/auth/bearer-gate.ts`](../../src/server/auth/bearer-gate.ts)):
+One gate ([`internal/auth/gate.go`](../../internal/auth/gate.go)):
 every protected request presents a Hydra opaque access token, validated by
 introspection. `sub` → account id; authorization is **by scope only** (audience
 is intentionally not checked):
@@ -53,15 +53,14 @@ them** (e.g. the bare `TerminalSession` from `POST /api/sessions`, the
 not assert anything the contract leaves unspecified — a scenario that needs an
 undocumented detail is a signal to document it here first. Discovery documents
 are compared against the committed goldens in
-`src/test/integration/__goldens__/`.
+[`testdata/goldens/`](../../testdata/goldens/).
 
 ## Regenerating / validating
 
-The spec is **hand-authored** (Fastify routes carry no JSON schema today). To
-serve it live or generate clients, the cheapest path is to attach
-`@fastify/swagger` schemas to routes and diff the emitted document against this
-file — that also tightens request validation (see #225 item 1). Until then,
-treat this directory as the reviewed contract.
+The spec is **hand-authored**; the server's response models are generated
+from it (`go generate ./internal/api`, oapi-codegen, models only) and CI fails
+on drift (`scripts/check-api-codegen.sh`). Request validation is still
+hand-written in the handlers. Treat this directory as the reviewed contract.
 
 ---
 
@@ -107,6 +106,12 @@ Specific instance of (A) worth calling out: session-create returns the raw
 Same logical operation, opposite id semantics. Also, MCP `list` omits
 `userVerification`, `agentForward`, and `isDemo` that REST returns. Two clients
 build different mental models of "an endpoint."
+
+Related, now resolved in both backends: Node's MCP tool schema used to
+silently strip `userVerification`/`agentForward` from create/update `data`, so
+endpoints were not fully editable via MCP. That was a bug, not the contract —
+create/update accept and validate both fields (see
+[`mcp-tools.md`](./mcp-tools.md)).
 
 ### D. Near-identical WS message names differ by one character / tense
 
