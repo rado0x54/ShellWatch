@@ -6,7 +6,7 @@
 # `pnpm api:codegen-check`. Requires a Go toolchain and a clean-ish tree
 # (only fails on diffs under the generated paths).
 #
-#   internal/api        <- oapi-codegen v2.7.1 (docs/api/openapi.yaml)
+#   internal/api        <- oapi-codegen v2.8.1 (docs/api/openapi.yaml)
 #   internal/store/gen  <- sqlc v1.31.1 (migrations + queries)
 set -euo pipefail
 

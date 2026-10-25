@@ -60,7 +60,7 @@ cd go && go test -v ./...   # needs the sshd up and gen-spike-env.sh run
    returned `ssh.Signature` uses the webauthn format. Unmodified
    `x/crypto/ssh` — **the ssh2 fork's job is reproducible without a
    fork**. ✅
-3. **MCP go-sdk** (v1.6.1) serving one tool over streamable HTTP,
+3. **MCP go-sdk** (v1.6.1 at the time; the spike module now tracks v1.8.0) serving one tool over streamable HTTP,
    round-tripped with the SDK client (`go/mcp_test.go`). ✅
 
 ## Findings from the Go spike (2026-07)

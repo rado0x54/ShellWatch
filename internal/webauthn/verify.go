@@ -19,6 +19,17 @@ var es256Params = []protocol.CredentialParameter{
 	{Type: protocol.PublicKeyCredentialType, Algorithm: webauthncose.AlgES256},
 }
 
+// Verification policies passed to protocol.Verify. These mirror the defaults
+// go-webauthn's Config.validate applies (its most restrictive settings);
+// protocol-level callers must state them explicitly.
+var (
+	defaultAttestationPolicy = protocol.AttestationPolicy{
+		AndroidKey: protocol.AndroidKeyPolicy{AuthorizationScope: protocol.AndroidKeyAuthorizationScopeTEEEnforced},
+		Compound:   protocol.CompoundPolicy{SubStatementScope: protocol.CompoundSubStatementScopeAll},
+	}
+	defaultSignaturePolicy = protocol.SignaturePolicy{ECDSAEncoding: protocol.ECDSASignatureEncodingDER}
+)
+
 // DecodedRegistration is the DB-ready credential shape (DecodedRegistration
 // in credential-store.ts).
 type DecodedRegistration struct {
@@ -38,9 +49,13 @@ func VerifyRegistration(rawCredential []byte, challenge, rpID string, origins []
 	if err != nil {
 		return nil, fmt.Errorf("parse registration response: %w", err)
 	}
-	// verifyUser=true (UV required), verifyUserPresence=true.
-	if _, err := pcc.Verify(challenge, rpID, origins, nil,
-		protocol.TopOriginDefaultVerificationMode, false, true, true, nil, es256Params); err != nil {
+	// verifyUser=true (UV required), verifyUserPresence=true. No opaque/top
+	// origins, no MDS. The attestation/signature policies are go-webauthn's
+	// own defaults (what webauthn.New would fill in): TEE-enforced Android
+	// key scope, all compound sub-statements, strict DER ECDSA signatures.
+	if _, err := pcc.Verify(challenge, rpID, origins, nil, nil,
+		protocol.TopOriginDefaultVerificationMode, false, true, true, nil, es256Params,
+		defaultAttestationPolicy, defaultSignaturePolicy); err != nil {
 		return nil, fmt.Errorf("verification failed: %w", err)
 	}
 
@@ -77,8 +92,9 @@ func VerifyAssertion(rawCredential []byte, challenge, rpID string, origins []str
 	if err != nil {
 		return nil, fmt.Errorf("parse assertion: %w", err)
 	}
-	if err := pca.Verify(challenge, rpID, "", origins, nil,
-		protocol.TopOriginDefaultVerificationMode, false, true, true, storedCOSE); err != nil {
+	if err := pca.Verify(challenge, rpID, "", origins, nil, nil,
+		protocol.TopOriginDefaultVerificationMode, false, true, true, storedCOSE,
+		defaultSignaturePolicy); err != nil {
 		return nil, fmt.Errorf("verification failed: %w", err)
 	}
 	// Clone detection (protocol.Verify is signature-level only and never sees

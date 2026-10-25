@@ -6,4 +6,4 @@
 // fails on drift.
 package api
 
-//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.1 -config ../../docs/api/oapi-codegen.yaml -o api.gen.go ../../docs/api/openapi.yaml
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.1 -config ../../docs/api/oapi-codegen.yaml -o api.gen.go ../../docs/api/openapi.yaml
