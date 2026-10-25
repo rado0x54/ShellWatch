@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -151,20 +152,15 @@ func (s stubKeyBroker) RequestKeyApproval(context.Context, string, string, strin
 	return s.err
 }
 
-// An unanswered prompt (60s TTL expiry) must skip to the next key, not abort
-// the whole publickey method — with file keys ordered before passkeys, a hard
-// error here would make an ignored prompt kill connections that should
-// proceed via passkey (composite-ssh-agent.ts:146-151).
-func TestFileKeyExpiryFallsThroughAsSkip(t *testing.T) {
+// An unanswered prompt (60s TTL expiry) surfaces as the broker's error; with
+// file keys ordered before passkeys, Connect's per-key auth (auth.go) then
+// moves on to the passkey instead of killing the connection
+// (composite-ssh-agent.ts:146-151).
+func TestFileKeyExpiryReturnsError(t *testing.T) {
 	signer := newTestSigner(t)
 	fk := &approvedFileKeySigner{signer: signer, broker: stubKeyBroker{err: approval.ErrExpired}, label: "k"}
-	data := []byte("payload")
-	sig, err := fk.Sign(rand.Reader, data)
-	if err != nil {
-		t.Fatalf("expiry must skip, not error: %v", err)
-	}
-	if err := signer.PublicKey().Verify(data, sig); err == nil {
-		t.Fatal("expiry produced a valid signature")
+	if _, err := fk.Sign(rand.Reader, []byte("payload")); !errors.Is(err, approval.ErrExpired) {
+		t.Fatalf("expiry must return ErrExpired, got %v", err)
 	}
 }
 
@@ -176,9 +172,9 @@ func TestFileKeyContextDeathAborts(t *testing.T) {
 	}
 }
 
-func TestFileKeyDenyFallsThroughAsSkip(t *testing.T) {
+func TestFileKeyDenyReturnsError(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
-	p, signer := fileKeyParams(t, true, actionStore)
+	p, _ := fileKeyParams(t, true, actionStore)
 	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
 	fk := signers[0].(*approvedFileKeySigner)
 
@@ -192,14 +188,7 @@ func TestFileKeyDenyFallsThroughAsSkip(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	data := []byte("payload")
-	sig, err := fk.Sign(rand.Reader, data)
-	if err != nil {
-		t.Fatalf("deny must skip, not error: %v", err)
-	}
-	// The skip signature must NOT verify — it exists to make the server move
-	// to the next identity.
-	if err := signer.PublicKey().Verify(data, sig); err == nil {
-		t.Fatal("deny produced a valid signature")
+	if _, err := fk.Sign(rand.Reader, []byte("payload")); !errors.Is(err, approval.ErrDenied) {
+		t.Fatalf("deny must return ErrDenied, got %v", err)
 	}
 }

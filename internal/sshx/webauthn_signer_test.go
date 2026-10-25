@@ -15,7 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"golang.org/x/crypto/ssh"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -102,33 +102,24 @@ func TestWebAuthnSignerEndToEnd(t *testing.T) {
 	verifyWebauthnSKSignature(t, fake.ECDSAPublicKey(), rpID, res.blob, res.rest)
 }
 
-// A denied passkey yields a skip signature (not an error) so x/crypto's auth
-// loop tries the NEXT offered key instead of aborting (mirrors Node's
-// SKIP_IDENTITY_SIGNATURE). The skip sig is well-formed but the SSH server
-// rejects it on verification.
-func TestWebAuthnSignerDenyReturnsSkipSignature(t *testing.T) {
+// A denied passkey surfaces the broker's rejection as a signer error; Connect
+// offers one publickey method per key, so x/crypto moves to the NEXT key
+// instead of aborting (see auth.go / TestDeniedKeyFallsThroughWithoutSignedAttempt).
+func TestWebAuthnSignerDenyReturnsError(t *testing.T) {
 	store := approval.NewStore(clock.Real{}, func() string { return "act-deny" })
 	broker := approval.NewBroker(store, func() string { return "https://sw.example" })
 	signer := &WebAuthnSigner{Broker: broker, AccountID: "acc", RpID: "localhost",
 		ActionCtx: approval.Context{Source: "endpoint-auth"}}
 
-	type result struct {
-		sig *ssh.Signature
-		err error
-	}
-	resCh := make(chan result, 1)
+	errCh := make(chan error, 1)
 	go func() {
-		sig, err := signer.Sign(nil, []byte("data"))
-		resCh <- result{sig, err}
+		_, err := signer.Sign(nil, []byte("data"))
+		errCh <- err
 	}()
 	waitForAction(t, store, "act-deny")
 	store.Deny("act-deny")
-	r := <-resCh
-	if r.err != nil {
-		t.Fatalf("deny should not error (it skips to the next key), got %v", r.err)
-	}
-	if r.sig == nil || r.sig.Format != signing.WebAuthnSKAlgo {
-		t.Fatalf("expected a skip signature with the webauthn-sk format, got %+v", r.sig)
+	if err := <-errCh; !errors.Is(err, approval.ErrDenied) {
+		t.Fatalf("deny must return ErrDenied, got %v", err)
 	}
 }
 

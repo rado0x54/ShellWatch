@@ -120,9 +120,12 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	if hostKey == nil {
 		hostKey = ssh.InsecureIgnoreHostKey()
 	}
+	// One publickey method per signer, handed out on demand (auth.go): a
+	// denied key fails its own method and x/crypto moves to the next one.
+	keys := newKeyAuth(ctx, p.Signers)
 	cfg := &ssh.ClientConfig{
 		User:            p.Username,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(p.Signers...)},
+		AuthCallback:    keys.callback,
 		HostKeyCallback: hostKey,
 		Timeout:         connectionTimeout,
 	}
@@ -136,7 +139,7 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("SSH handshake to %s failed: %w", addr, err)
+		return nil, fmt.Errorf("SSH handshake to %s failed: %w", addr, keys.authError(err))
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 
