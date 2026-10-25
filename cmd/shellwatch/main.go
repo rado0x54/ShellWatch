@@ -31,6 +31,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/mcp"
@@ -124,6 +125,7 @@ func run() error {
 
 	endpointStore := store.NewEndpoints(db, clk)
 	demoSvc := demo.NewService(cfg.DemoEndpoints)
+	epSvc := &endpointsvc.Service{Endpoints: endpointStore, Demo: demoSvc}
 	credStore := store.NewCredentials(db, clk)
 	keyDir := sshx.NewKeyDir(cfg.KeyDirectory)
 	// Discover file keys into ssh_keys + watch the directory for changes so
@@ -190,7 +192,7 @@ func run() error {
 
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
-		AgentDeps:      agent.Deps{Manager: manager, Endpoints: endpointStore, Demo: demoSvc},
+		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc},
 		Keys:           store.NewSSHKeys(db),
 		NewID:          newUUID,
 		Version:        buildInfo.Display,
@@ -245,15 +247,13 @@ func run() error {
 			return has
 		},
 		Endpoints: &rest.Endpoints{
-			Store:    endpointStore,
-			Demo:     demoSvc,
+			Svc:      epSvc,
 			Sessions: manager,
 			NewID:    newUUID,
 		},
 		Sessions: &rest.Sessions{
 			Manager:     manager,
-			Endpoints:   endpointStore,
-			Demo:        demoSvc,
+			Svc:         epSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
 		WSHub:   wsHub,

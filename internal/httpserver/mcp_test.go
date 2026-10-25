@@ -23,6 +23,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/golden"
 	"github.com/rado0x54/shellwatch/internal/mcp"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -67,7 +68,7 @@ func mcpServer(t *testing.T) *httptest.Server {
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		MCP: &mcp.Deps{
-			AgentDeps: agent.Deps{Manager: mgr, Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)},
+			AgentDeps: agent.Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)}},
 			Keys:      store.NewSSHKeys(db),
 		},
 	})

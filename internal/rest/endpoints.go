@@ -17,21 +17,9 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/api"
 	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
-
-const endpointDescriptionMaxLen = 1000
-
-var userVerificationValues = []string{"required", "preferred", "discouraged"}
-
-func isUserVerification(v string) bool {
-	for _, u := range userVerificationValues {
-		if u == v {
-			return true
-		}
-	}
-	return false
-}
 
 // SessionLister reports the endpoint ids an account currently has open
 // sessions against (satisfied by terminal.Manager; nil until Phase 3 slice 2
@@ -42,8 +30,7 @@ type SessionLister interface {
 
 // Endpoints wires the endpoint CRUD routes.
 type Endpoints struct {
-	Store    *store.Endpoints
-	Demo     *demo.Service
+	Svc      *endpointsvc.Service
 	Sessions SessionLister
 	// NewID generates endpoint ids (UUID); injected for testability.
 	NewID func() string
@@ -65,20 +52,14 @@ func toDTO(ep store.Endpoint, isDemo bool) api.Endpoint {
 }
 
 func (e *Endpoints) list(w http.ResponseWriter, r *http.Request) {
-	acc := accountID(r)
-	own, err := e.Store.ListForAccount(r.Context(), acc)
+	eps, err := e.Svc.ListForAccount(r.Context(), accountID(r))
 	if err != nil {
 		writeErr(w, 500, "internal error")
 		return
 	}
-	out := make([]api.Endpoint, 0, len(own))
-	for _, ep := range own {
-		out = append(out, toDTO(ep, false))
-	}
-	if show, _ := e.Store.ShowDemoEndpoints(r.Context(), acc); show && e.Demo != nil {
-		for _, ep := range e.Demo.List(acc) {
-			out = append(out, toDTO(ep, true))
-		}
+	out := make([]api.Endpoint, 0, len(eps))
+	for _, ep := range eps {
+		out = append(out, toDTO(ep.Endpoint, ep.IsDemo))
 	}
 	writeJSON(w, 200, map[string]any{"endpoints": out})
 }
@@ -95,7 +76,7 @@ func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
 	uv := "required"
 	if raw, ok := body["userVerification"]; ok {
 		v := jsonString(raw)
-		if !isUserVerification(v) {
+		if !endpointsvc.IsUserVerification(v) {
 			writeErr(w, 400, userVerificationErr())
 			return
 		}
@@ -125,7 +106,7 @@ func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := e.NewID()
-	if err := e.Store.Create(r.Context(), store.Endpoint{
+	if err := e.Svc.Endpoints.Create(r.Context(), store.Endpoint{
 		ID: id, AccountID: accountID(r), Label: label, Host: host, Port: port,
 		Username: username, UserVerification: uv, Description: desc, AgentForward: agentForward,
 	}); err != nil {
@@ -142,7 +123,7 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := readRawBody(r)
-	if raw, ok := body["userVerification"]; ok && !isUserVerification(jsonString(raw)) {
+	if raw, ok := body["userVerification"]; ok && !endpointsvc.IsUserVerification(jsonString(raw)) {
 		writeErr(w, 400, userVerificationErr())
 		return
 	}
@@ -161,7 +142,7 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 		desc, descSet = d, true
 	}
 
-	existing, err := e.Store.GetForAccount(r.Context(), id, accountID(r))
+	existing, err := e.Svc.Endpoints.GetForAccount(r.Context(), id, accountID(r))
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -192,7 +173,7 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 	if descSet {
 		merged.Description = desc
 	}
-	if _, err := e.Store.Update(r.Context(), merged); err != nil {
+	if _, err := e.Svc.Endpoints.Update(r.Context(), merged); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -213,7 +194,7 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if _, err := e.Store.Delete(r.Context(), id, accountID(r)); err != nil {
+	if _, err := e.Svc.Endpoints.Delete(r.Context(), id, accountID(r)); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -230,7 +211,7 @@ func normalizeDescription(raw json.RawMessage) (*string, bool) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, false
 	}
-	if len(s) > endpointDescriptionMaxLen {
+	if len(s) > endpointsvc.DescriptionMaxLen {
 		return nil, false
 	}
 	trimmed := strings.TrimSpace(s)
@@ -241,7 +222,7 @@ func normalizeDescription(raw json.RawMessage) (*string, bool) {
 }
 
 func userVerificationErr() string {
-	return "userVerification must be one of: " + strings.Join(userVerificationValues, ", ")
+	return "userVerification must be one of: " + strings.Join(endpointsvc.UserVerificationValues, ", ")
 }
 
 func descriptionErr() string {

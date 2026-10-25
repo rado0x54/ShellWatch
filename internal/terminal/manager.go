@@ -310,6 +310,22 @@ func (m *Manager) ListForAccount(accountID string) []Session {
 	return out
 }
 
+// CountOpenForAccount counts the account's status-open sessions — the REST
+// session-cap semantics: account-wide, UI and MCP sessions alike. (The MCP
+// cap in agent.Session deliberately differs: it counts only that agent's own
+// live sessions.)
+func (m *Manager) CountOpenForAccount(accountID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, mg := range m.terminals {
+		if mg.session.AccountID == accountID && mg.session.Status == StatusOpen {
+			n++
+		}
+	}
+	return n
+}
+
 // EndpointIDsForAccount lists endpoint ids an account has non-closed sessions
 // on (satisfies rest.SessionLister for the endpoint-delete guard).
 func (m *Manager) EndpointIDsForAccount(accountID string) []string {

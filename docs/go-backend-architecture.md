@@ -295,6 +295,13 @@ constraint is now one greppable package.
   evolving (re-enable `chi-server`/`strict-server` in
   `docs/api/oapi-codegen.yaml`; the models are already in use, so the
   remaining migration is handler signatures).
+- `internal/endpointsvc` is the shared endpoint read/resolution layer:
+  account-scoped, demo-aware lookup (list merge honoring the visibility
+  toggle, get-by-id regardless of toggle, `terminal.EndpointRef` resolution
+  for session creation) plus the field constraints (`userVerification`
+  enum, description cap) that both REST and MCP validation enforce. REST
+  handlers (`rest.Endpoints`/`rest.Sessions`) and the agent session
+  (`agent.Deps.Svc`) consume it — the resolution rules exist once.
 - Middleware stack (chi): request-ID → slog access log → IP allowlist (path-
   scoped, `/mcp`) → bearer gate (§5.9) → handlers. `/ws`, `/mcp`,
   `/agent-proxy`, Hydra provider pages, and static files mount beside the

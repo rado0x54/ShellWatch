@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -42,7 +43,7 @@ func TestCapIgnoresExternallyClosedSessions(t *testing.T) {
 			return m, nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Deps{Manager: mgr, Endpoints: eps}, "acc", "", 2)
+	sess := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", 2)
 	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestCapZeroBlocksCreation(t *testing.T) {
 			return terminal.NewMockTransport(), nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Deps{Manager: mgr, Endpoints: eps}, "acc", "", 0)
+	sess := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", 0)
 	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestCapZeroBlocksCreation(t *testing.T) {
 		t.Fatal("max_sessions=0 must block creation")
 	}
 	// Negative = "no cap resolved" -> default 5 still applies.
-	sess2 := New(Deps{Manager: mgr, Endpoints: eps}, "acc", "", -1)
+	sess2 := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", -1)
 	if _, err := sess2.CreateSession(ctx, "ep1", "default cap"); err != nil {
 		t.Fatalf("default-cap create: %v", err)
 	}

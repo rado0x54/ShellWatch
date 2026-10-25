@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/util"
@@ -19,9 +19,8 @@ import (
 
 // Deps are the collaborators an AgentSession needs.
 type Deps struct {
-	Manager   *terminal.Manager
-	Endpoints *store.Endpoints
-	Demo      *demo.Service
+	Manager *terminal.Manager
+	Svc     *endpointsvc.Service
 }
 
 // Session isolates one agent connection's terminal sessions.
@@ -68,13 +67,9 @@ type EndpointInfo struct {
 
 // ListEndpoints returns the account's endpoints (+ demo when visible).
 func (s *Session) ListEndpoints(ctx context.Context) ([]EndpointInfo, error) {
-	own, err := s.deps.Endpoints.ListForAccount(ctx, s.accountID)
+	merged, err := s.deps.Svc.ListForAccount(ctx, s.accountID)
 	if err != nil {
 		return nil, err
-	}
-	merged := own
-	if show, _ := s.deps.Endpoints.ShowDemoEndpoints(ctx, s.accountID); show && s.deps.Demo != nil {
-		merged = append(merged, s.deps.Demo.List(s.accountID)...)
 	}
 	out := make([]EndpointInfo, 0, len(merged))
 	for _, e := range merged {
@@ -85,23 +80,18 @@ func (s *Session) ListEndpoints(ctx context.Context) ([]EndpointInfo, error) {
 
 // GetEndpoint returns a full endpoint scoped to the account (nil when absent).
 func (s *Session) GetEndpoint(ctx context.Context, id string) (*store.Endpoint, error) {
-	if demo.IsID(id) && s.deps.Demo != nil {
-		for _, e := range s.deps.Demo.List(s.accountID) {
-			if e.ID == id {
-				e := e
-				return &e, nil
-			}
-		}
-		return nil, nil
+	ep, err := s.deps.Svc.GetForAccount(ctx, id, s.accountID)
+	if err != nil || ep == nil {
+		return nil, err
 	}
-	return s.deps.Endpoints.GetForAccount(ctx, id, s.accountID)
+	return &ep.Endpoint, nil
 }
 
 // CreateEndpoint creates an account-scoped endpoint (MCP path — the caller
 // supplies the id, unlike REST which mints one).
 func (s *Session) CreateEndpoint(ctx context.Context, ep store.Endpoint) error {
 	ep.AccountID = s.accountID
-	return s.deps.Endpoints.Create(ctx, ep)
+	return s.deps.Svc.Endpoints.Create(ctx, ep)
 }
 
 // EndpointPatch is a typed partial endpoint update; nil fields keep the
@@ -123,7 +113,7 @@ type EndpointPatch struct {
 // and field validation (userVerification enum, description cap) happen at the
 // caller (internal/mcp).
 func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointPatch) (bool, error) {
-	existing, err := s.deps.Endpoints.GetForAccount(ctx, id, s.accountID)
+	existing, err := s.deps.Svc.Endpoints.GetForAccount(ctx, id, s.accountID)
 	if err != nil || existing == nil {
 		return false, err
 	}
@@ -149,20 +139,20 @@ func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointP
 	if patch.DescriptionSet {
 		merged.Description = patch.Description
 	}
-	return s.deps.Endpoints.Update(ctx, merged)
+	return s.deps.Svc.Endpoints.Update(ctx, merged)
 }
 
 // DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing
 // matched.
 func (s *Session) DeleteEndpoint(ctx context.Context, id string) (bool, error) {
-	return s.deps.Endpoints.Delete(ctx, id, s.accountID)
+	return s.deps.Svc.Endpoints.Delete(ctx, id, s.accountID)
 }
 
 // CreateSession opens a session against an endpoint owned by the account. A
 // foreign/unknown id always returns "Unknown endpoint" (no cross-account
 // probing / spurious approval prompts).
 func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) (*terminal.Session, error) {
-	ep, err := s.resolveRef(ctx, endpointID)
+	ep, err := s.deps.Svc.RefForAccount(ctx, endpointID, s.accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,18 +194,6 @@ func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) 
 	s.owned[sess.SessionID] = true
 	s.mu.Unlock()
 	return sess, nil
-}
-
-func (s *Session) resolveRef(ctx context.Context, id string) (*terminal.EndpointRef, error) {
-	ep, err := s.GetEndpoint(ctx, id)
-	if err != nil || ep == nil {
-		return nil, err
-	}
-	ref := terminal.EndpointRef{
-		ID: ep.ID, Label: ep.Label, AccountID: ep.AccountID, Host: ep.Host, Port: int(ep.Port),
-		Username: ep.Username, UserVerification: ep.UserVerification, AgentForward: ep.AgentForward,
-	}
-	return &ref, nil
 }
 
 // ListSessions returns this agent's owned sessions.

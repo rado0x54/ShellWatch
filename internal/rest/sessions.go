@@ -14,17 +14,15 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/api"
-	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/realip"
-	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
 // Sessions wires the session routes.
 type Sessions struct {
-	Manager   *terminal.Manager
-	Endpoints *store.Endpoints
-	Demo      *demo.Service
+	Manager *terminal.Manager
+	Svc     *endpointsvc.Service
 	// MaxSessions resolves an account's concurrent-session cap.
 	MaxSessions func(ctx context.Context, accountID string) (int, bool)
 }
@@ -56,13 +54,7 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 	acc := accountID(r)
 	if s.MaxSessions != nil {
 		if max, ok := s.MaxSessions(r.Context(), acc); ok {
-			open := 0
-			for _, sess := range s.Manager.ListForAccount(acc) {
-				if sess.Status == terminal.StatusOpen {
-					open++
-				}
-			}
-			if open >= max {
+			if s.Manager.CountOpenForAccount(acc) >= max {
 				writeErr(w, 429, "Maximum concurrent sessions ("+strconv.Itoa(max)+") reached")
 				return
 			}
@@ -72,12 +64,12 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 	body := readRawBody(r)
 	endpointID := stringField(body, "endpointId")
 
-	ref, ok := s.resolveEndpoint(r.Context(), endpointID, acc)
-	if !ok {
+	ref, err := s.Svc.RefForAccount(r.Context(), endpointID, acc)
+	if err != nil || ref == nil {
 		writeErr(w, 404, "Endpoint not found")
 		return
 	}
-	sess, err := s.Manager.Create(r.Context(), ref, acc, terminal.Trigger{
+	sess, err := s.Manager.Create(r.Context(), *ref, acc, terminal.Trigger{
 		Kind: terminal.SourceUI, SourceIP: realip.FromRequest(r),
 	})
 	if err != nil {
@@ -90,29 +82,6 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, toSessionDTO(*sess))
-}
-
-func (s *Sessions) resolveEndpoint(ctx context.Context, id, accountID string) (terminal.EndpointRef, bool) {
-	if demo.IsID(id) && s.Demo != nil {
-		for _, e := range s.Demo.List(accountID) {
-			if e.ID == id {
-				return toRef(e), true
-			}
-		}
-		return terminal.EndpointRef{}, false
-	}
-	ep, err := s.Endpoints.GetForAccount(ctx, id, accountID)
-	if err != nil || ep == nil {
-		return terminal.EndpointRef{}, false
-	}
-	return toRef(*ep), true
-}
-
-func toRef(e store.Endpoint) terminal.EndpointRef {
-	return terminal.EndpointRef{
-		ID: e.ID, Label: e.Label, AccountID: e.AccountID, Host: e.Host, Port: int(e.Port),
-		Username: e.Username, UserVerification: e.UserVerification, AgentForward: e.AgentForward,
-	}
 }
 
 func (s *Sessions) list(w http.ResponseWriter, r *http.Request) {
