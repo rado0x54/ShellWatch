@@ -20,6 +20,9 @@ type managed struct {
 	session   *Session
 	transport Transport
 	output    *OutputBuffer
+	// pumpDone closes when the pump goroutine exits; Close joins it so the
+	// Closed broadcast always sees every event the transport delivered.
+	pumpDone chan struct{}
 }
 
 // StatusEvent is emitted on every status transition (guaranteed, ordered).
@@ -42,6 +45,7 @@ const DefaultIdleSweepInterval = time.Minute
 // Manager owns all sessions.
 type Manager struct {
 	mu            sync.Mutex
+	destroyed     bool // set by Destroy: Create refuses, no session can outlive shutdown
 	terminals     map[string]*managed
 	factory       TransportFactory
 	clk           clock.Clock
@@ -161,8 +165,17 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}
 
-	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize)}
+	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize), pumpDone: make(chan struct{})}
 	m.mu.Lock()
+	if m.destroyed {
+		// Destroy already snapshotted the registry: registering now would
+		// create a session nothing ever closes (an in-flight create request
+		// racing shutdown). Refuse at the owner — HTTP-layer ordering
+		// (srv.Close before Destroy) narrows this window but cannot close it.
+		m.mu.Unlock()
+		_ = transport.Close()
+		return nil, fmt.Errorf("server is shutting down")
+	}
 	m.terminals[sess.SessionID] = mg
 	m.mu.Unlock()
 
@@ -176,7 +189,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	m.mu.Lock()
 	out := *sess
 	m.mu.Unlock()
-	go m.pump(mg)
+	go func() {
+		defer close(mg.pumpDone)
+		m.pump(mg)
+	}()
 	return &out, nil
 }
 
@@ -375,14 +391,21 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 		return
 	}
 	_ = mg.transport.Close()
-	// Broadcast Closed BEFORE clearing: status subscribers run synchronously
-	// and the WS hub drains the undelivered output tail when it sees Closed —
-	// clearing first made that drain observe the offset rewinding and emit a
-	// reset frame that blanked the client's terminal on every explicit close
-	// (and dropped the tail on the idle-timeout/shutdown/account paths).
+	// Join the pump: it drains every event the transport already delivered
+	// (appending data and notifying output subscribers, in order) and then
+	// broadcasts Closed itself on the way out — so the Closed broadcast, and
+	// the WS hub's tail drain inside it, always see the complete buffer. The
+	// broadcast also happens BEFORE Clear below: clearing first made the
+	// drain observe the offset rewinding and emit a reset frame that blanked
+	// the client's terminal on every explicit close.
+	<-mg.pumpDone
+	// The pump finalized Closed on exit; this is a no-op safety net should a
+	// transport ever end its Events channel without the pump transitioning.
 	m.setStatus(mg, StatusClosed, reason)
-	mg.output.Clear()
+	// Clear and remove in one critical section: no reader can observe a
+	// cleared-but-still-listed session.
 	m.mu.Lock()
+	mg.output.Clear()
 	delete(m.terminals, sessionID)
 	m.mu.Unlock()
 }
@@ -450,9 +473,13 @@ func (m *Manager) RemoveForAccount(accountID string) int {
 	return n
 }
 
-// Destroy closes all sessions (shutdown).
+// Destroy closes all sessions (shutdown) and marks the manager destroyed:
+// the flag is set under the same lock the id snapshot is taken under, so any
+// Create either registered before the snapshot (and is closed here) or
+// observes the flag and refuses — no session can be created after Destroy.
 func (m *Manager) Destroy() {
 	m.mu.Lock()
+	m.destroyed = true
 	ids := make([]string, 0, len(m.terminals))
 	for id := range m.terminals {
 		ids = append(ids, id)

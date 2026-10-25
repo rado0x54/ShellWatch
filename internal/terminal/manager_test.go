@@ -257,3 +257,59 @@ func TestCreateSnapshotDoesNotRaceImmediateClose(t *testing.T) {
 		unsub()
 	}
 }
+
+// Close joins the pump before the Closed broadcast: every data event the
+// transport already delivered is appended (and announced) first, so a status
+// subscriber reading the buffer at Closed always sees the complete output —
+// the WS tail-drain contract depends on it. Before the join, Close could
+// broadcast while the pump still had queued events, which Clear then destroyed.
+func TestCloseJoinsPumpBeforeClosedBroadcast(t *testing.T) {
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		mgr, mock := mockManager(t)
+		ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var atClosed int
+		unsub := mgr.SubscribeStatus(func(e StatusEvent) {
+			if e.SessionID == sess.SessionID && e.Status == StatusClosed {
+				r, _ := mgr.ReadOutput(sess.SessionID, 0, 1<<20)
+				atClosed = len(r.Data)
+			}
+		})
+		total := 0
+		for j := 0; j < 40; j++ { // queue events faster than the pump drains
+			mock.Push([]byte("0123456789"))
+			total += 10
+		}
+		mgr.Close(sess.SessionID, CloseClientUI)
+		unsub()
+		if atClosed != total {
+			t.Fatalf("round %d: Closed broadcast saw %d/%d buffered bytes", i, atClosed, total)
+		}
+	}
+}
+
+// Destroy marks the manager destroyed under the same lock the id snapshot is
+// taken under: a Create landing afterwards (an in-flight request racing
+// shutdown) is refused and its fresh transport closed — no session can ever
+// be created after Destroy.
+func TestCreateAfterDestroyRefused(t *testing.T) {
+	mgr, mock := mockManager(t)
+	mgr.Destroy()
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	if _, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI}); err == nil {
+		t.Fatal("Create after Destroy must refuse")
+	}
+	mock.mu.Lock()
+	closed := mock.closed
+	mock.mu.Unlock()
+	if !closed {
+		t.Fatal("refused Create leaked an open transport")
+	}
+	if n := len(mgr.ListSessions()); n != 0 {
+		t.Fatalf("session registered after Destroy: %d", n)
+	}
+}
