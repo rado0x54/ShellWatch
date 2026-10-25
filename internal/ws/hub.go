@@ -95,7 +95,7 @@ func (h *Hub) onStatusChange(ev terminal.StatusEvent) {
 	h.mu.Unlock()
 	for _, c := range conns {
 		if terminalState {
-			c.closeSession(ev.SessionID)
+			c.closeSession(h.mgr, ev.SessionID)
 		}
 		c.send(h.sessionList(c))
 	}

@@ -151,30 +151,41 @@ func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, f
 	}
 }
 
+// detachLocked removes the session's per-connection state with c.mu held and
+// reports whether it was attached — the one copy of the teardown body that
+// detach and closeSession share.
+func (c *conn) detachLocked(sessionID string) bool {
+	attached := c.attached[sessionID]
+	delete(c.attached, sessionID)
+	delete(c.controlled, sessionID)
+	delete(c.lastOffset, sessionID)
+	return attached
+}
+
 // detach holds flushMu so an in-flight flush can't resurrect the deleted
 // lastOffset entry (or send to a session the client just left).
 func (c *conn) detach(sessionID string) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	c.mu.Lock()
-	delete(c.attached, sessionID)
-	delete(c.controlled, sessionID)
-	delete(c.lastOffset, sessionID)
+	c.detachLocked(sessionID)
 	c.mu.Unlock()
 }
 
-// closeSession delivers terminal:closed and detaches in one flushMu critical
-// section: a hub flush already in flight either finishes before the closed
-// frame or observes the detach and sends nothing — output can never follow
-// the closed frame. No-op when the session isn't attached.
-func (c *conn) closeSession(sessionID string) {
+// closeSession drains the session's remaining output, then delivers
+// terminal:closed and detaches — all in one flushMu critical section. The
+// drain matters: the close event can beat the debounced output notification,
+// and without it the final bytes (the shell's logout/exit output) would be
+// dropped by the late flush seeing a detached session. A hub flush already in
+// flight either finishes before the closed frame or observes the detach and
+// sends nothing — output can never follow the closed frame. No-op when the
+// session isn't attached.
+func (c *conn) closeSession(mgr *terminal.Manager, sessionID string) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
+	c.flushLocked(mgr, sessionID)
 	c.mu.Lock()
-	attached := c.attached[sessionID]
-	delete(c.attached, sessionID)
-	delete(c.controlled, sessionID)
-	delete(c.lastOffset, sessionID)
+	attached := c.detachLocked(sessionID)
 	c.mu.Unlock()
 	if attached {
 		c.send(map[string]any{"type": "terminal:closed", "sessionId": sessionID})
@@ -200,6 +211,11 @@ func (c *conn) releaseControl(sessionID string) {
 func (c *conn) flushOutput(mgr *terminal.Manager, sessionID string) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
+	c.flushLocked(mgr, sessionID)
+}
+
+// flushLocked is flushOutput's body; the caller holds flushMu.
+func (c *conn) flushLocked(mgr *terminal.Manager, sessionID string) {
 	c.mu.Lock()
 	attached := c.attached[sessionID]
 	last := c.lastOffset[sessionID]

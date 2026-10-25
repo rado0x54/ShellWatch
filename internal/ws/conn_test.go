@@ -161,7 +161,7 @@ func TestFlushRacesAttachDetach(t *testing.T) {
 			if i%2 == 0 {
 				c.detach(sess.SessionID)
 			} else {
-				c.closeSession(sess.SessionID)
+				c.closeSession(mgr, sess.SessionID)
 			}
 		}
 	}()
@@ -223,7 +223,7 @@ func TestNoOutputAfterClosedFrame(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			c.closeSession(sess.SessionID)
+			c.closeSession(mgr, sess.SessionID)
 		}()
 		wg.Wait()
 	}
@@ -240,5 +240,90 @@ func TestNoOutputAfterClosedFrame(t *testing.T) {
 				t.Fatalf("terminal:output enqueued after terminal:closed for %s", f.SessionID)
 			}
 		}
+	}
+}
+
+// closeSession must deliver the output tail: when the close event beats the
+// debounced output notification, the un-flushed final bytes (the shell's
+// logout/exit output) are drained inside the same flushMu section, before the
+// closed frame — not dropped by a late flush seeing a detached session.
+func TestCloseSessionDrainsOutputTail(t *testing.T) {
+	s, client := wsPair(t)
+
+	mock := terminal.NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	mgr := terminal.NewManager(func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
+		return mock, nil
+	}, nil, 0)
+	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { mgr.Close(sess.SessionID, terminal.CloseClientWS) })
+
+	type frame struct {
+		Type string `json:"type"`
+		Data string `json:"data"`
+	}
+	frames := make(chan frame, 256)
+	go func() { // drain concurrently so the close handshake completes
+		defer close(frames)
+		for {
+			_, raw, err := client.Read(context.Background())
+			if err != nil {
+				return
+			}
+			var f frame
+			if json.Unmarshal(raw, &f) == nil {
+				frames <- f
+			}
+		}
+	}()
+
+	c := newConn(s, "acc")
+	writerDone := c.startWriter(context.Background())
+	t.Cleanup(func() { c.close(); <-writerDone })
+
+	c.attachWithCatchUp(sess.SessionID, true, 0, nil)
+	mock.Push([]byte("logout\r\n"))
+	// Wait for the pump to land the bytes in the buffer, but do NOT flush —
+	// this is the "close beats the output notification" interleaving.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r, err := mgr.ReadOutput(sess.SessionID, 0, 100); err == nil && len(r.Data) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pump never delivered the output")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	c.closeSession(mgr, sess.SessionID)
+
+	// The connection stays open (only the session closed): the tail and the
+	// closed frame must arrive on the live stream, tail first.
+	var sawTail, closedSeen bool
+	timeout := time.After(5 * time.Second)
+	for !closedSeen {
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				t.Fatal("websocket closed before terminal:closed arrived")
+			}
+			switch f.Type {
+			case "terminal:output":
+				if strings.Contains(f.Data, "logout") {
+					sawTail = true
+				}
+			case "terminal:closed":
+				closedSeen = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for terminal:closed")
+		}
+	}
+	if !sawTail {
+		t.Fatal("output tail dropped on close — the logout bytes never reached the client")
 	}
 }
