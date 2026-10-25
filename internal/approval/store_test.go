@@ -169,8 +169,8 @@ func TestStoreResolveTypeMismatchDoesNotClaim(t *testing.T) {
 	s, _ := newStore(t)
 	a := s.Create(CreateParams{AccountID: "acc", Type: TypeWebAuthnSign,
 		ResolveSign: func(signing.SignResponse) {}})
-	if s.ResolveKey(a.ID).Won {
-		t.Fatal("key-approve resolve must not complete a webauthn-sign action")
+	if res := s.ResolveKey(a.ID); res.Won || res.Found {
+		t.Fatalf("key-approve resolve on a webauthn-sign action: %+v, want not found", res)
 	}
 	if !s.ResolveSign(a.ID, signing.SignResponse{}).Won {
 		t.Fatal("action must still be pending after the mismatched resolve")
@@ -206,5 +206,37 @@ func TestStoreClaimResultsReportAssertedState(t *testing.T) {
 	s.Sweep()
 	if res := s.Deny(a.ID); res.Won || res.Found {
 		t.Fatalf("deny of swept: %+v, want not found", res)
+	}
+}
+
+// The claim path enforces the deadline itself: between ExpiresAt and the next
+// sweep tick an action is still pending in memory, but no resolve (or deny)
+// may claim it — the claim performs the expiry, rejects the waiter, and emits
+// the expired event exactly once, and the later sweep doesn't double-fire.
+func TestStoreClaimOnExpiredActionLosesAndExpires(t *testing.T) {
+	clk := clock.NewFake(time.Unix(1000, 0))
+	s := NewStore(clk, func() string { return "act" })
+	var events, rejects atomic.Int32
+	s.OnResolved(func(ResolvedEvent) { events.Add(1) })
+	a := s.Create(CreateParams{
+		AccountID: "acc", Type: TypeKeyApprove,
+		ResolveKey: func() { t.Error("resolve closure fired for an expired action") },
+		Reject:     func(error) { rejects.Add(1) },
+	})
+
+	clk.Advance(ActionTTL + time.Second) // past the deadline, no sweep yet
+
+	if res := s.ResolveKey(a.ID); res.Won || !res.Found || res.Status != StatusExpired {
+		t.Fatalf("resolve past deadline: %+v, want lost claim on expired", res)
+	}
+	if res := s.Deny(a.ID); res.Won || res.Status != StatusExpired {
+		t.Fatalf("deny past deadline: %+v, want lost claim on expired", res)
+	}
+	s.Sweep() // must not double-fire: the claim already expired the action
+	if rejects.Load() != 1 {
+		t.Fatalf("reject fired %d times, want exactly 1", rejects.Load())
+	}
+	if events.Load() != 1 {
+		t.Fatalf("resolved events fired %d times, want exactly 1", events.Load())
 	}
 }

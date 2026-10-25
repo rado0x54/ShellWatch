@@ -337,18 +337,34 @@ func (s *Store) Sweep() {
 // wins and the rest see a nil Action — the resolution callbacks (1-buffered
 // broker channels, consumed once) therefore fire at most once per action.
 // Losers get the status the action actually ended in, asserted under the same
-// lock. typ restricts the claim to one action kind ("" accepts any).
+// lock, which is always terminal: a claim on a past-deadline action performs
+// the expiry itself (rejecting the waiter and emitting the expired event)
+// instead of trusting the sweep tick — no approval may ever land after the
+// action's TTL. typ restricts the claim to one action kind; a mismatch
+// reports not-found (there is no such action of that kind).
 func (s *Store) takePending(id string, typ ActionType, to Status) (*Action, ClaimResult) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.actions[id]
-	if !ok {
+	if !ok || (typ != "" && a.Type != typ) {
+		s.mu.Unlock()
 		return nil, ClaimResult{}
 	}
-	if a.Status != StatusPending || (typ != "" && a.Type != typ) {
-		return nil, ClaimResult{Found: true, Status: a.Status}
+	if a.Status == StatusPending && !a.ExpiresAt.After(s.clk.Now()) {
+		a.Status = StatusExpired
+		s.mu.Unlock()
+		if a.reject != nil {
+			a.reject(ErrExpired)
+		}
+		s.emitResolved(a, OutcomeExpired, "")
+		return nil, ClaimResult{Found: true, Status: StatusExpired}
+	}
+	if a.Status != StatusPending {
+		res := ClaimResult{Found: true, Status: a.Status}
+		s.mu.Unlock()
+		return nil, res
 	}
 	a.Status = to
+	s.mu.Unlock()
 	return a, ClaimResult{Won: true, Found: true, Status: to}
 }
 
