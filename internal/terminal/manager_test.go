@@ -12,6 +12,9 @@ import (
 func mockManager(t *testing.T) (*Manager, *MockTransport) {
 	t.Helper()
 	mock := NewMockTransport()
+	// t.Cleanup, not inline closes: a mid-test t.Fatal must not leak the pump
+	// goroutine (closing the transport makes the pump exit).
+	t.Cleanup(func() { _ = mock.Close() })
 	factory := func(_ context.Context, _ FactoryParams) (Transport, error) { return mock, nil }
 	return NewManager(factory, clock.Real{}, 0), mock
 }
@@ -133,6 +136,7 @@ func TestTerminalStateRetention(t *testing.T) {
 
 	// Errored sessions stay VISIBLE in lists (status filter is closed-only).
 	mock2 := NewMockTransport()
+	t.Cleanup(func() { _ = mock2.Close() })
 	mgr2 := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock2, nil }, clock.Real{}, 0)
 	sess2, err := mgr2.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
 	if err != nil {
@@ -228,6 +232,7 @@ func TestImmediateTransportDeathNeverReopens(t *testing.T) {
 func TestCreateSnapshotDoesNotRaceImmediateClose(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		mock := NewMockTransport()
+		t.Cleanup(func() { _ = mock.Close() }) // pump exits even on a mid-round t.Fatal
 		m := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock, nil }, clock.Real{}, 0)
 
 		closed := make(chan struct{})
