@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/auth"
@@ -107,7 +108,11 @@ func TestSessionCreateListGoldens(t *testing.T) {
 
 func actionsGoldenServer(t *testing.T) (*httptest.Server, *approval.Store) {
 	t.Helper()
-	as := approval.NewStore(clock.Real{}, func() string { return "act_fixed_0000000000000001" })
+	return actionsGoldenServerWith(t, approval.NewStore(clock.Real{}, func() string { return "act_fixed_0000000000000001" }))
+}
+
+func actionsGoldenServerWith(t *testing.T, as *approval.Store) (*httptest.Server, *approval.Store) {
+	t.Helper()
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
 	cfg.Hydra.PublicURL = "http://localhost:4444"
@@ -157,6 +162,17 @@ func TestActionGoldens(t *testing.T) {
 	a3 := seedKeyAction(as)
 	s, b = doJSON(t, ts, "POST", "/api/actions/"+a3.ID+"/deny", `{}`)
 	assertEnvelope(t, "action-deny", "/api/actions/{actionId}/deny", s, b)
+}
+
+// Deny on an expired-but-unswept action -> 200 { status: expired }: the
+// deliberate 409→200 contract change for the no-signature outcomes, pinned.
+func TestActionDenyExpiredGolden(t *testing.T) {
+	clk := clock.NewFake(time.Unix(1_700_000_000, 0))
+	ts, as := actionsGoldenServerWith(t, approval.NewStore(clk, func() string { return "act_fixed_0000000000000001" }))
+	a := seedKeyAction(as)
+	clk.Advance(approval.ActionTTL + time.Second)
+	s, b := doJSON(t, ts, "POST", "/api/actions/"+a.ID+"/deny", `{}`)
+	assertEnvelope(t, "action-deny-expired", "/api/actions/{actionId}/deny", s, b)
 }
 
 func decode(t *testing.T, r io.Reader) map[string]any {

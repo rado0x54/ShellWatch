@@ -106,7 +106,7 @@ var goldenCoverage = map[string]coverage{
 	// --- Pending actions + push ---
 	"getAction":              goldened("action-get"),
 	"resolveAction":          goldened("action-resolve"),
-	"denyAction":             goldened("action-deny"),
+	"denyAction":             goldened("action-deny", "action-deny-expired"),
 	"createPushSubscription": goldened("push-subscribe"),
 	"deletePushSubscription": goldened("push-unsubscribe"),
 }

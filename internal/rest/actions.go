@@ -103,7 +103,10 @@ func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
 	// asserted is ever reported: a lost race against a resolve answers 409
 	// "completed", never "denied" for a signature that actually went through.
 	if res.Won || (res.Found && (res.Status == approval.StatusDenied || res.Status == approval.StatusExpired)) {
-		writeJSON(w, 200, map[string]any{"status": "denied"})
+		// Report the store-asserted status, not a flattened "denied": the
+		// audit row and every other surface say "expired" for the expired
+		// edge, and this response must agree with them.
+		writeJSON(w, 200, map[string]any{"status": string(res.Status)})
 		return
 	}
 	writeClaimConflict(w, res)

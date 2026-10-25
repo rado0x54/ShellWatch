@@ -1189,11 +1189,13 @@ paths:
             Denied. Idempotent over every no-signature outcome: denying an
             action that is already denied or already expired also answers
             200 — what the caller asked for (no signature) holds either way.
+            `status` is the state the store asserted ("expired" when the
+            action lapsed before the deny landed).
           content:
             application/json:
               schema:
                 type: object
-                properties: { status: { type: string, enum: [denied] } }
+                properties: { status: { type: string, enum: [denied, expired] } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
