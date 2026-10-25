@@ -1,12 +1,12 @@
 allowBuilds:
-  better-sqlite3: true
-  cbor-extract: true
-  cpu-features: true
+  better-sqlite3: set this to true or false
+  cbor-extract: set this to true or false
+  cpu-features: set this to true or false
   esbuild: true
-  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/dd4f9633bbe66a94824761e41e28fa8723d0dbb9: true
+  ssh2@https://codeload.github.com/rado0x54/ssh2/tar.gz/dd4f9633bbe66a94824761e41e28fa8723d0dbb9: set this to true or false
 overrides:
   # Security: force patched transitive versions (see pnpm audit).
-  # fast-uri stays on 3.x (fastify/@modelcontextprotocol/sdk expect ^3); 3.1.9 patches
+  # fast-uri stays on 3.x (@modelcontextprotocol/sdk expects ^3); 3.1.9 patches
   # the path-traversal, SSRF + host-confusion (IDN / literal / backslash) advisories.
   fast-uri: ^3.1.9
   # hono 4.13.11 patches the CORS credentialed-Origin reflection + later advisories (via MCP sdk).
@@ -41,12 +41,5 @@ overrides:
   cookie: ^0.7.0
   # brace-expansion range-DoS; scope to the vulnerable 4.x/5.0.x window so other majors are untouched.
   "brace-expansion@>=4.0.0 <5.0.12": ^5.0.12
-  # esbuild dev-server request advisory; only the deprecated @esbuild-kit chain (drizzle-kit) pulls
-  # the vulnerable 0.18.x — scope the bump there so vite/svelte's healthy esbuild copies are untouched.
-  "@esbuild-kit/core-utils>esbuild": ^0.25.0
 onlyBuiltDependencies:
-  - better-sqlite3
-  - cbor-extract
-  - cpu-features
   - esbuild
-  - ssh2

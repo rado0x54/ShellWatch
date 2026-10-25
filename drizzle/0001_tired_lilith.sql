@@ -1,1 +1,0 @@
-ALTER TABLE `endpoints` ADD `user_verification` text DEFAULT 'required' NOT NULL;

@@ -1,1 +1,0 @@
-ALTER TABLE `endpoints` ADD `description` text;

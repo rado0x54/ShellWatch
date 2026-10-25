@@ -1,1 +1,0 @@
-ALTER TABLE `webauthn_credentials` ADD `state` text DEFAULT 'active' NOT NULL;
