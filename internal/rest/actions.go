@@ -74,15 +74,15 @@ func (a *Actions) resolve(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, "User verification required")
 			return
 		}
-		if !a.Store.ResolveSign(action.ID, signing.SignResponse{
+		if res := a.Store.ResolveSign(action.ID, signing.SignResponse{
 			AuthenticatorData: authData, Signature: sig, ClientDataJSON: cdj,
-		}) {
-			writeErr(w, 409, "Action is already "+a.currentStatus(action.ID))
+		}); !res.Won {
+			writeClaimConflict(w, res)
 			return
 		}
 	case approval.TypeKeyApprove:
-		if !a.Store.ResolveKey(action.ID) {
-			writeErr(w, 409, "Action is already "+a.currentStatus(action.ID))
+		if res := a.Store.ResolveKey(action.ID); !res.Won {
+			writeClaimConflict(w, res)
 			return
 		}
 	}
@@ -95,27 +95,30 @@ func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
 	if action == nil {
 		return
 	}
-	if action.Status != approval.StatusPending {
-		writeErr(w, 409, "Action is already "+string(action.Status))
+	res := a.Store.Deny(action.ID)
+	// Deny is idempotent: whether this call denied the action or it was
+	// already denied (double-click, concurrent cancel), the outcome the user
+	// asked for holds. Only a state the store asserted is ever reported —
+	// a lost race against a resolve answers 409 "completed", never "denied"
+	// for a signature that actually went through.
+	if res.Won || (res.Found && res.Status == approval.StatusDenied) {
+		writeJSON(w, 200, map[string]any{"status": "denied"})
 		return
 	}
-	if !a.Store.Deny(action.ID) {
-		// Lost a concurrent resolve: the action went through — never answer
-		// "denied" for a signature that actually succeeded.
-		writeErr(w, 409, "Action is already "+a.currentStatus(action.ID))
-		return
-	}
-	writeJSON(w, 200, map[string]any{"status": "denied"})
+	writeClaimConflict(w, res)
 }
 
-// currentStatus re-reads an action's status after a lost resolve race: the
-// pre-check snapshot saw pending, another resolver claimed the action in
-// between, and the 409 should name the state it actually ended in.
-func (a *Actions) currentStatus(id string) string {
-	if cur := a.Store.Get(id); cur != nil {
-		return string(cur.Status)
+// writeClaimConflict renders a lost claim from the store's own answer: 409
+// naming the terminal status the store asserted, or 404 when the action was
+// swept in between — the exact outcome is gone then, and naming one
+// ("resolved") would tell a denier a signature went through when it may not
+// have.
+func writeClaimConflict(w http.ResponseWriter, res approval.ClaimResult) {
+	if !res.Found {
+		writeErr(w, 404, "Action not found")
+		return
 	}
-	return "resolved" // swept after the grace window; the exact outcome is gone
+	writeErr(w, 409, "Action is already "+string(res.Status))
 }
 
 // actionView is the client-safe projection (excludes resolve/reject closures).

@@ -1185,7 +1185,9 @@ paths:
         - { name: actionId, in: path, required: true, schema: { type: string } }
       responses:
         "200":
-          description: Denied
+          description: >-
+            Denied. Idempotent: denying an action that is already denied also
+            answers 200 — the requested outcome holds either way.
           content:
             application/json:
               schema:
@@ -1194,7 +1196,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Action not pending
+          description: >-
+            Action already completed or expired — the message names the state
+            the action actually ended in, never a guessed one.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

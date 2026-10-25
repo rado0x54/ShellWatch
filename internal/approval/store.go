@@ -224,43 +224,54 @@ func (s *Store) Get(id string) *Action {
 	return &cp
 }
 
+// ClaimResult is what a resolution attempt learns from the store: whether
+// this caller performed the pending->terminal transition, and the status the
+// action actually holds afterwards. HTTP handlers derive their responses from
+// this value alone, so they can never report a state the store didn't assert
+// (the source of the deny-vs-resolve, deny-vs-deny and sweep-wording bugs).
+type ClaimResult struct {
+	Won    bool   // this call moved the action from pending to a terminal state
+	Found  bool   // false: already swept — the exact outcome is unknowable
+	Status Status // the action's status after this call (empty when !Found)
+}
+
 // ResolveSign completes a webauthn-sign action with a browser assertion.
-func (s *Store) ResolveSign(id string, resp signing.SignResponse) bool {
-	a := s.takePending(id, TypeWebAuthnSign, StatusCompleted)
+func (s *Store) ResolveSign(id string, resp signing.SignResponse) ClaimResult {
+	a, res := s.takePending(id, TypeWebAuthnSign, StatusCompleted)
 	if a == nil {
-		return false
+		return res
 	}
 	if a.resolveSign != nil {
 		a.resolveSign(resp)
 	}
 	s.emitResolved(a, OutcomeApproved, "")
-	return true
+	return res
 }
 
 // ResolveKey completes a key-approve action.
-func (s *Store) ResolveKey(id string) bool {
-	a := s.takePending(id, TypeKeyApprove, StatusCompleted)
+func (s *Store) ResolveKey(id string) ClaimResult {
+	a, res := s.takePending(id, TypeKeyApprove, StatusCompleted)
 	if a == nil {
-		return false
+		return res
 	}
 	if a.resolveKey != nil {
 		a.resolveKey()
 	}
 	s.emitResolved(a, OutcomeApproved, "")
-	return true
+	return res
 }
 
 // Deny rejects an action (the signer sees a sign failure -> tries next key).
-func (s *Store) Deny(id string) bool {
-	a := s.takePending(id, "", StatusDenied)
+func (s *Store) Deny(id string) ClaimResult {
+	a, res := s.takePending(id, "", StatusDenied)
 	if a == nil {
-		return false
+		return res
 	}
 	if a.reject != nil {
 		a.reject(ErrDenied)
 	}
 	s.emitResolved(a, OutcomeDenied, "")
-	return true
+	return res
 }
 
 // CancelForConnection denies every pending action for a dead SSH connection
@@ -323,18 +334,22 @@ func (s *Store) Sweep() {
 // takePending atomically claims a pending action: the terminal status
 // transition happens under the lock, so of several concurrent resolvers
 // (double-submit, resolve racing deny, resolve racing the sweep) exactly one
-// wins and the rest see nil — the resolution callbacks (1-buffered broker
-// channels, consumed once) therefore fire at most once per action. typ
-// restricts the claim to one action kind ("" accepts any).
-func (s *Store) takePending(id string, typ ActionType, to Status) *Action {
+// wins and the rest see a nil Action — the resolution callbacks (1-buffered
+// broker channels, consumed once) therefore fire at most once per action.
+// Losers get the status the action actually ended in, asserted under the same
+// lock. typ restricts the claim to one action kind ("" accepts any).
+func (s *Store) takePending(id string, typ ActionType, to Status) (*Action, ClaimResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.actions[id]
-	if !ok || a.Status != StatusPending || (typ != "" && a.Type != typ) {
-		return nil
+	if !ok {
+		return nil, ClaimResult{}
+	}
+	if a.Status != StatusPending || (typ != "" && a.Type != typ) {
+		return nil, ClaimResult{Found: true, Status: a.Status}
 	}
 	a.Status = to
-	return a
+	return a, ClaimResult{Won: true, Found: true, Status: to}
 }
 
 func (s *Store) emitResolved(a *Action, outcome Outcome, cancelReason string) {
