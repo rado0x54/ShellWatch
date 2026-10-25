@@ -327,3 +327,104 @@ func TestCloseSessionDrainsOutputTail(t *testing.T) {
 		t.Fatal("output tail dropped on close — the logout bytes never reached the client")
 	}
 }
+
+// Regression (review round 5): Manager.Close used to clear the buffer BEFORE
+// broadcasting Closed, so the hub's synchronous drain observed the offset
+// rewinding and emitted terminal:output{reset:true,data:""} — blanking the
+// client's scrollback on every explicit close. Clear now happens after the
+// broadcast: an explicit close delivers the undelivered tail, then the closed
+// frame, and never a reset.
+func TestExplicitCloseDrainsTailWithoutReset(t *testing.T) {
+	s, client := wsPair(t)
+	type frame struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+		Data      string `json:"data"`
+		Reset     bool   `json:"reset"`
+	}
+	frames := make(chan frame, 256)
+	go func() {
+		defer close(frames)
+		for {
+			_, raw, err := client.Read(context.Background())
+			if err != nil {
+				return
+			}
+			var f frame
+			if json.Unmarshal(raw, &f) == nil {
+				frames <- f
+			}
+		}
+	}()
+
+	mock := terminal.NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	mgr := terminal.NewManager(func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
+		return mock, nil
+	}, nil, 0)
+	h := NewHub(mgr)
+	t.Cleanup(h.Close)
+
+	c := newConn(s, "acc")
+	h.add(c)
+	t.Cleanup(func() { h.remove(c) })
+	writerDone := c.startWriter(context.Background())
+	t.Cleanup(func() { c.close(); <-writerDone })
+
+	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { mgr.Close(sess.SessionID, terminal.CloseClientWS) })
+	c.attachWithCatchUp(sess.SessionID, true, 0, nil)
+
+	waitBuffered := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if r, err := mgr.ReadOutput(sess.SessionID, 0, 1000); err == nil && len(r.Data) >= n {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("pump never delivered the output")
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	mock.Push([]byte("before "))
+	waitBuffered(len("before "))
+	c.flushOutput(mgr, sess.SessionID) // client is caught up
+	mock.Push([]byte("logout"))
+	waitBuffered(len("before logout")) // tail buffered but NOT flushed
+
+	// Explicit close: the hub's status subscriber drains synchronously inside.
+	mgr.Close(sess.SessionID, terminal.CloseClientUI)
+
+	var sawTail, closedSeen bool
+	timeout := time.After(5 * time.Second)
+	for !closedSeen {
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				t.Fatal("websocket closed before terminal:closed arrived")
+			}
+			if f.Type == "terminal:output" && f.Reset {
+				t.Fatalf("explicit close emitted a reset frame (blank terminal): %+v", f)
+			}
+			switch f.Type {
+			case "terminal:output":
+				if strings.Contains(f.Data, "logout") {
+					sawTail = true
+				}
+			case "terminal:closed":
+				closedSeen = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for terminal:closed")
+		}
+	}
+	if !sawTail {
+		t.Fatal("explicit close dropped the unflushed output tail")
+	}
+}

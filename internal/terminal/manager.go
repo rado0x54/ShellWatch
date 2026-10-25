@@ -375,8 +375,13 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 		return
 	}
 	_ = mg.transport.Close()
-	mg.output.Clear()
+	// Broadcast Closed BEFORE clearing: status subscribers run synchronously
+	// and the WS hub drains the undelivered output tail when it sees Closed —
+	// clearing first made that drain observe the offset rewinding and emit a
+	// reset frame that blanked the client's terminal on every explicit close
+	// (and dropped the tail on the idle-timeout/shutdown/account paths).
 	m.setStatus(mg, StatusClosed, reason)
+	mg.output.Clear()
 	m.mu.Lock()
 	delete(m.terminals, sessionID)
 	m.mu.Unlock()
