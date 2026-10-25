@@ -34,20 +34,40 @@ const isoMillis = clock.ISOMillis
 // opening->open, UPDATE (idempotent on closed_at) on ->closed/->error.
 func (w *Writer) AttachManager(m *terminal.Manager, snapshot func(sessionID string) *terminal.Session) {
 	m.SubscribeStatus(func(e terminal.StatusEvent) {
-		switch e.Status {
-		case terminal.StatusOpen:
-			if e.Previous != terminal.StatusOpening {
-				return
-			}
-			s := snapshot(e.SessionID)
-			if s == nil {
-				return
-			}
-			w.insertOpen(s)
-		case terminal.StatusClosed, terminal.StatusError:
-			w.recordClose(e)
-		}
+		w.handleSessionStatus(e, snapshot)
 	})
+}
+
+// handleSessionStatus is AttachManager's subscriber body (split out so the
+// absorbed-open race below is unit-testable).
+func (w *Writer) handleSessionStatus(e terminal.StatusEvent, snapshot func(sessionID string) *terminal.Session) {
+	switch e.Status {
+	case terminal.StatusOpen:
+		if e.Previous != terminal.StatusOpening {
+			return
+		}
+		s := snapshot(e.SessionID)
+		if s == nil {
+			return
+		}
+		w.insertOpen(s)
+	case terminal.StatusClosing:
+		// A close that raced Create (Destroy/account deletion between
+		// registration and setStatus(Open)) absorbs the Open transition,
+		// so the Open-keyed insert above never fires — insert here or the
+		// session vanishes from the append-only log. Unreachable on the
+		// normal path, where Closing's Previous is open.
+		if e.Previous != terminal.StatusOpening {
+			return
+		}
+		s := snapshot(e.SessionID)
+		if s == nil {
+			return
+		}
+		w.insertOpen(s)
+	case terminal.StatusClosed, terminal.StatusError:
+		w.recordClose(e)
+	}
 }
 
 func (w *Writer) insertOpen(s *terminal.Session) {

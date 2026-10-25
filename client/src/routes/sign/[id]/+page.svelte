@@ -159,7 +159,10 @@
     try {
       const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
       if (res.ok) {
-        resultStatus = "denied";
+        // The server reports the store-asserted outcome: "denied", or
+        // "expired" when the action lapsed just before the deny landed.
+        const body = await res.json().catch(() => ({}));
+        resultStatus = body.status === "expired" ? "expired" : "denied";
         clearAction(actionId);
       } else {
         const body = await res.json().catch(() => ({ error: "Unknown error" }));

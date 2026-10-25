@@ -79,8 +79,8 @@ func TestWebAuthnSignerEndToEnd(t *testing.T) {
 	authData, sig, cdj := parseAssertionResponse(t, assertion)
 	if !store.ResolveSign("act-1", signing.SignResponse{
 		AuthenticatorData: authData, Signature: sig, ClientDataJSON: cdj,
-	}) {
-		t.Fatal("ResolveSign returned false")
+	}).Won {
+		t.Fatal("ResolveSign lost the claim")
 	}
 
 	res := <-resCh

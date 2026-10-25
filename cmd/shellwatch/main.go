@@ -312,22 +312,31 @@ func run() error {
 
 	select {
 	case err := <-errCh:
-		stop() // cancel the root ctx so the janitors and the flusher exit
+		stop()            // cancel the root ctx so the janitors and the flusher exit
+		_ = srv.Close()   // sever accepted conns: no in-flight handler may create a session after Destroy
+		manager.Destroy() // close open PTYs cleanly + write their session-close audit rows
 		<-flusherDone
+		flusher.CloseAndFlush(context.Background())
 		return err
 	case <-ctx.Done():
 	}
-	// Ordered shutdown (§5.1): stop accepting HTTP, close all terminals, join
-	// the flusher, then flush ONCE MORE before the deferred db.Close — the
-	// flusher's own final flush fires on the signal, before srv.Shutdown has
-	// drained in-flight requests, so their Touch() calls land in a dirty map
-	// only this trailing flush captures.
+	// Ordered shutdown (§5.1): stop accepting HTTP and drain; if the drain
+	// deadline fires with a handler still running (a long MCP stream),
+	// hard-close the remaining connections so the straggler stops producing
+	// work. Then close all terminals, join the flusher, and CloseAndFlush:
+	// it flushes and marks the flusher closed atomically, so no Touch from
+	// any surviving goroutine can land after the final flush — "the flush is
+	// the last-used table's last write before db.Close" holds structurally
+	// on every branch, not just the clean drain.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = srv.Shutdown(shutdownCtx)
+	if err != nil {
+		_ = srv.Close()
+	}
 	manager.Destroy()
 	<-flusherDone
-	flusher.Flush(context.Background())
+	flusher.CloseAndFlush(context.Background())
 	return err
 }
 

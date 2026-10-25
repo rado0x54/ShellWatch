@@ -121,6 +121,19 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 	if id == nil {
 		return nil, fmt.Errorf("agent: key not found")
 	}
+	// Resolve the signing capability BEFORE raising the approval: an
+	// incapable signer must fail here, without prompting the human —
+	// otherwise the audit log records an approval for a signature that never
+	// happens. Refusing (not downgrading to ssh-rsa/SHA-1) matches ssh-agent:
+	// the client negotiated rsa-sha2 and the server would reject SHA-1 anyway.
+	var algoSigner ssh.AlgorithmSigner
+	if !id.IsPasskey && algorithm != "" && id.Signer.PublicKey().Type() == ssh.KeyAlgoRSA {
+		as, ok := id.Signer.(ssh.AlgorithmSigner)
+		if !ok {
+			return nil, fmt.Errorf("agent: signer for %q cannot sign with %s", id.Label, algorithm)
+		}
+		algoSigner = as
+	}
 	// One approval prompt at a time across concurrent forwarded channels.
 	a.signMu.Lock()
 	defer a.signMu.Unlock()
@@ -141,15 +154,8 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 	}); err != nil {
 		return nil, err
 	}
-	if algorithm != "" && id.Signer.PublicKey().Type() == ssh.KeyAlgoRSA {
-		as, ok := id.Signer.(ssh.AlgorithmSigner)
-		if !ok {
-			// Refuse rather than silently downgrade to ssh-rsa/SHA-1: the
-			// client negotiated rsa-sha2 and the server would reject the
-			// SHA-1 result anyway (ssh-agent answers failure here too).
-			return nil, fmt.Errorf("agent: signer for %q cannot sign with %s", id.Label, algorithm)
-		}
-		return as.SignWithAlgorithm(nil, data, algorithm)
+	if algoSigner != nil {
+		return algoSigner.SignWithAlgorithm(nil, data, algorithm)
 	}
 	return id.Signer.Sign(nil, data)
 }

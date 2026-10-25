@@ -27,8 +27,9 @@ type Hub struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 
-	unsubStatus func()
-	unsubOutput func()
+	unsubStatus  func()
+	unsubOutput  func()
+	unsubRemoved func()
 }
 
 // NewHub wires the hub to the terminal manager's guaranteed status hook and
@@ -37,6 +38,7 @@ func NewHub(mgr *terminal.Manager) *Hub {
 	h := &Hub{mgr: mgr, conns: map[*conn]struct{}{}}
 	h.unsubStatus = mgr.SubscribeStatus(h.onStatusChange)
 	h.unsubOutput = mgr.SubscribeOutput(h.onOutput)
+	h.unsubRemoved = mgr.SubscribeRemoved(h.onRemoved)
 	return h
 }
 
@@ -47,6 +49,28 @@ func (h *Hub) Close() {
 	}
 	if h.unsubOutput != nil {
 		h.unsubOutput()
+	}
+	if h.unsubRemoved != nil {
+		h.unsubRemoved()
+	}
+}
+
+// onRemoved sweeps every connection still attached to a session the Manager
+// just removed from its registry: an attach can land between the Closed
+// broadcast and the delete (the broadcast must come first so the tail drain
+// can read the buffer), and such a connection would otherwise stay attached
+// forever without a terminal:closed. closeSession no-ops when not attached.
+func (h *Hub) onRemoved(sessionID string) {
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		if c.isAttached(sessionID) { // cheap prefilter: don't take flushMu on bystanders
+			c.closeSession(h.mgr, sessionID)
+		}
 	}
 }
 
@@ -94,9 +118,8 @@ func (h *Hub) onStatusChange(ev terminal.StatusEvent) {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
-		if terminalState && c.isAttached(ev.SessionID) {
-			c.send(map[string]any{"type": "terminal:closed", "sessionId": ev.SessionID})
-			c.clearSession(ev.SessionID)
+		if terminalState {
+			c.closeSession(h.mgr, ev.SessionID)
 		}
 		c.send(h.sessionList(c))
 	}

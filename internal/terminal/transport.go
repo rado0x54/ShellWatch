@@ -18,6 +18,11 @@ type Event struct {
 type Transport interface {
 	Write(data []byte) error
 	Resize(cols, rows int) error
+	// Close MUST cause Events to terminate (deliver any final events, then
+	// close the channel) promptly: Manager.Close joins the pump draining it,
+	// bounded by closeJoinTimeout — a transport that wedges past the bound
+	// degrades that close (tail possibly incomplete, pump goroutine leaked)
+	// but must never be able to wedge every close path behind it.
 	Close() error
 	// Events yields transport events until the transport ends, then closes.
 	Events() <-chan Event

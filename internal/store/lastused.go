@@ -20,10 +20,16 @@ import (
 const isoMillis = clock.ISOMillis
 
 type LastUsedFlusher struct {
-	mu    sync.Mutex
-	dirty map[string]string // accountID -> ISO timestamp
-	q     *gen.Queries
-	clk   clock.Clock
+	mu     sync.Mutex
+	dirty  map[string]string // accountID -> ISO timestamp
+	closed bool              // set by CloseAndFlush: later Touches are discarded
+	// writeMu serializes the DB-write sections of Flush and CloseAndFlush (mu
+	// alone only guards the map swap): without it a Flush already past the
+	// swap could interleave its writes after CloseAndFlush's — the type, not
+	// the caller's ordering, enforces "the close flush is the last write".
+	writeMu sync.Mutex
+	q       *gen.Queries
+	clk     clock.Clock
 }
 
 func NewLastUsedFlusher(db *sql.DB, clk clock.Clock) *LastUsedFlusher {
@@ -34,19 +40,36 @@ func NewLastUsedFlusher(db *sql.DB, clk clock.Clock) *LastUsedFlusher {
 }
 
 // Touch records activity; cheap and non-blocking (map write under mutex).
+// After CloseAndFlush it is a discard: a straggler handler that outlives the
+// HTTP drain can no longer dirty state the final flush already missed.
 func (f *LastUsedFlusher) Touch(accountID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.closed {
+		return
+	}
 	f.dirty[accountID] = f.clk.Now().UTC().Format(isoMillis)
 }
 
 // Flush writes all dirty timestamps. Failures are logged, not fatal —
-// last-used is advisory (same policy as the Node repo).
+// last-used is advisory (same policy as the Node repo). After CloseAndFlush
+// it is a no-op: the closed check and the write happen under the same
+// writeMu, so no Flush can ever write after the final flush.
 func (f *LastUsedFlusher) Flush(ctx context.Context) {
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
 	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		return
+	}
 	batch := f.dirty
 	f.dirty = make(map[string]string)
 	f.mu.Unlock()
+	f.write(ctx, batch)
+}
+
+func (f *LastUsedFlusher) write(ctx context.Context, batch map[string]string) {
 	for id, ts := range batch {
 		if err := f.q.TouchAccountLastUsed(ctx, gen.TouchAccountLastUsedParams{
 			LastUsedAt: sql.NullString{String: ts, Valid: true}, ID: id,
@@ -56,15 +79,31 @@ func (f *LastUsedFlusher) Flush(ctx context.Context) {
 	}
 }
 
-// Run flushes every interval until ctx is cancelled (60s in Node), with a
-// final flush on the way out so shutdown captures the tail.
+// CloseAndFlush performs the final flush and marks the flusher closed in the
+// same critical section: once it returns, no Touch can ever dirty state again
+// and no later flush can run, so this flush is structurally the flusher's
+// last database write — on every shutdown branch, including a drain deadline
+// that leaves a handler running. Call it after Run has exited.
+func (f *LastUsedFlusher) CloseAndFlush(ctx context.Context) {
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
+	f.mu.Lock()
+	batch := f.dirty
+	f.dirty = make(map[string]string)
+	f.closed = true
+	f.mu.Unlock()
+	f.write(ctx, batch)
+}
+
+// Run flushes every interval until ctx is cancelled (60s in Node). It does
+// NOT flush on the way out: the single documented final write is the
+// CloseAndFlush every shutdown branch performs after joining Run.
 func (f *LastUsedFlusher) Run(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			f.Flush(context.Background())
 			return
 		case <-t.C:
 			f.Flush(ctx)

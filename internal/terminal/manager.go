@@ -10,7 +10,9 @@ package terminal
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
@@ -20,6 +22,14 @@ type managed struct {
 	session   *Session
 	transport Transport
 	output    *OutputBuffer
+	// pumpDone closes when the pump goroutine exits; Close joins it so the
+	// Closed broadcast always sees every event the transport delivered.
+	pumpDone chan struct{}
+	// abandoned is set when Close gave up joining the pump (wedged transport):
+	// the still-running pump must discard events instead of refilling a
+	// buffer the close already cleared (memory for a session that is gone —
+	// possibly a deleted account's).
+	abandoned atomic.Bool
 }
 
 // StatusEvent is emitted on every status transition (guaranteed, ordered).
@@ -42,15 +52,22 @@ const DefaultIdleSweepInterval = time.Minute
 // Manager owns all sessions.
 type Manager struct {
 	mu            sync.Mutex
+	destroyed     bool // set by Destroy: Create refuses, no session can outlive shutdown
 	terminals     map[string]*managed
 	factory       TransportFactory
 	clk           clock.Clock
 	maxBufferSize int
 	idleTimeout   time.Duration
 
-	statusSubs map[int]func(StatusEvent)
-	outputSubs map[int]func(sessionID string, offset int64)
-	nextSub    int
+	statusSubs  map[int]func(StatusEvent)
+	outputSubs  map[int]func(sessionID string, offset int64)
+	removedSubs map[int]func(sessionID string)
+	nextSub     int
+
+	// closeJoinTimeout bounds Close's pump join (liveness: a wedged transport
+	// teardown must not stall the idle janitor / shutdown / every other close
+	// behind it). Tests shorten it.
+	closeJoinTimeout time.Duration
 }
 
 // NewManager builds a Manager. factory establishes transports.
@@ -60,10 +77,12 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 	}
 	return &Manager{
 		terminals: map[string]*managed{}, factory: factory, clk: clk,
-		maxBufferSize: maxBufferSize,
-		idleTimeout:   DefaultIdleTimeout,
-		statusSubs:    map[int]func(StatusEvent){},
-		outputSubs:    map[int]func(string, int64){},
+		maxBufferSize:    maxBufferSize,
+		idleTimeout:      DefaultIdleTimeout,
+		statusSubs:       map[int]func(StatusEvent){},
+		outputSubs:       map[int]func(string, int64){},
+		removedSubs:      map[int]func(string){},
+		closeJoinTimeout: 5 * time.Second,
 	}
 }
 
@@ -112,9 +131,22 @@ func (m *Manager) SweepIdle() {
 		}
 	}
 	m.mu.Unlock()
+	m.closeAll(ids, CloseIdleTimeout)
+}
+
+// closeAll closes sessions concurrently: each Close's pump join is bounded by
+// closeJoinTimeout, and closing serially would stack those bounds (20 wedged
+// transports = 20x the bound stalling shutdown or a janitor sweep).
+func (m *Manager) closeAll(ids []string, reason CloseReason) {
+	var wg sync.WaitGroup
 	for _, id := range ids {
-		m.Close(id, CloseIdleTimeout)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Close(id, reason)
+		}()
 	}
+	wg.Wait()
 }
 
 // SubscribeStatus registers a guaranteed status hook; returns an unsubscribe.
@@ -135,6 +167,24 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 	m.nextSub++
 	m.outputSubs[id] = fn
 	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
+}
+
+// SubscribeRemoved registers a hook fired after a session is removed from
+// the registry (explicit close, account purge). The WS hub uses it to sweep
+// connections whose attach raced the removal: the Closed broadcast happens
+// before the delete (so the tail drain can still read the buffer), which
+// leaves a window where an attach lands on a session about to disappear.
+func (m *Manager) SubscribeRemoved(fn func(sessionID string)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.removedSubs[id] = fn
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.removedSubs, id)
+	}
 }
 
 // Create opens a session against an endpoint. expectedAccountID guards
@@ -161,8 +211,17 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}
 
-	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize)}
+	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize), pumpDone: make(chan struct{})}
 	m.mu.Lock()
+	if m.destroyed {
+		// Destroy already snapshotted the registry: registering now would
+		// create a session nothing ever closes (an in-flight create request
+		// racing shutdown). Refuse at the owner — HTTP-layer ordering
+		// (srv.Close before Destroy) narrows this window but cannot close it.
+		m.mu.Unlock()
+		_ = transport.Close()
+		return nil, fmt.Errorf("server is shutting down")
+	}
 	m.terminals[sess.SessionID] = mg
 	m.mu.Unlock()
 
@@ -176,7 +235,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	m.mu.Lock()
 	out := *sess
 	m.mu.Unlock()
-	go m.pump(mg)
+	go func() {
+		defer close(mg.pumpDone)
+		m.pump(mg)
+	}()
 	return &out, nil
 }
 
@@ -195,6 +257,9 @@ func (m *Manager) pump(mg *managed) {
 			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
 			return
 		default:
+			if mg.abandoned.Load() {
+				continue // close timed out and moved on; drop, don't refill
+			}
 			mg.output.Append(ev.Data)
 			m.mu.Lock()
 			mg.session.LastActivityAt = m.clk.Now()
@@ -375,11 +440,48 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 		return
 	}
 	_ = mg.transport.Close()
-	mg.output.Clear()
+	// Join the pump: it drains every event the transport already delivered
+	// (appending data and notifying output subscribers, in order) and then
+	// broadcasts Closed itself on the way out — so the Closed broadcast, and
+	// the WS hub's tail drain inside it, always see the complete buffer. The
+	// broadcast also happens BEFORE Clear below: clearing first made the
+	// drain observe the offset rewinding and emit a reset frame that blanked
+	// the client's terminal on every explicit close.
+	joinTimeout, stopTimer := m.clk.After(m.closeJoinTimeout)
+	select {
+	case <-mg.pumpDone:
+		stopTimer()
+	case <-joinTimeout:
+		// Liveness over completeness: the transport broke its contract
+		// (Close must terminate Events). Mark the pump abandoned so it
+		// discards further events instead of refilling the cleared buffer,
+		// and proceed — the tail may be incomplete and the goroutine leaks,
+		// but the janitor, shutdown, and every other close stay unblocked.
+		mg.abandoned.Store(true)
+		slog.Warn("terminal close: pump did not drain in time; proceeding", "session", sessionID)
+	}
+	// On the join path the pump finalized Closed itself; on the timeout path
+	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
+	// Clear and remove in one critical section: no reader can observe a
+	// cleared-but-still-listed session. The removed hooks fire only when THIS
+	// call performed the delete — a concurrent RemoveForAccount may have won,
+	// and each removal must notify exactly once (the WS hub sweep keys on it).
 	m.mu.Lock()
-	delete(m.terminals, sessionID)
+	_, present := m.terminals[sessionID]
+	var removed []func(string)
+	if present {
+		mg.output.Clear()
+		delete(m.terminals, sessionID)
+		removed = make([]func(string), 0, len(m.removedSubs))
+		for _, fn := range m.removedSubs {
+			removed = append(removed, fn)
+		}
+	}
 	m.mu.Unlock()
+	for _, fn := range removed {
+		fn(sessionID)
+	}
 }
 
 // beginClosing atomically checks the status and transitions to closing,
@@ -417,9 +519,7 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 		}
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
-		m.Close(id, reason)
-	}
+	m.closeAll(ids, reason)
 	return len(ids)
 }
 
@@ -430,8 +530,7 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 // this afterwards. Returns the number removed.
 func (m *Manager) RemoveForAccount(accountID string) int {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := 0
+	ids := make([]string, 0)
 	for id, mg := range m.terminals {
 		if mg.session.AccountID != accountID {
 			continue
@@ -439,23 +538,35 @@ func (m *Manager) RemoveForAccount(accountID string) int {
 		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
 			mg.output.Clear()
 			delete(m.terminals, id)
-			n++
+			ids = append(ids, id)
 		}
 	}
-	return n
+	removed := make([]func(string), 0, len(m.removedSubs))
+	for _, fn := range m.removedSubs {
+		removed = append(removed, fn)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		for _, fn := range removed {
+			fn(id)
+		}
+	}
+	return len(ids)
 }
 
-// Destroy closes all sessions (shutdown).
+// Destroy closes all sessions (shutdown) and marks the manager destroyed:
+// the flag is set under the same lock the id snapshot is taken under, so any
+// Create either registered before the snapshot (and is closed here) or
+// observes the flag and refuses — no session can be created after Destroy.
 func (m *Manager) Destroy() {
 	m.mu.Lock()
+	m.destroyed = true
 	ids := make([]string, 0, len(m.terminals))
 	for id := range m.terminals {
 		ids = append(ids, id)
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
-		m.Close(id, CloseShutdown)
-	}
+	m.closeAll(ids, CloseShutdown)
 }
 
 func (m *Manager) get(sessionID string) (*managed, error) {
@@ -475,10 +586,12 @@ func (m *Manager) get(sessionID string) (*managed, error) {
 func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	m.mu.Lock()
 	prev := mg.session.Status
-	// Same-status no-op; closed/error are absorbing — a late transition from
-	// the create or close path must not resurrect a session the pump already
-	// finalized (zombie "open" session with no pump behind it).
-	if prev == status || prev == StatusClosed || prev == StatusError {
+	// Same-status no-op; closed/error are absorbing, and closing absorbs an
+	// Open — Destroy or an account deletion can hit a session between Create
+	// registering it and Create's setStatus(Open), and the session must not
+	// broadcast closing -> open -> closed (a dead session resurrecting).
+	if prev == status || prev == StatusClosed || prev == StatusError ||
+		(prev == StatusClosing && status == StatusOpen) {
 		m.mu.Unlock()
 		return
 	}

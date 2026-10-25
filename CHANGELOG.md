@@ -1,3 +1,69 @@
+## v2.0.0 (unreleased)
+
+### ⚠️ Breaking: the Node backend is replaced by a single Go binary (#210)
+
+ShellWatch's server is now **one static Go binary** that embeds the built web
+UI — the Node/Fastify backend, its drizzle migration runtime, and the patched
+`ssh2` fork are gone. Node.js remains a **build-time** dependency only (the
+SvelteKit client); at runtime there is nothing to install besides the binary
+(or the distroless container image) and Ory Hydra. Everything moved: REST,
+WebSocket, MCP (streamable HTTP, now including server→client
+`output_available` / `session_status` notifications), the SSH broker (passkey
+and file-key signing through human approval, agent forwarding, the
+`/agent-proxy` bridge), WebAuthn ceremonies, Hydra login/consent +
+introspection, the audit log, and Web Push.
+
+**The wire contract is preserved.** [docs/api/](./docs/api/) remained the
+source of truth throughout the port; golden fixtures pin the normalized
+responses byte-for-byte, and the black-box e2e suite (real OpenSSH `sshd`,
+real Hydra) runs against the built binary. The few deliberate divergences are
+catalogued in
+[docs/api/README.md](./docs/api/README.md#known-inconsistencies-found-while-freezing-the-contract).
+One behavioral API change ships with the rewrite: denying a pending action is
+now **idempotent** — `POST /api/actions/:id/deny` answers `200` for every
+no-signature outcome (already denied, or expired just before the deny), with
+`status` reporting the state the store actually asserted.
+
+**Your database is adopted automatically and in place** — same image name,
+same volumes, no flags. On first boot the Go server recognizes the
+Node/drizzle schema, stamps its own migration table, and records the drizzle
+journal head so a rollback to the Node image applies nothing either.
+
+**Hardening:** the port was driven through eight adversarial review rounds,
+and the concurrency/lifecycle invariants now live in the owning components
+instead of call sites: approval resolution is a single atomic claim (no
+double-fired callbacks, no post-TTL signatures — the deadline is enforced at
+the claim, not just by the sweeper), per-session WebSocket frame ordering
+holds by construction (output never follows `terminal:closed` within an
+attachment, and a closing session delivers its final output tail instead of
+dropping it or blanking the terminal), shutdown is strictly ordered (the
+last-used flush is structurally the final database write; no session can be
+created after teardown begins), a wedged SSH teardown can no longer stall the
+idle janitor or shutdown, and every session reaches the append-only audit log
+even when closed mid-create.
+
+**Upgrade steps:**
+
+1. **Back up `./data` before the first Go boot.** Adoption is in-place; the
+   backup is your escape hatch, not part of the procedure.
+2. Pull/deploy the 2.0.0 image (or tarball) — no config changes are required.
+   New optional keys: `sessions.idleTimeoutMinutes` /
+   `sessions.cleanupIntervalSeconds`, and the `HOST` env var for the bind
+   address. One tightening: numeric hop-count `trustProxy` values are
+   rejected — use CIDRs/IPs or `true`.
+3. **Rollback window:** rolling back to the last Node image is safe only
+   until the first release that ships a new database migration; after that,
+   restore the pre-cutover backup instead.
+4. If boot fails fast with a half-migrated-database error, run the last Node
+   image once against the same data directory, let it finish its migrations,
+   then cut over.
+
+See
+[docs/deployment.md](./docs/deployment.md#upgrading-from-the-node-server)
+for the full upgrade story and
+[docs/go-backend-architecture.md](./docs/go-backend-architecture.md) for the
+design rationale.
+
 ## v1.1.0 (2026-06-14)
 
 ### ⚠️ Breaking: Ory Hydra is now the OAuth2/OIDC authority (#217)

@@ -301,13 +301,16 @@ func (e TerminalStatus) Valid() bool {
 
 // Defines values for DenyAction200JSONResponseBodyStatus.
 const (
-	DenyAction200JSONResponseBodyStatusDenied DenyAction200JSONResponseBodyStatus = "denied"
+	DenyAction200JSONResponseBodyStatusDenied  DenyAction200JSONResponseBodyStatus = "denied"
+	DenyAction200JSONResponseBodyStatusExpired DenyAction200JSONResponseBodyStatus = "expired"
 )
 
 // Valid indicates whether the value is a known member of the DenyAction200JSONResponseBodyStatus enum.
 func (e DenyAction200JSONResponseBodyStatus) Valid() bool {
 	switch e {
 	case DenyAction200JSONResponseBodyStatusDenied:
+		return true
+	case DenyAction200JSONResponseBodyStatusExpired:
 		return true
 	default:
 		return false
