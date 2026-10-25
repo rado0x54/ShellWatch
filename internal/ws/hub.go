@@ -94,9 +94,8 @@ func (h *Hub) onStatusChange(ev terminal.StatusEvent) {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
-		if terminalState && c.isAttached(ev.SessionID) {
-			c.send(map[string]any{"type": "terminal:closed", "sessionId": ev.SessionID})
-			c.clearSession(ev.SessionID)
+		if terminalState {
+			c.closeSession(ev.SessionID)
 		}
 		c.send(h.sessionList(c))
 	}

@@ -24,9 +24,11 @@ type conn struct {
 	controlled map[string]bool
 	lastOffset map[string]int64
 
-	// flushMu serializes flushOutput: an attach-time flush and the hub's
-	// coalesced onOutput flush must not both read the same lastOffset and
-	// send the same delta twice.
+	// flushMu orders every per-session frame — flush, attach catch-up,
+	// detach, terminal:closed — by construction: any operation that reads a
+	// session's offset state and enqueues frames for it holds flushMu for the
+	// whole read+enqueue, so no interleaving can duplicate output, resend a
+	// caught-up delta, or enqueue output after the closed frame.
 	flushMu sync.Mutex
 
 	out    chan []byte
@@ -161,7 +163,23 @@ func (c *conn) detach(sessionID string) {
 	c.mu.Unlock()
 }
 
-func (c *conn) clearSession(sessionID string) { c.detach(sessionID) }
+// closeSession delivers terminal:closed and detaches in one flushMu critical
+// section: a hub flush already in flight either finishes before the closed
+// frame or observes the detach and sends nothing — output can never follow
+// the closed frame. No-op when the session isn't attached.
+func (c *conn) closeSession(sessionID string) {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
+	c.mu.Lock()
+	attached := c.attached[sessionID]
+	delete(c.attached, sessionID)
+	delete(c.controlled, sessionID)
+	delete(c.lastOffset, sessionID)
+	c.mu.Unlock()
+	if attached {
+		c.send(map[string]any{"type": "terminal:closed", "sessionId": sessionID})
+	}
+}
 
 func (c *conn) takeControl(sessionID string) {
 	c.mu.Lock()

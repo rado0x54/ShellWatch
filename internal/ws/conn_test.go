@@ -7,6 +7,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,6 +95,7 @@ func TestOverflowDropReleasesWriter(t *testing.T) {
 	s, _ := wsPair(t) // client never reads: TCP backpressure blocks the writer
 	c := newConn(s, "acc")
 	writerDone := c.startWriter(context.Background())
+	t.Cleanup(func() { c.close(); <-writerDone }) // close() is idempotent
 
 	payload := []byte(strings.Repeat("x", 256*1024))
 	for i := 0; i < 4*cap(c.out) && !c.isClosed(); i++ {
@@ -135,9 +137,11 @@ func TestFlushRacesAttachDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { mgr.Close(sess.SessionID, terminal.CloseClientWS) })
 
 	c := newConn(s, "acc")
 	writerDone := c.startWriter(context.Background())
+	t.Cleanup(func() { c.close(); <-writerDone })
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { // the pump side: output + coalesced flushes
@@ -149,16 +153,92 @@ func TestFlushRacesAttachDetach(t *testing.T) {
 			}
 		}
 	}()
-	go func() { // the read-loop side: re-attach / detach cycles
+	go func() { // the read-loop side: re-attach / detach / hub-close cycles
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
 			c.attachWithCatchUp(sess.SessionID, true, 0, [][]byte{[]byte(`{"type":"t"}`)})
 			c.flushOutput(mgr, sess.SessionID)
-			c.detach(sess.SessionID)
+			if i%2 == 0 {
+				c.detach(sess.SessionID)
+			} else {
+				c.closeSession(sess.SessionID)
+			}
 		}
 	}()
 	wg.Wait()
+}
+
+// terminal:closed is ordered against output by flushMu: once the closed frame
+// is enqueued, no in-flight flush may enqueue output for that session after
+// it — the frame sequence a client observes never shows a session producing
+// output past its close.
+func TestNoOutputAfterClosedFrame(t *testing.T) {
+	s, client := wsPair(t)
+	type frame struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+	}
+	frames := make(chan frame, 16384)
+	go func() {
+		defer close(frames)
+		for {
+			_, raw, err := client.Read(context.Background())
+			if err != nil {
+				return
+			}
+			var f frame
+			if json.Unmarshal(raw, &f) == nil {
+				frames <- f
+			}
+		}
+	}()
+
+	mocks := make(chan *terminal.MockTransport, 1)
+	mgr := terminal.NewManager(func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
+		m := terminal.NewMockTransport()
+		mocks <- m
+		return m, nil
+	}, nil, 0)
+	c := newConn(s, "acc")
+	writerDone := c.startWriter(context.Background())
+	t.Cleanup(func() { c.close(); <-writerDone })
+
+	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	for i := 0; i < 100; i++ {
+		sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { mgr.Close(sess.SessionID, terminal.CloseClientWS) })
+		mock := <-mocks
+		c.attachWithCatchUp(sess.SessionID, true, 0, nil)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { // the pump side keeps flushing while the hub closes
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				mock.Push([]byte("x"))
+				c.flushOutput(mgr, sess.SessionID)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			c.closeSession(sess.SessionID)
+		}()
+		wg.Wait()
+	}
 	c.close()
 	<-writerDone
-	mgr.Close(sess.SessionID, terminal.CloseClientWS)
+
+	closed := map[string]bool{}
+	for f := range frames {
+		switch f.Type {
+		case "terminal:closed":
+			closed[f.SessionID] = true
+		case "terminal:output":
+			if closed[f.SessionID] {
+				t.Fatalf("terminal:output enqueued after terminal:closed for %s", f.SessionID)
+			}
+		}
+	}
 }
