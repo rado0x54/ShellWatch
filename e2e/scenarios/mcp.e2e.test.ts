@@ -20,7 +20,7 @@ import { createPasskeyIdentity } from "../harness/identity.js";
 import { loginThirdPartyClient, loginWebUi, selfRegister } from "../harness/oauth.js";
 import { recordScenario } from "../harness/out.js";
 import { waitFor } from "../harness/util.js";
-import type { TestMcpClient } from "../../src/test/helpers/mcp-client.js";
+import type { TestMcpClient } from "../lib/mcp-client.js";
 
 const target: SshdTarget = sshdTargets()[0]!;
 const MCP_REASON = "e2e: verify the tool surface against a real sshd";

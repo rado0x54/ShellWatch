@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const goldensDir = "../../src/test/integration/__goldens__"
+const goldensDir = "../../testdata/goldens"
 
 func TestNormalizationIdempotentOverAllFixtures(t *testing.T) {
 	entries, err := os.ReadDir(goldensDir)

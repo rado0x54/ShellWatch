@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -253,7 +254,7 @@ func TestMetaConfigJSGolden(t *testing.T) {
 		ContentType string `json:"contentType"`
 		Body        string `json:"body"`
 	}
-	raw, _ := os.ReadFile("../../src/test/integration/__goldens__/meta-config-js.json")
+	raw, _ := os.ReadFile(filepath.Join(goldensDir, "meta-config-js.json"))
 	json.Unmarshal(raw, &golden)
 
 	ct := res.Header.Get("Content-Type")

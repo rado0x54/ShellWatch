@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Package golden is the Go side of the cross-language parity oracle
-// (#210/#225): a port of src/test/helpers/golden.ts's normalization. Both
-// implementations must fold volatile values to the same placeholders so they
-// can diff against the same committed fixtures
-// (src/test/integration/__goldens__/*.json). Keep the rule set in lockstep
-// with golden.ts — it is the contract, not an implementation detail.
+// Package golden is the normalization half of the golden parity oracle
+// (#210/#225): volatile values in captured wire responses fold to stable
+// placeholders so a response can be diffed against the committed fixtures in
+// testdata/goldens/*.json. The e2e suite applies the identical rule set
+// (e2e/lib/golden.ts) — it is the contract, not an implementation detail.
 package golden
 
 import (

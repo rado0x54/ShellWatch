@@ -6,9 +6,11 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 const config = {
   preprocess: vitePreprocess(),
   kit: {
+    // The Go server embeds this directory (web/embed.go), so a plain
+    // `go build` after `pnpm build:client` yields a self-contained binary.
     adapter: adapter({
-      pages: "../dist/client",
-      assets: "../dist/client",
+      pages: "../web/dist",
+      assets: "../web/dist",
       fallback: "index.html",
     }),
     alias: {

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Package web embeds the SvelteKit client build so the release binary is
-// fully self-contained (docs/go-backend-architecture.md §2/§5.11).
+// Package web embeds the SvelteKit client build so the binary is fully
+// self-contained (docs/go-backend-architecture.md §2/§5.11).
 //
-// dist/ holds a committed placeholder; a release build copies the SvelteKit
-// output (client/build/*) into dist/ before `go build`. At runtime the
-// -static-dir flag overrides the embedded copy for development.
+// `pnpm build:client` writes the SvelteKit output straight into dist/
+// (client/svelte.config.js); only dist/.gitkeep is tracked. A binary built
+// before the client exists serves no UI (404 for /) but every API still works.
+// At runtime the -static-dir flag overrides the embedded copy for development.
 package web
 
 import (

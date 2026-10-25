@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Skip-identity semantics against a real sshd (#91, #244). When the human
- * denies a signature, the agent answers with a zero-length signature
- * (endpoint-auth) or SSH_AGENT_FAILURE (forwarded / proxied) instead of an
- * error, so the SSH client advances to its next identity rather than aborting.
- * The only way to prove that is a user with TWO authorized keys: deny the
+ * denies a signature, the SSH client advances to its next identity instead of
+ * aborting, and no signed attempt for the denied key reaches sshd: endpoint
+ * auth offers one publickey method per key and drops the denied one; forwarded
+ * and proxied requests answer SSH_AGENT_FAILURE, on which OpenSSH skips the
+ * key. The only way to prove that is a user with TWO authorized keys: deny the
  * first (file key), approve the second (passkey), and the login must succeed —
  * on all three sign paths.
  */
@@ -89,29 +90,22 @@ describe.skipIf(!modernEnabled())(
     }
 
     /**
-     * sshd's view of the skip, which differs per client:
-     *  - "empty-signature": ssh2 (endpoint-auth) sends the zero-length signature
-     *    as a real USERAUTH_REQUEST, which sshd rejects (`Failed publickey …
-     *    ED25519`) before the client moves on.
-     *  - "agent-failure": OpenSSH (forwarded / proxied) gets SSH_AGENT_FAILURE
-     *    from the agent and never sends a signature for that key — sshd only
-     *    sees the probe (`Accepted key … found at authorized_keys:1` +
-     *    `Postponed publickey`), no failure, then the passkey login.
-     * In both cases the file key must not be the key that logged in.
+     * sshd's view of the skip, identical on all three paths: it sees the file
+     * key's probe (`Accepted key … found at authorized_keys:1` + `Postponed
+     * publickey`) but never a signature for it — so no `Failed publickey` for
+     * that key and no login with it — and then the passkey login. A denial
+     * must not burn one of sshd's MaxAuthTries.
      */
-    async function expectSshdSkippedThenAccepted(
-      since: string,
-      mode: "empty-signature" | "agent-failure",
-    ) {
+    async function expectSshdSkippedThenAccepted(since: string) {
       const log = await logsSince(target, since);
       const fp = sc.server.fileKey!.fingerprint.replace(/[+/=]/g, "\\$&");
       expect(log).not.toMatch(new RegExp(`Accepted publickey for ${BOTH} [^\\n]* ED25519 `));
       expect(log).toMatch(
         new RegExp(`Accepted key ED25519 ${fp} found at /home/${BOTH}/.ssh/authorized_keys:1`),
       );
-      const failedFileKey = new RegExp(`Failed publickey for ${BOTH} from [^\\n]* ED25519 ${fp}`);
-      if (mode === "empty-signature") expect(log).toMatch(failedFileKey);
-      else expect(log).not.toMatch(failedFileKey);
+      expect(log).not.toMatch(
+        new RegExp(`Failed publickey for ${BOTH} from [^\\n]* ED25519 ${fp}`),
+      );
       expect(log).toMatch(
         new RegExp(`Accepted publickey for ${BOTH} from [^\\n]* ECDSA-SK SHA256:`),
       );
@@ -140,7 +134,7 @@ describe.skipIf(!modernEnabled())(
         await ws.attach(sid);
         await waitForPrompt(ws, sid);
         await run(ws, sid, "echo USER=$(whoami)", new RegExp(`USER=${BOTH}`));
-        await expectSshdSkippedThenAccepted(since, "empty-signature");
+        await expectSshdSkippedThenAccepted(since);
       } finally {
         await sc.api.delete(`/api/sessions/${sid}`);
       }
@@ -182,7 +176,7 @@ describe.skipIf(!modernEnabled())(
         expect(out).toMatch(/HOP=4/);
         expect(out).toMatch(/HOP-RC=0/);
         await expectDenyThenApprove(approvals, "agent-forwarding");
-        await expectSshdSkippedThenAccepted(since, "agent-failure");
+        await expectSshdSkippedThenAccepted(since);
       } finally {
         await sc.api.delete(`/api/sessions/${sid}`);
       }
@@ -215,7 +209,7 @@ describe.skipIf(!modernEnabled())(
         expect(result.code, result.stderr).toBe(0);
         expect(result.stdout).toContain("PROXY=6");
         await expectDenyThenApprove(approvals, "agent-proxy");
-        await expectSshdSkippedThenAccepted(since, "agent-failure");
+        await expectSshdSkippedThenAccepted(since);
       },
     );
   },

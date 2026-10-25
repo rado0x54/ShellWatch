@@ -21,7 +21,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/golden"
 )
 
-const goldensDir = "../../src/test/integration/__goldens__"
+const goldensDir = "../../testdata/goldens"
 
 // externalURL is pinned like the Node golden suite pins it, so discovery
 // bodies are stable independent of the per-run listen port.
