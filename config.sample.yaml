@@ -19,7 +19,6 @@ server:
   # X-Forwarded-For. Always prefer the CIDR form for production.
   # trustProxy: ["10.0.0.0/8", "172.16.0.0/12"]
   # trustProxy: "127.0.0.1"
-  # trustProxy: 1                                     # number of hops to trust
   # trustProxy: true                                  # trust all hops (only if network is trusted)
 
 # Directory containing SSH private key files (.pem)
