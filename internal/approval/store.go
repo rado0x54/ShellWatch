@@ -211,20 +211,25 @@ func (s *Store) Create(p CreateParams) *Action {
 	return a
 }
 
-// Get returns an action snapshot pointer (nil when absent).
+// Get returns an action snapshot copy (nil when absent) — callers read
+// fields without the store lock, while Status transitions happen under it.
 func (s *Store) Get(id string) *Action {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.actions[id]
+	a, ok := s.actions[id]
+	if !ok {
+		return nil
+	}
+	cp := *a
+	return &cp
 }
 
 // ResolveSign completes a webauthn-sign action with a browser assertion.
 func (s *Store) ResolveSign(id string, resp signing.SignResponse) bool {
-	a := s.takePending(id)
-	if a == nil || a.Type != TypeWebAuthnSign {
+	a := s.takePending(id, TypeWebAuthnSign, StatusCompleted)
+	if a == nil {
 		return false
 	}
-	a.Status = StatusCompleted
 	if a.resolveSign != nil {
 		a.resolveSign(resp)
 	}
@@ -234,11 +239,10 @@ func (s *Store) ResolveSign(id string, resp signing.SignResponse) bool {
 
 // ResolveKey completes a key-approve action.
 func (s *Store) ResolveKey(id string) bool {
-	a := s.takePending(id)
-	if a == nil || a.Type != TypeKeyApprove {
+	a := s.takePending(id, TypeKeyApprove, StatusCompleted)
+	if a == nil {
 		return false
 	}
-	a.Status = StatusCompleted
 	if a.resolveKey != nil {
 		a.resolveKey()
 	}
@@ -248,11 +252,10 @@ func (s *Store) ResolveKey(id string) bool {
 
 // Deny rejects an action (the signer sees a sign failure -> tries next key).
 func (s *Store) Deny(id string) bool {
-	a := s.takePending(id)
+	a := s.takePending(id, "", StatusDenied)
 	if a == nil {
 		return false
 	}
-	a.Status = StatusDenied
 	if a.reject != nil {
 		a.reject(ErrDenied)
 	}
@@ -317,13 +320,20 @@ func (s *Store) Sweep() {
 	}
 }
 
-func (s *Store) takePending(id string) *Action {
+// takePending atomically claims a pending action: the terminal status
+// transition happens under the lock, so of several concurrent resolvers
+// (double-submit, resolve racing deny, resolve racing the sweep) exactly one
+// wins and the rest see nil — the resolution callbacks (1-buffered broker
+// channels, consumed once) therefore fire at most once per action. typ
+// restricts the claim to one action kind ("" accepts any).
+func (s *Store) takePending(id string, typ ActionType, to Status) *Action {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.actions[id]
-	if !ok || a.Status != StatusPending {
+	if !ok || a.Status != StatusPending || (typ != "" && a.Type != typ) {
 		return nil
 	}
+	a.Status = to
 	return a
 }
 

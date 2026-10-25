@@ -3,6 +3,8 @@ package approval
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,5 +116,62 @@ func TestBrokerCancelUnblocksBackgroundAwaiter(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("awaiter still blocked after connection cancel — goroutine leak")
+	}
+}
+
+// Regression: the pending->terminal transition must be claimed under the
+// store lock. Concurrent resolve + deny (double-submit, two tabs on
+// /sign/:id, or a resolve racing the TTL sweep) used to both see "pending"
+// and both fire their callback — the broker's channels are 1-buffered and
+// consumed once, so the second send blocked its HTTP handler forever.
+func TestStoreConcurrentResolveDenyFiresOnce(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		s, _ := newStore(t)
+		var resolved, rejected, events, wins atomic.Int32
+		s.OnResolved(func(ResolvedEvent) { events.Add(1) })
+		a := s.Create(CreateParams{AccountID: "acc", Type: TypeKeyApprove,
+			ResolveKey: func() { resolved.Add(1) },
+			Reject:     func(error) { rejected.Add(1) },
+		})
+
+		var wg sync.WaitGroup
+		for j := 0; j < 4; j++ {
+			approve := j%2 == 0
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if approve {
+					if s.ResolveKey(a.ID) {
+						wins.Add(1)
+					}
+				} else if s.Deny(a.ID) {
+					wins.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		if wins.Load() != 1 {
+			t.Fatalf("round %d: %d resolvers won, want exactly 1", i, wins.Load())
+		}
+		if got := resolved.Load() + rejected.Load(); got != 1 {
+			t.Fatalf("round %d: %d callbacks fired, want exactly 1", i, got)
+		}
+		if events.Load() != 1 {
+			t.Fatalf("round %d: %d resolved events, want exactly 1", i, events.Load())
+		}
+	}
+}
+
+// A type-mismatched resolve must not claim the action: the real resolver of
+// the right kind still wins afterwards.
+func TestStoreResolveTypeMismatchDoesNotClaim(t *testing.T) {
+	s, _ := newStore(t)
+	a := s.Create(CreateParams{AccountID: "acc", Type: TypeWebAuthnSign,
+		ResolveSign: func(signing.SignResponse) {}})
+	if s.ResolveKey(a.ID) {
+		t.Fatal("key-approve resolve must not complete a webauthn-sign action")
+	}
+	if !s.ResolveSign(a.ID, signing.SignResponse{}) {
+		t.Fatal("action must still be pending after the mismatched resolve")
 	}
 }

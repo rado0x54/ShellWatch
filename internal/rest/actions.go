@@ -77,12 +77,12 @@ func (a *Actions) resolve(w http.ResponseWriter, r *http.Request) {
 		if !a.Store.ResolveSign(action.ID, signing.SignResponse{
 			AuthenticatorData: authData, Signature: sig, ClientDataJSON: cdj,
 		}) {
-			writeErr(w, 409, "Action is already "+string(action.Status))
+			writeErr(w, 409, "Action is already "+string(a.currentStatus(action.ID)))
 			return
 		}
 	case approval.TypeKeyApprove:
 		if !a.Store.ResolveKey(action.ID) {
-			writeErr(w, 409, "Action is already "+string(action.Status))
+			writeErr(w, 409, "Action is already "+string(a.currentStatus(action.ID)))
 			return
 		}
 	}
@@ -101,6 +101,16 @@ func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Store.Deny(action.ID)
 	writeJSON(w, 200, map[string]any{"status": "denied"})
+}
+
+// currentStatus re-reads an action's status after a lost resolve race: the
+// pre-check snapshot saw pending, another resolver claimed the action in
+// between, and the 409 should name the state it actually ended in.
+func (a *Actions) currentStatus(id string) approval.Status {
+	if cur := a.Store.Get(id); cur != nil {
+		return cur.Status
+	}
+	return approval.StatusExpired // swept away: TTL passed long ago
 }
 
 // actionView is the client-safe projection (excludes resolve/reject closures).
