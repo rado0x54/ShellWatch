@@ -68,7 +68,9 @@ func (h *Hub) onRemoved(sessionID string) {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
-		c.closeSession(h.mgr, sessionID)
+		if c.isAttached(sessionID) { // cheap prefilter: don't take flushMu on bystanders
+			c.closeSession(h.mgr, sessionID)
+		}
 	}
 }
 
