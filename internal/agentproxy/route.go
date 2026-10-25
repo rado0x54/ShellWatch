@@ -68,12 +68,16 @@ func (d *Deps) Handler() http.HandlerFunc {
 			return
 		}
 
-		ba := signagent.New(ctx, identities, d.Broker, principal.AccountID, connID, approval.Context{
-			Source:         "agent-proxy",
-			SourceIP:       realip.FromRequest(r),
-			ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
-			ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
-			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
+		ba := signagent.New(ctx, signagent.Params{
+			Identities: identities, Broker: d.Broker,
+			AccountID: principal.AccountID, ConnectionID: connID,
+			ActionCtx: approval.Context{
+				Source:         "agent-proxy",
+				SourceIP:       realip.FromRequest(r),
+				ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
+				ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
+				ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
+			},
 		})
 
 		// Cancel stranded approvals when the connection ends (+ clear toasts).

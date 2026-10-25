@@ -235,9 +235,10 @@ func (p PasskeyFactoryParams) buildForwardingAgent(fp terminal.FactoryParams, co
 		EndpointAddress: fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
 		SessionID:       fp.SessionID,
 	}
-	ag := signagent.New(ctx, identities, p.BrokerFunc(), fp.Endpoint.AccountID, connID, actionCtx)
-	ag.RedirectTo = sessionRedirect(fp.SessionID)
-	return ag
+	return signagent.New(ctx, signagent.Params{
+		Identities: identities, Broker: p.BrokerFunc(), AccountID: fp.Endpoint.AccountID,
+		ConnectionID: connID, ActionCtx: actionCtx, RedirectTo: sessionRedirect(fp.SessionID),
+	})
 }
 
 // sessionRedirect is the /sign page's post-approval destination for a sign

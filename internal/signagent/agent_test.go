@@ -38,8 +38,11 @@ func TestAgentRoutesFileKeyThroughApproval(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	signer, _ := ssh.NewSignerFromKey(priv)
 	fb := &fakeBroker{}
-	a := New(context.Background(), []Identity{{Signer: signer, Label: "file key"}}, fb,
-		"acc", "conn", approval.Context{Source: "agent-forwarding", SessionID: "sess_1"})
+	a := New(context.Background(), Params{
+		Identities: []Identity{{Signer: signer, Label: "file key"}}, Broker: fb,
+		AccountID: "acc", ConnectionID: "conn",
+		ActionCtx: approval.Context{Source: "agent-forwarding", SessionID: "sess_1"},
+	})
 
 	keys, _ := a.List()
 	if len(keys) != 1 {
@@ -64,8 +67,10 @@ func TestPasskeyIdentitySignRoutesToBroker(t *testing.T) {
 		t.Fatalf("PasskeyIdentity: %+v", id)
 	}
 	fb := &fakeBroker{}
-	a := New(context.Background(), []Identity{id}, fb, "acc", "conn",
-		approval.Context{Source: "agent-forwarding"})
+	a := New(context.Background(), Params{
+		Identities: []Identity{id}, Broker: fb, AccountID: "acc", ConnectionID: "conn",
+		ActionCtx: approval.Context{Source: "agent-forwarding"},
+	})
 	// The downstream BuildSSHSignature is exercised elsewhere; here we only care
 	// that the passkey sign was routed to the broker with the forwarding context.
 	_, _ = a.Sign(id.PublicKey, []byte("data"))
@@ -88,8 +93,10 @@ func TestSignWithFlagsHonorsRsaSha2(t *testing.T) {
 		t.Fatal(err)
 	}
 	fb := &fakeBroker{}
-	a := New(context.Background(), []Identity{{Signer: signer, Label: "rsa key"}}, fb,
-		"acc", "conn", approval.Context{Source: "agent-proxy"})
+	a := New(context.Background(), Params{
+		Identities: []Identity{{Signer: signer, Label: "rsa key"}}, Broker: fb,
+		AccountID: "acc", ConnectionID: "conn", ActionCtx: approval.Context{Source: "agent-proxy"},
+	})
 
 	data := []byte("payload")
 	sig, err := a.SignWithFlags(signer.PublicKey(), data, agent.SignatureFlagRsaSha256)

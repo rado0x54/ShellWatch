@@ -234,11 +234,22 @@ type SelfRegisterResult struct {
 	Label           string
 }
 
+// SelfRegisterParams carries the atomic account+credential create's inputs
+// (5+ args -> params struct, per the repo convention). NewAccountID/NewCredID
+// are injected by the caller.
+type SelfRegisterParams struct {
+	Name           string
+	Credential     DecodedCredential
+	SelfRegEnabled bool
+	NewAccountID   string
+	NewCredID      string
+}
+
 // SelfRegister creates (or adopts the seeded admin) account and inserts the
-// first credential atomically (self-register.ts). newAccountID/newCredID are
-// injected. Returns nil if self-registration is disabled and the system is
-// already bootstrapped (the caller 403s).
-func (c *Credentials) SelfRegister(ctx context.Context, name string, dec DecodedCredential, selfRegEnabled bool, newAccountID, newCredID string) (*SelfRegisterResult, error) {
+// first credential atomically (self-register.ts). Returns nil if
+// self-registration is disabled and the system is already bootstrapped (the
+// caller 403s).
+func (c *Credentials) SelfRegister(ctx context.Context, p SelfRegisterParams) (*SelfRegisterResult, error) {
 	var res *SelfRegisterResult
 	err := WithTx(ctx, c.db, func(tx *sql.Tx) error {
 		q := gen.New(tx)
@@ -248,7 +259,7 @@ func (c *Credentials) SelfRegister(ctx context.Context, name string, dec Decoded
 			return err
 		}
 		bootstrapped := has
-		if !selfRegEnabled && bootstrapped {
+		if !p.SelfRegEnabled && bootstrapped {
 			return nil // res stays nil -> disabled
 		}
 
@@ -260,11 +271,11 @@ func (c *Credentials) SelfRegister(ctx context.Context, name string, dec Decoded
 			// Onboarding: adopt the seeded admin (its canonical name wins).
 			accountID = adminID
 		} else {
-			accountID = newAccountID
+			accountID = p.NewAccountID
 			now := c.nowISO()
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO accounts (id, name, enabled, max_sessions, last_used_at, created_at, updated_at)
-				 VALUES (?, ?, 1, 5, ?, ?, ?)`, accountID, name, now, now, now); err != nil {
+				 VALUES (?, ?, 1, 5, ?, ?, ?)`, accountID, p.Name, now, now, now); err != nil {
 				return err
 			}
 			if !hasAdmin {
@@ -276,7 +287,7 @@ func (c *Credentials) SelfRegister(ctx context.Context, name string, dec Decoded
 			}
 		}
 
-		ins, err := c.insertTx(ctx, tx, accountID, dec, CredentialStateActive, newCredID)
+		ins, err := c.insertTx(ctx, tx, accountID, p.Credential, CredentialStateActive, p.NewCredID)
 		if err != nil {
 			return err
 		}

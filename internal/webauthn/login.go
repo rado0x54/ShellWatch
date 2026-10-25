@@ -94,8 +94,10 @@ func (d *Deps) VerifyLogin(ctx context.Context, challengeID, credentialID string
 	if stored.State != store.CredentialStateActive {
 		return LoginResult{Status: 403, Error: "This passkey is awaiting confirmation on the original device"}
 	}
-	res, err := VerifyAssertion(rawCredential, challenge, d.RpID, d.TrustedOrigins,
-		stored.PublicKeyCOSE, stored.Counter)
+	res, err := VerifyAssertion(AssertionParams{
+		RawCredential: rawCredential, Challenge: challenge, RpID: d.RpID, Origins: d.TrustedOrigins,
+		StoredCOSE: stored.PublicKeyCOSE, StoredCounter: stored.Counter,
+	})
 	if err != nil {
 		return LoginResult{Status: 400, Error: err.Error()}
 	}

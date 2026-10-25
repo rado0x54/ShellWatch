@@ -48,10 +48,7 @@ type Agent struct {
 	accountID    string
 	connectionID string
 	actionCtx    approval.Context
-	// RedirectTo is handed to every approval this agent raises: where the
-	// /sign page sends the approver afterwards (the parent session for agent
-	// forwarding; empty for the agent proxy).
-	RedirectTo string
+	redirectTo   string
 	// signMu serializes approvals: agent forwarding serves each auth-agent
 	// channel in its own goroutine (x/crypto's ForwardToAgent), so without this
 	// a remote offering several keys would pop every approval toast at once.
@@ -59,10 +56,27 @@ type Agent struct {
 	signMu sync.Mutex
 }
 
-// New builds a broker-backed agent. actionCtx carries the source (agent-proxy /
-// agent-forwarding) and endpoint/session metadata surfaced on the /sign page.
-func New(ctx context.Context, identities []Identity, broker Broker, accountID, connectionID string, actionCtx approval.Context) *Agent {
-	return &Agent{ctx: ctx, identities: identities, broker: broker, accountID: accountID, connectionID: connectionID, actionCtx: actionCtx}
+// Params carries the agent's wiring (5+ args -> params struct, per the repo
+// convention). ActionCtx carries the source (agent-proxy / agent-forwarding)
+// and endpoint/session metadata surfaced on the /sign page.
+type Params struct {
+	Identities   []Identity
+	Broker       Broker
+	AccountID    string
+	ConnectionID string
+	ActionCtx    approval.Context
+	// RedirectTo is handed to every approval this agent raises: where the
+	// /sign page sends the approver afterwards (the parent session for agent
+	// forwarding; empty for the agent proxy).
+	RedirectTo string
+}
+
+// New builds a broker-backed agent.
+func New(ctx context.Context, p Params) *Agent {
+	return &Agent{
+		ctx: ctx, identities: p.Identities, broker: p.Broker, accountID: p.AccountID,
+		connectionID: p.ConnectionID, actionCtx: p.ActionCtx, redirectTo: p.RedirectTo,
+	}
 }
 
 var _ agent.Agent = (*Agent)(nil)
@@ -114,7 +128,7 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 		resp, err := a.broker.RequestSign(a.ctx, a.accountID, signing.SignRequest{
 			CredentialID: id.CredentialID, DataToSign: data, RpID: id.RpID, PasskeyLabel: id.Label,
 			ConnectionID: a.connectionID,
-		}, a.actionCtx, a.RedirectTo)
+		}, a.actionCtx, a.redirectTo)
 		if err != nil {
 			return nil, err
 		}
@@ -123,7 +137,7 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 	fp := ssh.FingerprintSHA256(id.Signer.PublicKey())
 	if err := a.broker.RequestKeyApproval(a.ctx, approval.KeyApproval{
 		AccountID: a.accountID, KeyLabel: id.Label, KeyFingerprint: fp, ConnectionID: a.connectionID,
-		Context: a.actionCtx, RedirectTo: a.RedirectTo,
+		Context: a.actionCtx, RedirectTo: a.redirectTo,
 	}); err != nil {
 		return nil, err
 	}

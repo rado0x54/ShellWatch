@@ -84,16 +84,28 @@ type AssertionResult struct {
 	NewCounter   uint32
 }
 
+// AssertionParams carries everything VerifyAssertion needs (5+ args ->
+// params struct, per the repo convention).
+type AssertionParams struct {
+	RawCredential []byte
+	Challenge     string
+	RpID          string
+	Origins       []string
+	// Stored credential state the assertion is checked against.
+	StoredCOSE    []byte
+	StoredCounter uint32
+}
+
 // VerifyAssertion verifies an authentication response against a stored
 // credential's COSE public key (stepup.ts verifyAuthenticationResponse). UV
 // required; returns the bumped counter.
-func VerifyAssertion(rawCredential []byte, challenge, rpID string, origins []string, storedCOSE []byte, storedCounter uint32) (*AssertionResult, error) {
-	pca, err := protocol.ParseCredentialRequestResponseBytes(rawCredential)
+func VerifyAssertion(p AssertionParams) (*AssertionResult, error) {
+	pca, err := protocol.ParseCredentialRequestResponseBytes(p.RawCredential)
 	if err != nil {
 		return nil, fmt.Errorf("parse assertion: %w", err)
 	}
-	if err := pca.Verify(challenge, rpID, "", origins, nil, nil,
-		protocol.TopOriginDefaultVerificationMode, false, true, true, storedCOSE,
+	if err := pca.Verify(p.Challenge, p.RpID, "", p.Origins, nil, nil,
+		protocol.TopOriginDefaultVerificationMode, false, true, true, p.StoredCOSE,
 		defaultSignaturePolicy); err != nil {
 		return nil, fmt.Errorf("verification failed: %w", err)
 	}
@@ -102,10 +114,10 @@ func VerifyAssertion(rawCredential []byte, challenge, rpID string, origins []str
 	// counter must strictly increase — a regression means a cloned/replayed
 	// authenticator. Same rule + wording as @simplewebauthn (assertion.ts).
 	responseCounter := pca.Response.AuthenticatorData.Counter
-	if responseCounter > 0 || storedCounter > 0 {
-		if responseCounter <= storedCounter {
+	if responseCounter > 0 || p.StoredCounter > 0 {
+		if responseCounter <= p.StoredCounter {
 			return nil, fmt.Errorf("verification failed: response counter value %d was lower than expected %d",
-				responseCounter, storedCounter)
+				responseCounter, p.StoredCounter)
 		}
 	}
 	return &AssertionResult{
