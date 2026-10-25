@@ -312,7 +312,8 @@ func run() error {
 
 	select {
 	case err := <-errCh:
-		stop() // cancel the root ctx so the janitors and the flusher exit
+		stop()            // cancel the root ctx so the janitors and the flusher exit
+		manager.Destroy() // close open PTYs cleanly + write their session-close audit rows
 		<-flusherDone
 		flusher.CloseAndFlush(context.Background())
 		return err
