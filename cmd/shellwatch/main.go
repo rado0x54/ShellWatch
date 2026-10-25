@@ -317,15 +317,17 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
-	// Ordered shutdown (§5.1): stop accepting HTTP, close all terminals, then
-	// JOIN the flusher's final last-used flush (flusher.Run's ctx-done path)
-	// before the deferred db.Close — unjoined, the flush raced the close and
-	// the last minute of activity timestamps was lost on SIGTERM.
+	// Ordered shutdown (§5.1): stop accepting HTTP, close all terminals, join
+	// the flusher, then flush ONCE MORE before the deferred db.Close — the
+	// flusher's own final flush fires on the signal, before srv.Shutdown has
+	// drained in-flight requests, so their Touch() calls land in a dirty map
+	// only this trailing flush captures.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = srv.Shutdown(shutdownCtx)
 	manager.Destroy()
 	<-flusherDone
+	flusher.Flush(context.Background())
 	return err
 }
 
