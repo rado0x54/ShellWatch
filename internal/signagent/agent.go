@@ -83,6 +83,26 @@ func (a *Agent) List() ([]*agent.Key, error) {
 }
 
 func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	return a.sign(key, data, "")
+}
+
+// SignWithFlags honors the rsa-sha2 flags a client sets when the server
+// negotiated rsa-sha2-256/512 — discarding them would hand back an
+// ssh-rsa/SHA-1 signature the server then rejects (OpenSSH >= 8.8 default).
+// Flags apply to RSA keys only (ssh-agent semantics); other key types sign
+// with their sole algorithm.
+func (a *Agent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	algorithm := ""
+	switch {
+	case flags&agent.SignatureFlagRsaSha512 != 0:
+		algorithm = ssh.KeyAlgoRSASHA512
+	case flags&agent.SignatureFlagRsaSha256 != 0:
+		algorithm = ssh.KeyAlgoRSASHA256
+	}
+	return a.sign(key, data, algorithm)
+}
+
+func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Signature, error) {
 	id := a.match(key)
 	if id == nil {
 		return nil, fmt.Errorf("agent: key not found")
@@ -106,6 +126,11 @@ func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 		Context: a.actionCtx, RedirectTo: a.RedirectTo,
 	}); err != nil {
 		return nil, err
+	}
+	if algorithm != "" && id.Signer.PublicKey().Type() == ssh.KeyAlgoRSA {
+		if as, ok := id.Signer.(ssh.AlgorithmSigner); ok {
+			return as.SignWithAlgorithm(nil, data, algorithm)
+		}
 	}
 	return id.Signer.Sign(nil, data)
 }
@@ -152,10 +177,6 @@ func canonicalizeSK(blob []byte) []byte {
 	out = append(out, sk...)
 	out = append(out, rest...)
 	return out
-}
-
-func (a *Agent) SignWithFlags(key ssh.PublicKey, data []byte, _ agent.SignatureFlags) (*ssh.Signature, error) {
-	return a.Sign(key, data)
 }
 
 func (a *Agent) Add(agent.AddedKey) error       { return errReadOnly }

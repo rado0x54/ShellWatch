@@ -31,19 +31,59 @@ type approvedFileKeySigner struct {
 
 var _ ssh.Signer = (*approvedFileKeySigner)(nil)
 
+// newApprovedFileKeySigner wraps s preserving the AlgorithmSigner /
+// MultiAlgorithmSigner capabilities x/crypto type-asserts (same pattern as
+// wrapRecording in auth.go): wrapped as a plain Signer, an RSA key would be
+// forced down to ssh-rsa/SHA-1, which OpenSSH >= 8.8 rejects by default —
+// auth would fail even after the human approved.
+func newApprovedFileKeySigner(s *approvedFileKeySigner) ssh.Signer {
+	if ms, ok := s.signer.(ssh.MultiAlgorithmSigner); ok {
+		return &approvedFileKeyMultiSigner{approvedFileKeyAlgoSigner{s, ms}, ms}
+	}
+	if as, ok := s.signer.(ssh.AlgorithmSigner); ok {
+		return &approvedFileKeyAlgoSigner{s, as}
+	}
+	return s
+}
+
 func (s *approvedFileKeySigner) PublicKey() ssh.PublicKey { return s.signer.PublicKey() }
 
-func (s *approvedFileKeySigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+// approve blocks on the human key-approve action; any rejection is returned
+// as a plain signer error (x/crypto falls through to the next key).
+func (s *approvedFileKeySigner) approve() error {
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	fp := ssh.FingerprintSHA256(s.signer.PublicKey())
-	if err := s.broker.RequestKeyApproval(ctx, approval.KeyApproval{
+	return s.broker.RequestKeyApproval(ctx, approval.KeyApproval{
 		AccountID: s.accountID, KeyLabel: s.label, KeyFingerprint: fp, ConnectionID: s.connectionID,
 		Context: s.actionCtx, RedirectTo: s.redirectTo,
-	}); err != nil {
+	})
+}
+
+func (s *approvedFileKeySigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	if err := s.approve(); err != nil {
 		return nil, err
 	}
 	return s.signer.Sign(rand, data)
 }
+
+type approvedFileKeyAlgoSigner struct {
+	*approvedFileKeySigner
+	as ssh.AlgorithmSigner
+}
+
+func (s *approvedFileKeyAlgoSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	if err := s.approve(); err != nil {
+		return nil, err
+	}
+	return s.as.SignWithAlgorithm(rand, data, algorithm)
+}
+
+type approvedFileKeyMultiSigner struct {
+	approvedFileKeyAlgoSigner
+	ms ssh.MultiAlgorithmSigner
+}
+
+func (s *approvedFileKeyMultiSigner) Algorithms() []string { return s.ms.Algorithms() }

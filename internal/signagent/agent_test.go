@@ -4,9 +4,12 @@ package signagent
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/signing"
@@ -69,4 +72,49 @@ func TestPasskeyIdentitySignRoutesToBroker(t *testing.T) {
 	if !fb.signed || fb.signCtx.Source != "agent-forwarding" {
 		t.Errorf("passkey sign should route through RequestSign with agent-forwarding ctx: %+v", fb.signCtx)
 	}
+}
+
+// Regression: SignWithFlags used to discard the rsa-sha2 flags, handing back
+// an ssh-rsa/SHA-1 signature that OpenSSH >= 8.8 rejects by default — RSA
+// file keys failed even after human approval. Flags must map to the
+// rsa-sha2-256/512 algorithms; keys with a single algorithm are unaffected.
+func TestSignWithFlagsHonorsRsaSha2(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := &fakeBroker{}
+	a := New(context.Background(), []Identity{{Signer: signer, Label: "rsa key"}}, fb,
+		"acc", "conn", approval.Context{Source: "agent-proxy"})
+
+	data := []byte("payload")
+	sig, err := a.SignWithFlags(signer.PublicKey(), data, agent.SignatureFlagRsaSha256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Fatalf("signature format %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
+	}
+	if !fb.approved {
+		t.Fatal("flagged sign skipped the human approval")
+	}
+	if err := verifyWithAlgo(signer.PublicKey(), data, sig); err != nil {
+		t.Fatalf("rsa-sha2-256 signature invalid: %v", err)
+	}
+
+	sig512, err := a.SignWithFlags(signer.PublicKey(), data, agent.SignatureFlagRsaSha512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig512.Format != ssh.KeyAlgoRSASHA512 {
+		t.Fatalf("signature format %q, want %q", sig512.Format, ssh.KeyAlgoRSASHA512)
+	}
+}
+
+func verifyWithAlgo(pub ssh.PublicKey, data []byte, sig *ssh.Signature) error {
+	return pub.Verify(data, sig)
 }

@@ -7,7 +7,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -69,6 +71,22 @@ func fileKeyParams(t *testing.T, isAdmin bool, actionStore *approval.Store) (Pas
 	}, signer
 }
 
+// unwrapFileKeySigner peels the algorithm-preserving wrappers off the
+// approval gate (newApprovedFileKeySigner) for white-box assertions.
+func unwrapFileKeySigner(t *testing.T, s ssh.Signer) *approvedFileKeySigner {
+	t.Helper()
+	switch v := s.(type) {
+	case *approvedFileKeySigner:
+		return v
+	case *approvedFileKeyAlgoSigner:
+		return v.approvedFileKeySigner
+	case *approvedFileKeyMultiSigner:
+		return v.approvedFileKeySigner
+	}
+	t.Fatalf("signer is %T, want an approved file-key signer", s)
+	return nil
+}
+
 func endpointFP() terminal.FactoryParams {
 	return terminal.FactoryParams{
 		Endpoint: terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22,
@@ -100,10 +118,7 @@ func TestFileKeySelectionAdminEnabledOnDisk(t *testing.T) {
 	if len(signers) != 1 {
 		t.Fatalf("expected 1 signer, got %d", len(signers))
 	}
-	fk, ok := signers[0].(*approvedFileKeySigner)
-	if !ok {
-		t.Fatalf("signer is %T, want *approvedFileKeySigner", signers[0])
-	}
+	fk := unwrapFileKeySigner(t, signers[0])
 	if fk.label != "Deploy Key" || fk.accountID != "acc" || fk.connectionID != "conn-1" {
 		t.Errorf("signer wiring: %+v", fk)
 	}
@@ -116,7 +131,7 @@ func TestFileKeySignRequiresApproval(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, signer := fileKeyParams(t, true, actionStore)
 	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
-	fk := signers[0].(*approvedFileKeySigner)
+	fk := signers[0]
 
 	// Approve path: the pending key-approve action resolves -> real signature.
 	go func() {
@@ -176,7 +191,7 @@ func TestFileKeyDenyReturnsError(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, true, actionStore)
 	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
-	fk := signers[0].(*approvedFileKeySigner)
+	fk := signers[0]
 
 	go func() {
 		deadline := time.Now().Add(3 * time.Second)
@@ -190,5 +205,56 @@ func TestFileKeyDenyReturnsError(t *testing.T) {
 	}()
 	if _, err := fk.Sign(rand.Reader, []byte("payload")); !errors.Is(err, approval.ErrDenied) {
 		t.Fatalf("deny must return ErrDenied, got %v", err)
+	}
+}
+
+// The approval wrapper must preserve x/crypto's AlgorithmSigner /
+// MultiAlgorithmSigner type-assertions: wrapped as a plain Signer, an RSA
+// file key is forced down to ssh-rsa/SHA-1, which OpenSSH >= 8.8 rejects by
+// default — auth would fail even after the human approved (review finding).
+func TestFileKeySignerPreservesRSAAlgorithms(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := newApprovedFileKeySigner(&approvedFileKeySigner{signer: signer, broker: stubKeyBroker{err: nil}, label: "rsa"})
+
+	as, ok := wrapped.(ssh.AlgorithmSigner)
+	if !ok {
+		t.Fatalf("wrapped RSA signer is %T — not an AlgorithmSigner, x/crypto would downgrade to ssh-rsa/SHA-1", wrapped)
+	}
+	data := []byte("payload")
+	sig, err := as.SignWithAlgorithm(rand.Reader, data, ssh.KeyAlgoRSASHA256)
+	if err != nil {
+		t.Fatalf("SignWithAlgorithm: %v", err)
+	}
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Fatalf("signature format %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
+	}
+	if ms, ok := wrapped.(ssh.MultiAlgorithmSigner); ok {
+		if !slices.Contains(ms.Algorithms(), ssh.KeyAlgoRSASHA256) {
+			t.Fatalf("Algorithms() = %v, missing %s", ms.Algorithms(), ssh.KeyAlgoRSASHA256)
+		}
+	}
+}
+
+// A denied approval must gate the algorithm-signing path exactly like Sign.
+func TestFileKeySignWithAlgorithmRequiresApproval(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := newApprovedFileKeySigner(&approvedFileKeySigner{signer: signer, broker: stubKeyBroker{err: approval.ErrDenied}, label: "rsa"})
+	as := wrapped.(ssh.AlgorithmSigner)
+	if _, err := as.SignWithAlgorithm(rand.Reader, []byte("payload"), ssh.KeyAlgoRSASHA256); !errors.Is(err, approval.ErrDenied) {
+		t.Fatalf("denied SignWithAlgorithm must return ErrDenied, got %v", err)
 	}
 }

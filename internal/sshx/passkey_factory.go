@@ -178,10 +178,10 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 	// ceremony. Every file-key sign is approval-gated (H2) and the set is
 	// admin-only + enabled + on-disk (H3, fileKeysFor).
 	for _, fk := range fileKeys {
-		signers = append(signers, &approvedFileKeySigner{
+		signers = append(signers, newApprovedFileKeySigner(&approvedFileKeySigner{
 			signer: fk.signer, broker: p.BrokerFunc(), accountID: fp.Endpoint.AccountID,
 			label: fk.label, connectionID: connID, actionCtx: actionCtx, redirectTo: redirectTo, ctx: ctx,
-		})
+		}))
 	}
 
 	for _, c := range creds {
