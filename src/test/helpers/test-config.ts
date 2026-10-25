@@ -15,6 +15,7 @@ const defaults: Config = {
   },
   notifications: { mcp: { debounceMs: 50 } },
   agentSocket: { proxyEnabled: false },
+  sessions: { idleTimeoutMinutes: 30, cleanupIntervalSeconds: 60 },
   hydra: {
     publicUrl: "http://localhost:4444",
     adminUrl: "http://localhost:4445",

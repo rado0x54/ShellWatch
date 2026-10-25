@@ -114,6 +114,13 @@ security:
 #   publicKey: "BEl62i..."                                # base64url-encoded VAPID public key
 #   privateKey: "UGo..."                                  # base64url-encoded VAPID private key
 
+# Terminal-session housekeeping. Idle sessions (no input or output) are closed
+# by a periodic janitor; the audit log records them with closeReason
+# "idle-timeout". Fractional values are accepted (handy for test deployments).
+# sessions:
+#   idleTimeoutMinutes: 30                              # default: 30
+#   cleanupIntervalSeconds: 60                          # how often the janitor runs (default: 60)
+
 # SSH agent proxy — allows system SSH clients to use ShellWatch-managed keys.
 # Requires the shellwatch-agent thin client on the user's workstation.
 # agentSocket:

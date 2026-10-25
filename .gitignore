@@ -24,3 +24,6 @@ LICENSE-shellwatch-agent
 
 # Phase 0 spike throwaway key material (spike/gen-spike-env.sh)
 spike/out/
+
+# Black-box e2e suite artifacts (server logs, compose logs, built agent binary)
+e2e/out/
