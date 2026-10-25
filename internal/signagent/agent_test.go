@@ -25,9 +25,9 @@ func (f *fakeBroker) RequestSign(_ context.Context, _ string, _ signing.SignRequ
 	return signing.SignResponse{AuthenticatorData: []byte{0x04}, Signature: []byte("s"), ClientDataJSON: []byte("{}")}, nil
 }
 
-func (f *fakeBroker) RequestKeyApproval(_ context.Context, _, _, _, _ string, ctx approval.Context) error {
+func (f *fakeBroker) RequestKeyApproval(_ context.Context, p approval.KeyApproval) error {
 	f.approved = true
-	f.approveCtx = ctx
+	f.approveCtx = p.Context
 	return nil
 }
 

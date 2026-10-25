@@ -37,7 +37,7 @@ type Identity struct {
 // by *approval.Broker and the sshx.SignBroker facade).
 type Broker interface {
 	RequestSign(ctx context.Context, accountID string, req signing.SignRequest, actionCtx approval.Context, redirectTo string) (signing.SignResponse, error)
-	RequestKeyApproval(ctx context.Context, accountID, keyLabel, keyFingerprint, connectionID string, actionCtx approval.Context) error
+	RequestKeyApproval(ctx context.Context, p approval.KeyApproval) error
 }
 
 // Agent is the broker-backed read-only ssh/agent.Agent.
@@ -48,6 +48,10 @@ type Agent struct {
 	accountID    string
 	connectionID string
 	actionCtx    approval.Context
+	// RedirectTo is handed to every approval this agent raises: where the
+	// /sign page sends the approver afterwards (the parent session for agent
+	// forwarding; empty for the agent proxy).
+	RedirectTo string
 	// signMu serializes approvals: agent forwarding serves each auth-agent
 	// channel in its own goroutine (x/crypto's ForwardToAgent), so without this
 	// a remote offering several keys would pop every approval toast at once.
@@ -90,14 +94,17 @@ func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 		resp, err := a.broker.RequestSign(a.ctx, a.accountID, signing.SignRequest{
 			CredentialID: id.CredentialID, DataToSign: data, RpID: id.RpID, PasskeyLabel: id.Label,
 			ConnectionID: a.connectionID,
-		}, a.actionCtx, "")
+		}, a.actionCtx, a.RedirectTo)
 		if err != nil {
 			return nil, err
 		}
 		return signing.BuildSSHSignature(resp)
 	}
 	fp := ssh.FingerprintSHA256(id.Signer.PublicKey())
-	if err := a.broker.RequestKeyApproval(a.ctx, a.accountID, id.Label, fp, a.connectionID, a.actionCtx); err != nil {
+	if err := a.broker.RequestKeyApproval(a.ctx, approval.KeyApproval{
+		AccountID: a.accountID, KeyLabel: id.Label, KeyFingerprint: fp, ConnectionID: a.connectionID,
+		Context: a.actionCtx, RedirectTo: a.RedirectTo,
+	}); err != nil {
 		return nil, err
 	}
 	return id.Signer.Sign(nil, data)

@@ -148,7 +148,7 @@ type stubKeyBroker struct{ err error }
 func (s stubKeyBroker) RequestSign(context.Context, string, signing.SignRequest, approval.Context, string) (signing.SignResponse, error) {
 	return signing.SignResponse{}, s.err
 }
-func (s stubKeyBroker) RequestKeyApproval(context.Context, string, string, string, string, approval.Context) error {
+func (s stubKeyBroker) RequestKeyApproval(context.Context, approval.KeyApproval) error {
 	return s.err
 }
 

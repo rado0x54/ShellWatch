@@ -82,17 +82,29 @@ func (b *Broker) RequestSign(ctx context.Context, accountID string, req signing.
 	}
 }
 
+// KeyApproval describes one file-key use awaiting a human's go-ahead.
+type KeyApproval struct {
+	AccountID      string
+	KeyLabel       string
+	KeyFingerprint string
+	ConnectionID   string
+	Context        Context
+	// RedirectTo is where /sign/:id sends the approver afterwards (the new
+	// session for endpoint-auth and agent-forwarding; empty for agent-proxy).
+	RedirectTo string
+}
+
 // RequestKeyApproval handles a file-key sign request: creates a key-approve
 // action, dispatches, and blocks until a human approves (no silent auto-sign
 // on the agent-proxy path — the whole point is human-in-the-loop). On approval
 // the caller does the actual signing with the file key.
-func (b *Broker) RequestKeyApproval(ctx context.Context, accountID, keyLabel, keyFingerprint, connectionID string, actionCtx Context) error {
+func (b *Broker) RequestKeyApproval(ctx context.Context, p KeyApproval) error {
 	okCh := make(chan struct{}, 1)
 	errCh := make(chan error, 1)
 
 	action := b.store.Create(CreateParams{
-		AccountID: accountID, Type: TypeKeyApprove, Context: actionCtx,
-		ConnectionID: connectionID, KeyLabel: keyLabel, KeyFingerprint: keyFingerprint,
+		AccountID: p.AccountID, Type: TypeKeyApprove, Context: p.Context, RedirectTo: p.RedirectTo,
+		ConnectionID: p.ConnectionID, KeyLabel: p.KeyLabel, KeyFingerprint: p.KeyFingerprint,
 		ResolveKey: func() { okCh <- struct{}{} },
 		Reject:     func(err error) { errCh <- err },
 	})

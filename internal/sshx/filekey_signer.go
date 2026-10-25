@@ -25,6 +25,7 @@ type approvedFileKeySigner struct {
 	label        string
 	connectionID string
 	actionCtx    approval.Context
+	redirectTo   string
 	ctx          context.Context
 }
 
@@ -38,7 +39,10 @@ func (s *approvedFileKeySigner) Sign(rand io.Reader, data []byte) (*ssh.Signatur
 		ctx = context.Background()
 	}
 	fp := ssh.FingerprintSHA256(s.signer.PublicKey())
-	if err := s.broker.RequestKeyApproval(ctx, s.accountID, s.label, fp, s.connectionID, s.actionCtx); err != nil {
+	if err := s.broker.RequestKeyApproval(ctx, approval.KeyApproval{
+		AccountID: s.accountID, KeyLabel: s.label, KeyFingerprint: fp, ConnectionID: s.connectionID,
+		Context: s.actionCtx, RedirectTo: s.redirectTo,
+	}); err != nil {
 		return nil, err
 	}
 	return s.signer.Sign(rand, data)

@@ -171,6 +171,8 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		MCPClientName:   fp.Trigger.MCPClientName,
 		MCPClientVer:    fp.Trigger.MCPClientVer,
 	}
+	// Approving on /sign/:id lands the human in the session being opened.
+	redirectTo := sessionRedirect(fp.SessionID)
 	// File keys first, then passkeys (composite-ssh-agent.ts:94-103): when the
 	// server accepts both, the user sees a key-approve prompt, not a WebAuthn
 	// ceremony. Every file-key sign is approval-gated (H2) and the set is
@@ -178,7 +180,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 	for _, fk := range fileKeys {
 		signers = append(signers, &approvedFileKeySigner{
 			signer: fk.signer, broker: p.BrokerFunc(), accountID: fp.Endpoint.AccountID,
-			label: fk.label, connectionID: connID, actionCtx: actionCtx, ctx: ctx,
+			label: fk.label, connectionID: connID, actionCtx: actionCtx, redirectTo: redirectTo, ctx: ctx,
 		})
 	}
 
@@ -191,7 +193,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 			Pub: pub, Broker: p.BrokerFunc(), AccountID: fp.Endpoint.AccountID,
 			CredentialID: c.CredentialID, RpID: p.RpID, Origin: p.Origin,
 			UVPolicy: fp.Endpoint.UserVerification, PasskeyLabel: c.Label,
-			ConnectionID: connID, ActionCtx: actionCtx, Ctx: ctx,
+			ConnectionID: connID, ActionCtx: actionCtx, RedirectTo: redirectTo, Ctx: ctx,
 		})
 	}
 	return signers, nil
@@ -233,5 +235,16 @@ func (p PasskeyFactoryParams) buildForwardingAgent(fp terminal.FactoryParams, co
 		EndpointAddress: fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
 		SessionID:       fp.SessionID,
 	}
-	return signagent.New(ctx, identities, p.BrokerFunc(), fp.Endpoint.AccountID, connID, actionCtx)
+	ag := signagent.New(ctx, identities, p.BrokerFunc(), fp.Endpoint.AccountID, connID, actionCtx)
+	ag.RedirectTo = sessionRedirect(fp.SessionID)
+	return ag
+}
+
+// sessionRedirect is the /sign page's post-approval destination for a sign
+// raised while opening (or from inside) a session: the session itself.
+func sessionRedirect(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	return "/session/" + sessionID
 }
