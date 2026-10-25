@@ -35,3 +35,6 @@ spike/out/
 /shellwatch
 # Local Go test databases
 /data/go-*.db
+
+# Black-box e2e suite artifacts (server logs, compose logs, built agent binary)
+e2e/out/

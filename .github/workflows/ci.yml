@@ -123,6 +123,55 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration
 
+  # Black-box end-to-end suite (#244): the built server (dist/) launched as a
+  # child process against a real OpenSSH sshd + a real Ory Hydra in compose,
+  # driven only over the wire (REST, WS, MCP, agent-proxy via the Go agent).
+  # One leg per sshd image; the modern leg also runs the webauthn-sk scenarios.
+  # See docs/testing.md.
+  e2e:
+    name: E2E (Node ${{ matrix.node-version }} / sshd ${{ matrix.sshd }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24]
+        sshd: [modern, stable]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: agent-client/go.mod
+          cache-dependency-path: agent-client/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build agent-client
+        working-directory: agent-client
+        run: go build -o shellwatch-agent ./cmd/shellwatch-agent
+      - name: Start sshd + Hydra
+        run: pnpm e2e:up
+      - name: Run e2e suite
+        env:
+          E2E_SSHD: ${{ matrix.sshd }}
+          E2E_SKIP_BUILD: "1"
+        run: pnpm test:e2e
+      - name: Collect compose logs
+        if: failure()
+        run: pnpm test:e2e:logs > e2e/out/compose-all.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-${{ matrix.sshd }}-node${{ matrix.node-version }}
+          path: e2e/out/**
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: pnpm e2e:down
+
   # Spec-lint gate for the wire contract: #225 promises the OpenAPI spec is
   # "validated in CI" — this job is that validation (same command as the
   # local `pnpm api:lint`).

@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# Black-box e2e targets (#244): two real OpenSSH servers and a real Ory Hydra.
+# Everything binds to 127.0.0.1 on ports that don't collide with the dev
+# compose (hydra on 4444/4445) or the spike (sshd on 2222):
+#
+#   sshd-modern   127.0.0.1:2322   OpenSSH >= 10.3 (alpine:edge), webauthn-sk capable
+#   sshd-stable   127.0.0.1:2323   current stable distro OpenSSH (debian:stable)
+#   hydra         127.0.0.1:4544 (public) / 127.0.0.1:4545 (admin), in-memory SQLite
+#
+# The server under test is launched by the vitest harness on 127.0.0.1:3100
+# (e2e/harness/server.ts); Hydra's login/consent URLs point there (hydra.e2e.yml).
+#
+#   pnpm e2e:up      # build + start + wait for health
+#   pnpm test:e2e    # run the suite
+#   pnpm e2e:down    # tear down
+name: shellwatch-e2e
+
+services:
+  sshd-modern:
+    build:
+      context: ./sshd
+      dockerfile: Dockerfile.modern
+    ports:
+      - "127.0.0.1:2322:22"
+    volumes:
+      - ./sshd/hostkeys:/hostkeys:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  sshd-stable:
+    build:
+      context: ./sshd
+      dockerfile: Dockerfile.stable
+    ports:
+      - "127.0.0.1:2323:22"
+    volumes:
+      - ./sshd/hostkeys:/hostkeys:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  hydra:
+    image: oryd/hydra:v26.2.0
+    ports:
+      - "127.0.0.1:4544:4444"
+      - "127.0.0.1:4545:4445"
+    environment:
+      # In-memory SQLite: Hydra auto-migrates, nothing persists between runs.
+      DSN: memory
+      SECRETS_SYSTEM: e2e-only-system-secret-not-for-production-use
+    # `--dev` accepts the http:// issuer without TLS.
+    command: serve all --dev --config /etc/config/hydra.yml
+    volumes:
+      - ./hydra/hydra.e2e.yml:/etc/config/hydra.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4444/health/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s

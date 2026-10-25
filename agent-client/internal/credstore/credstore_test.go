@@ -3,9 +3,14 @@ package credstore
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 // File-backed paths are deterministic and OS-agnostic, so the meaningful
@@ -157,5 +162,44 @@ func TestCanonicalizeServerURL_Rejects(t *testing.T) {
 		if _, err := CanonicalizeServerURL(in); err == nil {
 			t.Errorf("CanonicalizeServerURL(%q): want error, got nil", in)
 		}
+	}
+}
+
+// isUnavailable decides whether dualStore falls back to the file store or
+// surfaces the keyring error. The shapes below are what go-keyring v0.2.8 /
+// godbus v5.2.2 actually return; the e2e suite's headless `login` scenario
+// relies on the dead-socket case (DBUS_SESSION_BUS_ADDRESS → nonexistent path).
+func TestIsUnavailable(t *testing.T) {
+	// A real dial against a nonexistent unix socket — exactly what godbus does
+	// when DBUS_SESSION_BUS_ADDRESS points at a dead path.
+	_, dialErr := net.Dial("unix", filepath.Join(t.TempDir(), "no-bus"))
+	if dialErr == nil {
+		t.Fatal("expected dial to a nonexistent socket to fail")
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"synthetic timeout", errKeyringUnavailable{msg: "keyring operation timed out"}, true},
+		{"dead session bus socket (real dial error)", dialErr, true},
+		{"dead session bus socket (wrapped)", fmt.Errorf("save: %w", dialErr), true},
+		{"connection refused", &net.OpError{Op: "dial", Net: "unix", Err: syscall.ECONNREFUSED}, true},
+		{"no bus address", errors.New("dbus: couldn't determine address of session bus"), true},
+		{"invalid bus address", errors.New("dbus: invalid bus address (no transport)"), true},
+		{"no secret service provider", errors.New("The name org.freedesktop.secrets was not provided by any .service files: secret service is not available"), true},
+		{"no such interface", errors.New("no such interface 'org.freedesktop.Secret.Service'"), true},
+		{"entry missing is not unavailable", keyring.ErrNotFound, false},
+		{"collection path not found is a real error", errors.New("path not found"), false},
+		{"unrelated error", errors.New("permission denied"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isUnavailable(tc.err); got != tc.want {
+				t.Fatalf("isUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

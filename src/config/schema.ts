@@ -119,7 +119,7 @@ export const NotificationsSchema = z.object({
 
 export const serverDefaults = {
   port: 3000,
-  trustProxy: false as boolean | number | string | string[],
+  trustProxy: false as boolean | string | string[],
 };
 
 export const ServerSchema = z.object({
@@ -133,14 +133,15 @@ export const ServerSchema = z.object({
    * Passed straight to Fastify's `trustProxy` option.
    *  - `false` (default): ignore proxy headers; `request.ip` is the TCP peer.
    *  - `true`: trust all hops (only safe if the network path itself is trusted).
-   *  - `number`: trust this many hops back from the connection.
    *  - CIDR string or array of CIDRs/IPs: trust hops from these proxies only.
    * For deployments behind a known proxy, prefer the CIDR form to avoid
    * client-side X-Forwarded-For spoofing.
+   * Hop-count (`number`) trust is no longer accepted: Fastify ≥5.12 fails it
+   * closed (treats it as `false`) because a hop count cannot validate the
+   * immediate peer, so we reject it at config load instead of silently
+   * ignoring it.
    */
-  trustProxy: z
-    .union([z.boolean(), z.number().int().min(0), z.string().min(1), z.array(z.string().min(1))])
-    .default(false),
+  trustProxy: z.union([z.boolean(), z.string().min(1), z.array(z.string().min(1))]).default(false),
 });
 
 export const SeedAdminPasskeySchema = z.object({
@@ -157,6 +158,28 @@ export const VapidSchema = z.object({
   privateKey: z
     .string()
     .min(1, "vapid.privateKey is required (base64url-encoded VAPID private key)"),
+});
+
+/**
+ * Terminal-session housekeeping (#244). `idleTimeoutMinutes` is how long a
+ * session may sit without input/output before the janitor closes it
+ * (`closeReason: "idle-timeout"`); `cleanupIntervalSeconds` is how often the
+ * janitor runs. Fractional values are allowed so test deployments can exercise
+ * the idle path quickly; production should leave the defaults.
+ */
+export const sessionsDefaults = { idleTimeoutMinutes: 30, cleanupIntervalSeconds: 60 };
+
+export const SessionsSchema = z.object({
+  idleTimeoutMinutes: z
+    .number()
+    .positive()
+    .max(24 * 60)
+    .default(sessionsDefaults.idleTimeoutMinutes),
+  cleanupIntervalSeconds: z
+    .number()
+    .positive()
+    .max(3600)
+    .default(sessionsDefaults.cleanupIntervalSeconds),
 });
 
 export const AgentSocketSchema = z.object({
@@ -254,6 +277,7 @@ export const ConfigSchema = z.object({
   security: SecuritySchema,
   notifications: NotificationsSchema.default(notificationDefaults),
   agentSocket: AgentSocketSchema.default(agentSocketDefaults),
+  sessions: SessionsSchema.default(sessionsDefaults),
   /**
    * Ory Hydra is a hard runtime dependency (#217) — the OAuth2/OIDC authority
    * for the web UI, MCP clients, and the agent-client, all via mediated DCR +

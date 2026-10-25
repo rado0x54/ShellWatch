@@ -62,6 +62,7 @@ src/
   test/
     helpers/            # Test infrastructure (SSH server, app, MCP/WS clients)
     integration/        # Integration tests by category
+e2e/                    # Black-box e2e suite: real sshd + real Hydra in Docker (docs/testing.md)
 client/                 # SvelteKit frontend app (adapter-static)
   src/
     app.html            # HTML shell
@@ -120,6 +121,10 @@ pnpm test             # Run unit tests (excludes integration)
 pnpm test:integration # Run integration tests
 pnpm test:watch       # Run tests in watch mode
 pnpm test:coverage    # Run tests with coverage report
+pnpm e2e:up           # Start the e2e stack (real sshd x2 + real Hydra) in Docker
+pnpm test:e2e         # Black-box e2e suite against the built server (docs/testing.md)
+pnpm e2e:down         # Tear the e2e stack down
+pnpm typecheck:e2e    # Type check the e2e suite
 
 # SPDX headers
 pnpm spdx:check       # Verify all source files have SPDX headers (CI gate)
@@ -193,6 +198,10 @@ Test categories (`src/test/integration/`):
 - `hydra-oauth.test.ts` — Hydra OAuth surfaces (mediated DCR, bearer gate + introspection/revocation, discovery, session management)
 - `passkey-invite-flow.test.ts` — passkey invite minting and redemption
 - `passkey-stepup-flow.test.ts` — step-up auth for sensitive actions
+
+### End-to-End Tests (black box)
+
+`pnpm test:e2e` runs the **built server** (`node dist/index.js`) as a child process against a **real OpenSSH `sshd`** (two images: OpenSSH ≥ 10.3 with `webauthn-sk`, and current Debian stable) and a **real Ory Hydra**, all in Docker (`pnpm e2e:up` / `pnpm e2e:down`). The suite in `e2e/` drives the server only over the wire — REST, `/ws`, `/mcp`, `/agent-proxy` via the Go agent — and imports nothing from `src/` except the app-independent test helpers (fake authenticator, MCP client, test log, golden normalizer). Identity is headless: a fake passkey seeded via `seedAdminPasskeys`, then the real authorization-code + PKCE flow through Hydra's redirects. Scenarios: session lifecycle, idle timeout, passkey signing (sshd `Accepted publickey … ECDSA-SK`), agent forwarding (second hop), agent proxy (system `ssh`), MCP, Hydra. See [docs/testing.md](./docs/testing.md) for layout, ports, and how to add a scenario. Not part of `pnpm test` / `pnpm test:integration`.
 
 ### Writing Tests
 
