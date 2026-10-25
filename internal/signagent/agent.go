@@ -142,9 +142,14 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 		return nil, err
 	}
 	if algorithm != "" && id.Signer.PublicKey().Type() == ssh.KeyAlgoRSA {
-		if as, ok := id.Signer.(ssh.AlgorithmSigner); ok {
-			return as.SignWithAlgorithm(nil, data, algorithm)
+		as, ok := id.Signer.(ssh.AlgorithmSigner)
+		if !ok {
+			// Refuse rather than silently downgrade to ssh-rsa/SHA-1: the
+			// client negotiated rsa-sha2 and the server would reject the
+			// SHA-1 result anyway (ssh-agent answers failure here too).
+			return nil, fmt.Errorf("agent: signer for %q cannot sign with %s", id.Label, algorithm)
 		}
+		return as.SignWithAlgorithm(nil, data, algorithm)
 	}
 	return id.Signer.Sign(nil, data)
 }

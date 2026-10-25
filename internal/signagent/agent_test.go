@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"io"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -124,4 +125,33 @@ func TestSignWithFlagsHonorsRsaSha2(t *testing.T) {
 
 func verifyWithAlgo(pub ssh.PublicKey, data []byte, sig *ssh.Signature) error {
 	return pub.Verify(data, sig)
+}
+
+// plainOnlySigner hides the inner signer's AlgorithmSigner capability.
+type plainOnlySigner struct{ inner ssh.Signer }
+
+func (p plainOnlySigner) PublicKey() ssh.PublicKey { return p.inner.PublicKey() }
+func (p plainOnlySigner) Sign(r io.Reader, d []byte) (*ssh.Signature, error) {
+	return p.inner.Sign(r, d)
+}
+
+// An RSA signer that cannot honor the requested rsa-sha2 flags must FAIL the
+// request (ssh-agent semantics), never silently downgrade to ssh-rsa/SHA-1.
+func TestSignWithFlagsRefusesUnhonorableRsaSha2(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := &fakeBroker{}
+	a := New(context.Background(), Params{
+		Identities: []Identity{{Signer: plainOnlySigner{signer}, Label: "plain rsa"}}, Broker: fb,
+		AccountID: "acc", ConnectionID: "conn", ActionCtx: approval.Context{Source: "agent-proxy"},
+	})
+	if _, err := a.SignWithFlags(signer.PublicKey(), []byte("data"), agent.SignatureFlagRsaSha256); err == nil {
+		t.Fatal("flagged sign on a flags-incapable signer must fail, not downgrade to SHA-1")
+	}
 }
