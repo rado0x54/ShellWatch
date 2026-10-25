@@ -7,7 +7,6 @@
 package signing
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -103,5 +102,3 @@ func mpint(v *big.Int) []byte {
 	}
 	return appendSSHString(nil, b)
 }
-
-var _ = sha256.Sum256

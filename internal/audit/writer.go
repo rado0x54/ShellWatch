@@ -7,7 +7,6 @@
 package audit
 
 import (
-	"context"
 	"database/sql"
 	"log/slog"
 
@@ -29,7 +28,7 @@ func NewWriter(db *sql.DB, clk clock.Clock) *Writer {
 	return &Writer{db: db, clk: clk}
 }
 
-const isoMillis = "2006-01-02T15:04:05.000Z"
+const isoMillis = clock.ISOMillis
 
 // AttachManager subscribes to session status transitions: INSERT on
 // opening->open, UPDATE (idempotent on closed_at) on ->closed/->error.
@@ -118,5 +117,3 @@ func nz(s string) sql.NullString {
 	}
 	return sql.NullString{String: s, Valid: true}
 }
-
-var _ = context.Background

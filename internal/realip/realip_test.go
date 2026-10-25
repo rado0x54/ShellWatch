@@ -22,8 +22,9 @@ func TestClientIP(t *testing.T) {
 		{"loopback preset stops at untrusted hop", "loopback", "127.0.0.1:9999", "203.0.113.7, 198.51.100.2", "198.51.100.2"},
 		{"CIDR string", "10.0.0.0/8", "10.1.2.3:44", "203.0.113.7", "203.0.113.7"},
 		{"CIDR not matching peer -> peer", "10.0.0.0/8", "192.0.2.4:44", "203.0.113.7", "192.0.2.4"},
-		{"hop count 1", 1, "127.0.0.1:9999", "203.0.113.7, 10.0.0.1", "10.0.0.1"},
-		{"hop count 2", 2, "127.0.0.1:9999", "203.0.113.7, 10.0.0.1", "203.0.113.7"},
+		// A numeric hop count is rejected by config validation and treated
+		// as trustProxy:false here (dead branch removed with it).
+		{"hop count rejected -> peer", 1, "127.0.0.1:9999", "203.0.113.7, 10.0.0.1", "127.0.0.1"},
 		{"array of presets", []any{"loopback", "uniquelocal"}, "192.168.1.1:80", "203.0.113.7", "203.0.113.7"},
 	}
 	for _, tc := range cases {

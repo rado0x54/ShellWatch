@@ -8,7 +8,6 @@
 package webauthn
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -143,5 +142,3 @@ func (s *StepUpStore) RequireStepUp(action string) func(http.Handler) http.Handl
 		})
 	}
 }
-
-var _ = context.Background

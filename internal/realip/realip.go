@@ -20,7 +20,6 @@ import (
 // Resolver computes the effective client IP for a request.
 type Resolver struct {
 	trustAll bool
-	hops     int
 	nets     []*net.IPNet
 }
 
@@ -33,17 +32,11 @@ var presets = map[string][]string{
 // New builds a Resolver from the parsed trustProxy config value.
 func New(trustProxy any) *Resolver {
 	r := &Resolver{}
+	// A numeric hop count is rejected by config validation (it cannot
+	// validate the immediate peer), so only bool / string / list reach here.
 	switch v := trustProxy.(type) {
 	case bool:
 		r.trustAll = v
-	case int:
-		r.hops = v
-	case int64:
-		r.hops = int(v)
-	case uint64:
-		r.hops = int(v)
-	case float64:
-		r.hops = int(v)
 	case string:
 		for _, part := range strings.Split(v, ",") {
 			r.addEntry(strings.TrimSpace(part))
@@ -106,22 +99,11 @@ func (r *Resolver) trusted(ip string) bool {
 
 // ClientIP resolves the effective client IP (proxy-addr walk): start at the
 // socket peer; while the current hop is trusted, step left through
-// X-Forwarded-For. With a hop count, take exactly that many steps.
+// X-Forwarded-For.
 func (r *Resolver) ClientIP(req *http.Request) string {
 	peer := remoteHost(req)
 	xff := forwardedChain(req)
 
-	if r.hops > 0 {
-		// Trust exactly N hops from the peer.
-		idx := len(xff) - r.hops
-		if idx < 0 {
-			idx = 0
-		}
-		if len(xff) == 0 {
-			return peer
-		}
-		return xff[idx]
-	}
 	if !r.trustAll && len(r.nets) == 0 {
 		return peer // trustProxy: false
 	}

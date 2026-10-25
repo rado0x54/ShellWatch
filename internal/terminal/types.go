@@ -75,5 +75,3 @@ func GenerateSessionID() string {
 	_, _ = rand.Read(b[:])
 	return "sess_" + hex.EncodeToString(b[:])
 }
-
-var _ = time.Now
