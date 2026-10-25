@@ -2,7 +2,9 @@
 
 ## Overview
 
-ShellWatch is an SSH session broker that sits between clients (humans and AI agents) and remote SSH targets. All terminal sessions flow through a shared `TerminalManager`, enabling observation, policy enforcement, and audit from a single point.
+ShellWatch is an SSH session broker that sits between clients (humans and AI agents) and remote SSH targets. All terminal sessions flow through a shared terminal `Manager`, enabling observation, policy enforcement, and audit from a single point.
+
+The server is a single Go binary (`cmd/shellwatch`) with the SvelteKit web UI embedded; Ory Hydra is the only external service.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -21,33 +23,32 @@ ShellWatch is an SSH session broker that sits between clients (humans and AI age
 │       └──────────────┼──────────────┘                   │
 │                      │                                  │
 │              ┌───────┴────────┐                         │
-│              │ Terminal       │                         │
+│              │ terminal.      │                         │
 │              │ Manager        │                         │
 │              └───────┬────────┘                         │
 │                      │                                  │
 │              ┌───────┴────────┐                         │
-│              │ SSH Transport  │                         │
-│              │ Factory        │                         │
+│              │ sshx transport │                         │
 │              │ ┌────────────┐ │                         │
 │              │ │ File keys  │ │                         │
-│              │ │ (auto-sign)│ │                         │
+│              │ │ (approved) │ │                         │
 │              │ ├────────────┤ │                         │
 │              │ │ Passkeys   │ │                         │
 │              │ │ (WebAuthn) │ │                         │
 │              │ └────────────┘ │                         │
 │              └───────┬────────┘                         │
-│                      │                                  │
 └──────────────────────┼──────────────────────────────────┘
                        │
-               ┌───────┴────────┐
-               │ Remote SSH     │
-               │ Targets        │
-               └────────────────┘
+                ┌──────┴──────┐
+                │ Remote host │
+                └─────────────┘
 ```
+
+Dependencies form a DAG: `cmd/shellwatch` is the only place that knows the whole graph (it wires every package and owns the shutdown order); interface packages depend on domain packages, domain packages on leaf packages, nobody depends upward. The design rationale and the per-package specifications are in [`go-backend-architecture.md`](./go-backend-architecture.md).
 
 ## Core Components
 
-### TerminalManager (`src/terminal/terminal-manager.ts`)
+### terminal.Manager (`internal/terminal`)
 
 The central session registry. Owns the lifecycle of all terminal sessions regardless of source.
 
@@ -56,105 +57,80 @@ The central session registry. Owns the lifecycle of all terminal sessions regard
 - Create/close terminal sessions against configured endpoints
 - Route input to the SSH transport
 - Buffer output per session (append-only with offset tracking)
-- Emit events: `output`, `status-change`, `close`
-- Idle session cleanup (configurable timeout)
+- Guaranteed subscriber hooks for status changes and output (audit writers, WS hub, MCP notifier)
+- Idle session janitor (`sessions.idleTimeoutMinutes` / `cleanupIntervalSeconds`)
 
-**Key design:** The TerminalManager is source-agnostic. It doesn't know or care whether a session was created by the web UI, an MCP agent, or an SSH client. All paths converge here.
+**Key design:** the Manager is source-agnostic. It doesn't know or care whether a session was created by the web UI, an MCP agent, or an SSH client. All paths converge here. Status/output fan-out uses explicit subscriptions rather than an event emitter, so a slow consumer can never drop a lifecycle event.
 
 **Event flow:**
 
 ```
-Client input → TerminalManager.sendInput() → SSH Transport → Remote host
-Remote host → SSH Transport (data event) → OutputBuffer.append() → TerminalManager emits "output"
+Client input → Manager.SendInput() → Transport.Write() → Remote host
+Remote host → Transport events → OutputBuffer.Append() → output subscribers (WS hub, MCP notifier)
 ```
 
-### OutputBuffer (`src/terminal/output-buffer.ts`)
+### OutputBuffer (`internal/terminal`)
 
-Append-only buffer per session with byte offset tracking.
+Append-only byte buffer per session with offset tracking.
 
-- Supports incremental reads via `afterOffset` parameter
+- Supports incremental reads via `afterOffset`
 - Configurable max size (default 1MB) with oldest-chunk eviction
-- Enables multiple consumers to read the same output independently (UI, MCP, future observers)
+- Enables multiple consumers to read the same output independently (UI, MCP, observers)
 
-### TerminalTransport (`src/terminal/transport.ts`)
+### Transport (`internal/terminal`, implemented by `internal/sshx`)
 
-Interface for the underlying connection to a remote host. Currently implemented by `SshTransport` (ssh2). Designed to be pluggable for future transports (local shell, Docker exec, etc.).
+Interface for the underlying connection to a remote host. The only implementation is the x/crypto/ssh transport in `internal/sshx`; the interface keeps the door open for other transports (local shell, container exec).
 
-```typescript
-interface TerminalTransport extends EventEmitter {
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  close(): void;
-  // Events: "data", "close", "error"
-}
-```
+### SSH transport and signers (`internal/sshx`)
 
-### SshTransportFactory (`src/transport/ssh-transport-factory.ts`)
+Connects to a remote host, authenticates, allocates a PTY (xterm-256color, 80x24 default) and opens an interactive shell. Window resizes are forwarded; unexpected disconnects surface as a status change.
 
-Resolves endpoint configuration and key material to establish SSH connections. Supports three authentication modes:
+**Authentication** builds an ordered list of `ssh.Signer`s per connection — approval-gated file keys first (admin accounts only, enabled + present on disk), then the account's passkeys — and offers **one public-key auth method per key** through x/crypto's `ClientConfig.AuthCallback`. A denied or expired approval drops that key and moves to the next one without putting a signed attempt on the wire, so a denial never costs one of sshd's `MaxAuthTries`. The connection timeout (90 s) covers dial + auth so a human has time to touch a passkey.
 
-1. **File key** — auto-sign with a PEM key from the key directory (no user interaction)
-2. **Passkey** — browser-based WebAuthn signing via the signing bridge
-3. **Auto-negotiate** — tries all available keys (file keys first, then passkeys)
+- `WebAuthnSigner` — asks the human for a WebAuthn assertion through the approval broker and encodes it as the `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` wire signature (`internal/signing`)
+- `approvedFileKeySigner` — a PEM key from the key directory, every use behind a `key-approve` prompt
+- Forwarding agent — when `agentForward` is on, the same signers are served to the remote `auth-agent@openssh.com` channel (`internal/signagent`), producing `agent-forwarding` sign requests
 
-For admin accounts, auto-negotiate uses `CompositeSshAgent` (file keys + passkeys). For non-admin accounts, `WebAuthnSshAgent` (passkeys only).
+### Key directory (`internal/sshx/keys.go`)
 
-### SshTransport (`src/transport/ssh-transport.ts`)
-
-ssh2-based implementation of `TerminalTransport`. Connects to a remote host, authenticates via private key or WebAuthn agent, allocates a PTY, and opens an interactive shell.
-
-- PTY: xterm-256color, 80x24 default
-- Connection timeout: 90 seconds — a single `readyTimeout` covering dial + auth (`WEBAUTHN_CONNECTION_TIMEOUT`, sized so a human can touch a passkey)
-- Resize via `setWindow()`
-- Handles unexpected disconnects gracefully
-
-### KeyDirectoryWatcher (`src/transport/key-directory-watcher.ts`)
-
-Watches the key directory for SSH private key files. Auto-discovers keys on startup and monitors for changes (additions, removals, modifications).
-
-- Scans for `.pem` files, extracts fingerprints and public keys
-- Provides `PrivateKeyProvider` interface for runtime key lookup by fingerprint
-- Registers discovered keys in the database via `SshKeyRepository`
+Watches the key directory (fsnotify) for private key files. Auto-discovers keys on startup and on change, extracts fingerprints and public keys, and registers them in `ssh_keys` so `GET /api/keys` lists them and file-key auth can find them.
 
 ## Authentication & WebAuthn
 
-### WebAuthn / Passkeys (`src/webauthn/`)
+### WebAuthn / Passkeys (`internal/webauthn`, `internal/signing`)
 
-ShellWatch uses WebAuthn passkeys (e.g., YubiKeys, platform authenticators) for both user authentication and SSH key signing.
+ShellWatch uses WebAuthn passkeys (YubiKeys, platform authenticators) for both user authentication and SSH key signing.
 
 **Key types:**
 
-- `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` — custom OpenSSH algorithm for browser-registered FIDO2 credentials
-- Standard file-based keys (ed25519, RSA, ECDSA) — auto-sign, no user interaction
+- `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` — OpenSSH algorithm for browser-registered FIDO2 credentials (OpenSSH ≥ 10.3 on the target)
+- Standard file-based keys (ed25519, RSA, ECDSA) — approval-gated, no WebAuthn ceremony
 
 **Components:**
 
-| File                     | Purpose                                                                       |
-| ------------------------ | ----------------------------------------------------------------------------- |
-| `ssh-agent.ts`           | `WebAuthnSshAgent` — custom ssh2 agent that delegates signing via callbacks   |
-| `composite-ssh-agent.ts` | `CompositeSshAgent` — extends WebAuthnSshAgent with file key approval support |
-| `signing-bridge.ts`      | `SigningBridge` — converts raw sign callbacks into `PendingAction` records    |
-| `signature-format.ts`    | Converts WebAuthn assertions to SSH signature wire format (PROTOCOL.u2f)      |
-| `ssh-key-format.ts`      | Converts COSE public keys to OpenSSH authorized_keys format                   |
-| `routes.ts`              | WebAuthn registration and authentication HTTP routes                          |
+| Package / file                   | Purpose                                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `internal/webauthn/verify.go`    | Registration + assertion verification (go-webauthn), ES256 only                                 |
+| `internal/webauthn/challenge.go` | Purpose-tagged challenge store (TTL, single use)                                                |
+| `internal/webauthn/stepup.go`    | Step-up tokens for sensitive actions (passkey revoke, authorized-client revoke)                 |
+| `internal/webauthn/invite*.go`   | Cross-device passkey invite slot + routes                                                       |
+| `internal/webauthn/cose.go`      | COSE public key → OpenSSH `authorized_keys` line                                                |
+| `internal/signing`               | Leaf package: sign-request types, WebAuthn assertion → SSH signature wire format (PROTOCOL.u2f) |
 
-Approval flow (passkey signing, file-key approval) is decoupled from the browser connection via the **PendingAction** system — see the [PendingAction & Sign Requests](#pendingaction--sign-requests-srcpending-action) section below.
+Approval flow (passkey signing, file-key approval) is decoupled from the browser connection via the **pending-action** system below.
 
-### PendingAction & Sign Requests (`src/pending-action/`)
+### Pending actions & sign requests (`internal/approval`)
 
-Unified approval system for all human-in-the-loop interactions (passkey signing, file-key approval). Decouples sign requests from the browser's live WebSocket — an approver can be notified via WebSocket toast, Web Push, or any future channel, and can approve from any browser (or phone) that's authenticated to the account.
+Unified approval system for all human-in-the-loop interactions (passkey signing, file-key approval). Decouples sign requests from the browser's live WebSocket — an approver can be notified via WebSocket toast or Web Push and can approve from any browser (or phone) authenticated to the account.
 
-**Components:**
+| File            | Purpose                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| `store.go`      | Pending-action store — TTL map (60 s) with resolve/deny/expire/cancel; sweeps on a ticker           |
+| `broker.go`     | Creates an action for a signer, fans it out to channels, blocks until a human answers or it expires |
+| `ws_channel.go` | `sign:request` / `sign:resolved` to the account's connected browsers                                |
+| `internal/push` | Web Push channel (VAPID) with an endpoint allowlist as SSRF guard                                   |
 
-| File              | Purpose                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------- |
-| `types.ts`        | `SignRequestContext` discriminated union + `PendingAction` record shape                   |
-| `store.ts`        | `PendingActionStore` — in-memory TTL map (60s) with resolve/deny/expire                   |
-| `dispatcher.ts`   | `NotificationDispatcher` — fans the action out to registered `NotificationChannel`s       |
-| `ws-channel.ts`   | `WebSocketChannel` — sends `sign:request` / `sign:resolved` to connected account browsers |
-| `push-channel.ts` | `PushChannel` — Web Push notifications (when a browser isn't open / visible)              |
-
-**Sign request sources** — `SignRequestContext` is a discriminated union:
+**Sign request sources:**
 
 | Source             | When                                                                         | Key fields                                                                                        |
 | ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -167,41 +143,40 @@ Client-reported fields on `agent-proxy` (hostname/OS/version from `X-ShellWatch-
 **Approval flow:**
 
 ```
-1. Agent's sign() fires onSignRequest callback with resolve/reject closures
-2. SigningBridge creates a PendingAction in the store (optional redirectTo)
-3. NotificationDispatcher fans out to all channels (WS + Push)
-4. Approver opens /sign/:id — GET /api/actions/:id returns the action
-5. For agent-forwarding, the page also fetches /api/sessions/:id/tail to
+1. A signer's Sign() asks the broker for an approval
+2. The broker stores a PendingAction (optional redirectTo) and fans it out (WS + Push)
+3. Approver opens /sign/:id — GET /api/actions/:id returns the action
+4. For agent-forwarding, the page also fetches /api/sessions/:id/tail to
    show the parent session's current output (pre-approval context)
-6. User approves → POST /api/actions/:id/resolve (with WebAuthn assertion
-   payload for webauthn-sign, empty body for key-approve)
-7. Store.resolve() fires the stored resolve callback → ssh2 gets signature
-8. Browser navigates to redirectTo (e.g. /session/<new-session-id>)
+5. User approves → POST /api/actions/:id/resolve (WebAuthn assertion payload for
+   webauthn-sign, empty body for key-approve)
+6. The broker returns the result to the waiting signer → signature goes to sshd
+7. Browser navigates to redirectTo (e.g. /session/<new-session-id>)
 ```
 
-Actions expire after 60s if no response; denied/expired actions surface back to ssh2 as a sign failure. WebSocket `sign:resolved` broadcasts clear toasts on any other tabs open for the account.
+Actions expire after 60 s; a denial or expiry is returned to the SSH client as "skip this key". When the terminal connection that owns a prompt dies, its pending prompts are cancelled and the toasts cleared.
 
-### Account System (`src/db/repositories/account-repo.ts`)
+### Accounts (`internal/store`)
 
-- Admin account (single, created on first passkey registration)
-- Non-admin accounts (created via WebAuthn registration)
+- Admin account (single, created on first passkey registration or seeded from config)
+- Non-admin accounts (via self-registration or passkey invite)
 - Passkey-first authentication — no passwords
-- Inactive account cleanup (90+ days, admin exempt)
+- Inactive account cleanup (90+ days, admin exempt); deleting an account closes its sessions, drops its MCP transports and revokes its Hydra sessions
 
-### OAuth2 / OIDC — fully delegated to Ory Hydra (`src/hydra/`)
+### OAuth2 / OIDC — fully delegated to Ory Hydra (`internal/hydra`, `internal/auth`)
 
 ShellWatch runs **no OAuth logic of its own** — [Ory Hydra](https://www.ory.sh/hydra/) is the single OAuth2/OIDC authority for every client (web UI, MCP, agent). ShellWatch is Hydra's **passkey-gated login + consent provider** and verifies the bearer tokens Hydra issues; it never sees a password and stores no client secrets or API keys.
 
-- **One flow for everyone:** mediated Dynamic Client Registration (`POST /api/hydra/register`) → `authorization_code` + PKCE → passkey login + consent. The access token's `sub` is the ShellWatch account (the human who logged in); an OAuth client is never bound to an account, and the granted `scope` (`ui` / `mcp` / `agent`) selects the surface.
-- **Single bearer gate** (`src/server/auth/bearer-gate.ts`): every authenticated surface presents an opaque Hydra access token, introspected per request (RFC 7662) and authorized by path — `ui` for `/api/*` + `/ws`, `mcp` for `/mcp`, `agent` for `/agent-proxy`. Only access tokens are honored (`token_use`); introspection fails closed (errors → 401, never cached).
-- **Tokens, not cookies:** the web UI is a public PKCE client holding its tokens in the browser (access token in memory, rotating refresh token in `localStorage`). No server-side session, no session cookie, no API keys.
-- **Components** (`src/hydra/`): `routes.ts` (passkey login/consent/logout providers, mediated DCR, RFC 9728/8414 discovery), `admin-client.ts` (Hydra admin API), `bearer-resolver.ts` (cached introspection), `ensure-client.ts` (provisions the first-party SPA client on boot), `render.ts` (server-rendered passkey pages). Hydra itself runs as a separate service backed by its own SQLite DB (`./data/hydra.sqlite`).
+- **One flow for everyone:** mediated Dynamic Client Registration (`POST /api/hydra/register`) → `authorization_code` + PKCE → passkey login + consent. The access token's `sub` is the ShellWatch account; an OAuth client is never bound to an account, and the granted `scope` (`ui` / `mcp` / `agent`) selects the surface.
+- **Single bearer gate** (`internal/auth`): every authenticated surface presents an opaque Hydra access token, introspected (RFC 7662, cached for `hydra.introspectionCacheTtlMs`) and authorized by path — `ui` for `/api/*` + `/ws`, `mcp` for `/mcp`, `agent` for `/agent-proxy`. Introspection fails closed.
+- **Tokens, not cookies:** the web UI is a public PKCE client holding its tokens in the browser. No server-side session, no session cookie, no API keys.
+- **Components** (`internal/hydra`): login/consent/logout providers with server-rendered passkey pages, mediated DCR, RFC 9728/8414 discovery documents, the thin admin-API client, the caching bearer resolver, and first-party SPA client provisioning on boot. Hydra itself runs as a separate service backed by its own SQLite DB (`./data/hydra.sqlite`).
 
 ## Client Interfaces
 
 ### Web UI (`client/`)
 
-SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit provides client-side routing, layouts, and the build pipeline — but no server-side features (no SSR, no API routes, no server hooks). All server logic lives in Fastify. The UI uses xterm.js for terminal emulation and Svelte stores for reactive state management.
+SvelteKit SPA (adapter-static) built into `web/dist` and embedded into the server binary (`web/embed.go`); unknown non-API paths fall back to `index.html`. SvelteKit provides client-side routing, layouts, and the build pipeline — no SSR, no server routes. The UI uses xterm.js for terminal emulation and Svelte stores for state.
 
 **Routes:**
 | Route | View |
@@ -225,171 +200,69 @@ SvelteKit SPA (adapter-static) served as static files by Fastify. SvelteKit prov
 
 **Communication:**
 
-- **REST API** (`/api/*`) — endpoint/session/key/WebAuthn CRUD, action resolve/deny (`/api/actions/:id/resolve` & `/deny`), session tail (`/api/sessions/:id/tail`)
-- **WebSocket** (`/ws`) — real-time terminal I/O and session events; also carries `sign:request` / `sign:resolved` notifications from the PendingAction system
+- **REST API** (`/api/*`, `internal/rest`) — endpoint/session/key/WebAuthn CRUD, action resolve/deny, session tail, audit pages. The contract is [`docs/api/openapi.yaml`](./api/openapi.yaml); response models are generated into `internal/api`.
+- **WebSocket** (`/ws`, `internal/ws`) — real-time terminal I/O and session events; also carries `sign:request` / `sign:resolved` from the approval layer. Protocol: [`docs/api/websocket-protocol.md`](./api/websocket-protocol.md).
 
-**WebSocket protocol (`src/server/ws-protocol.ts`):**
+The web UI sees ALL of the account's sessions regardless of source, labelled `ui` / `mcp`. The hub broadcasts `sessions:changed` on every status change, so MCP-created sessions appear instantly.
 
-```
-Client → Server: terminal:attach, terminal:input, terminal:resize, terminal:close,
-                 terminal:take-control, terminal:release-control
-Server → Client: terminal:output, terminal:status, terminal:closed, terminal:mode,
-                 sessions:changed, error
-```
+### MCP Server (`internal/mcp`)
 
-`sign:request` and `sign:resolved` also flow over the same WebSocket but are sent by `WebSocketChannel` in the PendingAction layer (`src/pending-action/ws-channel.ts`), not by the core terminal protocol — that's why they don't appear in `ws-protocol.ts`.
+Streamable HTTP MCP endpoint at `/mcp` (official Go SDK). Each MCP client connection gets its own stateful transport; sessions idle for `mcp.sessionTimeoutMinutes` are reaped. Requires a bearer token with the `mcp` scope and a source IP inside `security.allowedNetworks`.
 
-Sign approval itself (resolve/deny with WebAuthn assertion payload) goes over REST, not the WebSocket — see the [PendingAction section](#pendingaction--sign-requests-srcpending-action).
+**Tools:** `shellwatch_create_session`, `shellwatch_list_sessions`, `shellwatch_send_keys`, `shellwatch_read_output`, `shellwatch_close_session`, `shellwatch_manage_endpoints`, `shellwatch_manage_keys` — payloads in [`docs/api/mcp-tools.md`](./api/mcp-tools.md).
 
-**WebSocket extensions (`src/server/ws-extension.ts`):** Pluggable interface for sending server-initiated messages to account-scoped browser connections. `WebSocketChannel` (the notification-dispatcher channel) implements it to broadcast `sign:request` / `sign:resolved` to tabs owned by the target account.
+**Notifications** (`output_available`, `session_status`) are debounced (`notifications.mcp.debounceMs`, default 100 ms) and scoped to the agent's own sessions.
 
-**State management:** Svelte stores provide reactive state shared across components:
+**Session lifecycle:** an MCP transport owns an `AgentSession` (`internal/agent`); when the transport closes or expires, all of its terminal sessions are closed.
 
-- `ws.ts` — WebSocket connection, message dispatch, session list
-- `endpoints.ts` — endpoint CRUD operations
-- `keys.ts` — SSH keys
-- `webauthn.ts` — passkey registration, login, credential management
-- `connection.ts` — base path configuration
+### SSH Agent Proxy (`internal/agentproxy`)
 
-**Layout:** Responsive — persistent sidebar (280px) on desktop, hamburger slide-out on mobile (<768px). Settings uses a tab bar for sub-routes.
-
-The web UI sees ALL sessions (admin view) regardless of source. Sessions are displayed with their source label (`ui`, `mcp`, `ssh`).
-
-**Session lifecycle events:** The server broadcasts `sessions:changed` to all connected WebSocket clients whenever any session's status changes, enabling real-time updates across tabs and across sources (MCP-created sessions appear in the UI instantly).
-
-### MCP Server (`src/mcp/`)
-
-Streamable HTTP MCP endpoint at `/mcp`. Each MCP client connection gets its own stateful transport (per the MCP spec for streamable HTTP). Requires an OAuth bearer token with the `mcp` scope (Hydra-issued; see [OAuth2 / OIDC](#oauth2--oidc--fully-delegated-to-ory-hydra-srchydra)).
-
-**Tools:**
-| Tool | Description |
-|------|-------------|
-| `shellwatch_create_session` | Create a terminal session |
-| `shellwatch_list_sessions` | List this agent's sessions |
-| `shellwatch_send_keys` | Send keystrokes/text to a session |
-| `shellwatch_read_output` | Read session output (with offset) |
-| `shellwatch_close_session` | Close a session |
-| `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints |
-| `shellwatch_manage_keys` | List available SSH keys |
-
-**Notifications (server → client):**
-| Notification | When | Contains |
-|-------------|------|----------|
-| `output_available` | New output after debounce | `sessionId`, `offset` |
-| `session_status` | Session status changed | `sessionId`, `status`, `endpointId` |
-
-Notifications are debounced (configurable `debounceMs`, default 100ms) and scoped to the agent's own sessions.
-
-**Session lifecycle:** MCP client connection creates an `AgentSession`. When the MCP transport disconnects, `AgentSession.destroy()` closes all owned terminal sessions.
-
-### SSH Agent Proxy (`src/agent-socket/`)
-
-WebSocket endpoint at `/agent-proxy` that bridges the SSH agent protocol for remote clients. A thin Go client ([`shellwatch-agent`](../agent-client/)) on the user's workstation relays SSH agent protocol frames over WebSocket.
-
-**Components:**
-
-| File                      | Purpose                                                        |
-| ------------------------- | -------------------------------------------------------------- |
-| `agent-proxy-route.ts`    | WebSocket endpoint — auth, credential lookup, protocol wiring  |
-| `socket-agent-handler.ts` | Builds `CompositeSshAgent` and wires to ssh2's `AgentProtocol` |
-
-**Flow:**
+WebSocket endpoint at `/agent-proxy` that bridges the SSH agent protocol for remote clients. A thin Go client ([`shellwatch-agent`](../agent-client/)) on the user's workstation relays SSH agent protocol frames over WebSocket; the server answers them with the same broker-backed signers used for sessions (`internal/signagent`). Protocol: [`docs/api/agent-proxy-protocol.md`](./api/agent-proxy-protocol.md).
 
 ```
 ssh client → Unix socket → shellwatch-agent (Go) → WSS → ShellWatch /agent-proxy
                                                           │
-                                                          ├─ file keys (auto-sign)
+                                                          ├─ file keys (approval-gated)
                                                           └─ passkeys (browser-signed via WebAuthn)
 ```
 
-- Each WebSocket connection gets its own `AgentProtocol` instance
-- Both passkey signs _and_ file-key uses create `PendingAction`s for approval (no silent file-key auto-sign on this path — the whole point is human-in-the-loop)
-- Requires an OAuth bearer token with the `agent` scope (Hydra-issued)
-- Requires OpenSSH 10.3+ on the client for passkey support (see [#36](https://github.com/rado0x54/ShellWatch/issues/36))
-- Client advertises `X-ShellWatch-Hostname` / `-OS` / `-Version` handshake headers so the approver can see which machine is asking (sanitized server-side, rendered as "self-reported")
+- Both passkey signs _and_ file-key uses create pending actions (no silent file-key auto-sign anywhere)
+- A denied request answers `SSH_AGENT_FAILURE`, on which OpenSSH moves to its next identity
+- Requires a bearer token with the `agent` scope and OpenSSH 10.3+ on the client for passkey support (#36)
+- Client advertises `X-ShellWatch-Hostname` / `-OS` / `-Version` headers, sanitized server-side and rendered as "self-reported"
 
-**OpenSSH 10.3 canonicalization:** OpenSSH canonicalizes `webauthn-sk-ecdsa` to `sk-ecdsa` in agent protocol messages. The ssh2 fork handles this by checking the key's application field (`"ssh:"` = standard FIDO2, web domain = webauthn) and using the correct PROTOCOL.u2f wire format in `signReply`. See [rado0x54/ssh2#1](https://github.com/rado0x54/ssh2/pull/1).
+## Agent Layer (`internal/agent`)
 
-## Agent Layer (`src/agent/`)
+`AgentSession` manages terminal sessions owned by a single agent connection and enforces isolation — an agent can only see and act on sessions it created. One `AgentSession` per MCP transport; the web UI does not use it (REST + WS operate on the Manager directly, account-scoped).
 
-### AgentSession (`src/agent/agent-session.ts`)
+## Persistence (`internal/store`)
 
-Manages terminal sessions owned by a single agent connection. Enforces session isolation — each agent can only see and interact with sessions it created.
-
-```typescript
-class AgentSession {
-  createSession(endpointId: string): Promise<TerminalSession>;
-  listSessions(): TerminalSession[]; // only owned sessions
-  sendKeys(sessionId: string, keys: string[]): void;
-  readOutput(sessionId: string, afterOffset?, limit?): OutputReadResult;
-  closeSession(sessionId: string): void;
-  destroy(): void; // close all owned sessions
-}
-```
-
-**Used by:**
-
-- MCP server — one `AgentSession("mcp")` per MCP client connection
-- SSH server (planned) — one `AgentSession("ssh")` per SSH client connection
-
-**Not used by the web UI** — the UI uses the REST API and WebSocket which operate directly on the TerminalManager (admin-level access, sees all sessions).
-
-## Persistence (`src/db/`)
-
-### SQLite Database
-
-Single-file database (`data/shellwatch.db`) via better-sqlite3 with Drizzle ORM. WAL mode for concurrent reads.
-
-**Schema (`src/db/schema.ts`):**
+Single-file SQLite database (`data/shellwatch.db`, pure-Go driver, WAL mode, writes serialized through one connection). Queries are generated by sqlc (`internal/store/queries` → `internal/store/gen`); migrations are embedded and applied by goose at startup. The schema is the one the Node backend left behind: a Drizzle-managed database is adopted in place (baseline stamped, journal preserved), so a cutover needs no data migration.
 
 | Table                     | Purpose                                                                            |
 | ------------------------- | ---------------------------------------------------------------------------------- |
-| `accounts`                | User/agent accounts (admin flag, session limits, last used)                        |
+| `accounts`                | User accounts (admin flag, session limits, last used)                              |
 | `admin_account`           | Single-row pointer table identifying the admin account                             |
 | `webauthn_credentials`    | Passkey credentials (COSE public key, OpenSSH public key, label)                   |
 | `ssh_keys`                | File-based SSH key metadata (fingerprint, public key — private keys on filesystem) |
-| `endpoints`               | SSH target configuration (host, port, username, key/passkey assignment)            |
-| `audit_session_lifecycle` | Tamper-evident session audit log (open/close events, source, timestamps)           |
+| `endpoints`               | SSH target configuration (host, port, username, agent forwarding, UV policy)       |
+| `audit_session_lifecycle` | Append-only session audit log (open/close events, source, timestamps)              |
 | `audit_signing_requests`  | Signing-request audit log (passkey signs, key approvals — outcomes + metadata)     |
 | `push_subscriptions`      | Web Push subscriptions per account (endpoint, auth/p256dh keys)                    |
 
-**Repositories (`src/db/repositories/`):**
+OAuth clients, tokens, and consent/login sessions are **not** stored here — they live in Hydra.
 
-| Repository              | Scope                                                 |
-| ----------------------- | ----------------------------------------------------- |
-| `account-repo.ts`       | Account CRUD, admin check, activity tracking, cleanup |
-| `endpoint-repo.ts`      | Endpoint CRUD with key/passkey assignment             |
-| `key-repo.ts`           | SSH key registration and lookup                       |
-| `credential-queries.ts` | WebAuthn credential lookup for signing                |
+## Audit Log (`internal/audit`)
 
-OAuth clients, tokens, and consent/login sessions are **not** stored here — they live in Hydra. ShellWatch only verifies Hydra-issued tokens (via introspection) and reads Hydra's consent sessions through the admin API.
-
-**Migrations:** Auto-run at startup from `drizzle/` directory.
-
-## Audit Log (`src/audit/`)
-
-Tamper-evident, append-only audit of session lifecycle and signing-request outcomes. The audit module subscribes to `TerminalManager` events and `PendingActionStore` resolutions; it never joins to live tables at read time, so a passkey rename or endpoint relabel never rewrites history.
-
-| File                          | Purpose                                                                                                                                       |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session-lifecycle-writer.ts` | Subscribes to TerminalManager open/close events, persists to `audit_session_lifecycle`                                                        |
-| `session-lifecycle-repo.ts`   | Keyset-paged read API powering `/audit/sessions`                                                                                              |
-| `signing-requests-writer.ts`  | Persists every PendingAction outcome (`approved` / `denied` / `expired` / `cancelled`) to `audit_signing_requests` with full trigger metadata |
-| `signing-requests-repo.ts`    | Read API powering `/audit/signings`                                                                                                           |
-
-All audit reads are account-scoped — admin is an admin role, not a global view across accounts.
+Append-only audit of session lifecycle and signing-request outcomes. Writers are guaranteed subscribers of the Manager and the pending-action store; readers are keyset-paginated and never join live tables, so a passkey rename or endpoint relabel never rewrites history. All audit reads are account-scoped — admin is a role, not a global view.
 
 ## Security
 
-### IP Allowlist (`src/server/auth/ip-allowlist.ts`)
-
-CIDR-based network filter applied to MCP and agent proxy endpoints. Configured via `security.allowedNetworks` in config. Defaults to localhost only (`127.0.0.1/32`, `::1/128`).
-
-Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`).
-
-### Bearer Gate (`src/server/auth/bearer-gate.ts`)
-
-The single authentication gate for every protected surface (`/api/*`, `/ws`, `/mcp`, `/agent-proxy`). It extracts the Hydra access token (the `Authorization: Bearer` header, or the `Sec-WebSocket-Protocol` subprotocol on `/ws` — browsers can't set headers on a WS handshake), introspects it via `bearer-resolver.ts` (RFC 7662, cached), and authorizes by path/scope (`ui` / `mcp` / `agent`). Only access tokens pass; introspection failures fail closed. There is no session cookie and no API-key path — all auth is Hydra-issued OAuth bearer tokens. See [OAuth2 / OIDC](#oauth2--oidc--fully-delegated-to-ory-hydra-srchydra).
+- **Bearer gate** (`internal/auth/gate.go`) — the single authentication gate for `/api/*`, `/ws` (token via `Sec-WebSocket-Protocol`), `/mcp` and `/agent-proxy`; scope by path; introspection fails closed.
+- **IP allowlist** (`internal/auth/ipallowlist.go`) — CIDR filter on `/mcp` and `/agent-proxy` (`security.allowedNetworks`, default loopback). Handles IPv4, IPv6 and IPv4-mapped IPv6.
+- **Client IP** (`internal/realip`) — `server.trustProxy` decides whether `X-Forwarded-For` is honoured (false, true, or CIDR list; hop counts are rejected at config load).
+- **Rate limits** (`internal/ratelimit`) — per-IP limits on self-registration, passkey registration and login ceremonies (`security.rateLimit`).
+- **Step-up** — revoking a passkey or an authorized client requires a fresh passkey assertion.
 
 ## Configuration
 
@@ -405,7 +278,7 @@ security:
     - "::1/128"
 
 server:
-  port: 3000 # HTTP port
+  port: 3000 # HTTP port (bind address via $HOST, default 0.0.0.0)
   externalUrl: http://localhost:3000 # required — issuer/redirect base for OAuth
 
 hydra: # OAuth2/OIDC authority (required)
@@ -417,55 +290,61 @@ hydra: # OAuth2/OIDC authority (required)
 agentSocket:
   proxyEnabled: true # Enable /agent-proxy WebSocket endpoint
 
+sessions:
+  idleTimeoutMinutes: 30 # idle janitor
+  cleanupIntervalSeconds: 60
+
 notifications:
   mcp:
     debounceMs: 100 # output_available debounce
 
 # Seeding (first run only)
-seedAdminEndpoints: # Pre-seed SSH endpoints
+seedAdminEndpoints:
   - label: Dev Box
     address: ubuntu@dev.example.com
-seedAdminPasskeys: # Pre-seed admin passkeys (for testing)
+seedAdminPasskeys:
   - credentialId: base64url...
     publicKeyHex: hex...
 ```
 
-Config is validated at startup via Zod. See `config.sample.yaml` for all options.
+Config is loaded from `--config` / positional arg > `SHELLWATCH_CONFIG` > `./config.yaml` and validated at startup (`internal/config`). See `config.sample.yaml` for all options.
 
 ## Process Model
 
-Everything runs in a single Node.js process:
+Everything runs in a single Go process:
 
 ```
 ┌─────────────────────────────────────────┐
-│              Node.js Process            │
+│          shellwatch (Go binary)         │
 │                                         │
-│  Fastify HTTP server (:3000)            │
-│    ├── REST API routes (/api/*)         │
-│    ├── WebSocket handler (/ws)          │
+│  net/http + chi (:3000)                 │
+│    ├── REST API (/api/*)                │
+│    ├── WebSocket hub (/ws)              │
 │    ├── MCP streamable HTTP (/mcp)       │
 │    ├── Agent proxy WebSocket            │
 │    │   (/agent-proxy)                   │
-│    ├── WebAuthn routes (/api/webauthn)  │
-│    ├── Health check (/health)           │
-│    └── Static files (/ — SvelteKit SPA) │
+│    ├── Hydra login/consent providers    │
+│    ├── Health / version / config.js     │
+│    └── Embedded SvelteKit SPA (/)       │
 │                                         │
-│  TerminalManager                        │
-│    └── SSH connections (ssh2)           │
+│  terminal.Manager                       │
+│    └── x/crypto/ssh connections         │
 │                                         │
-│  SigningBridge + PendingActionStore       │
+│  approval.Broker + Store                │
 │    └── Approval queue (60s TTL)         │
-│                                         │
-│  NotificationDispatcher                 │
 │    └── WebSocket + Web Push channels    │
 │                                         │
-│  KeyDirectoryWatcher                    │
-│    └── SSH key auto-discovery           │
+│  sshx key directory watcher             │
 │                                         │
-│  SQLite (better-sqlite3, WAL mode)      │
+│  Janitors: idle sessions, pending       │
+│    actions, MCP sessions, inactive      │
+│    accounts, last-used flusher          │
 │                                         │
+│  SQLite (modernc, WAL, single writer)   │
 └─────────────────────────────────────────┘
 ```
+
+Shutdown on SIGINT/SIGTERM is ordered: stop accepting HTTP → close all terminals → final last-used flush → close the DB.
 
 ## Data Flow Examples
 
@@ -473,151 +352,88 @@ Everything runs in a single Node.js process:
 
 ```
 1. MCP client calls shellwatch_send_keys(sessionId, ["text:ls -la", "enter"])
-2. AgentSession.sendKeys() checks ownership → resolves key names to bytes
-3. TerminalManager.sendInput() writes to SshTransport
-4. SshTransport.write() sends bytes to remote shell via ssh2
-5. Remote shell executes, output flows back via ssh2 stream
-6. SshTransport emits "data" → TerminalManager appends to OutputBuffer
-7. TerminalManager emits "output" event
-8. MCP notification dispatcher (debounced) sends output_available notification
-9. WebSocket handler broadcasts to attached UI clients (terminal:output)
-10. MCP client calls shellwatch_read_output(sessionId, afterOffset)
-11. AgentSession.readOutput() checks ownership → reads from OutputBuffer
+2. AgentSession.SendKeys() checks ownership → resolves key names to bytes
+3. Manager.SendInput() writes to the sshx transport
+4. Remote shell executes; output arrives on the transport's event channel
+5. Manager appends to the OutputBuffer and notifies output subscribers
+6. MCP notifier (debounced) sends output_available; WS hub forwards terminal:output
+7. MCP client calls shellwatch_read_output(sessionId, afterOffset)
+8. AgentSession.ReadOutput() checks ownership → reads from the OutputBuffer
 ```
 
 ### Session created via MCP appears in web UI
 
 ```
 1. MCP client calls shellwatch_create_session(endpointId)
-2. AgentSession.createSession() → TerminalManager.create()
-3. TerminalManager establishes SSH connection
-4. TerminalManager emits status-change("open")
-5. WebSocket handler broadcasts sessions:changed to all browser clients
-6. Browser renders new session in sidebar with "(mcp)" label
-7. Browser user clicks session → terminal:attach → receives buffered output
+2. AgentSession.CreateSession() → Manager.Create()
+3. Manager establishes the SSH connection (approvals as needed)
+4. Manager publishes status "open" to its subscribers
+5. WS hub broadcasts sessions:changed to the account's browser clients
+6. Browser renders the new session with an "(mcp)" label
+7. Browser user clicks it → terminal:attach → receives buffered output
 ```
 
 ### SSH via agent proxy with passkey signing
 
 ```
-1. ssh client connects to shellwatch-agent Unix socket
+1. ssh client connects to the shellwatch-agent Unix socket
 2. shellwatch-agent opens WSS to ShellWatch /agent-proxy
    (advertises X-ShellWatch-Hostname / -OS / -Version headers)
-3. SSH client sends SSH_AGENTC_REQUEST_IDENTITIES
-4. AgentProtocol returns file keys + passkeys
-5. SSH client sends SSH_AGENTC_SIGN_REQUEST for a passkey
-6. CompositeSshAgent delegates to WebAuthnSshAgent
-7. WebAuthnSshAgent's onSignRequest → SigningBridge creates a PendingAction
-   with an agent-proxy context (OAuth client label, client metadata)
-8. NotificationDispatcher fans out to connected browsers (sign:request via WS)
-   and/or Web Push; user sees a toast and/or native push notification
-9. User opens /sign/:id, taps passkey → WebAuthn ceremony in browser
-10. Browser POSTs the assertion to /api/actions/:id/resolve
-11. SigningBridge's resolve callback hands the signature back to ssh2
-12. Signature returned to SSH client via agent proxy
-13. SSH client authenticates with remote server
+3. SSH client sends SSH_AGENTC_REQUEST_IDENTITIES → file keys + passkeys
+4. SSH client sends SSH_AGENTC_SIGN_REQUEST for a passkey
+5. The WebAuthnSigner asks the broker; a PendingAction with an agent-proxy
+   context (OAuth client label, client metadata) is created
+6. Channels fan out (sign:request via WS, Web Push); user sees a toast/notification
+7. User opens /sign/:id, taps passkey → WebAuthn ceremony in browser
+8. Browser POSTs the assertion to /api/actions/:id/resolve
+9. The broker hands the result to the waiting signer → SSH wire signature
+10. Signature returned to the SSH client via the agent proxy → sshd accepts
 ```
 
 ## File Structure
 
 ```
-src/
-  index.ts                      # Entry point — config, TerminalManager, Fastify
-  agent/
-    agent-session.ts            # Session ownership and isolation per agent
-  agent-socket/
-    agent-proxy-route.ts        # WebSocket endpoint for SSH agent proxy
-    socket-agent-handler.ts     # AgentProtocol wiring to CompositeSshAgent
-  audit/
-    session-lifecycle-writer.ts # Subscribes to TerminalManager, persists open/close events
-    session-lifecycle-repo.ts   # Read API for /audit/sessions
-    signing-requests-writer.ts  # Persists PendingAction outcomes (approve/deny/expire/cancel)
-    signing-requests-repo.ts    # Read API for /audit/signings
-  config/
-    schema.ts                   # Zod schemas for config validation
-    loader.ts                   # YAML config loading
-  db/
-    connection.ts               # SQLite connection setup
-    schema.ts                   # Drizzle table definitions
-    repositories/               # Data access layer (accounts, keys, endpoints, etc.)
-  hydra/
-    routes.ts                   # Passkey login/consent/logout providers, mediated DCR, discovery
-    admin-client.ts             # Ory Hydra admin API client
-    bearer-resolver.ts          # Cached RFC 7662 token introspection
-    ensure-client.ts            # Provisions the first-party SPA client on boot
-    render.ts                   # Server-rendered passkey login/consent pages
-  server/
-    app.ts                      # Fastify app — routes, WebSocket, MCP, static files
-    ws-handler.ts               # WebSocket protocol handler
-    ws-extension.ts             # Pluggable WS message interceptor interface
-    ws-protocol.ts              # WebSocket message type definitions
-    auth/
-      bearer-gate.ts            # Single OAuth bearer gate (introspects Hydra tokens)
-      ip-allowlist.ts           # CIDR-based IP filtering
-  terminal/
-    terminal-manager.ts         # Central session registry and lifecycle
-    output-buffer.ts            # Append-only output buffer with offsets
-    transport.ts                # TerminalTransport interface
-    keys.ts                     # Named key → escape sequence mapping
-    types.ts                    # TerminalSession, status, events
-  transport/
-    ssh-transport.ts            # ssh2 implementation of TerminalTransport
-    ssh-transport-factory.ts    # Resolves auth mode (file key / passkey / auto)
-    key-directory-watcher.ts    # Filesystem key discovery and watching
-    key-scanner.ts              # PEM key parsing and fingerprinting
-  mcp/
-    server.ts                   # MCP tool definitions (delegates to AgentSession)
-    http-transport.ts           # Streamable HTTP transport wiring
-    notifications.ts            # Debounced MCP notification dispatcher
-  pending-action/
-    types.ts                    # SignRequestContext union + PendingAction record
-    store.ts                    # In-memory TTL store with resolve/deny/expire
-    dispatcher.ts               # Fans actions out to NotificationChannels
-    ws-channel.ts               # sign:request / sign:resolved over WebSocket
-    push-channel.ts             # Web Push delivery
-  webauthn/
-    ssh-agent.ts                # WebAuthnSshAgent — browser-delegated signing
-    composite-ssh-agent.ts      # CompositeSshAgent — file keys + passkeys
-    signing-bridge.ts           # SigningBridge — agent ↔ browser relay
-    signature-format.ts         # WebAuthn → SSH signature conversion
-    ssh-key-format.ts           # COSE → OpenSSH key format conversion
-    routes.ts                   # WebAuthn registration/auth HTTP routes
-  test/
-    helpers/                    # In-process test infrastructure
-    integration/                # End-to-end tests across all actors
-client/                           # SvelteKit frontend (adapter-static)
-  src/
-    app.html                    # HTML shell
-    app.css                     # Global styles (CSS variables, shared classes)
-    lib/
-      stores/                   # Svelte stores (ws, endpoints, keys, webauthn, toasts, account, ...)
-      components/               # Reusable components (Terminal, TerminalSnapshot, Sidebar, ToastContainer, Identicon)
-      utils/                    # Utilities (WebAuthn ceremony helpers, error formatting)
-    routes/
-      +layout.svelte            # Root layout (sidebar + mobile nav + auth gate)
-      +page.svelte              # Terminal view (default route)
-      session/[id]/             # Specific session view
-      sign/[id]/                # Sign-request approval page (+ tail preview for agent-forwarding)
-      auth/callback/            # OAuth redirect target — exchanges code for tokens
-      register/                 # WebAuthn passkey registration (bootstrap / self-register)
-      observer/                 # Multi-session grid view
-      audit/                    # Audit log views (sessions / signings)
-      admin/                    # Admin views (accounts, general settings)
-      passkey-invite/[token]/   # Cross-device passkey enrollment
-      settings/                 # Settings with tab sub-routes (incl. notifications / Web Push)
-  svelte.config.js              # SvelteKit config (adapter-static)
-agent-client/                     # Go thin client for SSH agent proxy
-  cmd/shellwatch-agent/         # CLI entry point
-  internal/
-    config/                     # Flag/env config parsing
-    proxy/                      # WebSocket relay + SSH agent protocol
+cmd/shellwatch/main.go          # Composition root: flags/env → config → wire → run → ordered shutdown
+internal/
+  api/                          # oapi-codegen model types from docs/api/openapi.yaml (generated; committed)
+  httpserver/                   # chi router, middleware stack, route mounting, SPA fallback
+  rest/                         # REST handlers (endpoints, sessions, keys, actions, audit, accounts, credentials, push)
+  ws/                           # Browser WebSocket hub + protocol
+  mcp/                          # MCP server, tools, per-session notifier, session janitor
+  agentproxy/                   # /agent-proxy framing ↔ agent protocol
+  agent/                        # AgentSession — per-agent session isolation
+  terminal/                     # Manager, Session, OutputBuffer, Transport interface, key map
+  sshx/                         # x/crypto/ssh transport, per-key auth, WebAuthn + file-key signers, key directory
+  signagent/                    # SSH agent protocol server used by forwarding and the proxy
+  signing/                      # Leaf: sign-request types, WebAuthn → SSH signature wire format
+  approval/                     # Pending-action store, broker, WS channel
+  push/                         # Web Push channel + endpoint allowlist
+  webauthn/                     # Ceremonies (go-webauthn), challenge/step-up/invite stores, COSE → OpenSSH
+  hydra/                        # Login/consent/logout providers, mediated DCR, discovery, admin client, bearer resolver
+  auth/                         # Bearer gate, scope routing, IP allowlist, Principal
+  realip/, ratelimit/           # Client IP under trustProxy; ceremony rate limits
+  audit/                        # Lifecycle + signing writers and keyset readers
+  store/                        # sqlc queries (gen/), goose migrations, repositories
+  seed/, demo/, endpointsvc/    # First-run seeding, demo endpoints, endpoint service
+  config/                       # YAML load, defaults, validation
+  ephemeral/, clock/            # TTL store; injectable clock
+  buildinfo/                    # Build identity for /api/version and /config.js
+  golden/                       # Golden normalization + coverage guard (tests)
+  hydratest/, webauthntest/     # Fake Hydra and fake authenticator for Go tests
+web/embed.go                    # go:embed of the SvelteKit build (web/dist)
+testdata/goldens/               # Golden wire fixtures (parity oracle)
+client/                         # SvelteKit frontend (adapter-static → web/dist)
+e2e/                            # Black-box suite: real sshd + real Hydra (docs/testing.md)
+docs/api/                       # Wire contract (OpenAPI, WS, MCP, agent-proxy)
+agent-client/                   # Go thin client for the SSH agent proxy (separate module, MIT)
 ```
 
 ## Planned Architecture Extensions
 
 See individual tickets for details:
 
-- **Guardrails (#13)** — input filtering layer in TerminalManager, before `sendInput()`
-- **SSH Server (#12)** — ssh2 Server for agent SSH access, username-based routing, uses AgentSession
-- **Telegram notification channel** — new `NotificationChannel` implementation alongside WS/Push
-- **Agent client distribution (#35)** — Homebrew tap published at [rado0x54/homebrew-tap](https://github.com/rado0x54/homebrew-tap); still pending: install script, deb/rpm packaging, install-service CLI; Windows support in #175
+- **Guardrails (#13)** — input filtering layer in the Manager, before `SendInput()`
+- **SSH Server (#12)** — an SSH server front door for agents, username-based routing, uses `AgentSession`
+- **Certificate UX (#209)** — `ssh.NewCertSigner` composition on the x/crypto foundation
+- **Host-key verification (#241)** — pin endpoint host keys instead of `InsecureIgnoreHostKey`
+- **Telegram notification channel** — another `approval.Channel` alongside WS/Push

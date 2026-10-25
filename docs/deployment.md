@@ -52,7 +52,7 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
 pnpm hydra:migrate                # create Hydra's schema (./data/hydra.sqlite)
 docker compose up -d hydra        # naming the service starts ONLY Hydra
 # Then run ShellWatch on the host:
-pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
+pnpm dev          # or: pnpm build && pnpm start  (single binary serving the built client on :3000)
 ```
 
 `hydra` is a profiled service in `docker-compose.yml` (alongside the `shellwatch`
@@ -74,7 +74,7 @@ passkey **login + consent providers** are server-rendered by ShellWatch at
 
 > Note: under `pnpm dev` the Vite dev server (`:3001`) is for SPA hot-reload
 > only — the OAuth redirect flow + the login/consent providers are served by
-> Fastify on `:3000`.
+> the Go server on `:3000`.
 
 ### Config
 
@@ -175,18 +175,27 @@ docker run -d \
 
 ### Environment variables
 
-| Variable            | Default                       | Description                |
-| ------------------- | ----------------------------- | -------------------------- |
-| `HOST`              | `0.0.0.0`                     | Bind address               |
-| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string |
-| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path           |
+| Variable                | Default                       | Description                                 |
+| ----------------------- | ----------------------------- | ------------------------------------------- |
+| `HOST`                  | `0.0.0.0`                     | Bind address                                |
+| `SHELLWATCH_DB`         | `sqlite:./data/shellwatch.db` | Database connection string                  |
+| `SHELLWATCH_CONFIG`     | `config.yaml`                 | Config file path (also `-config` / 1st arg) |
+| `SHELLWATCH_LOG_LEVEL`  | `info`                        | `debug` / `info` / `warn` / `error`         |
+| `SHELLWATCH_LOG_FORMAT` | `text`                        | `text` or `json`                            |
+| `SHELLWATCH_LOG_FILE`   | —                             | Also append logs to this file               |
+
+### Image
+
+The image is a distroless (no shell) base carrying one statically linked Go
+binary with the web UI embedded; `HEALTHCHECK` runs `shellwatch -healthcheck`,
+which probes `/health` on the configured port. There is nothing to `exec`
+into — use `docker logs` and the audit log.
 
 ### Running as non-root
 
-The image ships with a `shellwatch` user pinned to UID/GID `1000:1000` and runs
-as that user by default. If your host user uses a different UID/GID, override
-with Docker's `--user` flag (or `user:` in compose) and make sure the bind-
-mounted directories are owned by that UID/GID:
+The image runs as UID/GID `1000:1000` by default. If your host user uses a
+different UID/GID, override with Docker's `--user` flag (or `user:` in
+compose) and make sure the bind-mounted directories are owned by that UID/GID:
 
 ```bash
 sudo chown -R 1001:1001 ./data ./keys
@@ -201,27 +210,29 @@ services:
 
 ## Standalone tarball
 
-For deployments without Docker.
+For deployments without Docker. Each release ships one tarball per Linux
+architecture (`linux-amd64`, `linux-arm64`) containing the static `shellwatch`
+binary (web UI embedded), `buildInfo.generated.json`, `config.sample.yaml`,
+`LICENSE` and `THIRD_PARTY_LICENSES`. No runtime dependencies.
 
 ### Install
 
 ```bash
-# Download the release tarball
-wget https://github.com/rado0x54/ShellWatch/releases/latest/download/shellwatch-VERSION.tar.gz
-tar xzf shellwatch-*.tar.gz
-cd shellwatch-*
-
-# Install production dependencies
-npm i -g pnpm
-pnpm install --prod
+# Download the release tarball for your architecture
+wget https://github.com/rado0x54/ShellWatch/releases/latest/download/shellwatch-VERSION-linux-amd64.tar.gz
+tar xzf shellwatch-*-linux-amd64.tar.gz
+cd shellwatch-*-linux-amd64
 
 # Configure
 cp config.sample.yaml config.yaml
 # Edit config.yaml
 
-# Run
-node dist/index.js
+# Run (reads ./config.yaml, ./buildInfo.generated.json and writes ./data/shellwatch.db)
+./shellwatch
 ```
+
+Building from source instead: `pnpm install && pnpm build` produces the same
+binary at the repo root (`./shellwatch`).
 
 ### Systemd service
 
@@ -233,7 +244,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/shellwatch
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/opt/shellwatch/shellwatch
 Restart=on-failure
 User=shellwatch
 Environment=HOST=0.0.0.0

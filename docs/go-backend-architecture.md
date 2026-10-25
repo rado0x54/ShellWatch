@@ -22,6 +22,14 @@ Verified against the library ecosystem as of **July 2026**.
 
 ---
 
+> **Status (2026-10):** the cutover is complete. The Go server is the only
+> backend in the repo; `src/`, drizzle and the ssh2 fork are gone, the goldens
+> live in `testdata/goldens/`, the fake Hydra is `internal/hydratest`, and the
+> black-box e2e suite (`e2e/`, written against the Node server) passes
+> unchanged against the Go binary. References to `src/` below describe the
+> Node tree this design was derived from. The living description of the
+> system is [`architecture.md`](./architecture.md).
+
 ## 1. Scope and invariants
 
 ### In scope
@@ -567,9 +575,12 @@ webauthnSigner)` against sshd with `TrustedUserCAKeys` (the
 - **Phase 5 — periphery:** audit writers/readers + pagination, seeding,
   inactive-account cleanup, demo endpoints, full integration suite green.
   _Goldens: audit pagination; full suite._
-- **Phase 6 — cutover:** side-by-side soak (same config, copied DB), flip
-  deployment, freeze `src/` (keep for reference one release), then remove
-  Node server + ssh2 fork; `docs/architecture.md` rewritten for Go.
+- **Phase 6 — cutover (done 2026-10):** the black-box e2e suite (#245) was
+  written against the Node server first and then run unchanged against the Go
+  binary; Node server + ssh2 fork + drizzle removed, Dockerfile/CI/release
+  switched to the Go binary, `docs/architecture.md` rewritten for Go. The
+  same-data-dir adoption (baseline stamped on a Drizzle DB) means an existing
+  deployment needs no data migration.
 
 Post-cutover (separate track): contract convergence (A–J), then #209
 certificate UX and #12 SSH-server source on the now-native `x/crypto/ssh`

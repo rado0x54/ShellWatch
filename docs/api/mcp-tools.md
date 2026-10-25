@@ -4,8 +4,8 @@
 
 Language-agnostic contract for the MCP (Model Context Protocol) surface, frozen
 ahead of the Go rewrite (#210, #225). Source of truth in the Node backend:
-[`src/mcp/tools/`](../../src/mcp/tools/) and
-[`src/mcp/notifications.ts`](../../src/mcp/notifications.ts).
+[`internal/mcp/`](../../internal/mcp/) (`tools_sessions.go`,
+`tools_endpoints.go`, the notifier).
 
 ## Transport & auth
 
@@ -90,7 +90,7 @@ Input: `{ action: "list" | "read"; id?: string }`.
 
 ## Notifications (server → client)
 
-Debounced, per subscribed session (`src/mcp/notifications.ts`). `params`:
+Debounced, per subscribed session (`internal/mcp`). `params`:
 
 - `notifications/shellwatch/output_available` — new output is buffered.
   `params: { sessionId: string, offset: number }` (current buffer offset).

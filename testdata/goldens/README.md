@@ -1,17 +1,22 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 
-# Golden fixtures — cross-language parity oracle
+# Golden fixtures — wire-contract regression oracle
 
-Committed, normalized captures of real Node-backend responses, used to prove the
-Go rewrite (#210) reproduces the wire contract exactly (#225 item 2). They pair
-with the hand-authored spec in [`docs/api/`](../../../../docs/api): the spec
-says what the shape _should_ be; these goldens pin what the handlers _actually_
-return, byte for byte (after normalization).
+Committed, normalized captures of real server responses. They were captured
+from the original Node backend and used to prove the Go rewrite (#210)
+reproduces the wire contract byte for byte (#225 item 2); today they are the
+server's regression oracle. They pair with the hand-authored spec in
+[`docs/api/`](../../docs/api): the spec says what the shape _should_ be; these
+goldens pin what the handlers _actually_ return (after normalization).
 
 ## Layout
 
-Each `*.json` is one captured case. Generated and asserted by the
-`src/test/integration/golden-*.test.ts` suites:
+Each `*.json` is one captured case, asserted by the Go suites under
+`internal/httpserver` (`parity_test.go`, `remaining_goldens_test.go`,
+`mcp_test.go`, `ws_test.go`, `audit_test.go`, `ceremony_test.go`,
+`sessions_test.go`, `endpoints_test.go`) and reused by the e2e suite
+(`e2e/scenarios/hydra.e2e.test.ts` compares live discovery documents). The
+historical grouping:
 
 | Suite                 | Fixtures                                                         | Covers                                                                                                                                 |
 | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -28,10 +33,10 @@ Each `*.json` is one captured case. Generated and asserted by the
 
 ## Normalization
 
-Volatile per-run values are folded to stable placeholders before writing/
-comparing, so both implementations diff against the same file. Rules live in
-[`src/test/helpers/golden.ts`](../../helpers/golden.ts) — the Go harness must
-apply the identical set:
+Volatile per-run values are folded to stable placeholders before comparing.
+Rules live in [`internal/golden/golden.go`](../../internal/golden/golden.go)
+and, for the e2e suite, [`e2e/lib/golden.ts`](../../e2e/lib/golden.ts) — keep
+the two sets identical:
 
 | Placeholder     | Source                                                |
 | --------------- | ----------------------------------------------------- |
@@ -50,24 +55,27 @@ are stable independent of the listen port.
 ## Workflow
 
 ```bash
-pnpm test:golden          # assert current backend matches the committed goldens
-pnpm test:golden:update   # regenerate after an INTENTIONAL contract change (review the diff!)
+go test ./internal/httpserver/ ./internal/golden/   # assert the server matches the committed goldens
 ```
 
-A few suites fold values the `golden.ts` normalizer can't pattern-match, by hand
-before capture: `<ID>` (random base64url pending-action ids) and `<OUTPUT>` (raw
-terminal tail bytes). These are per-suite, documented in each suite's docblock.
+Fixtures are edited by hand (or captured from a running server with `curl` and
+normalized) when a contract change is intentional — the same PR updates
+`docs/api/openapi.yaml`, the fixture and the handler. There is no automatic
+regeneration: a golden that drifts without a spec change is a bug.
+
+A few fixtures fold values the normalizer can't pattern-match, by hand:
+`<ID>` (random base64url pending-action ids) and `<OUTPUT>` (raw terminal tail
+bytes). These are per-suite, documented in each suite's docblock.
 
 ## Coverage guard
 
 The goldens are the parity oracle, so a silent gap in them (the #225 failure
 mode — ~20 of 54 operationIds covered, parity generalized from the subset) is
-exactly what must not recur. [`golden-coverage.ts`](../golden-coverage.ts) is a
-committed manifest mapping **every** `openapi.yaml` `operationId` to its golden
-fixture(s) or to an `excluded` entry with a stated reason, and
-[`golden-coverage.test.ts`](../golden-coverage.test.ts) fails CI on any operation
-that is neither goldened nor deliberately excluded, on stale manifest entries,
-and on mapped fixtures missing from disk. Adding or renaming an operation in
+exactly what must not recur. [`internal/golden/coverage_test.go`](../../internal/golden/coverage_test.go)
+holds a committed manifest mapping **every** `openapi.yaml` `operationId` to its
+golden fixture(s) or to an `excluded` entry with a stated reason, and fails CI
+on any operation that is neither goldened nor deliberately excluded, on stale
+manifest entries, and on mapped fixtures missing from disk. Adding or renaming an operation in
 `openapi.yaml` therefore forces a matching golden (or a documented exclusion) in
 the same change. Current deliberate exclusions: the WebAuthn/consent `/options`
 passthroughs (non-deterministic `@simplewebauthn` challenge bodies) and
