@@ -171,7 +171,11 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	// the pump, and a terminal state must never be flipped back to open —
 	// setStatus guards that too, this ordering just makes it impossible here.
 	m.setStatus(mg, StatusOpen, "")
+	// Snapshot under the lock: the open broadcast above can prompt a client
+	// to close the session from another goroutine before Create returns.
+	m.mu.Lock()
 	out := *sess
+	m.mu.Unlock()
 	go m.pump(mg)
 	return &out, nil
 }

@@ -220,3 +220,35 @@ func TestImmediateTransportDeathNeverReopens(t *testing.T) {
 		t.Fatalf("terminal state overwritten back to %s", s.Status)
 	}
 }
+
+// Regression: Create's returned snapshot must be copied under the lock — the
+// open broadcast fires synchronously inside Create, and a subscriber can hand
+// the session id to another goroutine that closes it (mutating Status and
+// CloseReason) while the unlocked copy is still in flight. Run under -race.
+func TestCreateSnapshotDoesNotRaceImmediateClose(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		mock := NewMockTransport()
+		m := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock, nil }, clock.Real{}, 0)
+
+		closed := make(chan struct{})
+		unsub := m.SubscribeStatus(func(e StatusEvent) {
+			if e.Status == StatusOpen {
+				go func() { // a client reacting to the sessions:changed broadcast
+					m.Close(e.SessionID, CloseClientWS)
+					close(closed)
+				}()
+			}
+		})
+
+		ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+		sess, err := m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.SessionID == "" {
+			t.Fatal("empty snapshot")
+		}
+		<-closed
+		unsub()
+	}
+}
