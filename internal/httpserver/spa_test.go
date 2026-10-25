@@ -33,6 +33,10 @@ func TestSPACacheHeaders(t *testing.T) {
 		// Go's file server canonicalizes /index.html to / (301); the redirect
 		// target is the fallback below, which answers no-cache.
 		{"/index.html", 301, "no-cache"},
+		// Directories must NOT get the file server's auto-generated listing
+		// (least of all a one-year-immutable one): they fall back to the SPA.
+		{"/_app/immutable", 200, "no-cache"},
+		{"/_app/immutable/chunks", 200, "no-cache"},
 		// Client-side routes fall back to index.html and must revalidate too.
 		{"/settings/endpoints", 200, "no-cache"},
 		{"/", 200, "no-cache"},

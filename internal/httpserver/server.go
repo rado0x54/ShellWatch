@@ -277,10 +277,18 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
 			if f, err := staticFS.Open(path); err == nil {
+				info, statErr := f.Stat()
 				f.Close()
-				w.Header().Set("Cache-Control", staticCacheControl(path))
-				fileServer.ServeHTTP(w, r)
-				return
+				// Only real files are served statically. A directory would
+				// get the file server's auto-generated listing — and
+				// /_app/immutable/ would cache that listing for a year — so
+				// directories fall through to the SPA fallback (what the
+				// Node server answered for them).
+				if statErr == nil && !info.IsDir() {
+					w.Header().Set("Cache-Control", staticCacheControl(path))
+					fileServer.ServeHTTP(w, r)
+					return
+				}
 			}
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
