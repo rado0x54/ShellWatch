@@ -139,7 +139,7 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("SSH handshake to %s failed: %w", addr, keys.authError(err))
+		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, keys.authError(err))
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 

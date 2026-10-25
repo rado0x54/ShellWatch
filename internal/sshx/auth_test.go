@@ -136,7 +136,8 @@ func TestAllKeysDeniedReportsTheDenial(t *testing.T) {
 	}
 	// The human-visible reason (last rejection) is what the 400 body carries,
 	// not x/crypto's generic "unable to authenticate".
-	if !errors.Is(err, approval.ErrExpired) || !strings.Contains(err.Error(), "SSH handshake to") {
+	if !errors.Is(err, approval.ErrExpired) || !strings.Contains(err.Error(), "SSH connection to") ||
+		!strings.Contains(err.Error(), "All configured authentication methods failed: ") {
 		t.Errorf("error should wrap the last rejection: %v", err)
 	}
 }

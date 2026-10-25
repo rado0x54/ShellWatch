@@ -158,7 +158,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	transport, err := m.factory(ctx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
 	if err != nil {
 		sess.Status = StatusError
-		return nil, fmt.Errorf("failed to connect to %s: %w", ep.ID, err)
+		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}
 
 	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize)}

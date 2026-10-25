@@ -19,7 +19,10 @@ import (
 	"slices"
 	"sync"
 
+	"errors"
+	"fmt"
 	"golang.org/x/crypto/ssh"
+	"strings"
 )
 
 // keyAuth hands x/crypto one publickey method per signer, in order, and keeps
@@ -67,14 +70,28 @@ func (k *keyAuth) record(err error) {
 // authError returns the most useful error for a failed handshake: the last
 // signer rejection (deny / expiry — the human-visible reason) when there was
 // one, else x/crypto's error.
+// authError turns the handshake error into the message a user sees in the UI
+// (the body of the failed POST /api/sessions). Every authentication failure
+// reads "All configured authentication methods failed" — the wording users
+// have always seen — with the broker's rejection appended when a human denied
+// or let a prompt expire (still errors.Is-able), instead of x/crypto's
+// "unable to authenticate, attempted methods [...]" internals. Non-auth
+// failures (host key, protocol) pass through unchanged.
 func (k *keyAuth) authError(handshakeErr error) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.lastErr != nil {
-		return k.lastErr
+		return fmt.Errorf("%s: %w", authFailedMessage, k.lastErr)
+	}
+	if strings.Contains(handshakeErr.Error(), "unable to authenticate") {
+		return errors.New(authFailedMessage)
 	}
 	return handshakeErr
 }
+
+// authFailedMessage is the user-facing summary of an SSH authentication
+// failure (no key accepted, denied, or expired).
+const authFailedMessage = "All configured authentication methods failed"
 
 // wrapRecording returns s with Sign errors reported to rec, preserving the
 // AlgorithmSigner / MultiAlgorithmSigner capabilities x/crypto type-asserts
