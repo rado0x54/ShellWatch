@@ -145,9 +145,19 @@ export function generateFileKey(
   type: FileKeyType = "ed25519",
 ): FileKeyIdentity {
   const privateKeyPath = join(keyDirectory, `${name}.pem`);
-  const args = ["-q", "-t", type, "-N", "", "-C", name, "-f", privateKeyPath];
-  if (type === "rsa") args.splice(3, 0, "-b", "3072");
-  execFileSync("ssh-keygen", args);
+  const sizeArgs = type === "rsa" ? ["-b", "3072"] : [];
+  execFileSync("ssh-keygen", [
+    "-q",
+    "-t",
+    type,
+    ...sizeArgs,
+    "-N",
+    "",
+    "-C",
+    name,
+    "-f",
+    privateKeyPath,
+  ]);
   const publicKeyLine = readFileSync(`${privateKeyPath}.pub`, "utf8").trim();
   const fingerprint = execFileSync("ssh-keygen", ["-lf", `${privateKeyPath}.pub`], {
     encoding: "utf8",
