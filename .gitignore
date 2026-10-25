@@ -9,6 +9,7 @@ coverage/
 logs/*
 !logs/.gitkeep
 config.yaml
+config.docker.yaml
 .env
 client/.svelte-kit/
 agent-client/shellwatch-agent
