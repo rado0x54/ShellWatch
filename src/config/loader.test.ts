@@ -121,6 +121,38 @@ seedAdminEndpoints:
     expect(() => loadConfig(configPath)).toThrow("Failed to parse YAML");
   });
 
+  it("accepts CIDR-list trustProxy and rejects hop-count numbers", () => {
+    const dir = createTempDir();
+    const base = `
+keyDirectory: ./keys
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost:3000
+`;
+    const cidrPath = writeConfig(
+      dir,
+      `${base}server:
+  externalUrl: http://localhost:3000
+  trustProxy:
+    - 10.0.0.0/8
+`,
+    );
+    expect(loadConfig(cidrPath).server.trustProxy).toEqual(["10.0.0.0/8"]);
+
+    // Fastify >=5.12 fails numeric (hop-count) trustProxy closed, so the
+    // schema rejects it up front instead of silently ignoring the setting.
+    const hopPath = join(dir, "hops.yaml");
+    writeFileSync(
+      hopPath,
+      `${base}server:
+  externalUrl: http://localhost:3000
+  trustProxy: 1
+${HYDRA_YAML}`,
+    );
+    expect(() => loadConfig(hopPath)).toThrow(/trustProxy/);
+  });
+
   it("throws on missing required fields in seedAdminEndpoints entries", () => {
     const dir = createTempDir();
     const configPath = writeConfig(
