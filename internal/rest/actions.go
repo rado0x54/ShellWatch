@@ -96,12 +96,13 @@ func (a *Actions) deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := a.Store.Deny(action.ID)
-	// Deny is idempotent: whether this call denied the action or it was
-	// already denied (double-click, concurrent cancel), the outcome the user
-	// asked for holds. Only a state the store asserted is ever reported —
-	// a lost race against a resolve answers 409 "completed", never "denied"
-	// for a signature that actually went through.
-	if res.Won || (res.Found && res.Status == approval.StatusDenied) {
+	// Deny is idempotent over every no-signature outcome: whether this call
+	// denied the action, it was already denied (double-click, concurrent
+	// cancel), or it expired a moment earlier, what the user asked for — no
+	// signature — holds, so all three answer 200. Only a state the store
+	// asserted is ever reported: a lost race against a resolve answers 409
+	// "completed", never "denied" for a signature that actually went through.
+	if res.Won || (res.Found && (res.Status == approval.StatusDenied || res.Status == approval.StatusExpired)) {
 		writeJSON(w, 200, map[string]any{"status": "denied"})
 		return
 	}

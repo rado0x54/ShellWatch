@@ -1186,8 +1186,9 @@ paths:
       responses:
         "200":
           description: >-
-            Denied. Idempotent: denying an action that is already denied also
-            answers 200 — the requested outcome holds either way.
+            Denied. Idempotent over every no-signature outcome: denying an
+            action that is already denied or already expired also answers
+            200 — what the caller asked for (no signature) holds either way.
           content:
             application/json:
               schema:
@@ -1197,8 +1198,8 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >-
-            Action already completed or expired — the message names the state
-            the action actually ended in, never a guessed one.
+            Action already completed — the message names the state the action
+            actually ended in, never a guessed one.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
