@@ -26,9 +26,12 @@ Verified against the library ecosystem as of **July 2026**.
 > backend in the repo; `src/`, drizzle and the ssh2 fork are gone, the goldens
 > live in `testdata/goldens/`, the fake Hydra is `internal/hydratest`, and the
 > black-box e2e suite (`e2e/`, written against the Node server) passes
-> unchanged against the Go binary. References to `src/` below describe the
-> Node tree this design was derived from. The living description of the
-> system is [`architecture.md`](./architecture.md).
+> unchanged against the Go binary. The Phase 0 spike environment (`spike/`)
+> was removed after the cutover — its real-sshd coverage lives on in the e2e
+> suite, and its unique certificate-composition proof (`ssh.NewCertSigner`
+> over TrustedUserCAKeys) is recorded in git history for #209. References to
+> `src/` below describe the Node tree this design was derived from. The
+> living description of the system is [`architecture.md`](./architecture.md).
 
 ## 1. Scope and invariants
 

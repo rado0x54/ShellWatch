@@ -92,7 +92,6 @@ client/                   # SvelteKit frontend app (adapter-static → web/dist)
 agent-client/             # Go agent binary (separate module, MIT)
 docs/                     # Architecture, deployment, testing, wire contract (docs/api/)
 scripts/                  # SPDX check, codegen drift check, license bundling, aaguid refresh
-spike/                    # Phase 0 de-risk spike against a real sshd (not in CI)
 config.sample.yaml        # Sample config
 ```
 

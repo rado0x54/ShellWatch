@@ -23,9 +23,6 @@ AGENT_THIRD_PARTY_LICENSES
 LICENSE-shellwatch-agent
 .env.hydra
 
-# Phase 0 spike throwaway key material (spike/gen-spike-env.sh)
-spike/out/
-
 # SvelteKit build output, embedded into the server binary (web/embed.go).
 # Only the .gitkeep is tracked so `go build` works before the first client build.
 web/dist/*

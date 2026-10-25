@@ -68,8 +68,8 @@ e2e/
 
 ### Addresses
 
-Everything binds to `127.0.0.1`. Ports avoid the dev compose and the spike so
-the suite can run next to a local stack.
+Everything binds to `127.0.0.1`. Ports avoid the dev compose (Hydra on
+4444/4445) so the suite can run next to a local stack.
 
 | Service              | Address                             |
 | -------------------- | ----------------------------------- |
