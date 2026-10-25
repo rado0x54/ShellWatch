@@ -131,9 +131,20 @@ func adoptNodeDatabase(db *sql.DB) error {
 			return fmt.Errorf("existing database is missing table %q — it predates the final Node schema; run the Node backend once to finish its migrations before cutting over", tbl)
 		}
 	}
-	if ok, err := tableExists(db, "__drizzle_migrations"); err == nil && ok {
+	// Fail loudly on any journal-read error: this one-shot boot check is the
+	// single riskiest step of the cutover, and a corrupt drizzle journal
+	// silently passing the half-migrated guard would let adoption proceed on
+	// a store the schema checks above can't fully vouch for.
+	hasJournal, err := tableExists(db, "__drizzle_migrations")
+	if err != nil {
+		return err
+	}
+	if hasJournal {
 		var applied int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM __drizzle_migrations`).Scan(&applied); err == nil && applied < drizzleMigrationCount {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM __drizzle_migrations`).Scan(&applied); err != nil {
+			return fmt.Errorf("read drizzle journal: %w", err)
+		}
+		if applied < drizzleMigrationCount {
 			return fmt.Errorf("existing database has %d of %d Node migrations applied; run the Node backend once to finish them before cutting over", applied, drizzleMigrationCount)
 		}
 	}
