@@ -313,3 +313,114 @@ func TestCreateAfterDestroyRefused(t *testing.T) {
 		t.Fatalf("session registered after Destroy: %d", n)
 	}
 }
+
+// Closing absorbs Open: Destroy (or an account deletion) can hit a session
+// between Create registering it and Create's setStatus(Open) — the session
+// must not broadcast closing -> open -> closed (a dead session resurrecting).
+func TestClosingAbsorbsOpen(t *testing.T) {
+	mgr, _ := mockManager(t)
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mg, err := mgr.get(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawOpenAfterClosing bool
+	unsub := mgr.SubscribeStatus(func(e StatusEvent) {
+		if e.Status == StatusOpen && e.Previous == StatusClosing {
+			sawOpenAfterClosing = true
+		}
+	})
+	defer unsub()
+	if !mgr.beginClosing(mg, CloseShutdown) {
+		t.Fatal("beginClosing refused an open session")
+	}
+	mgr.setStatus(mg, StatusOpen, "") // Create's late Open transition
+	if s := mgr.GetSession(sess.SessionID); s.Status != StatusClosing {
+		t.Fatalf("closing session resurrected to %s", s.Status)
+	}
+	if sawOpenAfterClosing {
+		t.Fatal("subscribers watched a closing session broadcast open")
+	}
+}
+
+// wedgedTransport breaks the Transport contract: Close never terminates
+// Events. Manager.Close must still return within closeJoinTimeout, finalize
+// Closed, and remove the session — liveness over completeness.
+type wedgedTransport struct{ events chan Event }
+
+func (w *wedgedTransport) Write([]byte) error    { return nil }
+func (w *wedgedTransport) Resize(int, int) error { return nil }
+func (w *wedgedTransport) Close() error          { return nil } // never closes events
+func (w *wedgedTransport) Events() <-chan Event  { return w.events }
+
+func TestCloseJoinIsBounded(t *testing.T) {
+	wedged := &wedgedTransport{events: make(chan Event)}
+	m := NewManager(func(context.Context, FactoryParams) (Transport, error) { return wedged, nil }, clock.Real{}, 0)
+	m.closeJoinTimeout = 50 * time.Millisecond
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		m.Close(sess.SessionID, CloseClientUI)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close wedged behind a transport that never terminates Events")
+	}
+	if m.GetSession(sess.SessionID) != nil {
+		t.Fatal("wedged session not removed")
+	}
+	close(wedged.events) // release the leaked pump for a clean -race exit
+}
+
+// The removed hook fires once per removal, on explicit close and on the
+// account purge — it is what lets the WS hub sweep attaches that raced the
+// registry delete.
+func TestRemovedHookFires(t *testing.T) {
+	mgr, _ := mockManager(t)
+	var removed []string
+	unsub := mgr.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	defer unsub()
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if len(removed) != 1 || removed[0] != sess.SessionID {
+		t.Fatalf("explicit close: removed hook got %v", removed)
+	}
+
+	// Retained post-mortem session purged by account deletion.
+	mock2 := NewMockTransport()
+	t.Cleanup(func() { _ = mock2.Close() })
+	mgr2 := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock2, nil }, clock.Real{}, 0)
+	removed = nil
+	unsub2 := mgr2.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	defer unsub2()
+	sess2, err := mgr2.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mock2.Close() // transport death -> retained post-mortem
+	waitFor(t, func() bool {
+		s := mgr2.GetSession(sess2.SessionID)
+		return s != nil && s.Status == StatusClosed
+	})
+	if n := mgr2.RemoveForAccount("acc"); n != 1 {
+		t.Fatalf("RemoveForAccount: %d", n)
+	}
+	if len(removed) != 1 || removed[0] != sess2.SessionID {
+		t.Fatalf("account purge: removed hook got %v", removed)
+	}
+}

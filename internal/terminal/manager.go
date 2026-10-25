@@ -10,6 +10,7 @@ package terminal
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -52,9 +53,15 @@ type Manager struct {
 	maxBufferSize int
 	idleTimeout   time.Duration
 
-	statusSubs map[int]func(StatusEvent)
-	outputSubs map[int]func(sessionID string, offset int64)
-	nextSub    int
+	statusSubs  map[int]func(StatusEvent)
+	outputSubs  map[int]func(sessionID string, offset int64)
+	removedSubs map[int]func(sessionID string)
+	nextSub     int
+
+	// closeJoinTimeout bounds Close's pump join (liveness: a wedged transport
+	// teardown must not stall the idle janitor / shutdown / every other close
+	// behind it). Tests shorten it.
+	closeJoinTimeout time.Duration
 }
 
 // NewManager builds a Manager. factory establishes transports.
@@ -64,10 +71,12 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 	}
 	return &Manager{
 		terminals: map[string]*managed{}, factory: factory, clk: clk,
-		maxBufferSize: maxBufferSize,
-		idleTimeout:   DefaultIdleTimeout,
-		statusSubs:    map[int]func(StatusEvent){},
-		outputSubs:    map[int]func(string, int64){},
+		maxBufferSize:    maxBufferSize,
+		idleTimeout:      DefaultIdleTimeout,
+		statusSubs:       map[int]func(StatusEvent){},
+		outputSubs:       map[int]func(string, int64){},
+		removedSubs:      map[int]func(string){},
+		closeJoinTimeout: 5 * time.Second,
 	}
 }
 
@@ -143,6 +152,24 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 
 // Create opens a session against an endpoint. expectedAccountID guards
 // cross-account creation (terminal-manager.ts:62, #130).
+// SubscribeRemoved registers a hook fired after a session is removed from
+// the registry (explicit close, account purge). The WS hub uses it to sweep
+// connections whose attach raced the removal: the Closed broadcast happens
+// before the delete (so the tail drain can still read the buffer), which
+// leaves a window where an attach lands on a session about to disappear.
+func (m *Manager) SubscribeRemoved(fn func(sessionID string)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.removedSubs[id] = fn
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.removedSubs, id)
+	}
+}
+
 func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID string, trigger Trigger) (*Session, error) {
 	if ep.AccountID != expectedAccountID {
 		return nil, fmt.Errorf("unknown endpoint: %s", ep.ID)
@@ -398,16 +425,32 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// broadcast also happens BEFORE Clear below: clearing first made the
 	// drain observe the offset rewinding and emit a reset frame that blanked
 	// the client's terminal on every explicit close.
-	<-mg.pumpDone
-	// The pump finalized Closed on exit; this is a no-op safety net should a
-	// transport ever end its Events channel without the pump transitioning.
+	select {
+	case <-mg.pumpDone:
+	case <-time.After(m.closeJoinTimeout):
+		// Liveness over completeness: the transport broke its contract
+		// (Close must terminate Events). Proceed — the tail may be
+		// incomplete and the pump goroutine leaks, but the janitor,
+		// shutdown, and every other close stay unblocked.
+		slog.Warn("terminal close: pump did not drain in time; proceeding", "session", sessionID)
+	}
+	// On the join path the pump finalized Closed itself; on the timeout path
+	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
 	// Clear and remove in one critical section: no reader can observe a
-	// cleared-but-still-listed session.
+	// cleared-but-still-listed session. The removed hooks fire after, letting
+	// the WS hub sweep any connection whose attach raced this removal.
 	m.mu.Lock()
 	mg.output.Clear()
 	delete(m.terminals, sessionID)
+	removed := make([]func(string), 0, len(m.removedSubs))
+	for _, fn := range m.removedSubs {
+		removed = append(removed, fn)
+	}
 	m.mu.Unlock()
+	for _, fn := range removed {
+		fn(sessionID)
+	}
 }
 
 // beginClosing atomically checks the status and transitions to closing,
@@ -458,8 +501,7 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 // this afterwards. Returns the number removed.
 func (m *Manager) RemoveForAccount(accountID string) int {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := 0
+	ids := make([]string, 0)
 	for id, mg := range m.terminals {
 		if mg.session.AccountID != accountID {
 			continue
@@ -467,10 +509,20 @@ func (m *Manager) RemoveForAccount(accountID string) int {
 		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
 			mg.output.Clear()
 			delete(m.terminals, id)
-			n++
+			ids = append(ids, id)
 		}
 	}
-	return n
+	removed := make([]func(string), 0, len(m.removedSubs))
+	for _, fn := range m.removedSubs {
+		removed = append(removed, fn)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		for _, fn := range removed {
+			fn(id)
+		}
+	}
+	return len(ids)
 }
 
 // Destroy closes all sessions (shutdown) and marks the manager destroyed:
@@ -507,10 +559,12 @@ func (m *Manager) get(sessionID string) (*managed, error) {
 func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	m.mu.Lock()
 	prev := mg.session.Status
-	// Same-status no-op; closed/error are absorbing — a late transition from
-	// the create or close path must not resurrect a session the pump already
-	// finalized (zombie "open" session with no pump behind it).
-	if prev == status || prev == StatusClosed || prev == StatusError {
+	// Same-status no-op; closed/error are absorbing, and closing absorbs an
+	// Open — Destroy or an account deletion can hit a session between Create
+	// registering it and Create's setStatus(Open), and the session must not
+	// broadcast closing -> open -> closed (a dead session resurrecting).
+	if prev == status || prev == StatusClosed || prev == StatusError ||
+		(prev == StatusClosing && status == StatusOpen) {
 		m.mu.Unlock()
 		return
 	}
