@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
 // wsPair dials a real websocket against an httptest server and returns the
@@ -106,4 +109,56 @@ func TestOverflowDropReleasesWriter(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer goroutine leaked after overflow drop")
 	}
+}
+
+// -race smoke test for the attach/detach/flush interleavings: coalesced
+// flushes (pump side) running against re-attach and detach (read-loop side)
+// must serialize on flushMu — a flush in flight across a re-attach used to
+// enqueue its stale delta after the catch-up frames and rewind lastOffset,
+// and a flush racing a detach could send a detached session the full buffer.
+func TestFlushRacesAttachDetach(t *testing.T) {
+	s, client := wsPair(t)
+	go func() { // drain the client so the writer never overflows
+		for {
+			if _, _, err := client.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+
+	mock := terminal.NewMockTransport()
+	mgr := terminal.NewManager(func(context.Context, terminal.FactoryParams) (terminal.Transport, error) {
+		return mock, nil
+	}, nil, 0)
+	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := newConn(s, "acc")
+	writerDone := c.startWriter(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // the pump side: output + coalesced flushes
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			mock.Push([]byte("x"))
+			if c.isAttached(sess.SessionID) {
+				c.flushOutput(mgr, sess.SessionID)
+			}
+		}
+	}()
+	go func() { // the read-loop side: re-attach / detach cycles
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			c.attachWithCatchUp(sess.SessionID, true, 0, [][]byte{[]byte(`{"type":"t"}`)})
+			c.flushOutput(mgr, sess.SessionID)
+			c.detach(sess.SessionID)
+		}
+	}()
+	wg.Wait()
+	c.close()
+	<-writerDone
+	mgr.Close(sess.SessionID, terminal.CloseClientWS)
 }

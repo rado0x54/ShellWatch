@@ -49,6 +49,10 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 	// Buffered catch-up: delta from afterOffset, or full buffer with reset.
 	buffered, err := h.mgr.ReadOutputFrom(msg.SessionID, msg.AfterOffset)
 	if err != nil {
+		// The session vanished between the GetSession check and the read
+		// (explicit close): answer like the not-found path above instead of
+		// leaving the terminal view hanging with no frame at all.
+		c.sendError(fmt.Sprintf("Session not found: %s", msg.SessionID))
 		return
 	}
 	frames := [][]byte{

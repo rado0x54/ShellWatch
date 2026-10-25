@@ -124,8 +124,13 @@ func (c *conn) hasControl(sessionID string) bool {
 // and queues the initial frames in one critical section: a concurrent
 // coalesced flush (hub onOutput) can only observe the attach after lastOffset
 // is set and the catch-up frames are queued, so it can neither resend the
-// caught-up data nor enqueue a later delta ahead of it.
+// caught-up data nor enqueue a later delta ahead of it. flushMu is held too:
+// on a RE-attach the conn is already attached, so a flush already in flight
+// could otherwise enqueue its stale delta after the catch-up reset frame and
+// overwrite the fresh offset.
 func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, frames [][]byte) {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
 	c.mu.Lock()
 	c.attached[sessionID] = true
 	if control {
@@ -144,7 +149,11 @@ func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, f
 	}
 }
 
+// detach holds flushMu so an in-flight flush can't resurrect the deleted
+// lastOffset entry (or send to a session the client just left).
 func (c *conn) detach(sessionID string) {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
 	c.mu.Lock()
 	delete(c.attached, sessionID)
 	delete(c.controlled, sessionID)
@@ -174,8 +183,14 @@ func (c *conn) flushOutput(mgr *terminal.Manager, sessionID string) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	c.mu.Lock()
+	attached := c.attached[sessionID]
 	last := c.lastOffset[sessionID]
 	c.mu.Unlock()
+	// The caller's isAttached check raced a detach: don't send output (from a
+	// zero offset, i.e. the whole buffer) to a session the client just left.
+	if !attached {
+		return
+	}
 	res, err := mgr.ReadOutputFrom(sessionID, &last)
 	if err != nil {
 		return
