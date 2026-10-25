@@ -105,7 +105,11 @@ func run() error {
 	}
 
 	flusher := store.NewLastUsedFlusher(db, clk)
-	go flusher.Run(ctx, time.Minute)
+	flusherDone := make(chan struct{})
+	go func() {
+		defer close(flusherDone)
+		flusher.Run(ctx, time.Minute)
+	}()
 
 	// First-run seeding (admin account + passkeys + endpoints). Fatal on
 	// failure like the Node boot (index.ts:43) — continuing without an admin
@@ -309,16 +313,20 @@ func run() error {
 
 	select {
 	case err := <-errCh:
+		stop() // cancel the root ctx so the janitors and the flusher exit
+		<-flusherDone
 		return err
 	case <-ctx.Done():
 	}
 	// Ordered shutdown (§5.1): stop accepting HTTP, close all terminals, then
-	// the final last-used flush (via flusher.Run's ctx-done path) and the DB
-	// (deferred Close).
+	// JOIN the flusher's final last-used flush (flusher.Run's ctx-done path)
+	// before the deferred db.Close — unjoined, the flush raced the close and
+	// the last minute of activity timestamps was lost on SIGTERM.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = srv.Shutdown(shutdownCtx)
 	manager.Destroy()
+	<-flusherDone
 	return err
 }
 
