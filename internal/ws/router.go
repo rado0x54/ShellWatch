@@ -5,6 +5,7 @@
 package ws
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/rado0x54/shellwatch/internal/terminal"
@@ -36,22 +37,24 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 		return
 	}
 	// UI-created sessions default to control for the owning account; mcp/ssh
-	// attach as observer (take-control to send input).
+	// attach as observer (take-control to send input). hasControl is read
+	// before the attach: only this read loop mutates control state, so a
+	// re-attach keeps a previously taken control.
 	control := sess.Source == terminal.SourceUI
-	c.attach(msg.SessionID, control)
 	mode := "observer"
-	if c.hasControl(msg.SessionID) {
+	if control || c.hasControl(msg.SessionID) {
 		mode = "control"
 	}
-	c.send(map[string]any{"type": "terminal:status", "sessionId": msg.SessionID, "status": string(sess.Status)})
-	c.send(map[string]any{"type": "terminal:mode", "sessionId": msg.SessionID, "mode": mode})
 
 	// Buffered catch-up: delta from afterOffset, or full buffer with reset.
 	buffered, err := h.mgr.ReadOutputFrom(msg.SessionID, msg.AfterOffset)
 	if err != nil {
 		return
 	}
-	c.setInitialOffset(msg.SessionID, buffered.Offset)
+	frames := [][]byte{
+		marshalFrame(map[string]any{"type": "terminal:status", "sessionId": msg.SessionID, "status": string(sess.Status)}),
+		marshalFrame(map[string]any{"type": "terminal:mode", "sessionId": msg.SessionID, "mode": mode}),
+	}
 	if len(buffered.Data) > 0 || buffered.Reset {
 		out := map[string]any{
 			"type": "terminal:output", "sessionId": msg.SessionID,
@@ -60,8 +63,17 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 		if buffered.Reset {
 			out["reset"] = true
 		}
-		c.send(out)
+		frames = append(frames, marshalFrame(out))
 	}
+	c.attachWithCatchUp(msg.SessionID, control, buffered.Offset, frames)
+	// Output appended between the buffer read above and the attach becoming
+	// visible fired its onOutput before we were attached — pick it up now.
+	c.flushOutput(h.mgr, msg.SessionID)
+}
+
+func marshalFrame(msg any) []byte {
+	raw, _ := json.Marshal(msg)
+	return raw
 }
 
 func (h *Hub) input(c *conn, msg *clientMessage) {

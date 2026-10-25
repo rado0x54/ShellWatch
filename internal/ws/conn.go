@@ -24,6 +24,11 @@ type conn struct {
 	controlled map[string]bool
 	lastOffset map[string]int64
 
+	// flushMu serializes flushOutput: an attach-time flush and the hub's
+	// coalesced onOutput flush must not both read the same lastOffset and
+	// send the same delta twice.
+	flushMu sync.Mutex
+
 	out    chan []byte
 	closed bool
 }
@@ -50,19 +55,31 @@ func (c *conn) startWriter(ctx context.Context) <-chan struct{} {
 	return done
 }
 
-func (c *conn) enqueue(raw []byte) {
-	c.mu.Lock()
+// enqueueLocked queues raw with c.mu held. On overflow it marks the
+// connection closed AND closes the outbound channel — the writer drains what
+// is queued and exits, so Serve's close/<-writerDone teardown always finishes
+// and the hub entry is removed. Returns false on overflow; the caller must
+// drop the websocket after releasing the lock.
+func (c *conn) enqueueLocked(raw []byte) bool {
 	if c.closed {
-		c.mu.Unlock()
-		return
+		return true
 	}
 	select {
 	case c.out <- raw:
-		c.mu.Unlock()
+		return true
 	default:
 		// Slow client: drop the connection rather than block the hub.
 		c.closed = true
-		c.mu.Unlock()
+		close(c.out)
+		return false
+	}
+}
+
+func (c *conn) enqueue(raw []byte) {
+	c.mu.Lock()
+	ok := c.enqueueLocked(raw)
+	c.mu.Unlock()
+	if !ok {
 		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
 	}
 }
@@ -79,14 +96,14 @@ func (c *conn) sendError(message string) {
 	c.send(map[string]any{"type": "error", "message": message})
 }
 
+// close releases the writer (c.out is closed exactly once, here or on the
+// overflow path) and shuts the socket; a second websocket close is a no-op.
 func (c *conn) close() {
 	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return
+	if !c.closed {
+		c.closed = true
+		close(c.out)
 	}
-	c.closed = true
-	close(c.out)
 	c.mu.Unlock()
 	_ = c.ws.Close(websocket.StatusNormalClosure, "")
 }
@@ -103,13 +120,28 @@ func (c *conn) hasControl(sessionID string) bool {
 	return c.controlled[sessionID]
 }
 
-func (c *conn) attach(sessionID string, control bool) {
+// attachWithCatchUp marks the session attached, records the catch-up offset,
+// and queues the initial frames in one critical section: a concurrent
+// coalesced flush (hub onOutput) can only observe the attach after lastOffset
+// is set and the catch-up frames are queued, so it can neither resend the
+// caught-up data nor enqueue a later delta ahead of it.
+func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, frames [][]byte) {
 	c.mu.Lock()
 	c.attached[sessionID] = true
 	if control {
 		c.controlled[sessionID] = true
 	}
+	c.lastOffset[sessionID] = offset
+	ok := true
+	for _, raw := range frames {
+		if ok = c.enqueueLocked(raw); !ok {
+			break
+		}
+	}
 	c.mu.Unlock()
+	if !ok {
+		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
+	}
 }
 
 func (c *conn) detach(sessionID string) {
@@ -135,9 +167,12 @@ func (c *conn) releaseControl(sessionID string) {
 }
 
 // flushOutput reads the buffer delta since this connection's last-sent offset
-// and sends a terminal:output frame (the coalesced fan-out; W10). setLast
-// starts from the offset recorded at attach time.
+// and sends a terminal:output frame (the coalesced fan-out; W10), starting
+// from the offset recorded at attach time. flushMu keeps concurrent flushes
+// (attach vs onOutput) from reading the same offset and duplicating output.
 func (c *conn) flushOutput(mgr *terminal.Manager, sessionID string) {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
 	c.mu.Lock()
 	last := c.lastOffset[sessionID]
 	c.mu.Unlock()
@@ -159,12 +194,4 @@ func (c *conn) flushOutput(mgr *terminal.Manager, sessionID string) {
 	c.lastOffset[sessionID] = res.Offset
 	c.mu.Unlock()
 	c.send(msg)
-}
-
-// setInitialOffset records the offset sent in the attach reply so subsequent
-// coalesced flushes start from the right place.
-func (c *conn) setInitialOffset(sessionID string, offset int64) {
-	c.mu.Lock()
-	c.lastOffset[sessionID] = offset
-	c.mu.Unlock()
 }
