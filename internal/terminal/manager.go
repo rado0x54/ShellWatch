@@ -248,12 +248,16 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	m.mu.Unlock()
 
 	if err != nil {
-		if aborted {
-			// beginClosing already broadcast closing; balance it with closed
-			// (before removal, same ordering invariant as Close).
-			m.setStatus(mg, StatusClosed, "")
-		}
-		// No lifecycle was broadcast otherwise — the session never opened.
+		// Broadcast closed BEFORE removal (same ordering invariant as Close):
+		// the pre-registered opening session was visible to session lists, and
+		// the WS hub refreshes lists on status broadcasts, not on the removed
+		// hook — removing silently would leave a stale "opening" row in every
+		// browser that listed it during setup. Closed (not error) because
+		// closed sessions are filtered from the list snapshot the broadcast
+		// sends. The audit writer is unaffected: recordClose is an idempotent
+		// UPDATE, and no lifecycle row exists unless a Close raced the setup
+		// (in which case closing inserted it and this balances it).
+		m.setStatus(mg, StatusClosed, CloseTransportError)
 		m.removeEntry(sess.SessionID)
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}

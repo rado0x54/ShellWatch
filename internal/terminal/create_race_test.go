@@ -103,6 +103,56 @@ func TestCloseDuringCreateRefusesLateTransport(t *testing.T) {
 	}
 }
 
+// A failed connect must broadcast closed before the pre-registered session is
+// removed: the WS hub refreshes session lists on status broadcasts only, so a
+// silent removal would leave a stale "opening" row in any browser that listed
+// the session while it was connecting.
+func TestFailedConnectBroadcastsClosedBeforeRemoval(t *testing.T) {
+	release := make(chan struct{})
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		<-release
+		return nil, context.DeadlineExceeded
+	}, clock.Real{}, 0)
+
+	type seen struct {
+		status      Status
+		listedAfter int
+	}
+	events := make(chan seen, 4)
+	unsub := mgr.SubscribeStatus(func(e StatusEvent) {
+		// Snapshot the list the way the WS hub does, synchronously inside the
+		// broadcast: the closed event's snapshot must already hide the session.
+		events <- seen{status: e.Status, listedAfter: len(mgr.ListSessions())}
+	})
+	defer unsub()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := mgr.Create(context.Background(),
+			EndpointRef{ID: "ep", AccountID: "acc"}, "acc", Trigger{Kind: SourceUI})
+		done <- err
+	}()
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("create should fail")
+	}
+
+	select {
+	case ev := <-events:
+		if ev.status != StatusClosed {
+			t.Fatalf("first broadcast after failed connect: %s, want closed", ev.status)
+		}
+		if ev.listedAfter != 0 {
+			t.Fatalf("closed broadcast's list snapshot still shows %d session(s)", ev.listedAfter)
+		}
+	default:
+		t.Fatal("failed connect broadcast no status — stale opening rows in session lists")
+	}
+	if n := len(mgr.ListSessions()); n != 0 {
+		t.Fatalf("%d session(s) listed after failed connect", n)
+	}
+}
+
 // The happy path still works with pre-registration: a Create that finishes
 // uninterrupted opens, pumps, and closes normally.
 func TestCreateStillOpensAfterPreRegistration(t *testing.T) {
