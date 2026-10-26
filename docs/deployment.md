@@ -105,25 +105,21 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
 > callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
 >
-> **Mirroring the single-origin deployment locally (#243):** 2026-07-28-era MCP
-> clients validate RFC 8414 §3.3 — the authorization-server metadata's `issuer`
-> must equal the origin it was fetched from — which the split
-> `localhost:3000` / `localhost:4444` dev layout cannot satisfy (the blended
-> doc at ShellWatch's origin names Hydra's). Instead of running a local reverse
-> proxy, let ShellWatch forward Hydra's public surface itself:
+> **One origin for app + OAuth (#243):** 2026-07-28-era MCP clients enforce
+> RFC 8414 §3.3 — the authorization-server metadata's `issuer` must equal the
+> origin it was fetched from — so ShellWatch and Hydra must share a public
+> origin, with the proxy routing `/oauth2/*`, `/userinfo`,
+> `/.well-known/jwks.json` and `/.well-known/openid-configuration` to Hydra and
+> everything else (including the RFC 9728/8414 discovery docs, which are
+> ShellWatch's own) to ShellWatch. Set `hydra.publicUrl` and Hydra's
+> `urls.self.issuer` to that shared origin.
 >
-> 1. `config.yaml`: set `hydra.publicUrl` to `server.externalUrl`
->    (`http://localhost:3000`) and `hydra.devProxyUpstream: http://localhost:4444`.
-> 2. Start Hydra with its public identity on the app origin via the opt-in
->    overlay (the base compose never overrides a customized `hydra.yml`):
->    `docker compose -f docker-compose.yml -f docker-compose.single-origin.yml up -d hydra`.
-> 3. Restart the app and log out/in once — tokens minted under the `:4444`
->    issuer are not valid for the new one.
->
-> ShellWatch then proxies `/oauth2/*`, `/userinfo`, `/.well-known/jwks.json`,
-> and `/.well-known/openid-configuration` to Hydra — the same split as the
-> production proxy — and discovery is self-consistent on one origin. Dev only;
-> leave `devProxyUpstream` unset wherever a real proxy fronts both services.
+> **Locally**, `hydra.devProxyUpstream: http://localhost:4444` makes ShellWatch
+> forward that same path set itself, so `pnpm dev` + `docker compose up -d hydra`
+> give you the single origin with no local proxy — the bundled `hydra.yml`
+> already issues on the app's origin. Remove the key in production, where the
+> real proxy does the routing. Changing the issuer invalidates existing tokens:
+> log out and back in once (and re-authorize MCP clients).
 >
 > **MCP streams through proxies (#243):** `/mcp` responses can be long-lived SSE
 > streams (`subscriptions/listen`, `read_output` long-polls). The proxy must not
