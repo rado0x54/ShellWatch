@@ -804,7 +804,7 @@ func TestResolveRejectsUnregisteredRedirectURI(t *testing.T) {
 	}
 }
 
-func TestResolveIsIdempotentAndCacheHitsSkipHydra(t *testing.T) {
+func TestResolveIsIdempotentAcrossRepeatedAuthorizations(t *testing.T) {
 	doc := map[string]any{
 		"client_name":   "Example App",
 		"redirect_uris": []string{"http://127.0.0.1/callback"},
@@ -816,12 +816,139 @@ func TestResolveIsIdempotentAndCacheHitsSkipHydra(t *testing.T) {
 			t.Fatalf("resolve %d: %v", i, err)
 		}
 	}
+	// provision runs every time, but an unchanged document means no write and
+	// therefore no log row.
 	creates, updates := admin.counts()
 	if creates != 1 || updates != 0 {
 		t.Errorf("creates=%d updates=%d, want 1/0", creates, updates)
 	}
 	if *hits != 1 {
-		t.Errorf("document fetches = %d, want 1 (cached)", *hits)
+		t.Errorf("document fetches = %d, want 1 (the DOCUMENT is cached)", *hits)
+	}
+}
+
+// Regression (review finding): the document cache must not gate provisioning.
+// A request refused AFTER the fetch left the document cached but nothing in
+// Hydra, and the next valid request then skipped provisioning — so Hydra
+// rejected it as an unknown client until the cache expired.
+func TestResolveProvisionsAfterAnEarlierRequestWasRefused(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+	}
+	r, admin, url, hits := resolverFixture(t, &doc)
+
+	// Refused on the redirect_uri, which happens after the document is fetched
+	// (and therefore cached).
+	if _, err := r.Resolve(context.Background(), url, "http://127.0.0.1:1/evil", "mcp"); err == nil {
+		t.Fatal("want a redirect_uri rejection")
+	}
+	if creates, _ := admin.counts(); creates != 0 {
+		t.Fatalf("creates = %d, want 0 after a refusal", creates)
+	}
+
+	// The next, valid request must still provision — even though the document
+	// now comes from cache.
+	res, err := r.Resolve(context.Background(), url, "http://127.0.0.1:2/callback", "mcp")
+	if err != nil {
+		t.Fatalf("second resolve: %v", err)
+	}
+	if !res.FirstSeen {
+		t.Error("the client had never been created, so this is its first sighting")
+	}
+	if creates, _ := admin.counts(); creates != 1 {
+		t.Errorf("creates = %d, want 1", creates)
+	}
+	if admin.stored(url).ClientID != url {
+		t.Error("no Hydra client was provisioned")
+	}
+	// The document itself was only fetched once: the cache still works, it just
+	// no longer decides whether Hydra holds the client.
+	if *hits != 1 {
+		t.Errorf("document fetches = %d, want 1", *hits)
+	}
+}
+
+// Regression (review finding): the registered scope must come from the
+// document, not from whichever authorization arrived first — otherwise the
+// first request permanently capped the client.
+func TestRegisteredScopeComesFromTheDocument(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+		"scope":         "mcp agent",
+	}
+	r, admin, url, _ := resolverFixture(t, &doc)
+
+	// A narrow first request must not narrow the registration.
+	if _, err := r.Resolve(context.Background(), url, "", "mcp"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := admin.stored(url).Scope; got != "mcp agent offline_access" {
+		t.Fatalf("registered scope = %q, want the document's full set", got)
+	}
+
+	// So a later request for the document's other scope works, with no update
+	// to Hydra at all.
+	_, updatesBefore := admin.counts()
+	if _, err := r.Resolve(context.Background(), url, "", "mcp agent"); err != nil {
+		t.Fatalf("broader request rejected: %v", err)
+	}
+	if _, updates := admin.counts(); updates != updatesBefore {
+		t.Errorf("updates = %d, want %d — the registration should not churn with the request",
+			updates, updatesBefore)
+	}
+}
+
+// A request may not exceed what the document registered, and that error is the
+// redirectable one.
+func TestResolveRejectsAScopeTheDocumentDidNotRegister(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+		"scope":         "mcp",
+	}
+	r, _, url, _ := resolverFixture(t, &doc)
+	if _, err := r.Resolve(context.Background(), url, "", "mcp"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	_, err := r.Resolve(context.Background(), url, "http://127.0.0.1:1/callback", "agent")
+	if err == nil {
+		t.Fatal("want a scope rejection")
+	}
+	re, ok := err.(*ResolveError)
+	if !ok || re.Code != "invalid_scope" {
+		t.Fatalf("got %v, want invalid_scope", err)
+	}
+	if !re.RedirectValidated {
+		t.Error("the redirect_uri was validated, so this error may be redirected")
+	}
+}
+
+// A document whose scopes this deployment does not grant at all is an unusable
+// document, not a bad request — so it renders rather than redirects.
+func TestResolveRejectsADocumentWithNoGrantableScope(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+		"scope":         "root admin",
+	}
+	r, admin, url, _ := resolverFixture(t, &doc)
+
+	_, err := r.Resolve(context.Background(), url, "http://127.0.0.1:1/callback", "mcp")
+	if err == nil {
+		t.Fatal("want a rejection")
+	}
+	re, ok := err.(*ResolveError)
+	if !ok || re.Code != "invalid_client" {
+		t.Fatalf("got %v, want invalid_client", err)
+	}
+	if re.RedirectValidated {
+		t.Error("a document-level failure must not be redirected")
+	}
+	if creates, _ := admin.counts(); creates != 0 {
+		t.Errorf("creates = %d, want 0", creates)
 	}
 }
 

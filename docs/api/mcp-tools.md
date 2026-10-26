@@ -44,6 +44,10 @@ The server is a **stateless dual-era** MCP streamable-HTTP server (#243):
     a 5 KB read cap, no redirects followed, and exact `redirect_uri` matching
     with the RFC 8252 §7.3 loopback-port exception) are in
     [`openapi.yaml`](./openapi.yaml) under `authorizeOauthClient`.
+    The client's **registered scope comes from the document**, not from the
+    authorization request: declare `"scope": "agent"` (or `"mcp agent"`) in the
+    document if the client needs more than the default `mcp`, since a request
+    may not exceed what the document registered.
   - **DCR** — `POST /api/hydra/register`, unchanged and still supported. Note
     that each call mints a **new** Hydra client, so repeated registrations of
     the same software accumulate rows; CIMD collapses them onto one identity

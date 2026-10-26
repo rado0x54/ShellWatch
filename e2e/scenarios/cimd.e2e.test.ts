@@ -24,6 +24,7 @@ import {
   introspect,
   loginCimdClient,
   loginWebUi,
+  stepUpToken,
   registerClient,
   selfRegister,
 } from "../harness/oauth.js";
@@ -483,6 +484,32 @@ describe("CIMD front door (real Hydra) — discovery, passthrough, rejections", 
     expect(seen.size).toBe(all.length);
     const times = all.map((r) => r.createdAt);
     expect([...times].sort().reverse()).toEqual(times);
+  });
+
+  // A CIMD client_id is a URL, so revocation has to survive being
+  // percent-encoded into the route. chi hands the segment back still encoded,
+  // which previously sent Hydra a client literally named "https%3A%2F%2F…".
+  it("revokes a CIMD client by its URL client_id", async () => {
+    const listed = await sc.api.get<{ sessions: { clientId: string }[] }>("/api/auth/sessions");
+    expect(listed.status).toBe(200);
+    expect(listed.body.sessions.map((x) => x.clientId)).toContain(host.clientId);
+
+    const token = await stepUpToken(sc.uiToken, sc.identity, "revoke_session");
+    const revoked = await sc.api.request(
+      "DELETE",
+      `/api/auth/sessions/${encodeURIComponent(host.clientId)}`,
+      undefined,
+      { "x-shellwatch-stepup-token": token },
+    );
+    expect(revoked.status, JSON.stringify(revoked.body)).toBe(200);
+    expect(revoked.body).toEqual({ status: "revoked" });
+
+    // Hydra really dropped the grant for THAT client.
+    const after = await sc.api.get<{ sessions: { clientId: string }[] }>("/api/auth/sessions");
+    expect(after.status).toBe(200);
+    expect(after.body.sessions.map((x) => x.clientId)).not.toContain(host.clientId);
+    // …and not for the web UI's own grant.
+    expect(after.body.sessions.map((x) => x.clientId)).toContain(SPA_CLIENT_ID);
   });
 
   it("rejects an unknown origin or event filter rather than silently ignoring it", async () => {

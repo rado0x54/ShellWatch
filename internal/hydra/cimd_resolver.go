@@ -116,7 +116,9 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 	unlock := r.lockFor(clientIDURL)
 	defer unlock()
 
-	doc, cached, err := r.fetcher.Fetch(ctx, clientIDURL, r.policy)
+	// The cache-hit flag is deliberately ignored: see the note at provision
+	// below for why it must not gate provisioning.
+	doc, _, err := r.fetcher.Fetch(ctx, clientIDURL, r.policy)
 	if err != nil {
 		return Resolution{}, resolveErr("invalid_client", err)
 	}
@@ -128,20 +130,33 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 	}
 	redirectOK := requestedRedirectURI != ""
 
-	scope, err := GrantedScope(requestedScope, r.policy.AllowedScopes)
+	// The scope the client is REGISTERED with is a function of its document
+	// alone (RFC 7591 lists `scope` as client metadata), never of the request
+	// that happened to arrive first. Deriving it from the request would make
+	// the Hydra registration oscillate with whatever each authorization asked
+	// for, and would mean the first request silently capped the client.
+	registered, err := GrantedScope(doc.Scope, r.policy.AllowedScopes)
 	if err != nil {
+		// A document asking only for scopes this deployment does not grant is
+		// an unusable document, not a bad request.
+		return Resolution{}, resolveErr("invalid_client", err)
+	}
+	// This authorization must stay inside what the document registered.
+	if _, err := GrantedScope(requestedScope, setOf(registered)); err != nil {
 		return Resolution{}, &ResolveError{
 			Code: "invalid_scope", Description: err.Error(), RedirectValidated: redirectOK,
 		}
 	}
 
-	// A cache hit means we already provisioned this exact document; skip the
-	// Hydra round trip entirely.
-	if cached {
-		return Resolution{Doc: doc}, nil
-	}
-
-	out, err := r.provision(ctx, clientIDURL, doc, scope)
+	// provision runs on EVERY authorization, cache hit or not. The document
+	// cache says the document has not changed; it says nothing about whether
+	// Hydra holds the client. Treating the two as the same thing meant a
+	// request rejected after the fetch (a bad redirect_uri, an out-of-policy
+	// scope) left the document cached but nothing provisioned, so the next
+	// valid request skipped provisioning and Hydra rejected it as an unknown
+	// client until the cache expired. provision is a no-op read when nothing
+	// changed, so this costs one admin GET, not a write or a log row.
+	out, err := r.provision(ctx, clientIDURL, doc, registered)
 	if err != nil {
 		// Do not keep a document we could not apply — the next attempt
 		// re-reads rather than serving a client Hydra does not have.

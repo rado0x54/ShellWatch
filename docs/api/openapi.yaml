@@ -873,6 +873,13 @@ paths:
         (RFC 6749 §4.1.1 plus PKCE); they are passed through unchanged rather
         than re-serialized, and are documented here only as far as CIMD reads
         them.
+
+
+        Resolution runs on every authorization, not only the first. The document
+        cache (see `hydra.cimd.cacheMinSeconds`) decides whether the document is
+        re-fetched; it never decides whether Hydra holds the client, so a
+        request refused after the fetch cannot leave a later valid one without a
+        registration.
       parameters:
         - name: client_id
           in: query
@@ -893,7 +900,15 @@ paths:
         - name: scope
           in: query
           schema: { type: string }
-          description: Space-delimited; filtered through `hydra.dcr.allowedScopes`, then `offline_access` is appended.
+          description: >-
+            Space-delimited, and must stay within the scope the client's
+            **document** registered, else `invalid_scope`. The registered scope
+            is the document's own `scope` (RFC 7591 client metadata) filtered
+            through `hydra.dcr.allowedScopes`, defaulting to `mcp` when the
+            document declares none, plus `offline_access` — so a client that
+            wants `agent` has to say so in its document. It is deliberately not
+            derived from this parameter: otherwise whichever authorization
+            arrived first would cap the client permanently.
         - name: state
           in: query
           schema: { type: string }

@@ -310,3 +310,12 @@ func isAbsoluteURI(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme != "" && (u.Host != "" || u.Opaque != "")
 }
+
+// setOf turns a scope slice into the lookup map GrantedScope takes.
+func setOf(scopes []string) map[string]bool {
+	out := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		out[s] = true
+	}
+	return out
+}

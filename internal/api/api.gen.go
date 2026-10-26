@@ -1267,7 +1267,7 @@ type AuthorizeOauthClientParams struct {
 	// RedirectUri Must match one of the document's `redirect_uris` exactly, with the RFC 8252 §7.3 loopback exception (a registered `http://127.0.0.1/…` or `http://[::1]/…` entry matches any port; `localhost` does not).
 	RedirectUri *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
 
-	// Scope Space-delimited; filtered through `hydra.dcr.allowedScopes`, then `offline_access` is appended.
+	// Scope Space-delimited, and must stay within the scope the client's **document** registered, else `invalid_scope`. The registered scope is the document's own `scope` (RFC 7591 client metadata) filtered through `hydra.dcr.allowedScopes`, defaulting to `mcp` when the document declares none, plus `offline_access` — so a client that wants `agent` has to say so in its document. It is deliberately not derived from this parameter: otherwise whichever authorization arrived first would cap the client permanently.
 	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
 	State               *string `form:"state,omitempty" json:"state,omitempty"`
 	ResponseType        *string `form:"response_type,omitempty" json:"response_type,omitempty"`
