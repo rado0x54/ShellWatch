@@ -1,9 +1,10 @@
 -- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 -- Notification log (#252): server-originated events the user must not miss
--- (first producer: host-key mismatches) are persisted here and pushed over
--- the WebSocket as 'notification:new'. Persistence is the point - a toast on
--- a disconnected tab is lost, a row is not; the client renders the log at
--- /notifications and dedupes toasts by notification id.
+-- (host-key mismatches, failed connects) are persisted here - append-only,
+-- like the other audit tables - and pushed over the WebSocket as
+-- 'notification:new'. Persistence is the point: a toast on a disconnected
+-- tab is lost, a row is not; the client renders the log under
+-- Audit -> Notifications and dedupes toasts by notification id.
 -- 'type' carries no CHECK constraint on purpose: widening a CHECK needs a
 -- full table rebuild (see 00002), and adding a producer should not need a
 -- migration. 'payload' is a JSON object whose shape is typed per 'type'

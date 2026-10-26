@@ -65,9 +65,7 @@ tags:
   - name: actions
     description: Human-in-the-loop signing approvals
   - name: audit
-    description: Session-lifecycle + signing-request audit log
-  - name: notifications
-    description: Account notification log (server-originated alerts, #252)
+    description: Session-lifecycle + signing-request audit log + notification log
   - name: keys
     description: File-based SSH key listing (admin)
   - name: push
@@ -375,8 +373,11 @@ components:
             because the server presented a key that differs from the pin
             (payload: endpointId, endpointLabel, endpointAddress, keyType,
             observedFingerprint, pinnedFingerprint, auditId of the
-            host-key-mismatch audit row). Clients must ignore unknown kinds
-            gracefully (render title/detail, no typed action).
+            host-key-mismatch audit row); session-connect-failed — any other
+            failed SSH connect, whatever the trigger (payload: endpointId,
+            endpointLabel, endpointAddress, trigger, mcpClientName,
+            mcpClientVersion, mcpReason, sourceIp, error). Clients must ignore
+            unknown kinds gracefully (render title/detail, no typed action).
         severity: { type: string, enum: [info, warning, error] }
         title:
           type: string
@@ -1478,17 +1479,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  # ---------------------------------------------------------- notifications
-  /api/notifications:
+  /api/audit/notifications:
     get:
-      operationId: listNotifications
-      tags: [notifications]
+      operationId: listAuditNotifications
+      tags: [audit]
       summary: Account notification log
       description: >-
-        Keyset-paginated, newest first (#252). Live delivery happens over the
-        WebSocket (notification:new); this log is what a reconnecting client
-        reads to catch up on what a closed tab missed. The server keeps the
-        newest 500 per account.
+        The third audit surface (#252): append-only, keyset-paginated, newest
+        first. Live delivery happens over the WebSocket (notification:new);
+        this log is what a reconnecting client reads to catch up on what a
+        closed tab missed.
       parameters:
         - { name: cursor, in: query, schema: { type: string } }
         - name: limit

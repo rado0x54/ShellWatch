@@ -304,14 +304,6 @@
     <button
       type="button"
       class="btn-nav"
-      class:active={currentPath.startsWith("/notifications")}
-      onclick={() => navTo("/notifications")}
-    >
-      Notifications
-    </button>
-    <button
-      type="button"
-      class="btn-nav"
       class:active={currentPath.startsWith("/settings")}
       onclick={() => navTo("/settings")}
     >

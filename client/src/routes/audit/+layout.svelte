@@ -8,6 +8,7 @@
   const tabs: { path: Pathname; label: string }[] = [
     { path: "/audit/sessions", label: "Sessions" },
     { path: "/audit/signings", label: "Signing Requests" },
+    { path: "/audit/notifications", label: "Notifications" },
   ];
 </script>
 

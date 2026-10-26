@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 /**
  * Account notification log (#252): server-originated events the user must not
- * miss, persisted server-side and pushed live as `notification:new`. This
- * module owns the wire type, the log fetch, and the typed per-kind action
- * links — client behavior derives from `type` + `payload`, never from text.
+ * miss, persisted server-side as an append-only audit surface (Audit →
+ * Notifications) and pushed live as `notification:new`. This module owns the
+ * wire type, the log fetch, and the typed per-kind action links — client
+ * behavior derives from `type` + `payload`, never from text.
  */
 import { apiFetch } from "../api.js";
 
@@ -32,7 +33,7 @@ export async function fetchNotifications(cursor?: string, limit = 50): Promise<N
   const params = new URLSearchParams();
   if (cursor) params.set("cursor", cursor);
   params.set("limit", String(limit));
-  const res = await apiFetch(`/api/notifications?${params}`);
+  const res = await apiFetch(`/api/audit/notifications?${params}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "Failed to fetch notifications");

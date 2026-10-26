@@ -6,11 +6,31 @@
         "accountId": "test-account-00000000-0000-0000-0000-000000000000",
         "createdAt": "<TS>",
         "detail": null,
-        "id": "ntf_0000000000000000000002",
+        "id": "ntf_0000000000000000000003",
         "payload": null,
         "severity": "info",
         "title": "A kind this client version does not know",
         "type": "future-kind"
+      },
+      {
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "createdAt": "<TS>",
+        "detail": "Endpoint:  Demo (openclaw@172.28.0.117:22)\nSource:    mcp (codex 1.2.3)\nError:     Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
+        "id": "ntf_0000000000000000000002",
+        "payload": {
+          "endpointAddress": "openclaw@172.28.0.117:22",
+          "endpointId": "audit-endpoint-2",
+          "endpointLabel": "Demo",
+          "error": "Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
+          "mcpClientName": "codex",
+          "mcpClientVersion": "1.2.3",
+          "mcpReason": "deploy hotfix",
+          "sourceIp": "203.0.113.1",
+          "trigger": "mcp"
+        },
+        "severity": "warning",
+        "title": "Connection to \"Demo\" failed",
+        "type": "session-connect-failed"
       },
       {
         "accountId": "test-account-00000000-0000-0000-0000-000000000000",

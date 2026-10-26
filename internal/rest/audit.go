@@ -11,12 +11,15 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/audit"
+	"github.com/rado0x54/shellwatch/internal/notify"
 )
 
 // Audit wires the audit read routes.
 type Audit struct {
 	Sessions *audit.Sessions
 	Signings *audit.Signings
+	// Notify serves the notification log (#252) — the third audit surface.
+	Notify *notify.Service
 }
 
 var (
@@ -28,6 +31,19 @@ func (a *Audit) Mount(r chi.Router) {
 	r.Get("/api/audit/sessions", a.listSessions)
 	r.Get("/api/audit/signings", a.listSignings)
 	r.Get("/api/audit/signings/{id}", a.getSigning)
+	if a.Notify != nil {
+		r.Get("/api/audit/notifications", a.listNotifications)
+	}
+}
+
+func (a *Audit) listNotifications(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := a.Notify.List(r.Context(), accountID(r), q.Get("cursor"), parseLimit(q.Get("limit")))
+	if err != nil {
+		writeErr(w, 500, "internal error")
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 func (a *Audit) listSessions(w http.ResponseWriter, r *http.Request) {

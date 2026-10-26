@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Notification log REST (#252): the keyset-paginated log behind
-// /notifications, pinned by the notifications-list golden.
+// Notification log REST (#252): the keyset-paginated audit surface behind
+// Audit -> Notifications, pinned by the audit-notifications golden.
 package httpserver
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -35,7 +36,7 @@ func notificationsServer(t *testing.T) *httptest.Server {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC))
 	svc := notify.NewService(db, clk)
 	n := 0
-	svc.NewID = func() string { n++; return []string{"ntf_0000000000000000000001", "ntf_0000000000000000000002"}[n-1] }
+	svc.NewID = func() string { n++; return fmt.Sprintf("ntf_%022d", n) }
 	svc.Publish(ctx, notify.PublishParams{
 		AccountID: auditAccount, Type: "host-key-mismatch", Severity: "error",
 		Title:  `Host key MISMATCH — connection to "Prod Web" blocked`,
@@ -46,6 +47,19 @@ func notificationsServer(t *testing.T) *httptest.Server {
 			"observedFingerprint": "SHA256:observedobservedobservedobservedobservedobs",
 			"pinnedFingerprint":   "SHA256:pinnedpinnedpinnedpinnedpinnedpinnedpinnedp",
 			"auditId":             "act_0000000000000000000009",
+		},
+	})
+	clk.Advance(time.Second)
+	svc.Publish(ctx, notify.PublishParams{
+		AccountID: auditAccount, Type: "session-connect-failed", Severity: "warning",
+		Title:  `Connection to "Demo" failed`,
+		Detail: "Endpoint:  Demo (openclaw@172.28.0.117:22)\nSource:    mcp (codex 1.2.3)\nError:     Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
+		Payload: map[string]any{
+			"endpointId": "audit-endpoint-2", "endpointLabel": "Demo",
+			"endpointAddress": "openclaw@172.28.0.117:22", "trigger": "mcp",
+			"mcpClientName": "codex", "mcpClientVersion": "1.2.3", "mcpReason": "deploy hotfix",
+			"sourceIp": "203.0.113.1",
+			"error":    "Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
 		},
 	})
 	clk.Advance(time.Second)
@@ -65,7 +79,7 @@ func notificationsServer(t *testing.T) *httptest.Server {
 	})
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		Notifications: &rest.Notifications{Svc: svc},
+		Audit: &rest.Audit{Notify: svc},
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
@@ -74,6 +88,6 @@ func notificationsServer(t *testing.T) *httptest.Server {
 
 func TestNotificationsGolden(t *testing.T) {
 	ts := notificationsServer(t)
-	_, page := doJSON(t, ts, "GET", "/api/notifications", "")
-	assertBodyGolden(t, "notifications-list", 200, page)
+	_, page := doJSON(t, ts, "GET", "/api/audit/notifications", "")
+	assertBodyGolden(t, "audit-notifications", 200, page)
 }

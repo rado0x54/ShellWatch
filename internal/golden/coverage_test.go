@@ -63,7 +63,7 @@ var goldenCoverage = map[string]coverage{
 	"getAuditSigning":   goldened("audit-signings-by-id"),
 
 	// --- Notification log (#252) ---
-	"listNotifications": goldened("notifications-list"),
+	"listAuditNotifications": goldened("audit-notifications"),
 
 	// --- Current account + admin ---
 	"getCurrentAccount":    goldened("account-me"),

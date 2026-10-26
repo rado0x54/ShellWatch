@@ -59,8 +59,6 @@ type Params struct {
 	AgentProxy *agentproxy.Deps
 	// Audit mounts the audit read routes (nil-able).
 	Audit *rest.Audit
-	// Notifications mounts the notification-log read route (#252, nil-able).
-	Notifications *rest.Notifications
 	// Accounts, Credentials, Keys, AuthSessions, Push mount the account/auth
 	// self-service + admin REST surfaces (nil-able).
 	Accounts     *rest.Accounts
@@ -137,9 +135,6 @@ func New(p Params) http.Handler {
 	}
 	if p.Audit != nil {
 		p.Audit.Mount(r)
-	}
-	if p.Notifications != nil {
-		p.Notifications.Mount(r)
 	}
 	if p.Accounts != nil {
 		p.Accounts.Mount(r)

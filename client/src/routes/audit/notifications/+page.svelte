@@ -47,18 +47,10 @@
   }
 </script>
 
-<div class="notifications-page">
-  <div class="page-header">
-    <h1>Notifications</h1>
-    <p class="subtitle">
-      Server alerts you must not miss — newest first. Each entry was also pushed live to open tabs;
-      this log is where a closed tab catches up.
-    </p>
-  </div>
-
+<div class="audit-page">
   <SettingsList empty={rows.length === 0 && !loading} emptyText="No notifications">
     {#each rows as n (n.id)}
-      <SettingsRow detailLabel={n.detail || n.payload ? "Details" : undefined}>
+      <SettingsRow detailLabel={n.detail || notificationLink(n) ? "Details" : undefined}>
         {#snippet primary()}
           <span class="row-label">
             <span class="severity-dot {n.severity}"></span>{n.title}
@@ -85,45 +77,27 @@
     {/each}
   </SettingsList>
 
-  {#if nextCursor}
-    <div class="load-more">
+  <div class="audit-footer">
+    {#if nextCursor}
       <button
         type="button"
         class="btn btn-secondary"
-        onclick={() => load(false)}
         disabled={loading}
+        onclick={() => load(false)}
       >
         {loading ? "Loading…" : "Load more"}
       </button>
-    </div>
-  {/if}
+    {:else if rows.length > 0 && !loading}
+      <span class="end-marker">— end of log —</span>
+    {/if}
+  </div>
 </div>
 
 <style>
-  .notifications-page {
-    padding: 2rem;
-    overflow-y: auto;
-    height: 100%;
-  }
-
-  .page-header {
-    margin-bottom: 1.5rem;
-  }
-
-  .page-header h1 {
-    font-family: var(--font-display);
-    font-size: var(--display-md);
-    font-weight: 600;
-    letter-spacing: -0.035em;
-  }
-
-  .subtitle {
-    color: var(--on-surface-variant);
-    font-size: var(--body-md);
-    margin-top: var(--space-2);
-  }
-
   .row-label {
+    font-weight: 600;
+    font-size: var(--body-md);
+    color: var(--on-surface);
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -168,15 +142,14 @@
     margin-top: var(--space-3);
   }
 
-  .load-more {
+  .audit-footer {
     display: flex;
     justify-content: center;
     margin-top: 1rem;
   }
 
-  @media (max-width: 768px) {
-    .notifications-page {
-      padding: 1rem;
-    }
+  .end-marker {
+    color: var(--on-surface-variant);
+    font-size: var(--label-md);
   }
 </style>

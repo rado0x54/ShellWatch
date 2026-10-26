@@ -108,20 +108,17 @@ func TestListPaginatesNewestFirst(t *testing.T) {
 	}
 }
 
-func TestPruneKeepsNewestPerAccount(t *testing.T) {
+// Notifications are an audit surface: append-only, nothing is pruned.
+func TestLogIsAppendOnly(t *testing.T) {
 	svc, _ := testService(t)
 	ctx := context.Background()
-	for i := 0; i < keepPerAccount+5; i++ {
+	const total = 600 // more than any paging default
+	for i := 0; i < total; i++ {
 		svc.clk.(*clock.Fake).Advance(time.Millisecond)
 		svc.Publish(ctx, PublishParams{AccountID: "acc", Type: "t", Severity: SeverityInfo, Title: fmt.Sprintf("n%d", i)})
 	}
 	var count int
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE account_id = 'acc'`).Scan(&count); err != nil || count != keepPerAccount {
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE account_id = 'acc'`).Scan(&count); err != nil || count != total {
 		t.Fatalf("count=%d err=%v", count, err)
-	}
-	// The newest survives, the oldest is gone.
-	page, _ := svc.List(ctx, "acc", "", 1)
-	if len(page.Rows) != 1 || page.Rows[0].Title != fmt.Sprintf("n%d", keepPerAccount+4) {
-		t.Fatalf("newest: %+v", page.Rows)
 	}
 }

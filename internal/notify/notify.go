@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Package notify is the account notification log (#252): server-originated
-// events the user must not miss. Publish persists the notification first (the
-// durable log a reconnecting client can re-read) and then pushes it to every
-// connected tab as a 'notification:new' WebSocket message. Toast rendering,
-// dedupe, and per-type action links all key off the notification id and type
-// on the client — never off message text.
+// events the user must not miss, kept as an append-only audit surface (the
+// Notifications tab under Audit, GET /api/audit/notifications). Publish
+// persists the notification first (the durable record a reconnecting client
+// re-reads) and then pushes it to every connected tab as a 'notification:new'
+// WebSocket message. Toast rendering, dedupe, and per-type action links all
+// key off the notification id and type on the client — never off message
+// text.
 package notify
 
 import (
@@ -22,10 +24,6 @@ import (
 const (
 	pageLimitDefault = 50
 	pageLimitMax     = 500 // matches the audit readers' clampLimit
-	// keepPerAccount caps the log per account: the newest rows win. The log is
-	// a user-attention stream, not an audit trail — the append-only security
-	// record stays in audit_signing_requests.
-	keepPerAccount = 500
 )
 
 // Severity levels (CHECK-constrained in the notifications table).
@@ -40,6 +38,13 @@ const (
 // {endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint,
 // pinnedFingerprint, auditId}.
 const TypeHostKeyMismatch = "host-key-mismatch"
+
+// TypeSessionConnectFailed is any other failed SSH connect, whatever the
+// trigger (UI click or MCP agent) — the agent-triggered ones have no other
+// human-visible surface. Payload: {endpointId, endpointLabel,
+// endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason,
+// sourceIp, error}.
+const TypeSessionConnectFailed = "session-connect-failed"
 
 // Notification is the wire/domain shape of one notification row.
 type Notification struct {
@@ -122,24 +127,11 @@ func (s *Service) Publish(ctx context.Context, p PublishParams) Notification {
 		n.ID, n.AccountID, n.Type, n.Severity, n.Title, nullable(p.Detail), payload, n.CreatedAt); err != nil {
 		slog.Warn("notify: insert failed", "type", p.Type, "err", err)
 		n.ID = "" // not persisted: nothing to reference
-	} else {
-		s.prune(ctx, p.AccountID)
 	}
 	if s.Hub != nil {
 		s.Hub.SendToAccount(p.AccountID, map[string]any{"type": "notification:new", "notification": n})
 	}
 	return n
-}
-
-// prune keeps the newest keepPerAccount rows per account.
-func (s *Service) prune(ctx context.Context, accountID string) {
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM notifications WHERE account_id = ? AND id NOT IN (
-			SELECT id FROM notifications WHERE account_id = ?
-			ORDER BY created_at DESC, id DESC LIMIT ?)`,
-		accountID, accountID, keepPerAccount); err != nil {
-		slog.Warn("notify: prune failed", "err", err)
-	}
 }
 
 // Page is a keyset-paginated result ({rows, nextCursor}).

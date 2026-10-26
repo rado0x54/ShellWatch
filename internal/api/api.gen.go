@@ -771,7 +771,7 @@ type Notification struct {
 	// Title Short headline sized for a toast.
 	Title string `json:"title"`
 
-	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
 	Type string `json:"type"`
 }
 
@@ -1023,6 +1023,14 @@ type ResolveActionJSONBody struct {
 	Signature *string `json:"signature,omitempty"`
 }
 
+// ListAuditNotificationsParams defines parameters for ListAuditNotifications.
+type ListAuditNotificationsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListAuditSessionsParams defines parameters for ListAuditSessions.
 type ListAuditSessionsParams struct {
 	EndpointId *string `form:"endpointId,omitempty" json:"endpointId,omitempty"`
@@ -1161,14 +1169,6 @@ type RegisterOauthClient201JSONResponseBodyTokenEndpointAuthMethod string
 
 // RegisterOauthClient502JSONResponseBodyError defines parameters for RegisterOauthClient.
 type RegisterOauthClient502JSONResponseBodyError string
-
-// ListNotificationsParams defines parameters for ListNotifications.
-type ListNotificationsParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-
-	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
-}
 
 // FinishInvitePasskeyRegistrationJSONBody defines parameters for FinishInvitePasskeyRegistration.
 type FinishInvitePasskeyRegistrationJSONBody struct {
