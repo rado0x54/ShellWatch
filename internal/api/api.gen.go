@@ -968,6 +968,9 @@ type TerminalSession struct {
 	McpClientVersion *string `json:"mcpClientVersion,omitempty"`
 	McpReason        *string `json:"mcpReason,omitempty"`
 
+	// OwnerClientId OAuth client_id that owns the session (mcp source only; omitted for ui sessions). MCP session visibility is scoped to (account, ownerClientId) — #243.
+	OwnerClientId *string `json:"ownerClientId,omitempty"`
+
 	// SessionId Example: sess_a1b2c3d4e5f6
 	SessionId string         `json:"sessionId"`
 	Source    TerminalSource `json:"source"`

@@ -200,6 +200,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		SourceIP: trigger.SourceIP,
 	}
 	if trigger.Kind == SourceMCP {
+		sess.OwnerClientID = trigger.OwnerClientID
 		sess.MCPReason = trigger.Reason
 		sess.MCPClientName = trigger.MCPClientName
 		sess.MCPClientVer = trigger.MCPClientVer
@@ -521,6 +522,33 @@ func (m *Manager) CloseAllForAccount(accountID string, reason CloseReason) int {
 	m.mu.Unlock()
 	m.closeAll(ids, reason)
 	return len(ids)
+}
+
+// CloseAllForClient closes an account's non-closed MCP sessions owned by the
+// given OAuth client (consent revocation, #243). An empty clientID matches
+// every MCP client of the account (revoke-all). Returns the count.
+func (m *Manager) CloseAllForClient(accountID, clientID string, reason CloseReason) int {
+	m.mu.Lock()
+	ids := make([]string, 0)
+	for id, mg := range m.terminals {
+		s := mg.session
+		if s.AccountID == accountID && s.Source == SourceMCP && s.Status != StatusClosed &&
+			(clientID == "" || s.OwnerClientID == clientID) {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	m.closeAll(ids, reason)
+	return len(ids)
+}
+
+// OutputOffset returns the offset past the last buffered output byte.
+func (m *Manager) OutputOffset(sessionID string) (int64, error) {
+	mg, err := m.get(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return mg.output.CurrentOffset(), nil
 }
 
 // RemoveForAccount drops an account's retained post-mortem (closed/errored)

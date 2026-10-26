@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Package agent is per-agent session isolation (port of src/agent/): an
-// AgentSession owns the terminal sessions created by one agent connection
-// (MCP today, SSH server later) so each agent only sees its own sessions.
-// Endpoint listing/lookup is account-scoped; on disconnect all owned sessions
-// close.
+// Package agent is per-agent session isolation: an AgentSession scopes the
+// terminal sessions an agent may touch to the OAuth client (and account) its
+// bearer token was issued to. Since MCP 2026-07-28 there is no protocol-level
+// connection to anchor ownership to (#243): an AgentSession is built per
+// request from the request's principal, and ownership lives on the terminal
+// session itself (terminal.Session.OwnerClientID). Endpoint listing/lookup is
+// account-scoped.
 package agent
 
 import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
+	"time"
 
 	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
@@ -34,29 +36,41 @@ type Deps struct {
 	Audit HostKeyAuditor
 }
 
-// Session isolates one agent connection's terminal sessions.
+// Session scopes one request's terminal-session access to an OAuth client on
+// an account. It is cheap to build and not safe for concurrent use — make one
+// per request.
 type Session struct {
 	deps      Deps
 	accountID string
+	clientID  string
 	sourceIP  string
 	maxOwned  int
-
-	mu    sync.Mutex
-	owned map[string]bool
 
 	clientName string
 	clientVer  string
 }
 
-// New builds an AgentSession for an account. maxOwned caps concurrent owned
-// sessions: negative means "unresolved, use the default 5"; an explicit 0
-// blocks all creation (Node honors a stored max_sessions of 0, and so does
-// the REST cap check — MCP must not silently upgrade 0 to 5).
-func New(deps Deps, accountID, sourceIP string, maxOwned int) *Session {
-	if maxOwned < 0 {
-		maxOwned = 5
+// Params configures New.
+type Params struct {
+	Deps      Deps
+	AccountID string
+	// ClientID is the OAuth client_id ownership is scoped to (introspection
+	// client_id). Sessions created here carry it; only sessions carrying it
+	// are visible.
+	ClientID string
+	SourceIP string
+	// MaxOwned caps this client's concurrent live sessions: negative means
+	// "unresolved, use the default 5"; an explicit 0 blocks all creation
+	// (a stored max_sessions of 0 must not silently upgrade to 5).
+	MaxOwned int
+}
+
+// New builds an AgentSession for one request.
+func New(p Params) *Session {
+	if p.MaxOwned < 0 {
+		p.MaxOwned = 5
 	}
-	return &Session{deps: deps, accountID: accountID, sourceIP: sourceIP, maxOwned: maxOwned, owned: map[string]bool{}}
+	return &Session{deps: p.Deps, accountID: p.AccountID, clientID: p.ClientID, sourceIP: p.SourceIP, maxOwned: p.MaxOwned}
 }
 
 // SetClientInfo records the MCP client's advertised name/version (sanitized).
@@ -187,54 +201,32 @@ func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) 
 	if ep == nil {
 		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
 	}
-	s.mu.Lock()
-	// The cap counts only LIVE sessions — deliberate divergence from Node,
-	// which counts its raw owned set and so lets N externally-closed sessions
-	// (idle janitor, server hangup) starve the cap until the agent reconnects.
-	// Dead-but-retained ids (post-mortem closed/error sessions, M6) stay in
-	// owned so read_output/close_session keep working on them; only ids the
-	// manager has forgotten entirely are dropped.
+	// The cap counts only LIVE sessions owned by this client: dead-but-retained
+	// (post-mortem closed/error) sessions stay readable via read_output but do
+	// not starve the cap.
 	live := 0
-	for id := range s.owned {
-		sess := s.deps.Manager.GetSession(id)
-		if sess == nil {
-			delete(s.owned, id)
-			continue
-		}
-		if sess.Status != terminal.StatusClosed && sess.Status != terminal.StatusError {
+	for _, sess := range s.deps.Manager.ListSessions() {
+		if s.ownsSession(&sess) && sess.Status != terminal.StatusClosed && sess.Status != terminal.StatusError {
 			live++
 		}
 	}
 	if live >= s.maxOwned {
-		s.mu.Unlock()
 		return nil, fmt.Errorf("maximum concurrent sessions (%d) reached", s.maxOwned)
 	}
-	s.mu.Unlock()
 
-	sess, err := s.deps.Manager.Create(ctx, *ep, s.accountID, terminal.Trigger{
+	return s.deps.Manager.Create(ctx, *ep, s.accountID, terminal.Trigger{
 		Kind: terminal.SourceMCP, Reason: reason, SourceIP: s.sourceIP,
+		OwnerClientID: s.clientID,
 		MCPClientName: s.clientName, MCPClientVer: s.clientVer,
 	})
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	s.owned[sess.SessionID] = true
-	s.mu.Unlock()
-	return sess, nil
 }
 
-// ListSessions returns this agent's owned sessions.
+// ListSessions returns this client's owned sessions (live and retained
+// post-mortem ones, until the manager forgets them).
 func (s *Session) ListSessions() []terminal.Session {
-	s.mu.Lock()
-	owned := make(map[string]bool, len(s.owned))
-	for k := range s.owned {
-		owned[k] = true
-	}
-	s.mu.Unlock()
 	var out []terminal.Session
 	for _, sess := range s.deps.Manager.ListSessions() {
-		if owned[sess.SessionID] {
+		if s.ownsSession(&sess) {
 			out = append(out, sess)
 		}
 	}
@@ -253,12 +245,75 @@ func (s *Session) SendKeys(sessionID string, keys []string) error {
 	return s.deps.Manager.SendInput(sessionID, data)
 }
 
-// ReadOutput reads owned-session output.
-func (s *Session) ReadOutput(sessionID string, afterOffset int64, limit int) (terminal.ReadResult, error) {
-	if err := s.assertOwned(sessionID); err != nil {
+// ReadOutputParams configures ReadOutput.
+type ReadOutputParams struct {
+	SessionID   string
+	AfterOffset int64
+	Limit       int
+	// Wait long-polls: when no output past AfterOffset exists yet, block until
+	// some arrives, the session reaches a terminal state, or Wait elapses —
+	// then read once more and return. 0 reads immediately (#243, the
+	// era-independent replacement for the removed output_available
+	// notification).
+	Wait time.Duration
+}
+
+// ReadOutput reads owned-session output, optionally long-polling.
+func (s *Session) ReadOutput(ctx context.Context, p ReadOutputParams) (terminal.ReadResult, error) {
+	if err := s.assertOwned(p.SessionID); err != nil {
 		return terminal.ReadResult{}, err
 	}
-	return s.deps.Manager.ReadOutput(sessionID, afterOffset, limit)
+	res, err := s.deps.Manager.ReadOutput(p.SessionID, p.AfterOffset, p.Limit)
+	if err != nil || p.Wait <= 0 || len(res.Data) > 0 {
+		return res, err
+	}
+	if sess := s.deps.Manager.GetSession(p.SessionID); sess == nil ||
+		sess.Status == terminal.StatusClosed || sess.Status == terminal.StatusError {
+		return res, err
+	}
+
+	wake := make(chan struct{}, 1)
+	poke := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	unsubOut := s.deps.Manager.SubscribeOutput(func(id string, _ int64) {
+		if id == p.SessionID {
+			poke()
+		}
+	})
+	defer unsubOut()
+	unsubStatus := s.deps.Manager.SubscribeStatus(func(ev terminal.StatusEvent) {
+		if ev.SessionID == p.SessionID &&
+			(ev.Status == terminal.StatusClosed || ev.Status == terminal.StatusError) {
+			poke()
+		}
+	})
+	defer unsubStatus()
+
+	timer := time.NewTimer(p.Wait)
+	defer timer.Stop()
+	for {
+		// Re-read first: output or a terminal state may have landed between the
+		// initial read and the subscriptions above.
+		res, err = s.deps.Manager.ReadOutput(p.SessionID, p.AfterOffset, p.Limit)
+		if err != nil || len(res.Data) > 0 {
+			return res, err
+		}
+		if sess := s.deps.Manager.GetSession(p.SessionID); sess == nil ||
+			sess.Status == terminal.StatusClosed || sess.Status == terminal.StatusError {
+			return res, err
+		}
+		select {
+		case <-wake:
+		case <-timer.C:
+			return s.deps.Manager.ReadOutput(p.SessionID, p.AfterOffset, p.Limit)
+		case <-ctx.Done():
+			return res, ctx.Err()
+		}
+	}
 }
 
 // CloseSession closes an owned session.
@@ -267,38 +322,22 @@ func (s *Session) CloseSession(sessionID string) error {
 		return err
 	}
 	s.deps.Manager.Close(sessionID, terminal.CloseClientMCP)
-	s.mu.Lock()
-	delete(s.owned, sessionID)
-	s.mu.Unlock()
 	return nil
 }
 
-// Destroy closes all owned sessions (agent disconnect).
-func (s *Session) Destroy() {
-	s.mu.Lock()
-	ids := make([]string, 0, len(s.owned))
-	for id := range s.owned {
-		ids = append(ids, id)
-	}
-	s.owned = map[string]bool{}
-	s.mu.Unlock()
-	for _, id := range ids {
-		s.deps.Manager.Close(id, terminal.CloseAgentDisconnect)
-	}
+// Owns reports whether sessionID is one of this client's sessions (the MCP
+// resource watcher filters the manager's fan-out with it).
+func (s *Session) Owns(sessionID string) bool {
+	return s.ownsSession(s.deps.Manager.GetSession(sessionID))
 }
 
-// Owns reports whether sessionID is one of this agent's sessions (the MCP
-// notifier filters the manager's fan-out with it).
-func (s *Session) Owns(sessionID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.owned[sessionID]
+func (s *Session) ownsSession(sess *terminal.Session) bool {
+	return sess != nil && sess.Source == terminal.SourceMCP &&
+		sess.AccountID == s.accountID && sess.OwnerClientID == s.clientID
 }
 
 func (s *Session) assertOwned(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.owned[sessionID] {
+	if !s.Owns(sessionID) {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 	return nil

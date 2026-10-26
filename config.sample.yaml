@@ -118,13 +118,10 @@ security:
     - 127.0.0.1/32
     - "::1/128"
 
-# MCP surface lifecycle.
-# mcp:
-#   sessionTimeoutMinutes: 30       # Close MCP sessions after this long with no HTTP
-#                                   # activity (client vanished without DELETE). Expiry
-#                                   # also closes the agent's SSH sessions. A live client
-#                                   # holding its SSE stream never expires. 0 disables.
-#                                   # Default: 30 (aligned with the SSH idle timeout).
+# The MCP surface is stateless (spec 2026-07-28): there are no MCP sessions to
+# expire. Terminal sessions created via MCP belong to the agent's OAuth client
+# and end on close_session, remote hangup, or sessions.idleTimeoutMinutes.
+# (mcp.sessionTimeoutMinutes was removed and now fails validation.)
 
 # Web Push notifications — send push notifications for sign requests
 # so users don't need the browser tab open. Requires VAPID keys.

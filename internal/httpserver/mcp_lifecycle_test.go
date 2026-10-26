@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// MCP session lifecycle security (H4/H5): cross-account Mcp-Session-Id replay
-// gets the uniform Node-shaped 404, and closing the MCP session (client
-// DELETE) destroys the AgentSession -> owned terminal sessions close with
-// reason agent-disconnect.
+// MCP stateless dual-era behaviour (#243): no protocol-level sessions
+// (GET/DELETE 405, no Mcp-Session-Id), per-(account, OAuth client) terminal
+// session ownership with cross-client/cross-account isolation, legacy
+// (initialize) and modern (server/discover) clients on the same handler,
+// resources/updated over subscriptions/listen, and read_output long-polling.
 package httpserver
 
 import (
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,9 +32,9 @@ import (
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
-// mcpLifecycleServer is like mcpServer but with two principals and the
-// terminal manager exposed. sessionTimeout 0 = sessions never expire.
-func mcpLifecycleServer(t *testing.T, sessionTimeout time.Duration) (*httptest.Server, *terminal.Manager) {
+// mcpLifecycleServer is like mcpServer but with several principals (two OAuth
+// clients on account A, one on account B) and the terminal manager exposed.
+func mcpLifecycleServer(t *testing.T) (*httptest.Server, *terminal.Manager) {
 	t.Helper()
 	db, err := store.Open("sqlite::memory:")
 	if err != nil {
@@ -56,12 +58,14 @@ func mcpLifecycleServer(t *testing.T, sessionTimeout time.Duration) (*httptest.S
 	cfg.Server.ExternalURL = externalURL
 	cfg.Hydra.PublicURL = "http://localhost:4444"
 	cfg.Security.AllowedNetworks = []string{"127.0.0.1/32", "::1/128"}
+	principals := map[string]auth.Principal{
+		"tok-a1": {AccountID: "acc-a", ClientID: "client-1", Scopes: []string{"mcp"}},
+		"tok-a2": {AccountID: "acc-a", ClientID: "client-2", Scopes: []string{"mcp"}},
+		"tok-b1": {AccountID: "acc-b", ClientID: "client-1", Scopes: []string{"mcp"}},
+	}
 	resolve := auth.Resolver(func(_ context.Context, tok string) *auth.Principal {
-		switch tok {
-		case "tok-a":
-			return &auth.Principal{AccountID: "acc-a", Scopes: []string{"mcp"}}
-		case "tok-b":
-			return &auth.Principal{AccountID: "acc-b", Scopes: []string{"mcp"}}
+		if p, ok := principals[tok]; ok {
+			return &p
 		}
 		return nil
 	})
@@ -70,7 +74,7 @@ func mcpLifecycleServer(t *testing.T, sessionTimeout time.Duration) (*httptest.S
 		MCP: &mcp.Deps{
 			AgentDeps:      agent.Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)}},
 			Keys:           store.NewSSHKeys(db),
-			SessionTimeout: sessionTimeout,
+			NotifyDebounce: 20 * time.Millisecond,
 		},
 	})
 	ts := httptest.NewServer(handler)
@@ -78,121 +82,88 @@ func mcpLifecycleServer(t *testing.T, sessionTimeout time.Duration) (*httptest.S
 	return ts, mgr
 }
 
-func mcpConnectAs(t *testing.T, ts *httptest.Server, token string) *mcpsdk.ClientSession {
+// mcpConnectVer dials /mcp as token at the given protocol version ("" =
+// latest, i.e. 2026-07-28 via server/discover).
+func mcpConnectVer(t *testing.T, ts *httptest.Server, token, version string, opts *mcpsdk.ClientOptions) *mcpsdk.ClientSession {
 	t.Helper()
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, opts)
 	httpClient := &http.Client{Transport: bearerRT{tok: token, base: http.DefaultTransport}}
+	var sessOpts *mcpsdk.ClientSessionOptions
+	if version != "" {
+		sessOpts = &mcpsdk.ClientSessionOptions{ProtocolVersion: version}
+	}
 	sess, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
 		Endpoint: ts.URL + "/mcp", HTTPClient: httpClient,
-	}, nil)
+	}, sessOpts)
 	if err != nil {
-		t.Fatalf("mcp connect: %v", err)
+		t.Fatalf("mcp connect (%s, %q): %v", token, version, err)
 	}
+	t.Cleanup(func() { sess.Close() })
 	return sess
 }
 
-func TestMCPCrossAccountSessionIDIsUniform404(t *testing.T) {
-	ts, _ := mcpLifecycleServer(t, 0)
-	sessA := mcpConnectAs(t, ts, "tok-a")
-	defer sessA.Close()
-	sid := sessA.ID()
-	if sid == "" {
-		t.Fatal("no Mcp-Session-Id assigned")
+func createTerminalSession(t *testing.T, sess *mcpsdk.ClientSession, endpointID string) string {
+	t.Helper()
+	text, isErr := callTool(t, sess, "shellwatch_create_session",
+		map[string]any{"endpointId": endpointID, "reason": "lifecycle test"})
+	if isErr {
+		t.Fatalf("create_session: %s", text)
 	}
-
-	// Replay account A's session id with account B's token.
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp",
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	req.Header.Set("Authorization", "Bearer tok-b")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Mcp-Session-Id", sid)
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	var created struct {
+		SessionID string `json:"sessionId"`
 	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusNotFound {
-		t.Fatalf("foreign session id: got %d, want 404", res.StatusCode)
+	if err := json.Unmarshal([]byte(text), &created); err != nil || created.SessionID == "" {
+		t.Fatalf("create_session result: %q (%v)", text, err)
 	}
-	body, _ := io.ReadAll(res.Body)
-	var rpc struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &rpc); err != nil {
-		t.Fatalf("body not JSON-RPC: %q", body)
-	}
-	if rpc.Error.Code != -32001 || rpc.Error.Message != "Session not found" {
-		t.Fatalf("wrong error envelope: %q", body)
-	}
-
-	// The rightful owner still works.
-	if _, err := sessA.ListTools(context.Background(), nil); err != nil {
-		t.Fatalf("owner's session broken after replay: %v", err)
-	}
-
-	// An unknown/stale id gets the SAME envelope — not go-sdk's plain-text 404.
-	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp",
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	req2.Header.Set("Authorization", "Bearer tok-a")
-	req2.Header.Set("Content-Type", "application/json")
-	req2.Header.Set("Accept", "application/json, text/event-stream")
-	req2.Header.Set("Mcp-Session-Id", "00000000-0000-4000-8000-000000000000")
-	res2, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res2.Body.Close()
-	body2, _ := io.ReadAll(res2.Body)
-	if res2.StatusCode != http.StatusNotFound || !strings.Contains(string(body2), `"code":-32001`) {
-		t.Fatalf("stale session id: got %d %q, want uniform JSON-RPC 404", res2.StatusCode, body2)
-	}
+	return created.SessionID
 }
 
-func TestMCPDisconnectClosesOwnedSessions(t *testing.T) {
-	ts, mgr := mcpLifecycleServer(t, 0)
-	sess := mcpConnectAs(t, ts, "tok-a")
+// The stateless transport mints no sessions: GET and DELETE answer 405, and no
+// response ever carries an Mcp-Session-Id.
+func TestMCPStatelessTransport(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
 
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
-		Name:      "shellwatch_create_session",
-		Arguments: map[string]any{"endpointId": "ep-a", "reason": "lifecycle test"},
-	})
-	if err != nil || res.IsError {
-		t.Fatalf("create_session failed: %v %+v", err, res)
-	}
-	if n := len(mgr.ListForAccount("acc-a")); n != 1 {
-		t.Fatalf("expected 1 live session, got %d", n)
-	}
-
-	// Client-side Close sends the session DELETE; the server must destroy the
-	// AgentSession and close its owned terminal sessions.
-	if err := sess.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(mgr.ListForAccount("acc-a")) == 0 {
-			return
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		req, _ := http.NewRequest(method, ts.URL+"/mcp", nil)
+		req.Header.Set("Authorization", "Bearer tok-a1")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(20 * time.Millisecond)
+		io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s /mcp: got %d, want 405", method, res.StatusCode)
+		}
+		if allow := res.Header.Get("Allow"); allow != "POST" {
+			t.Errorf("%s /mcp Allow: got %q, want POST", method, allow)
+		}
 	}
-	t.Fatalf("terminal session still alive after MCP disconnect: %+v", mgr.ListForAccount("acc-a"))
+
+	// A legacy initialize is answered, but no session id is minted.
+	res := rawMCPPost(t, ts, "tok-a1", "",
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"legacy","version":"1"}}}`)
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("initialize: status %d (%s)", res.StatusCode, body)
+	}
+	if sid := res.Header.Get("Mcp-Session-Id"); sid != "" {
+		t.Errorf("initialize minted an Mcp-Session-Id (%q); stateless servers must not", sid)
+	}
 }
 
-// rawMCPPost drives /mcp without the go-sdk client — the client keeps a
-// hanging SSE GET open, which suspends the sdk's idle timer, so expiry can
-// only be exercised with bare request/response POSTs.
-func rawMCPPost(t *testing.T, ts *httptest.Server, token, sessionID, body string) *http.Response {
+// rawMCPPost drives /mcp without the go-sdk client (legacy era: no required
+// Mcp-* headers).
+func rawMCPPost(t *testing.T, ts *httptest.Server, token, protocolVersion, body string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", sessionID)
+	if protocolVersion != "" {
+		req.Header.Set("Mcp-Protocol-Version", protocolVersion)
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -201,65 +172,48 @@ func rawMCPPost(t *testing.T, ts *httptest.Server, token, sessionID, body string
 	return res
 }
 
-// A client that vanishes without DELETE must not leak: after SessionTimeout
-// of no HTTP activity, the sdk session expires, the Wait teardown destroys
-// the AgentSession (owned SSH sessions close with agent-disconnect), and the
-// stale Mcp-Session-Id answers with the uniform 404.
-func TestMCPIdleSessionExpiryClosesEverything(t *testing.T) {
-	const timeout = 500 * time.Millisecond
-	ts, mgr := mcpLifecycleServer(t, timeout)
+// Ownership is (account, OAuth client): another client on the same account and
+// the same client id on another account both get the uniform "session not
+// found"; the owner keeps access across connections (no MCP session to lose).
+func TestMCPCrossClientIsolation(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+	owner := mcpConnectVer(t, ts, "tok-a1", "", nil)
+	sid := createTerminalSession(t, owner, "ep-a")
 
-	// initialize -> session id.
-	res := rawMCPPost(t, ts, "tok-a", "",
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"vanisher","version":"1"}}}`)
-	sid := res.Header.Get("Mcp-Session-Id")
-	io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-	if res.StatusCode != 200 || sid == "" {
-		t.Fatalf("initialize: status=%d sid=%q", res.StatusCode, sid)
-	}
-
-	res = rawMCPPost(t, ts, "tok-a", sid, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-
-	res = rawMCPPost(t, ts, "tok-a", sid,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shellwatch_create_session","arguments":{"endpointId":"ep-a","reason":"idle expiry test"}}}`)
-	io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-	if res.StatusCode != 200 {
-		t.Fatalf("create_session: status=%d", res.StatusCode)
-	}
-	if n := len(mgr.ListForAccount("acc-a")); n != 1 {
-		t.Fatalf("expected 1 live terminal session, got %d", n)
-	}
-
-	// Vanish. No DELETE, no further requests. Everything must unwind.
-	deadline := time.Now().Add(timeout + 5*time.Second)
-	for time.Now().Before(deadline) {
-		if len(mgr.ListForAccount("acc-a")) == 0 {
-			break
+	for _, tok := range []string{"tok-a2", "tok-b1"} {
+		foreign := mcpConnectVer(t, ts, tok, "", nil)
+		text, _ := callTool(t, foreign, "shellwatch_list_sessions", map[string]any{})
+		if strings.Contains(text, sid) {
+			t.Errorf("%s sees foreign session in list: %s", tok, text)
 		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if n := len(mgr.ListForAccount("acc-a")); n != 0 {
-		t.Fatalf("terminal session still alive after MCP idle expiry: %d", n)
+		text, isErr := callTool(t, foreign, "shellwatch_read_output", map[string]any{"sessionId": sid})
+		if !isErr || !strings.Contains(text, "session not found") {
+			t.Errorf("%s read_output on foreign session: isErr=%v %q", tok, isErr, text)
+		}
+		text, isErr = callTool(t, foreign, "shellwatch_close_session", map[string]any{"sessionId": sid})
+		if !isErr || !strings.Contains(text, "session not found") {
+			t.Errorf("%s close_session on foreign session: isErr=%v %q", tok, isErr, text)
+		}
 	}
 
-	// The expired id is gone from the owners registry -> uniform JSON 404.
-	res = rawMCPPost(t, ts, "tok-a", sid, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusNotFound || !strings.Contains(string(body), `"code":-32001`) {
-		t.Fatalf("expired session id: got %d %q, want uniform JSON-RPC 404", res.StatusCode, body)
+	// The owning client reconnects (fresh ClientSession, same token): the
+	// terminal session is still its to use — ownership survives connections.
+	again := mcpConnectVer(t, ts, "tok-a1", "", nil)
+	text, _ := callTool(t, again, "shellwatch_list_sessions", map[string]any{})
+	if !strings.Contains(text, sid) {
+		t.Fatalf("owner lost its session across connections: %s", text)
+	}
+	if text, isErr := callTool(t, again, "shellwatch_close_session", map[string]any{"sessionId": sid}); isErr {
+		t.Fatalf("owner close after reconnect: %s", text)
 	}
 }
 
-// M3: initialize returns live-endpoint instructions.
-func TestMCPServerInstructions(t *testing.T) {
-	ts, _ := mcpLifecycleServer(t, 0)
-	sess := mcpConnectAs(t, ts, "tok-a")
-	defer sess.Close()
+// A legacy (2025-06-18, initialize handshake) client works on the same
+// stateless handler and still receives the live-endpoint instructions.
+func TestMCPLegacyEraWorks(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+	sess := mcpConnectVer(t, ts, "tok-a1", "2025-06-18", nil)
+
 	res := sess.InitializeResult()
 	if res == nil {
 		t.Fatal("no initialize result")
@@ -268,10 +222,242 @@ func TestMCPServerInstructions(t *testing.T) {
 		"ShellWatch is an SSH session broker",
 		"- ep-a: Box A (u@127.0.0.1:22)",
 		"shellwatch_create_session",
+		"waitMs",
 		"sudo:",
 	} {
 		if !strings.Contains(res.Instructions, want) {
 			t.Errorf("instructions missing %q\n%s", want, res.Instructions)
 		}
 	}
+
+	sid := createTerminalSession(t, sess, "ep-a")
+	if text, isErr := callTool(t, sess, "shellwatch_send_keys",
+		map[string]any{"sessionId": sid, "keys": []string{"text:hi"}}); isErr {
+		t.Fatalf("send_keys: %s", text)
+	}
+	if text, isErr := callTool(t, sess, "shellwatch_close_session", map[string]any{"sessionId": sid}); isErr {
+		t.Fatalf("close: %s", text)
+	}
+}
+
+// Era interop: a modern and a legacy connection with the same token operate on
+// the same terminal sessions.
+func TestMCPEraInterop(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+	modern := mcpConnectVer(t, ts, "tok-a1", "", nil)
+	legacy := mcpConnectVer(t, ts, "tok-a1", "2025-11-25", nil)
+
+	sid := createTerminalSession(t, modern, "ep-a")
+	text, _ := callTool(t, legacy, "shellwatch_list_sessions", map[string]any{})
+	if !strings.Contains(text, sid) {
+		t.Fatalf("legacy connection of the same client should see the session: %s", text)
+	}
+	if text, isErr := callTool(t, legacy, "shellwatch_close_session", map[string]any{"sessionId": sid}); isErr {
+		t.Fatalf("legacy close: %s", text)
+	}
+}
+
+// shellwatch://sessions resources: readable by the owner, uniform not-found
+// for foreign clients, and resources/updated delivered over
+// subscriptions/listen on output and status changes.
+func TestMCPSessionResources(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+
+	var mu sync.Mutex
+	var updated []string
+	owner := mcpConnectVer(t, ts, "tok-a1", "", &mcpsdk.ClientOptions{
+		ResourceUpdatedHandler: func(_ context.Context, req *mcpsdk.ResourceUpdatedNotificationRequest) {
+			mu.Lock()
+			updated = append(updated, req.Params.URI)
+			mu.Unlock()
+		},
+	})
+	sid := createTerminalSession(t, owner, "ep-a")
+	uri := "shellwatch://sessions/" + sid
+	ctx := context.Background()
+
+	// Read the session document and the list.
+	res, err := owner.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatalf("read session resource: %v", err)
+	}
+	var doc struct {
+		SessionID string `json:"sessionId"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(res.Contents[0].Text), &doc); err != nil || doc.SessionID != sid || doc.Status != "open" {
+		t.Fatalf("session doc: %q (%v)", res.Contents[0].Text, err)
+	}
+	listRes, err := owner.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "shellwatch://sessions"})
+	if err != nil || !strings.Contains(listRes.Contents[0].Text, sid) {
+		t.Fatalf("sessions list resource: %v %+v", err, listRes)
+	}
+
+	// Foreign client: uniform not-found on read; a subscribe attempt is
+	// rejected server-side (the sdk client fires listen asynchronously, so the
+	// rejection is observable only as silence — asserted at the end).
+	var foreignMu sync.Mutex
+	foreignUpdates := 0
+	foreign := mcpConnectVer(t, ts, "tok-a2", "", &mcpsdk.ClientOptions{
+		ResourceUpdatedHandler: func(context.Context, *mcpsdk.ResourceUpdatedNotificationRequest) {
+			foreignMu.Lock()
+			foreignUpdates++
+			foreignMu.Unlock()
+		},
+	})
+	if _, err := foreign.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: uri}); err == nil {
+		t.Error("foreign client could read the session resource")
+	}
+	_ = foreign.Subscribe(ctx, &mcpsdk.SubscribeParams{URI: uri})
+
+	// Owner subscribes, then output triggers resources/updated (debounced).
+	// Subscribe's listen stream registers asynchronously, so keep nudging
+	// output until the first notification lands.
+	if err := owner.Subscribe(ctx, &mcpsdk.SubscribeParams{URI: uri}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if text, isErr := callTool(t, owner, "shellwatch_send_keys",
+			map[string]any{"sessionId": sid, "keys": []string{"text:ping"}}); isErr {
+			t.Fatalf("send_keys: %s", text)
+		}
+		mu.Lock()
+		n := len(updated)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	mu.Lock()
+	got := append([]string(nil), updated...)
+	mu.Unlock()
+	if len(got) == 0 {
+		t.Fatal("no resources/updated arrived for owned session output")
+	}
+	for _, u := range got {
+		if u != uri {
+			t.Errorf("unexpected updated uri %q", u)
+		}
+	}
+	foreignMu.Lock()
+	defer foreignMu.Unlock()
+	if foreignUpdates != 0 {
+		t.Errorf("foreign client received %d resources/updated for a session it does not own", foreignUpdates)
+	}
+}
+
+// read_output waitMs long-polls: it returns early when output arrives and at
+// the deadline (empty) when none does.
+func TestMCPReadOutputWait(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+	sess := mcpConnectVer(t, ts, "tok-a1", "", nil)
+	sid := createTerminalSession(t, sess, "ep-a")
+
+	// No output yet: a short wait returns empty at the deadline.
+	start := time.Now()
+	text, isErr := callTool(t, sess, "shellwatch_read_output",
+		map[string]any{"sessionId": sid, "waitMs": 300})
+	if isErr {
+		t.Fatalf("read_output wait: %s", text)
+	}
+	var out struct {
+		Data   string `json:"data"`
+		Offset int64  `json:"offset"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Data != "" {
+		t.Fatalf("expected no data, got %q", out.Data)
+	}
+	if time.Since(start) < 250*time.Millisecond {
+		t.Fatalf("wait returned too early: %v", time.Since(start))
+	}
+
+	// Output arriving mid-wait wakes the poll before the deadline.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = callTool(t, sess, "shellwatch_send_keys",
+			map[string]any{"sessionId": sid, "keys": []string{"text:hello"}})
+	}()
+	start = time.Now()
+	text, isErr = callTool(t, sess, "shellwatch_read_output",
+		map[string]any{"sessionId": sid, "afterOffset": out.Offset, "waitMs": 10000})
+	if isErr {
+		t.Fatalf("read_output long poll: %s", text)
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Data != "hello" {
+		t.Fatalf("long poll data: %q", out.Data)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("long poll did not return early: %v", elapsed)
+	}
+
+	if text, isErr := callTool(t, sess, "shellwatch_read_output",
+		map[string]any{"sessionId": sid, "waitMs": 30001}); !isErr || !strings.Contains(text, "waitMs") {
+		t.Errorf("waitMs over cap accepted: %q", text)
+	}
+}
+
+// Version negotiation edges: an unsupported Mcp-Protocol-Version header is a
+// 400, and a header-less legacy request (treated as the pre-2025-06-18 era,
+// which this server dropped) is still answered by the legacy handshake rules
+// rather than rejected outright — documented in docs/api/mcp-tools.md.
+func TestMCPProtocolVersionEdges(t *testing.T) {
+	ts, _ := mcpLifecycleServer(t)
+
+	res := rawMCPPost(t, ts, "tok-a1", "2025-03-26", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "Unsupported protocol version") {
+		t.Errorf("excluded version header: got %d %q, want 400 with supported list", res.StatusCode, body)
+	}
+
+	// Supported legacy version in the header works without initialize (the
+	// stateless handler default-initializes the temporary session).
+	res = rawMCPPost(t, ts, "tok-a1", "2025-06-18", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), "shellwatch_create_session") {
+		t.Errorf("legacy tools/list: got %d %q", res.StatusCode, body)
+	}
+}
+
+// Consent revocation closes exactly the revoked client's live MCP sessions
+// (the REST hook calls CloseAllForClient; asserted here at the manager level).
+func TestCloseAllForClient(t *testing.T) {
+	ts, mgr := mcpLifecycleServer(t)
+	a1 := mcpConnectVer(t, ts, "tok-a1", "", nil)
+	a2 := mcpConnectVer(t, ts, "tok-a2", "", nil)
+	sid1 := createTerminalSession(t, a1, "ep-a")
+	sid2 := createTerminalSession(t, a2, "ep-a")
+
+	if n := mgr.CloseAllForClient("acc-a", "client-1", terminal.CloseAgentDisconnect); n != 1 {
+		t.Fatalf("CloseAllForClient client-1: closed %d, want 1", n)
+	}
+	waitForManagerRemoval(t, mgr, sid1)
+	if s := mgr.GetSession(sid2); s == nil || s.Status != terminal.StatusOpen {
+		t.Fatalf("client-2's session was collateral damage: %+v", s)
+	}
+
+	// Revoke-all ("" client) closes the account's remaining MCP sessions.
+	if n := mgr.CloseAllForClient("acc-a", "", terminal.CloseAgentDisconnect); n != 1 {
+		t.Fatalf("CloseAllForClient all: closed %d, want 1", n)
+	}
+	waitForManagerRemoval(t, mgr, sid2)
+}
+
+// waitForManagerRemoval waits until the manager forgot the session (an
+// explicit Close removes it from the registry once the pump drained).
+func waitForManagerRemoval(t *testing.T, mgr *terminal.Manager, id string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if mgr.GetSession(id) == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("session %s never removed", id)
 }

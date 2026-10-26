@@ -55,9 +55,13 @@ type Session struct {
 	Source         Source
 	CloseReason    CloseReason
 	SourceIP       string
-	MCPReason      string
-	MCPClientName  string
-	MCPClientVer   string
+	// OwnerClientID is the OAuth client that created the session (MCP source
+	// only; empty for UI sessions). MCP ownership is (AccountID, OwnerClientID)
+	// — the spec's server-minted-handle model, #243.
+	OwnerClientID string
+	MCPReason     string
+	MCPClientName string
+	MCPClientVer  string
 }
 
 // Trigger carries create-time metadata (EndpointAuthTrigger subset).
@@ -65,6 +69,7 @@ type Trigger struct {
 	Kind          Source
 	SourceIP      string
 	Reason        string
+	OwnerClientID string
 	MCPClientName string
 	MCPClientVer  string
 }

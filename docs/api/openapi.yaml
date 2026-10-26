@@ -201,6 +201,12 @@ components:
         source: { $ref: "#/components/schemas/TerminalSource" }
         closeReason: { type: string, nullable: true }
         sourceIp: { type: string }
+        ownerClientId:
+          type: string
+          description: >-
+            OAuth client_id that owns the session (mcp source only; omitted for
+            ui sessions). MCP session visibility is scoped to
+            (account, ownerClientId) — #243.
         mcpReason: { type: string }
         mcpClientName: { type: string }
         mcpClientVersion: { type: string }

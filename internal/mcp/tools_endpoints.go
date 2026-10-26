@@ -130,6 +130,7 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 		if err := decodeArgs(req, &args); err != nil {
 			return errResult(err.Error()), nil
 		}
+		captureClientInfo(as, req) // the host-key-cleared audit event names the client
 		switch args.Action {
 		case "list":
 			eps, err := as.ListEndpoints(ctx)

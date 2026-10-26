@@ -47,6 +47,7 @@ func toSessionDTO(s terminal.Session) api.TerminalSession {
 		LastActivityAt:   s.LastActivityAt.UTC().Format(isoMillis),
 		CloseReason:      strPtrIf(string(s.CloseReason)),
 		SourceIp:         strPtrIf(s.SourceIP),
+		OwnerClientId:    strPtrIf(s.OwnerClientID),
 		McpReason:        strPtrIf(s.MCPReason),
 		McpClientName:    strPtrIf(s.MCPClientName),
 		McpClientVersion: strPtrIf(s.MCPClientVer),

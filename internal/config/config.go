@@ -131,13 +131,11 @@ type Notifications struct {
 	} `yaml:"mcp"`
 }
 
-// Mcp holds MCP-surface lifecycle settings. Go-only section: Node's zod
-// schema is non-strict and ignores it in a shared config.yaml.
+// Mcp exists only to reject the removed sessionTimeoutMinutes setting with a
+// migration hint (#243): the MCP surface is stateless, so there are no MCP
+// sessions to expire — terminal sessions end via sessions.idleTimeoutMinutes.
 type Mcp struct {
-	// SessionTimeoutMinutes closes MCP sessions with no HTTP activity for this
-	// long (idle-session janitor for the MCP layer; expiry also closes the
-	// agent's SSH sessions). Pointer so an explicit 0 (= never expire) is
-	// distinguishable from absent (= default 30).
+	// SessionTimeoutMinutes is REMOVED; any value is a validation error.
 	SessionTimeoutMinutes *int `yaml:"sessionTimeoutMinutes"`
 }
 
@@ -208,9 +206,6 @@ const (
 	defaultIdleTimeoutMinutes     = 30
 	defaultCleanupIntervalSeconds = 60
 )
-
-// defaultMcpSessionTimeoutMinutes aligns with the terminal idle janitor.
-const defaultMcpSessionTimeoutMinutes = 30
 
 // Load reads, parses, defaults, validates, and derives — the equivalent of
 // loadConfig in src/config/loader.ts. Resolution order for the path:
@@ -286,10 +281,6 @@ func (c *Config) applyDefaults() {
 	fillRule(&rl.LoginVerify, defaultRateLimit.LoginVerify)
 	if c.Notifications.Mcp.DebounceMs == 0 {
 		c.Notifications.Mcp.DebounceMs = 100
-	}
-	if c.Mcp.SessionTimeoutMinutes == nil {
-		v := defaultMcpSessionTimeoutMinutes
-		c.Mcp.SessionTimeoutMinutes = &v
 	}
 	if c.Sessions.IdleTimeoutMinutes == 0 {
 		c.Sessions.IdleTimeoutMinutes = defaultIdleTimeoutMinutes
@@ -378,8 +369,8 @@ func (c *Config) validate() []string {
 		add("notifications.mcp.debounceMs: must be between 10 and 5000")
 	}
 
-	if v := *c.Mcp.SessionTimeoutMinutes; v < 0 || v > 1440 {
-		add("mcp.sessionTimeoutMinutes: must be between 0 (disabled) and 1440")
+	if c.Mcp.SessionTimeoutMinutes != nil {
+		add("mcp.sessionTimeoutMinutes: removed — MCP is stateless (no protocol-level sessions to expire); terminal sessions end via sessions.idleTimeoutMinutes. Delete this key.")
 	}
 
 	if v := c.Sessions.IdleTimeoutMinutes; v <= 0 || v > 24*60 {

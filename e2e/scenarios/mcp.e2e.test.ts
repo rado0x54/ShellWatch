@@ -29,6 +29,7 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
   let sc: Scenario;
   let ws: WsClient;
   let mcpToken: string;
+  let mcpClientId: string;
   let endpointId: string;
   const rec = recordScenario("mcp", () => sc?.server);
 
@@ -50,6 +51,7 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
     expect(mcp.tokens.scope?.split(" ")).toContain("mcp");
     expect(mcp.tokens.refresh_token).toBeTruthy();
     mcpToken = mcp.tokens.access_token;
+    mcpClientId = mcp.clientId;
     rec.note(`mcp client ${mcp.clientId}: ${mcp.trace.steps.join(" | ")}`);
   });
 
@@ -122,11 +124,16 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
         }),
       );
       expect(sent).toEqual({ status: "sent", keys: ["text:echo MCP=$((5+5))", "enter"] });
-      const notif = await mcp.waitForNotification(
-        "notifications/shellwatch/output_available",
-        10_000,
-      );
-      expect(notif.params).toMatchObject({ sessionId: session.sessionId });
+
+      // waitMs long-polls: the first chunk arrives without client-side
+      // polling loops (#243 — the replacement for output_available).
+      const first = parse(
+        await mcp.callTool("shellwatch_read_output", {
+          sessionId: session.sessionId,
+          waitMs: 10_000,
+        }),
+      ) as { data: string; offset: number };
+      expect(first.data.length).toBeGreaterThan(0);
 
       const out1 = await waitFor(
         async () => {
@@ -142,6 +149,13 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
         { what: "MCP=10 in read_output" },
       );
       expect(out1.offset).toBeGreaterThan(0);
+
+      // The removed notifications/shellwatch/* methods must never appear on
+      // the wire (#243): output has long since flowed, so a short wait proves
+      // silence rather than racing it.
+      await expect(
+        mcp.waitForNotification("notifications/shellwatch/output_available", 1_000),
+      ).rejects.toThrow(/Timeout/);
 
       // Incremental read from the previous offset excludes what we already saw.
       await mcp.callTool("shellwatch_send_keys", {
@@ -166,10 +180,17 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
       expect(out2.data).not.toContain("MCP=10");
       expect(out2.offset).toBeGreaterThan(out1.offset);
 
-      // The web UI (same account) sees the MCP session as an observer.
+      // The web UI (same account) sees the MCP session as an observer, and the
+      // REST shape names the owning OAuth client (#243).
       await waitFor(() =>
         ws.sessions().some((s) => s.sessionId === session.sessionId && s.source === "mcp"),
       );
+      const restSessions = await sc.api.get<{
+        sessions: { sessionId: string; ownerClientId?: string }[];
+      }>("/api/sessions");
+      expect(
+        restSessions.body.sessions.find((s) => s.sessionId === session.sessionId)?.ownerClientId,
+      ).toBe(mcpClientId);
 
       const closed = parse(
         await mcp.callTool("shellwatch_close_session", { sessionId: session.sessionId }),
@@ -186,12 +207,15 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
         const row = res.body.rows.find((r) => r.sessionId === session.sessionId);
         return row?.status === "closed" ? row : null;
       });
+      // Agent attribution: the TS SDK speaks a pre-2026-07-28 era, whose
+      // initialize-advertised name cannot reach stateless tool calls — the
+      // audit trail records the OAuth client_id instead (the tamper-proof
+      // fallback; a 2026-07-28 client's per-request clientInfo overrides it).
       expect(audit).toMatchObject({
         source: "mcp",
         closeReason: "client.mcp",
         mcpReason: MCP_REASON,
-        mcpClientName: "test-client",
-        mcpClientVersion: "1.0.0",
+        mcpClientName: mcpClientId,
       });
       const signing = await sc.api.get<Record<string, unknown>>(
         `/api/audit/signings/${approvals[0]!.request.actionId}`,
@@ -200,7 +224,7 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
         source: "endpoint-auth",
         outcome: "approved",
         mcpReason: MCP_REASON,
-        mcpClientName: "test-client",
+        mcpClientName: mcpClientId,
       });
 
       const del = parse(

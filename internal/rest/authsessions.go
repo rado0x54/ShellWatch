@@ -28,6 +28,10 @@ type AuthSessions struct {
 	Admin       consentAdmin
 	SPAClientID string
 	StepUp      *webauthn.StepUpStore
+	// CloseClientSessions closes the account's live MCP terminal sessions owned
+	// by the revoked OAuth client ("" = every client) so a revoked grant's
+	// agent loses its terminals immediately (#243). nil skips (tests).
+	CloseClientSessions func(accountID, clientID string) int
 }
 
 func (a *AuthSessions) Mount(r chi.Router) {
@@ -90,9 +94,14 @@ func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AuthSessions) revoke(w http.ResponseWriter, r *http.Request) {
-	if err := a.Admin.RevokeConsentSessions(r.Context(), accountID(r), chi.URLParam(r, "clientId")); err != nil {
+	acct := accountID(r)
+	clientID := chi.URLParam(r, "clientId")
+	if err := a.Admin.RevokeConsentSessions(r.Context(), acct, clientID); err != nil {
 		writeErr(w, 500, "internal error")
 		return
+	}
+	if a.CloseClientSessions != nil {
+		a.CloseClientSessions(acct, clientID)
 	}
 	writeJSON(w, 200, map[string]string{"status": "revoked"})
 }
@@ -106,6 +115,9 @@ func (a *AuthSessions) revokeAll(w http.ResponseWriter, r *http.Request) {
 	if err := a.Admin.RevokeLoginSessions(r.Context(), acct); err != nil {
 		writeErr(w, 500, "internal error")
 		return
+	}
+	if a.CloseClientSessions != nil {
+		a.CloseClientSessions(acct, "")
 	}
 	writeJSON(w, 200, map[string]string{"status": "revoked_all"})
 }
