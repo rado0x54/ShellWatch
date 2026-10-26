@@ -5,6 +5,7 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -14,12 +15,23 @@ import (
 	"github.com/rado0x54/shellwatch/internal/notify"
 )
 
+// AdminCheck reports whether an account holds the admin role (satisfied by
+// *store.Accounts).
+type AdminCheck interface {
+	IsAdmin(ctx context.Context, accountID string) bool
+}
+
 // Audit wires the audit read routes.
 type Audit struct {
 	Sessions *audit.Sessions
 	Signings *audit.Signings
 	// Notify serves the notification log (#252) — the third audit surface.
 	Notify *notify.Service
+	// OAuthClients serves the OAuth client registration log (#242) — the
+	// fourth audit surface, and the only one that is NOT account-scoped: DCR
+	// and CIMD both run before any account exists. Admin-only, hence IsAdmin.
+	OAuthClients *audit.OAuthClients
+	IsAdmin      AdminCheck
 }
 
 var (
@@ -34,6 +46,44 @@ func (a *Audit) Mount(r chi.Router) {
 	if a.Notify != nil {
 		r.Get("/api/audit/notifications", a.listNotifications)
 	}
+	if a.OAuthClients != nil && a.IsAdmin != nil {
+		r.Get("/api/audit/oauth-clients", a.listOAuthClients)
+	}
+}
+
+var (
+	oauthOriginValues = map[string]bool{audit.OriginDCR: true, audit.OriginCIMD: true}
+	oauthEventValues  = map[string]bool{
+		audit.EventRegistered: true, audit.EventRefreshed: true, audit.EventRejected: true,
+	}
+)
+
+// listOAuthClients serves the registration log. Unlike every other audit
+// route this one is NOT account-filtered — the rows are pre-account by nature
+// — so the admin role is the only thing standing in front of it.
+func (a *Audit) listOAuthClients(w http.ResponseWriter, r *http.Request) {
+	if !a.IsAdmin.IsAdmin(r.Context(), accountID(r)) {
+		writeErr(w, 403, "Admin role required")
+		return
+	}
+	q := r.URL.Query()
+	if v := q.Get("origin"); v != "" && !oauthOriginValues[v] {
+		writeErr(w, 400, "invalid origin filter")
+		return
+	}
+	if v := q.Get("event"); v != "" && !oauthEventValues[v] {
+		writeErr(w, 400, "invalid event filter")
+		return
+	}
+	page, err := a.OAuthClients.List(r.Context(), audit.OAuthClientFilter{
+		ClientID: q.Get("clientId"), Origin: q.Get("origin"), Event: q.Get("event"),
+		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
+	})
+	if err != nil {
+		writeErr(w, 500, "internal error")
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 func (a *Audit) listNotifications(w http.ResponseWriter, r *http.Request) {

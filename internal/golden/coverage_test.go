@@ -112,6 +112,10 @@ var goldenCoverage = map[string]coverage{
 		"webauthn-login-verify (identical accept-consent → redirect construction); the success path " +
 		"additionally requires a full DB-enrolled WebAuthn assertion ceremony. Dedicated capture deferred."),
 
+	// --- OAuth client registration log (#242) ---
+	"listAuditOAuthClients": goldened("audit-oauth-clients",
+		"audit-oauth-clients-forbidden", "audit-oauth-clients-invalid-origin"),
+
 	// --- Pending actions + push ---
 	"getAction":              goldened("action-get"),
 	"resolveAction":          goldened("action-resolve"),

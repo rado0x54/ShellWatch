@@ -49,6 +49,10 @@ type Params struct {
 	HasPasskeys func() bool
 	// Clock drives the CIMD document cache's TTLs. nil -> clock.Real.
 	Clock clock.Clock
+	// ClientLog records DCR/CIMD registration events in the
+	// non-account-scoped client log (satisfied by *audit.OAuthClients).
+	// nil drops them.
+	ClientLog ClientLogRecorder
 	// CimdFetcher overrides the document fetcher the CIMD front door uses.
 	// nil -> built from hydra.cimd. Tests inject one that trusts a local
 	// httptest CA; a deployment behind a private CA can do the same.
@@ -113,6 +117,7 @@ func New(p Params) http.Handler {
 	if clk == nil {
 		clk = clock.Real{}
 	}
+	onClientEvent := clientEventSink(p.ClientLog)
 	// hydra.cimd.enabled defaults to TRUE, and an unset pointer must mean the
 	// default for any Config — not just one the loader filled in.
 	cimdEnabled := p.Config.Hydra.Cimd.Enabled == nil || *p.Config.Hydra.Cimd.Enabled
@@ -146,6 +151,7 @@ func New(p Params) http.Handler {
 			AllowedScopes:           p.Config.Hydra.Dcr.AllowedScopes,
 			RedirectURIPatterns:     p.Config.Hydra.Dcr.RedirectURIPatterns,
 			AgentProxyEnabled:       agentProxy,
+			OnEvent:                 onClientEvent,
 		})
 
 	}
@@ -187,6 +193,7 @@ func New(p Params) http.Handler {
 		hydra.MountFrontDoor(r, hydra.FrontDoorParams{
 			Resolver:          cimd,
 			HydraAuthorizeURL: strings.TrimRight(p.Config.Hydra.PublicURL, "/") + "/oauth2/auth",
+			OnEvent:           onClientEvent,
 		})
 	}
 

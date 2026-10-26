@@ -165,6 +165,13 @@ func run() error {
 	notifSvc := notify.NewService(db, clk)
 	notifSvc.NewID = newUUID
 
+	// OAuth client registration log (#242): how each MCP/agent client came to
+	// exist in Hydra, via mediated DCR or CIMD. The only audit surface that is
+	// not account-scoped — both paths run before any account is identified —
+	// so it is admin-only to read (migration 00004).
+	oauthClientLog := audit.NewOAuthClients(db, clk)
+	oauthClientLog.NewID = newUUID
+
 	// Ordering: build the hub first (needs a manager) but the manager's
 	// passkey factory needs the broker which needs the hub's WS channel. Break
 	// it with a manager built on a factory closure that reads the broker set
@@ -378,13 +385,16 @@ func run() error {
 			Svc:         epSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
-		WSHub:   wsHub,
-		MCP:     mcpDeps,
-		Actions: &rest.Actions{Store: actionStore},
+		WSHub:     wsHub,
+		MCP:       mcpDeps,
+		Actions:   &rest.Actions{Store: actionStore},
+		ClientLog: oauthClientLog,
 		Audit: &rest.Audit{
-			Sessions: audit.NewSessions(db),
-			Signings: audit.NewSignings(db),
-			Notify:   notifSvc,
+			Sessions:     audit.NewSessions(db),
+			Signings:     audit.NewSignings(db),
+			Notify:       notifSvc,
+			OAuthClients: oauthClientLog,
+			IsAdmin:      store.NewAccounts(db),
 		},
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,

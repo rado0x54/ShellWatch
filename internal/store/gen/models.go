@@ -105,6 +105,21 @@ type Notification struct {
 	CreatedAt string
 }
 
+type OauthClientRegistration struct {
+	ID           string
+	ClientID     string
+	Origin       string
+	Event        string
+	ClientName   sql.NullString
+	MetadataHost sql.NullString
+	AuthMethod   sql.NullString
+	RedirectUris sql.NullString
+	Scope        sql.NullString
+	Reason       sql.NullString
+	SourceIp     sql.NullString
+	CreatedAt    string
+}
+
 type PushSubscription struct {
 	ID        string
 	AccountID string

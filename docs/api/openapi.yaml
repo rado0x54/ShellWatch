@@ -351,6 +351,81 @@ components:
         nextCursor: { type: string, nullable: true }
       required: [rows, nextCursor]
 
+    OAuthClientRegistrationPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/OAuthClientRegistration" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    OAuthClientRegistration:
+      type: object
+      description: >-
+        One entry of the OAuth client registration log (#242): how an MCP or
+        agent client came to exist in Hydra, via mediated DCR
+        (POST /api/hydra/register) or CIMD document resolution
+        (GET /api/hydra/authorize).
+
+
+        This is the only audit surface that is **not account-scoped**. Both
+        onboarding paths run before any account is identified — there is no
+        subject, no bearer token, only a peer address and a `client_id` — so
+        reads are gated on the admin role instead of an account filter.
+
+
+        It is a **log, not a registry**: current client state stays in Hydra
+        (`GET /admin/clients` serves name, scope, redirect URIs, `created_at`
+        and the `metadata.shellwatch.origin` marker ShellWatch writes). Rows
+        here are a snapshot denormalized at write time and are never
+        reconciled, so a client deleted in Hydra keeps its history.
+      properties:
+        id: { type: string }
+        clientId:
+          type: string
+          description: >-
+            Hydra's `client_id` — a UUID for DCR, the Client Identifier URL for
+            CIMD. The link to Hydra's own data model. Not unique in this table:
+            a client appears once per event.
+        origin:
+          type: string
+          enum: [dcr, cimd]
+          description: Which onboarding path produced the event.
+        event:
+          type: string
+          description: >-
+            `registered` — the client was created in Hydra; `refreshed` — a
+            CIMD document changed and the Hydra client was updated;
+            `rejected` — the registration was refused, so **no Hydra client
+            exists** for this row. Not enum-constrained: #255 adds `blocked`.
+          example: registered
+        clientName: { type: string, nullable: true }
+        metadataHost:
+          type: string
+          nullable: true
+          description: >-
+            The CIMD Client Identifier URL's hostname — the identity cue
+            draft-ietf-oauth-client-id-metadata-document-02 §9.1 wants
+            surfaced. Null for DCR, which has no metadata document.
+        authMethod: { type: string, nullable: true, example: none }
+        redirectUris:
+          type: array
+          items: { type: string }
+          description: Empty on a rejection, where no document was accepted.
+        scope: { type: string, nullable: true }
+        reason:
+          type: string
+          nullable: true
+          description: >-
+            The cause for `rejected`, or what changed for `refreshed`.
+        sourceIp:
+          type: string
+          nullable: true
+          description: Peer address resolved under the server's trustProxy policy.
+        createdAt: { type: string }
+      required: [id, clientId, origin, event, createdAt]
+
     NotificationPage:
       type: object
       properties:
@@ -1612,6 +1687,62 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NotificationPage" }
+
+  /api/audit/oauth-clients:
+    get:
+      operationId: listAuditOAuthClients
+      tags: [audit]
+      summary: OAuth client registration log (admin only)
+      description: >-
+        The fourth audit surface (#242): append-only, keyset-paginated, newest
+        first. Records every DCR registration and every CIMD document
+        resolution, including rejections.
+
+
+        **Admin only, and not account-scoped.** Every other audit route filters
+        on the caller's account; these rows are pre-account by nature (DCR and
+        CIMD both run before a subject exists), so the admin role is the only
+        thing in front of them. A non-admin caller gets 403.
+
+
+        Runtime allow/deny policy over these clients is tracked separately in
+        #255.
+      parameters:
+        - name: clientId
+          in: query
+          description: Exact Hydra `client_id` — the full history of one client.
+          schema: { type: string }
+        - name: origin
+          in: query
+          description: "`dcr` or `cimd`; any other value is a 400."
+          schema: { type: string, enum: [dcr, cimd] }
+        - name: event
+          in: query
+          description: "`registered`, `refreshed` or `rejected`; any other value is a 400."
+          schema: { type: string }
+        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side: non-finite or ≤0 → 50; values
+            above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Page of registration events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthClientRegistrationPage" }
+        "400":
+          description: Invalid origin or event filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Caller does not hold the admin role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ------------------------------------------------------------------ keys
   /api/keys:

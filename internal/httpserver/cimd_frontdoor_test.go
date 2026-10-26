@@ -17,11 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/hydratest"
+	"github.com/rado0x54/shellwatch/internal/store"
 )
 
 // cimdDocHost serves a mutable metadata document over TLS on loopback and
@@ -42,6 +44,14 @@ func cimdDocHost(t *testing.T, doc map[string]any, hits *int) (*httptest.Server,
 // frontDoorServer boots the handler stack with CIMD enabled, trusting docSrv's
 // certificate so a document can be served from loopback in-process.
 func frontDoorServer(t *testing.T, admin hydra.Admin, docSrv *httptest.Server, tweak func(*config.Config)) *httptest.Server {
+	t.Helper()
+	ts, _ := frontDoorServerWithLog(t, admin, docSrv, tweak)
+	return ts
+}
+
+// frontDoorServerWithLog also returns the registration log the server writes
+// to, so the DCR/CIMD -> audit wiring can be asserted end to end.
+func frontDoorServerWithLog(t *testing.T, admin hydra.Admin, docSrv *httptest.Server, tweak func(*config.Config)) (*httptest.Server, *audit.OAuthClients) {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
@@ -74,6 +84,16 @@ func frontDoorServer(t *testing.T, admin hydra.Admin, docSrv *httptest.Server, t
 		})
 	}
 
+	db, err := store.Open("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	log := audit.NewOAuthClients(db, nil)
+
 	handler := New(Params{
 		Config:      cfg,
 		Resolve:     auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
@@ -81,10 +101,11 @@ func frontDoorServer(t *testing.T, admin hydra.Admin, docSrv *httptest.Server, t
 		BuildInfo:   buildinfo.Info{},
 		HydraAdmin:  admin,
 		CimdFetcher: fetcher,
+		ClientLog:   log,
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, log
 }
 
 // authorizeNoFollow issues the authorization request without following the
@@ -377,4 +398,77 @@ func keysOf[V any](m map[string]V) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// --- registration log wiring (#242) ----------------------------------------
+
+func logRows(t *testing.T, log *audit.OAuthClients, f audit.OAuthClientFilter) []audit.OAuthClientRegistration {
+	t.Helper()
+	page, err := log.List(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Rows
+}
+
+func TestCimdRegistrationAndRejectionAreLogged(t *testing.T) {
+	admin := hydratest.New()
+	doc := map[string]any{
+		"client_name":   "Example MCP Client",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+	}
+	docSrv, clientID := cimdDocHost(t, doc, nil)
+	doc["client_id"] = clientID
+	ts, log := frontDoorServerWithLog(t, admin, docSrv, nil)
+
+	query := url.Values{
+		"client_id": {clientID}, "response_type": {"code"},
+		"redirect_uri": {"http://127.0.0.1:54321/callback"}, "scope": {"mcp"}, "state": {"xyz"},
+	}.Encode()
+	if res := authorizeNoFollow(t, ts, query); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+
+	rows := logRows(t, log, audit.OAuthClientFilter{Origin: audit.OriginCIMD})
+	if len(rows) != 1 {
+		t.Fatalf("log rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.ClientID != clientID {
+		t.Errorf("clientId = %q, want the document URL", r.ClientID)
+	}
+	if r.Event != audit.EventRegistered {
+		t.Errorf("event = %q, want registered", r.Event)
+	}
+	if r.MetadataHost == nil || *r.MetadataHost != "127.0.0.1" {
+		t.Errorf("metadataHost = %v, want the client_id hostname", r.MetadataHost)
+	}
+	if r.AuthMethod == nil || *r.AuthMethod != "none" {
+		t.Errorf("authMethod = %v", r.AuthMethod)
+	}
+
+	// Repeating the authorization is a cache hit: no new row, because nothing
+	// about the client changed.
+	authorizeNoFollow(t, ts, query)
+	if rows := logRows(t, log, audit.OAuthClientFilter{Origin: audit.OriginCIMD}); len(rows) != 1 {
+		t.Errorf("log rows after a cache hit = %d, want 1", len(rows))
+	}
+
+	// A refused document is logged with its reason and creates no client.
+	authorizeNoFollow(t, ts, url.Values{
+		"client_id": {"https://169.254.169.254/latest/meta-data/client.json"},
+	}.Encode())
+	rejected := logRows(t, log, audit.OAuthClientFilter{Event: audit.EventRejected})
+	if len(rejected) != 1 {
+		t.Fatalf("rejected rows = %d, want 1", len(rejected))
+	}
+	if rejected[0].Reason == nil || *rejected[0].Reason == "" {
+		t.Error("a rejection must record its reason")
+	}
+	if rejected[0].MetadataHost == nil || *rejected[0].MetadataHost != "169.254.169.254" {
+		t.Errorf("metadataHost = %v", rejected[0].MetadataHost)
+	}
+	if n := len(admin.Clients()); n != 1 {
+		t.Errorf("Hydra clients = %d, want 1 (the rejected one must not exist)", n)
+	}
 }

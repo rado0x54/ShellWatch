@@ -37,6 +37,9 @@ type ProviderParams struct {
 	AgentProxyEnabled   bool
 	// Clock injected so the DCR client_id_issued_at is testable (Date.now()).
 	Now func() time.Time
+	// OnEvent records the registration in the non-account-scoped client log
+	// (see clientevents.go). nil drops events.
+	OnEvent ClientEventSink
 }
 
 // mountProviderPages registers the server-rendered GET login/consent/logout
@@ -396,8 +399,21 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 		Scope:                   clientScope,
 		RedirectURIs:            body.RedirectURIs,
 		TokenEndpointAuthMethod: "none",
+		// Stamp the origin so an admin reading Hydra's client list can tell a
+		// DCR client from a CIMD one (clients registered before this landed
+		// have an empty metadata object and read as origin unknown).
+		Metadata: map[string]any{
+			"shellwatch": map[string]any{"origin": ClientOriginDCR},
+		},
 	})
 	if err != nil {
+		if p.OnEvent != nil {
+			p.OnEvent(r, ClientEvent{
+				Origin: ClientOriginDCR, Event: ClientEventRejected,
+				ClientName: clientName, RedirectURIs: body.RedirectURIs,
+				Scope: clientScope, Reason: "server_error: client registration failed",
+			})
+		}
 		apierr.WriteOAuth(w, 502, "server_error", "client registration failed")
 		return
 	}
@@ -408,6 +424,13 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 	scope := created.Scope
 	if scope == "" {
 		scope = clientScope
+	}
+	if p.OnEvent != nil {
+		p.OnEvent(r, ClientEvent{
+			ClientID: created.ClientID, Origin: ClientOriginDCR,
+			Event: ClientEventRegistered, ClientName: clientName,
+			AuthMethod: "none", RedirectURIs: redirectURIs, Scope: scope,
+		})
 	}
 	writeJSONStatus(w, 201, map[string]any{
 		"client_id":                  created.ClientID,

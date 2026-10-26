@@ -653,7 +653,11 @@ func (f *fakeAdmin) CreateClient(_ context.Context, c OAuth2Client) (OAuth2Clien
 		f.createErr = nil
 		return OAuth2Client{}, err
 	}
-	if _, exists := f.clients[c.ClientID]; exists {
+	// Hydra mints a client_id when the caller does not supply one (the DCR
+	// path); CIMD always supplies the Client Identifier URL.
+	if c.ClientID == "" {
+		c.ClientID = fmt.Sprintf("fake-client-%d", f.creates+1)
+	} else if _, exists := f.clients[c.ClientID]; exists {
 		return OAuth2Client{}, &APIError{Status: http.StatusConflict, Msg: "client exists"}
 	}
 	f.creates++

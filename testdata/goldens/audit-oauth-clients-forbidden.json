@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "Admin role required"
+  },
+  "status": 403
+}

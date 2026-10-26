@@ -25,31 +25,10 @@ type FrontDoorParams struct {
 	Resolver *CIMDResolver
 	// HydraAuthorizeURL is Hydra's real authorization endpoint.
 	HydraAuthorizeURL string
-	// OnEvent, when set, records an audit event for each CIMD outcome.
-	OnEvent func(r *http.Request, ev CIMDEvent)
+	// OnEvent, when set, records the registration event. Supplied by the
+	// composition root so this package does not import the audit writer.
+	OnEvent ClientEventSink
 }
-
-// CIMDEvent is what the front door reports to the audit log.
-type CIMDEvent struct {
-	// Type is one of the oauth-client-* audit event types.
-	Type string
-	// ClientID is the Client Identifier URL.
-	ClientID string
-	// Host is the client_id's hostname — the identity cue the draft wants
-	// surfaced (§9.1), and the one field worth indexing.
-	Host string
-	// AuthMethod is the resolved token_endpoint_auth_method, when known.
-	AuthMethod string
-	// Reason carries the rejection cause for oauth-client-metadata-rejected.
-	Reason string
-}
-
-// Audit event types written by the front door.
-const (
-	EventClientDiscovered      = "oauth-client-discovered"
-	EventClientMetadataChanged = "oauth-client-metadata-changed"
-	EventClientRejected        = "oauth-client-metadata-rejected"
-)
 
 // MountFrontDoor registers GET /api/hydra/authorize.
 func MountFrontDoor(r chi.Router, p FrontDoorParams) {
@@ -74,20 +53,26 @@ func (p FrontDoorParams) handleAuthorize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if p.OnEvent != nil {
-		ev := CIMDEvent{
-			Type:       EventClientDiscovered,
-			ClientID:   clientID,
-			Host:       hostOf(clientID),
-			AuthMethod: res.Doc.TokenEndpointAuthMethod,
+	// Only a state change is worth a row: a cache hit on an unchanged document
+	// is every subsequent authorization, and logging those would bury the
+	// interesting events.
+	if res.FirstSeen || res.MaterialChange {
+		ev := ClientEvent{
+			ClientID:     clientID,
+			Origin:       ClientOriginCIMD,
+			Event:        ClientEventRegistered,
+			ClientName:   res.Doc.ClientName,
+			MetadataHost: hostOf(clientID),
+			AuthMethod:   res.Doc.TokenEndpointAuthMethod,
+			RedirectURIs: res.Doc.RedirectURIs,
+		}
+		if !res.FirstSeen {
+			ev.Event = ClientEventRefreshed
 		}
 		if res.MaterialChange {
-			ev.Type = EventClientMetadataChanged
 			ev.Reason = "authentication keys or method changed"
 		}
-		if res.FirstSeen || res.MaterialChange {
-			p.OnEvent(r, ev)
-		}
+		p.emit(r, ev)
 	}
 	p.redirectToHydra(w, r)
 }
@@ -116,14 +101,13 @@ func (p FrontDoorParams) fail(w http.ResponseWriter, r *http.Request, clientID s
 	if !ok {
 		re = &ResolveError{Code: "server_error", Description: err.Error()}
 	}
-	if p.OnEvent != nil {
-		p.OnEvent(r, CIMDEvent{
-			Type:     EventClientRejected,
-			ClientID: clientID,
-			Host:     hostOf(clientID),
-			Reason:   re.Description,
-		})
-	}
+	p.emit(r, ClientEvent{
+		ClientID:     clientID,
+		Origin:       ClientOriginCIMD,
+		Event:        ClientEventRejected,
+		MetadataHost: hostOf(clientID),
+		Reason:       re.Code + ": " + re.Description,
+	})
 
 	q := r.URL.Query()
 	redirectURI := q.Get("redirect_uri")
@@ -142,6 +126,13 @@ func (p FrontDoorParams) fail(w http.ResponseWriter, r *http.Request, clientID s
 		}
 	}
 	writeHTML(w, http.StatusBadRequest, renderErrorPage(re.Code, re.Description))
+}
+
+// emit forwards an event to the sink, if one is wired.
+func (p FrontDoorParams) emit(r *http.Request, ev ClientEvent) {
+	if p.OnEvent != nil {
+		p.OnEvent(r, ev)
+	}
 }
 
 func hostOf(rawURL string) string {
