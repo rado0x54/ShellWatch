@@ -20,7 +20,7 @@
 ShellWatch is a Human-in-the-Loop platform for agent-driven SSH. Passkey-first and passkey-only — no passwords anywhere — with an SSH-agent proxy that delivers end-to-end secure SSH authentication to your local client. Every agent action surfaces in realtime notifications, persists in a tamper-evident audit log, and can be gated behind explicit human approval before it touches the remote host.
 
 - **Passkey-only auth** — WebAuthn for UI login, agent enrollment, and SSH authentication via OpenSSH's [`webauthn-sk-ecdsa-sha2-nistp256@openssh.com`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.u2f) signature algorithm
-- **OAuth2 delegated to Ory Hydra** — the OAuth2/OIDC layer is owned entirely by [Ory Hydra](https://www.ory.sh/hydra/). Every client (web UI, MCP, agent) authenticates through it via mediated DCR + `authorization_code` + PKCE, with passkey login + consent; ShellWatch is Hydra's passkey-gated login/consent provider and the access token's subject is the human. No passwords, no API keys.
+- **OAuth2 delegated to Ory Hydra** — the OAuth2/OIDC layer is owned entirely by [Ory Hydra](https://www.ory.sh/hydra/). Every client (web UI, MCP, agent) authenticates through it via `authorization_code` + PKCE with passkey login + consent; ShellWatch is Hydra's passkey-gated login/consent provider and the access token's subject is the human. No passwords, no API keys. Client onboarding is mediated by ShellWatch so local policy always applies: **Client ID Metadata Documents** (CIMD — the `client_id` is an `https` URL serving the client's own metadata, and the path the 2026-07-28 MCP spec prefers) or mediated DCR for clients that only speak RFC 7591.
 - **End-to-end SSH-agent proxy** — local `ssh`/`scp`/`git` reach a passkey via ShellWatch with explicit browser approval per signature
 - **Agent forwarding into sessions** — your passkey-backed SSH agent is forwarded into ShellWatch sessions (per-endpoint toggle), so you can hop to additional hosts and enable SSH-agent-based PAM integration
 - **PAM integration** — pair with [`pam-ssh-agent-webauthn`](https://github.com/rado0x54/pam-ssh-agent-webauthn) to gate `sudo` (or any PAM-aware step) behind a passkey approval surfaced through ShellWatch
@@ -141,7 +141,7 @@ Point your client (Claude Desktop, Claude Code, any MCP-aware tool) at the `/mcp
 https://your-shellwatch-host/mcp
 ```
 
-The client registers via mediated Dynamic Client Registration and you approve it with a **passkey** on the consent screen; Hydra issues an `mcp`-scoped token. Programmatic SSH-agent access works the same way — `shellwatch-agent login` runs a browser passkey login and obtains an `agent`-scoped token. See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the Hydra setup.
+The client onboards with a CIMD URL `client_id` where it supports one, or mediated Dynamic Client Registration otherwise, and you approve it with a **passkey** on the consent screen; Hydra issues an `mcp`-scoped token. For a URL `client_id` the consent screen leads with the document's **hostname**, since that is the part the client cannot choose for itself, and never renders a client-supplied logo. Admins can see every registration, refresh and rejection under **Audit → OAuth Clients**. Programmatic SSH-agent access works the same way — `shellwatch-agent login` runs a browser passkey login and obtains an `agent`-scoped token. See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the Hydra setup.
 
 ## Push notifications (PWA)
 

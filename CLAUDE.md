@@ -21,7 +21,7 @@ Operationally, it brokers terminal sessions between configured SSH targets, huma
 - **MCP:** official `modelcontextprotocol/go-sdk` (streamable HTTP transport)
 - **WebSocket:** `coder/websocket`
 - **WebAuthn:** `go-webauthn` for ceremonies; the SSH `webauthn-sk-*` signature format is hand-built in `internal/signing`
-- **Auth:** WebAuthn passkeys (human login + SSH signing). OAuth2/OIDC is **fully delegated to Ory Hydra** (web UI, MCP, and agent all use mediated DCR + authorization_code + PKCE); ShellWatch is Hydra's passkey-gated login/consent provider and verifies opaque bearer tokens via introspection. No passwords, no API keys.
+- **Auth:** WebAuthn passkeys (human login + SSH signing). OAuth2/OIDC is **fully delegated to Ory Hydra** (web UI, MCP, and agent all use authorization_code + PKCE); ShellWatch is Hydra's passkey-gated login/consent provider and verifies opaque bearer tokens via introspection. Client onboarding is mediated by ShellWatch — CIMD (URL `client_id`, via the `/api/hydra/authorize` front door) or DCR (`/api/hydra/register`) — so local policy applies before anything reaches Hydra; Hydra's own registration endpoint is off. No passwords, no API keys.
 - **Config:** YAML (goccy/go-yaml) with hand-rolled validation (`internal/config`)
 - **Frontend:** SvelteKit (adapter-static, client-side SPA) with Svelte 5, xterm.js — routing, layouts, and build only; the build output goes to `web/dist` and is embedded by `web/embed.go`
 - **Testing:** Go `testing` (unit, in-process integration, golden parity) · Vitest (client unit tests, black-box e2e suite)
@@ -206,7 +206,7 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 
 - **Local-first persistence:** SQLite is the only datastore ShellWatch owns — no external/remote database. (OAuth2/OIDC is delegated to Ory Hydra, a required external service; Hydra keeps its own SQLite store, by default in the same `./data` folder.)
 - **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows. The product is scoped to one process per deployment.
-- **Account-scoped:** All operations are scoped to the calling account. Admin is a role, not a cross-account view; never imply cross-account session/output visibility.
+- **Account-scoped:** All operations are scoped to the calling account. Admin is a role, not a cross-account view; never imply cross-account session/output visibility. The single deliberate exception is the OAuth client onboarding log (`oauth_client_registrations`, `GET /api/audit/oauth-clients`): DCR and CIMD both run before any account is identified, so those rows cannot be scoped to one — they are admin-gated instead. Do not "fix" that table by adding an `account_id`.
 - **Shared core:** UI and MCP must use the same Manager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately
 - **Passkey-first:** No passwords, no API keys. WebAuthn passkeys for humans; every client (UI, MCP, agent) authenticates with a Hydra-issued OAuth bearer token whose `sub` is the account.

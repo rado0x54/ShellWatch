@@ -142,7 +142,13 @@ Two routes already break the pattern, in different directions:
 stepup_wrong_action, stepup_wrong_account}` (`stepup-gate.ts`). This is the
   only machine-readable error code in the API today.
 - The **Hydra/DCR** routes use `{ error, error_description }` OAuth-style — a
-  third error shape.
+  third error shape. The CIMD front door (`GET /api/hydra/authorize`) is a
+  fourth: having no JSON body at all, it reports failure either as an HTML error
+  page (when the requested `redirect_uri` has not yet been validated against the
+  client's metadata document and therefore must not be trusted as a
+  destination) or as `error` / `error_description` / `state` in the query string
+  of a redirect to that `redirect_uri` once it has been (RFC 6749 §4.1.2.1).
+  That split is a security property, not an inconsistency to converge away.
 
 So a Go port inherits three error envelopes; converging on one `{ error, code }`
 is the natural cleanup.

@@ -97,17 +97,59 @@ ShellWatch provisions the public SPA client in Hydra automatically on boot
 `oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
 login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 
-> **Reverse-proxy note:** ShellWatch's mediated DCR endpoint lives under its own
-> namespace at `POST /api/hydra/register`, so ownership is unambiguous when
-> ShellWatch and Hydra share a hostname behind one proxy: everything under
+> **Reverse-proxy note:** ShellWatch's client-onboarding endpoints live under
+> its own namespace — `POST /api/hydra/register` (mediated DCR) and
+> `GET /api/hydra/authorize` (the CIMD front door) — so ownership is unambiguous
+> when ShellWatch and Hydra share a hostname behind one proxy: everything under
 > `/oauth2/*` (`/oauth2/auth`, `/oauth2/token`, `/oauth2/revoke`,
-> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including
-> `/api/hydra/register`) routes to ShellWatch. Hydra's own native DCR stays
-> disabled.
+> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including both
+> `/api/hydra/*` endpoints above) routes to ShellWatch. Hydra's own native DCR
+> stays disabled.
 >
-> **Allowed redirect URIs** for DCR clients are configurable under
-> `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
-> callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+> **The advertised `authorization_endpoint` is ShellWatch's, not Hydra's**, while
+> CIMD is enabled (the default): a URL `client_id` has to be resolved into a
+> Hydra client before Hydra sees the request, since Hydra would otherwise reject
+> it as an unknown client. A non-URL `client_id` — the first-party SPA, every DCR
+> client — is passed straight through to `/oauth2/auth` with the query string
+> forwarded verbatim, so those flows are unchanged. `/oauth2/auth` must still
+> route to Hydra: the front door redirects to it.
+>
+> Setting `hydra.cimd.enabled: false` is an operator kill switch, not a hand-off
+> — `authorization_endpoint` reverts to Hydra's `/oauth2/auth` and URL
+> `client_id`s stop working entirely, because Hydra cannot resolve a metadata
+> document.
+>
+> **Outbound requests on the login path (CIMD):** resolving a document means
+> ShellWatch fetches the `client_id` URL itself — HTTPS only, no redirects
+> followed, 5 s deadline, 5 KB read cap, and a dial-time guard that refuses
+> loopback, link-local, RFC 1918, ULA, CGNAT, multicast and other special-use
+> destinations **after** DNS resolution, so a rebinding answer cannot reach an
+> internal address. Documents are cached per RFC 9111 headers, clamped into
+> `hydra.cimd.cacheMinSeconds`…`cacheMaxSeconds`; errors and invalid documents are
+> never cached. Restrict which clients may onboard with
+> `hydra.cimd.allowedHosts` / `blockedHosts` (exact hostnames; blocked wins). If
+> outbound HTTPS is not available to the server, leave CIMD off and use DCR.
+>
+> `hydra.cimd.allowLoopbackDocuments` exists for development and testing only —
+> the CIMD draft (§8.6) forbids it in production, and it re-opens the SSRF hole
+> the dial-time guard closes. The server logs a warning when it is on.
+>
+> **Allowed redirect URIs** are configurable under
+> `hydra.dcr.redirectUriPatterns` (default: loopback only) and are shared by DCR
+> **and** CIMD — a document's `redirect_uris` are filtered through the same
+> patterns, so a published metadata document can never widen your policy. Add a
+> hosted client's callback (e.g. Claude.ai) explicitly — see
+> `config.sample.yaml`. A registered loopback entry matches any port (RFC 8252
+> §7.3); `localhost` does not, because it can resolve anywhere.
+>
+> **Auditing who onboarded:** every registration, document refresh and rejection
+> is recorded in an append-only log, readable by admins at
+> `GET /api/audit/oauth-clients` (UI: Audit → OAuth Clients). It is the one audit
+> surface that is not account-scoped — onboarding happens before anyone signs in
+> — so it is gated on the admin role instead of an account filter. Current client
+> state stays in Hydra (`GET /admin/clients`), tagged with
+> `metadata.shellwatch.origin` = `cimd` or `dcr`; clients registered before this
+> landed have an empty metadata object and read as origin unknown.
 >
 > **One origin for app + OAuth (#243):** 2026-07-28-era MCP clients enforce
 > RFC 8414 §3.3 — the authorization-server metadata's `issuer` must equal the
