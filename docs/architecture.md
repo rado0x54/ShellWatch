@@ -207,13 +207,13 @@ The web UI sees ALL of the account's sessions regardless of source, labelled `ui
 
 ### MCP Server (`internal/mcp`)
 
-Streamable HTTP MCP endpoint at `/mcp` (official Go SDK). Each MCP client connection gets its own stateful transport; sessions idle for `mcp.sessionTimeoutMinutes` are reaped. Requires a bearer token with the `mcp` scope and a source IP inside `security.allowedNetworks`.
+Stateless streamable HTTP MCP endpoint at `/mcp` (official Go SDK), serving spec revision `2026-07-28` alongside the `2025-11-25`/`2025-06-18` handshake eras (#243). There are no protocol-level sessions: every POST builds a fresh SDK server bound to an `AgentSession` (`internal/agent`) scoped to the request's `(account, OAuth client_id)`. Requires a bearer token with the `mcp` scope and a source IP inside `security.allowedNetworks`.
 
-**Tools:** `shellwatch_create_session`, `shellwatch_list_sessions`, `shellwatch_send_keys`, `shellwatch_read_output`, `shellwatch_close_session`, `shellwatch_manage_endpoints`, `shellwatch_manage_keys` — payloads in [`docs/api/mcp-tools.md`](./api/mcp-tools.md).
+**Tools:** `shellwatch_create_session`, `shellwatch_list_sessions`, `shellwatch_send_keys`, `shellwatch_read_output` (with `waitMs` long-polling), `shellwatch_close_session`, `shellwatch_manage_endpoints`, `shellwatch_manage_keys` — payloads in [`docs/api/mcp-tools.md`](./api/mcp-tools.md).
 
-**Notifications** (`output_available`, `session_status`) are debounced (`notifications.mcp.debounceMs`, default 100 ms) and scoped to the agent's own sessions.
+**Server→client updates:** sessions are resources (`shellwatch://sessions`, `shellwatch://sessions/{id}`); `2026-07-28` clients subscribe over `subscriptions/listen` and receive `notifications/resources/updated` — debounced per session for output (`notifications.mcp.debounceMs`, default 100 ms), immediate for status changes. Older clients long-poll with `read_output waitMs`.
 
-**Session lifecycle:** an MCP transport owns an `AgentSession` (`internal/agent`); when the transport closes or expires, all of its terminal sessions are closed.
+**Session lifecycle:** terminal sessions belong to the agent's OAuth client and survive its connections. They end via `close_session`, remote hangup, the idle janitor (`sessions.idleTimeoutMinutes`), account deletion, or consent revocation of the owning client.
 
 ### SSH Agent Proxy (`internal/agentproxy`)
 
@@ -282,8 +282,9 @@ server:
   externalUrl: http://localhost:3000 # required — issuer/redirect base for OAuth
 
 hydra: # OAuth2/OIDC authority (required)
-  publicUrl: http://localhost:4444 # Hydra public issuer
+  publicUrl: http://localhost:3000 # shared public origin of app + OAuth (= Hydra urls.self.issuer)
   adminUrl: http://localhost:4445 # Hydra admin API (trusted-network only)
+  devProxyUpstream: http://localhost:4444 # local dev only: forward Hydra's public surface
   spa:
     clientId: shellwatch-web # first-party PKCE client (no secret)
 

@@ -82,8 +82,12 @@ Add a `hydra:` section to `config.yaml` (see `config.sample.yaml`):
 
 ```yaml
 hydra:
-  publicUrl: http://localhost:4444 # must equal Hydra urls.self.issuer
+  # The SHARED public origin of app + OAuth (= server.externalUrl), not Hydra's
+  # listener: it must equal Hydra's urls.self.issuer, which the bundled
+  # hydra.yml sets to this value (see "One origin for app + OAuth" below).
+  publicUrl: http://localhost:3000
   adminUrl: http://localhost:4445 # trusted-network only
+  devProxyUpstream: http://localhost:4444 # LOCAL DEV ONLY — drop behind a real proxy
   spa:
     clientId: shellwatch-web # first-party public PKCE client (no secret)
 ```
@@ -104,6 +108,30 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > **Allowed redirect URIs** for DCR clients are configurable under
 > `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
 > callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+>
+> **One origin for app + OAuth (#243):** 2026-07-28-era MCP clients enforce
+> RFC 8414 §3.3 — the authorization-server metadata's `issuer` must equal the
+> origin it was fetched from — so ShellWatch and Hydra must share a public
+> origin, with the proxy routing `/oauth2/*`, `/userinfo`,
+> `/.well-known/jwks.json` and `/.well-known/openid-configuration` to Hydra and
+> everything else (including the RFC 9728/8414 discovery docs, which are
+> ShellWatch's own) to ShellWatch. Set `hydra.publicUrl` and Hydra's
+> `urls.self.issuer` to that shared origin.
+>
+> **Locally**, `hydra.devProxyUpstream: http://localhost:4444` makes ShellWatch
+> forward that same path set itself, so `pnpm dev` + `docker compose up -d hydra`
+> give you the single origin with no local proxy — the bundled `hydra.yml`
+> already issues on the app's origin. Remove the key in production, where the
+> real proxy does the routing. Changing the issuer invalidates existing tokens:
+> log out and back in once (and re-authorize MCP clients).
+>
+> **MCP streams through proxies (#243):** `/mcp` responses can be long-lived SSE
+> streams (`subscriptions/listen`, `read_output` long-polls). The proxy must not
+> buffer them (nginx: `proxy_buffering off;` — or
+> `add_header X-Accel-Buffering no;` — on the `/mcp` location) and must forward
+> all `Mcp-*` request headers unchanged — `2026-07-28` clients send required
+> `Mcp-Method` / `Mcp-Name` / `Mcp-Protocol-Version` headers that the server
+> validates.
 
 ### Manual verification
 

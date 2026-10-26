@@ -1,1 +1,11 @@
 npx lint-staged
+
+# web/dist/.gitkeep must stay tracked: web/embed.go uses `//go:embed all:dist`,
+# which fails when web/dist holds no file, so deleting it breaks `go build` in
+# every fresh checkout. The SvelteKit adapter wipes web/dist, so an interrupted
+# client build can leave the deletion staged (`pnpm build:client` restores it).
+if git diff --cached --name-only --diff-filter=D | grep -qx 'web/dist/.gitkeep'; then
+	echo 'error: web/dist/.gitkeep is staged for deletion — go:embed needs a file in web/dist.'
+	echo '       restore it with:  node scripts/keep-web-dist.mjs && git add web/dist/.gitkeep'
+	exit 1
+fi

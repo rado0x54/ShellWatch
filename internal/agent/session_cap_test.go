@@ -43,7 +43,7 @@ func TestCapIgnoresExternallyClosedSessions(t *testing.T) {
 			return m, nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", 2)
+	sess := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: 2})
 	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestCapIgnoresExternallyClosedSessions(t *testing.T) {
 	}
 	// ...but the dead ids stay OWNED: post-mortem output remains readable
 	// through the agent even after new creates pruned the live count.
-	r, err := sess.ReadOutput(ids[0], 0, 100)
+	r, err := sess.ReadOutput(ctx, ReadOutputParams{SessionID: ids[0], Limit: 100})
 	if err != nil {
 		t.Fatalf("post-mortem read on retained session: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestCapZeroBlocksCreation(t *testing.T) {
 			return terminal.NewMockTransport(), nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", 0)
+	sess := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: 0})
 	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestCapZeroBlocksCreation(t *testing.T) {
 		t.Fatal("max_sessions=0 must block creation")
 	}
 	// Negative = "no cap resolved" -> default 5 still applies.
-	sess2 := New(Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, "acc", "", -1)
+	sess2 := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: -1})
 	if _, err := sess2.CreateSession(ctx, "ep1", "default cap"); err != nil {
 		t.Fatalf("default-cap create: %v", err)
 	}

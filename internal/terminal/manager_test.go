@@ -295,20 +295,21 @@ func TestCloseJoinsPumpBeforeClosedBroadcast(t *testing.T) {
 
 // Destroy marks the manager destroyed under the same lock the id snapshot is
 // taken under: a Create landing afterwards (an in-flight request racing
-// shutdown) is refused and its fresh transport closed — no session can ever
-// be created after Destroy.
+// shutdown) is refused before it ever dials — no session can be created, and
+// no transport opened, after Destroy.
 func TestCreateAfterDestroyRefused(t *testing.T) {
-	mgr, mock := mockManager(t)
+	dialed := false
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		dialed = true
+		return NewMockTransport(), nil
+	}, clock.Real{}, 0)
 	mgr.Destroy()
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
 	if _, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI}); err == nil {
 		t.Fatal("Create after Destroy must refuse")
 	}
-	mock.mu.Lock()
-	closed := mock.closed
-	mock.mu.Unlock()
-	if !closed {
-		t.Fatal("refused Create leaked an open transport")
+	if dialed {
+		t.Fatal("refused Create still dialed a transport")
 	}
 	if n := len(mgr.ListSessions()); n != 0 {
 		t.Fatalf("session registered after Destroy: %d", n)

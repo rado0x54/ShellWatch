@@ -22,7 +22,7 @@ func TestSessionEndpointMutations(t *testing.T) {
 	ctx := context.Background()
 	db.ExecContext(ctx, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('acc','A','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 
-	sess := New(Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, "acc", "1.2.3.4", 5)
+	sess := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc", ClientID: "client-1", SourceIP: "1.2.3.4", MaxOwned: 5})
 
 	// Create.
 	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
@@ -66,7 +66,7 @@ func TestSessionEndpointMutations(t *testing.T) {
 		t.Error("update of missing endpoint should return false")
 	}
 	// Cross-account isolation: another account can't touch ep1.
-	other := New(Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, "acc2", "", 5)
+	other := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc2", ClientID: "client-1", MaxOwned: 5})
 	if ok, _ := other.DeleteEndpoint(ctx, "ep1"); ok {
 		t.Error("cross-account delete should not match")
 	}

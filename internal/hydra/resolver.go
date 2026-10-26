@@ -45,7 +45,7 @@ func NewResolver(admin Introspector, cacheTTL time.Duration, clk clock.Clock) au
 		if !ins.Active || ins.Sub == "" || ins.TokenUse != "access_token" {
 			return nil
 		}
-		p := auth.Principal{AccountID: ins.Sub, Scopes: strings.Fields(ins.Scope)}
+		p := auth.Principal{AccountID: ins.Sub, ClientID: ins.ClientID, Scopes: strings.Fields(ins.Scope)}
 		// Cache ONLY valid principals — negative caching would let an
 		// attacker spraying invalid tokens evict legitimate entries.
 		if cache != nil {

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Server instructions (port of the instructions block in src/mcp/server.ts):
-// a live endpoint list + workflow / session-lifecycle / sudo guidance the
-// client model reads at initialize time. One deliberate divergence: Node's
-// "Notifications:" section is omitted — the go-sdk cannot send custom
-// notification methods (M1 is blocked on that), and promising notifications
-// that never arrive would make agents wait instead of polling read_output.
+// Server instructions: a live endpoint list + workflow / session-lifecycle /
+// sudo guidance, returned by server/discover and by the legacy initialize
+// answer. Waiting for output is read_output waitMs (any era) or the
+// shellwatch://sessions resources over subscriptions/listen (2026-07-28).
 package mcp
 
 import (
@@ -38,10 +36,14 @@ func buildInstructions(endpoints []agent.EndpointInfo) string {
 		"4. Keep the session open for follow-up commands — do NOT close it after each command",
 		"5. Only close with shellwatch_close_session when you are certain no more interactions are needed",
 		"",
+		"Waiting for output:",
+		"- Pass waitMs to shellwatch_read_output (up to 30000) to long-poll: it returns as soon as output past afterOffset arrives, so you never need tight polling loops",
+		"- Alternatively (protocol >= 2026-07-28), subscribe to shellwatch://sessions/<sessionId> via subscriptions/listen and re-read on notifications/resources/updated",
+		"",
 		"Session lifecycle:",
-		"- Sessions are automatically closed when your MCP connection ends — you do not need to close them manually",
+		"- Sessions persist across your requests (they belong to your OAuth client) and close on shellwatch_close_session, the remote end hanging up, or the server's idle timeout",
 		"- Keep sessions open between commands so the human observer can see your work and send follow-ups",
-		"- Creating a new session for every command is wasteful — reuse your existing session",
+		"- Creating a new session for every command is wasteful — list your existing sessions with shellwatch_list_sessions and reuse them",
 		"",
 		"sudo:",
 		"- Do NOT pass -n (non-interactive). The human operator can attach to your session and type the password directly, so a [sudo] password: prompt is not a failure mode.",

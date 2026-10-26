@@ -71,6 +71,10 @@ services:
       # `_fk=true` enables foreign-key enforcement (Hydra relies on it).
       DSN: ${HYDRA_DSN:-sqlite:///data/hydra.sqlite?_fk=true}
       SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:-this-is-a-dev-only-system-secret-change-me}
+      # urls.self.* live in hydra.yml and are authoritative — nothing here
+      # overrides them. The dev hydra.yml uses ShellWatch's origin as the
+      # issuer (single-origin mode, hydra.devProxyUpstream — see
+      # config.sample.yaml); production deployments bring their own config.
       # `--dev` accepts the http:// issuer without TLS; only for local dev.
     command: serve all --dev --config /etc/config/hydra.yml
     volumes:

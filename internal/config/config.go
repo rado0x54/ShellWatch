@@ -131,13 +131,11 @@ type Notifications struct {
 	} `yaml:"mcp"`
 }
 
-// Mcp holds MCP-surface lifecycle settings. Go-only section: Node's zod
-// schema is non-strict and ignores it in a shared config.yaml.
+// Mcp exists only to reject the removed sessionTimeoutMinutes setting with a
+// migration hint (#243): the MCP surface is stateless, so there are no MCP
+// sessions to expire — terminal sessions end via sessions.idleTimeoutMinutes.
 type Mcp struct {
-	// SessionTimeoutMinutes closes MCP sessions with no HTTP activity for this
-	// long (idle-session janitor for the MCP layer; expiry also closes the
-	// agent's SSH sessions). Pointer so an explicit 0 (= never expire) is
-	// distinguishable from absent (= default 30).
+	// SessionTimeoutMinutes is REMOVED; any value is a validation error.
 	SessionTimeoutMinutes *int `yaml:"sessionTimeoutMinutes"`
 }
 
@@ -161,6 +159,15 @@ type Hydra struct {
 	Spa                     HydraSpa `yaml:"spa"`
 	IntrospectionCacheTtlMs *int     `yaml:"introspectionCacheTtlMs"`
 	Dcr                     HydraDcr `yaml:"dcr"`
+	// DevProxyUpstream (local dev): when set, ShellWatch itself reverse-proxies
+	// Hydra's public surface (/oauth2/*, /userinfo, /.well-known/jwks.json,
+	// /.well-known/openid-configuration) to this address — one origin for app
+	// and OAuth, like the production reverse proxy, with no extra container.
+	// Set publicUrl to the shared origin (= server.externalUrl) and point this
+	// at the real Hydra listener (e.g. 'http://localhost:4444'); Hydra's own
+	// urls.self.issuer/public must be the shared origin too (see
+	// docker-compose.yml / docs/deployment.md). Leave unset in production.
+	DevProxyUpstream string `yaml:"devProxyUpstream"`
 }
 
 type Vapid struct {
@@ -208,9 +215,6 @@ const (
 	defaultIdleTimeoutMinutes     = 30
 	defaultCleanupIntervalSeconds = 60
 )
-
-// defaultMcpSessionTimeoutMinutes aligns with the terminal idle janitor.
-const defaultMcpSessionTimeoutMinutes = 30
 
 // Load reads, parses, defaults, validates, and derives — the equivalent of
 // loadConfig in src/config/loader.ts. Resolution order for the path:
@@ -286,10 +290,6 @@ func (c *Config) applyDefaults() {
 	fillRule(&rl.LoginVerify, defaultRateLimit.LoginVerify)
 	if c.Notifications.Mcp.DebounceMs == 0 {
 		c.Notifications.Mcp.DebounceMs = 100
-	}
-	if c.Mcp.SessionTimeoutMinutes == nil {
-		v := defaultMcpSessionTimeoutMinutes
-		c.Mcp.SessionTimeoutMinutes = &v
 	}
 	if c.Sessions.IdleTimeoutMinutes == 0 {
 		c.Sessions.IdleTimeoutMinutes = defaultIdleTimeoutMinutes
@@ -378,8 +378,8 @@ func (c *Config) validate() []string {
 		add("notifications.mcp.debounceMs: must be between 10 and 5000")
 	}
 
-	if v := *c.Mcp.SessionTimeoutMinutes; v < 0 || v > 1440 {
-		add("mcp.sessionTimeoutMinutes: must be between 0 (disabled) and 1440")
+	if c.Mcp.SessionTimeoutMinutes != nil {
+		add("mcp.sessionTimeoutMinutes: removed — MCP is stateless (no protocol-level sessions to expire); terminal sessions end via sessions.idleTimeoutMinutes. Delete this key.")
 	}
 
 	if v := c.Sessions.IdleTimeoutMinutes; v <= 0 || v > 24*60 {
@@ -390,13 +390,16 @@ func (c *Config) validate() []string {
 	}
 
 	if !isURL(c.Hydra.PublicURL) {
-		add("hydra.publicUrl must be a valid URL (e.g. 'http://localhost:4444')")
+		add("hydra.publicUrl must be a valid URL — the shared public origin of app and OAuth, i.e. Hydra's urls.self.issuer (e.g. 'http://localhost:3000')")
 	}
 	if !isURL(c.Hydra.AdminURL) {
 		add("hydra.adminUrl must be a valid URL (e.g. 'http://localhost:4445')")
 	}
 	if c.Hydra.Spa.RedirectURI != "" && !isURL(c.Hydra.Spa.RedirectURI) {
 		add("hydra.spa.redirectUri: must be a valid URL")
+	}
+	if c.Hydra.DevProxyUpstream != "" && !isURL(c.Hydra.DevProxyUpstream) {
+		add("hydra.devProxyUpstream: must be a valid URL (e.g. 'http://localhost:4444')")
 	}
 	if ttl := *c.Hydra.IntrospectionCacheTtlMs; ttl < 0 || ttl > 300_000 {
 		add("hydra.introspectionCacheTtlMs: must be between 0 and 300000")

@@ -318,9 +318,7 @@ func run() error {
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
 		Keys:           store.NewSSHKeys(db),
-		NewID:          newUUID,
 		Version:        buildInfo.Display,
-		SessionTimeout: time.Duration(*cfg.Mcp.SessionTimeoutMinutes) * time.Minute,
 		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
 		MaxOwned:       store.NewAccounts(db).MaxSessions,
 	}
@@ -337,9 +335,6 @@ func run() error {
 		// terminal output must not stay readable in memory.
 		if n := manager.RemoveForAccount(accountID); n > 0 {
 			slog.Info("purged retained sessions for deleted account", "account", accountID, "count", n)
-		}
-		if n := mcpDeps.DropAccount(accountID); n > 0 {
-			slog.Info("tore down MCP transports for deleted account", "account", accountID, "count", n)
 		}
 		go func() {
 			rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -405,6 +400,15 @@ func run() error {
 		},
 		AuthSessions: &rest.AuthSessions{
 			Admin: admin, SPAClientID: cfg.Hydra.Spa.ClientID, StepUp: webauthnDeps.StepUp,
+			// Revoking a client's consent also closes its live terminal
+			// sessions — the grant was the only thing tying them to the agent.
+			CloseClientSessions: func(accountID, clientID string) int {
+				n := manager.CloseAllForClient(accountID, clientID, terminal.CloseAgentDisconnect)
+				if n > 0 {
+					slog.Info("closed MCP sessions for revoked client", "account", accountID, "client", clientID, "count", n)
+				}
+				return n
+			},
 		},
 		// Push routes mount only when VAPID is configured (Node 404s them
 		// otherwise); the endpoint allowlist is the SSRF guard (H8).

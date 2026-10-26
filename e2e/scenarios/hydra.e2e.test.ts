@@ -82,6 +82,30 @@ describe("Hydra (real) — discovery, login/consent branches, tokens", () => {
     // Hydra's native DCR is off; ours is the mediated endpoint.
     expect(hydra.registration_endpoint).toBeUndefined();
     expect(ours.registration_endpoint).toBe(`${sc.server.url}/api/hydra/register`);
+
+    // RFC 9207 (#243): our blended doc must advertise
+    // authorization_response_iss_parameter_supported exactly as truthfully as
+    // Hydra does. Hydra v26.2.0 neither advertises it nor emits `iss` on the
+    // authorization response; when a Hydra upgrade starts doing either, this
+    // assertion flags the doc (and MCP clients' iss validation) for review.
+    expect(ours.authorization_response_iss_parameter_supported).toBe(
+      hydra.authorization_response_iss_parameter_supported,
+    );
+  });
+
+  it("the authorization response carries RFC 9207 `iss` iff Hydra advertises it", async () => {
+    const hydra = await hydraOpenIdConfiguration();
+    const flow = await loginThirdPartyClient({
+      clientName: "E2E iss probe",
+      scope: "mcp",
+      identity: sc.identity,
+      jar: sc.jar,
+    });
+    if (hydra.authorization_response_iss_parameter_supported) {
+      expect(flow.issParam).toBe(hydra.issuer);
+    } else {
+      expect(flow.issParam).toBeNull();
+    }
   });
 
   it("the web UI login was a fresh passkey ceremony with first-party auto-consent and yields an introspectable ui token", async () => {

@@ -9,7 +9,11 @@ import "context"
 // Hydra glue — hydra.NewResolver produces one.
 type Principal struct {
 	AccountID string
-	Scopes    []string
+	// ClientID is the OAuth client the token was issued to (introspection
+	// client_id). Terminal-session ownership on the MCP surface is scoped to
+	// (AccountID, ClientID) — see internal/agent (#243).
+	ClientID string
+	Scopes   []string
 }
 
 func (p Principal) HasScope(s string) bool {

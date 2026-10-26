@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -106,6 +107,15 @@ func New(p Params) http.Handler {
 		HydraPublicURL:    p.Config.Hydra.PublicURL,
 		AgentProxyEnabled: agentProxy,
 	})
+
+	// Dev single-origin mode (#243): forward Hydra's public surface so one
+	// origin serves app + OAuth, as the production reverse proxy does. The
+	// config loader validated the URL.
+	if up := p.Config.Hydra.DevProxyUpstream; up != "" {
+		if u, err := url.Parse(up); err == nil {
+			hydra.MountDevProxy(r, u)
+		}
+	}
 
 	if p.WebAuthn != nil {
 		p.WebAuthn.Mount(r)

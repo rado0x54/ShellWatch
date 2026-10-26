@@ -178,10 +178,11 @@ func send401(w http.ResponseWriter, p GateParams, scope, message, kind string) {
 		status = http.StatusForbidden
 	}
 	parts := []string{`Bearer realm="shellwatch"`}
-	// RFC 9728 discovery hint only for the externally-discoverable resources.
+	// RFC 9728 discovery hint only for the externally-discoverable resources,
+	// plus the required scope (MCP 2026-07-28 "Scope Selection Strategy").
 	if scope == McpScope || scope == AgentScope {
 		ext := strings.TrimRight(p.ExternalURL(), "/")
-		parts = append(parts, `resource_metadata="`+ext+ResourceMetadataPath(scope)+`"`)
+		parts = append(parts, `resource_metadata="`+ext+ResourceMetadataPath(scope)+`"`, `scope="`+scope+`"`)
 	}
 	if kind == "invalid" {
 		parts = append(parts, `error="invalid_token"`)

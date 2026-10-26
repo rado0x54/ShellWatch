@@ -118,13 +118,10 @@ security:
     - 127.0.0.1/32
     - "::1/128"
 
-# MCP surface lifecycle.
-# mcp:
-#   sessionTimeoutMinutes: 30       # Close MCP sessions after this long with no HTTP
-#                                   # activity (client vanished without DELETE). Expiry
-#                                   # also closes the agent's SSH sessions. A live client
-#                                   # holding its SSE stream never expires. 0 disables.
-#                                   # Default: 30 (aligned with the SSH idle timeout).
+# The MCP surface is stateless (spec 2026-07-28): there are no MCP sessions to
+# expire. Terminal sessions created via MCP belong to the agent's OAuth client
+# and end on close_session, remote hangup, or sessions.idleTimeoutMinutes.
+# (mcp.sessionTimeoutMinutes was removed and now fails validation.)
 
 # Web Push notifications — send push notifications for sign requests
 # so users don't need the browser tab open. Requires VAPID keys.
@@ -155,10 +152,25 @@ security:
 hydra:
   # Public issuer URL — must equal Hydra's urls.self.issuer. The browser SPA,
   # MCP clients, and the agent-client reach this; advertised in discovery.
-  publicUrl: http://localhost:4444
+  #
+  # ONE ORIGIN serves the app and the OAuth authority, here and in production:
+  # strict (2026-07-28-era) MCP clients enforce RFC 8414 §3.3 — the
+  # authorization-server metadata's issuer must equal the origin it was fetched
+  # from — so this is ShellWatch's own origin, not Hydra's listener. In
+  # production your reverse proxy routes /oauth2/* and the OIDC docs to Hydra
+  # (docs/deployment.md); locally devProxyUpstream below does the same job.
+  publicUrl: http://localhost:3000
   # Admin API URL — login/consent acceptance, client CRUD, token introspection.
   # NEVER expose this to the internet; bind it to a trusted network only.
   adminUrl: http://localhost:4445
+  # LOCAL DEV ONLY (#243): ShellWatch forwards Hydra's public surface
+  # (/oauth2/*, /userinfo, /.well-known/{jwks.json,openid-configuration}) to
+  # this address, so no local reverse proxy is needed to get the single origin
+  # above. Pairs with the bundled hydra.yml (urls.self.issuer = the app origin)
+  # and `docker compose up -d hydra`.
+  # REMOVE THIS in production — there a real proxy fronts both services, and
+  # publicUrl is the shared public origin.
+  devProxyUpstream: http://localhost:4444
   spa:
     # First-party PUBLIC client the web UI uses for its PKCE flow (no secret).
     # ShellWatch ensures it exists in Hydra on boot.

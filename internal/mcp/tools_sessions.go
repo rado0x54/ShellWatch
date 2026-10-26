@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"strings"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -35,6 +36,7 @@ func registerSessionTools(srv *mcpsdk.Server, as *agent.Session) {
 		if err := decodeArgs(req, &args); err != nil {
 			return errResult(err.Error()), nil
 		}
+		captureClientInfo(as, req)
 		reason := strings.TrimSpace(args.Reason)
 		if reason == "" {
 			return errResult("reason must not be empty"), nil
@@ -87,22 +89,32 @@ func registerSessionTools(srv *mcpsdk.Server, as *agent.Session) {
 
 	srv.AddTool(&mcpsdk.Tool{
 		Name:        "shellwatch_read_output",
-		Description: "Read terminal output from a session. Use afterOffset for incremental reads.",
+		Description: "Read terminal output from a session. Use afterOffset for incremental reads. Set waitMs to long-poll: the call returns as soon as output past afterOffset exists (or the wait elapses), so you never busy-poll.",
 		InputSchema: objSchema(map[string]any{
 			"sessionId":   map[string]any{"type": "string"},
 			"afterOffset": map[string]any{"type": "number"},
 			"limit":       map[string]any{"type": "number"},
+			"waitMs":      map[string]any{"type": "number", "description": "Max milliseconds to wait for new output past afterOffset (0-30000, default 0 = return immediately)."},
 		}, "sessionId"),
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		var args struct {
 			SessionID   string `json:"sessionId"`
 			AfterOffset int64  `json:"afterOffset"`
 			Limit       int    `json:"limit"`
+			WaitMs      int64  `json:"waitMs"`
 		}
 		if err := decodeArgs(req, &args); err != nil {
 			return errResult(err.Error()), nil
 		}
-		res, err := as.ReadOutput(args.SessionID, args.AfterOffset, args.Limit)
+		if args.WaitMs < 0 || args.WaitMs > 30000 {
+			return errResult("waitMs must be between 0 and 30000"), nil
+		}
+		res, err := as.ReadOutput(ctx, agent.ReadOutputParams{
+			SessionID:   args.SessionID,
+			AfterOffset: args.AfterOffset,
+			Limit:       args.Limit,
+			Wait:        time.Duration(args.WaitMs) * time.Millisecond,
+		})
 		if err != nil {
 			return errResult(err.Error()), nil
 		}
