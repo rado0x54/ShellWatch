@@ -39,17 +39,7 @@ func New[K comparable, V any](ttl time.Duration, capacity int, clk clock.Clock) 
 
 // Put inserts or replaces k, restarting its TTL. At capacity the oldest
 // insertion is evicted first.
-func (s *Store[K, V]) Put(k K, v V) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.m[k]; !exists && s.cap > 0 && len(s.m) >= s.cap {
-		s.evictOldestLocked()
-	}
-	if _, exists := s.m[k]; !exists {
-		s.order = append(s.order, k)
-	}
-	s.m[k] = entry[V]{value: v, expiresAt: s.clk.Now().Add(s.ttl)}
-}
+func (s *Store[K, V]) Put(k K, v V) { s.PutTTL(k, v, s.ttl) }
 
 // Get returns the live value for k, if any.
 func (s *Store[K, V]) Get(k K) (V, bool) {
@@ -149,4 +139,22 @@ func (s *Store[K, V]) deleteLocked(k K) {
 			break
 		}
 	}
+}
+
+// PutTTL is Put with a per-entry lifetime, for stores whose TTL comes from the
+// data rather than from construction (the CIMD document cache takes it from
+// RFC 9111 response headers). ttl <= 0 falls back to the store's own TTL.
+func (s *Store[K, V]) PutTTL(k K, v V, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = s.ttl
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.m[k]; !exists && s.cap > 0 && len(s.m) >= s.cap {
+		s.evictOldestLocked()
+	}
+	if _, exists := s.m[k]; !exists {
+		s.order = append(s.order, k)
+	}
+	s.m[k] = entry[V]{value: v, expiresAt: s.clk.Now().Add(ttl)}
 }

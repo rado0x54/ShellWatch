@@ -251,3 +251,72 @@ seedAdminEndpoints:
 		t.Fatalf("invalid hostKey must fail the load: %v", err)
 	}
 }
+
+// hydraConfig renders a valid config whose hydra block carries extra keys
+// (minimalConfig ends with a list, so keys cannot just be appended).
+func hydraConfig(extra string) string {
+	return `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost:3000
+server:
+  externalUrl: http://localhost:3000
+hydra:
+  publicUrl: http://localhost:4444
+  adminUrl: http://localhost:4445
+` + extra + `
+seedAdminEndpoints:
+  - label: Dev Box
+    address: ubuntu@dev.example.com:2222
+`
+}
+
+func TestCimdConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hydra.Cimd.Enabled == nil || !*cfg.Hydra.Cimd.Enabled {
+		t.Error("hydra.cimd.enabled must default to true")
+	}
+	if cfg.Hydra.Cimd.CacheMinSeconds != 300 || cfg.Hydra.Cimd.CacheMaxSeconds != 86400 {
+		t.Errorf("cache bounds: got %d/%d, want 300/86400",
+			cfg.Hydra.Cimd.CacheMinSeconds, cfg.Hydra.Cimd.CacheMaxSeconds)
+	}
+	if cfg.Hydra.Cimd.AllowLoopbackDocuments {
+		t.Error("allowLoopbackDocuments must default to false (draft §8.6 forbids it in production)")
+	}
+
+	// An explicit false is preserved, not re-defaulted.
+	cfg, err = Load(writeConfig(t, hydraConfig("  cimd:\n    enabled: false")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hydra.Cimd.Enabled == nil || *cfg.Hydra.Cimd.Enabled {
+		t.Error("hydra.cimd.enabled: an explicit false must be preserved")
+	}
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{"min above max", "  cimd:\n    cacheMinSeconds: 900\n    cacheMaxSeconds: 300", "cacheMinSeconds"},
+		{"negative min", "  cimd:\n    cacheMinSeconds: -1", "cacheMinSeconds"},
+		{"host as URL", "  cimd:\n    allowedHosts: ['https://apps.example.com']", "bare hostnames"},
+		{"host with port", "  cimd:\n    blockedHosts: ['apps.example.com:443']", "bare hostnames"},
+		{"bad dcr pattern", "  dcr:\n    redirectUriPatterns: ['([']", "not a valid regular expression"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, hydraConfig(tc.yaml)))
+			if err == nil {
+				t.Fatalf("want error containing %q, got none", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
