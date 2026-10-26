@@ -75,7 +75,7 @@ func TestMigrateAdoptsNodeDatabase(t *testing.T) {
 	// the adopted store (host-key pinning is 2). Bump this alongside new
 	// migrations.
 	var v int
-	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 2 {
+	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 3 {
 		t.Fatalf("goose stamp: v=%d err=%v", v, err)
 	}
 	// The adopted Node store gained the host-key columns.

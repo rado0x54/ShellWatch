@@ -22,7 +22,7 @@ import (
 // HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
 // nil skips auditing — tests).
 type HostKeyAuditor interface {
-	RecordHostKeyEvent(ev audit.HostKeyEvent)
+	RecordHostKeyEvent(ev audit.HostKeyEvent) string
 }
 
 // Deps are the collaborators an AgentSession needs.

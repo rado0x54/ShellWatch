@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
+import type { AppNotification } from "./notifications.js";
 import {
   addToast,
   clearAction,
   toastError,
+  toastNotification,
   type SignRequestAction,
   type SignRequestHostKey,
 } from "./toasts.js";
@@ -46,17 +48,12 @@ type SignRequestMessage = {
   keyFingerprint?: string;
 };
 
-/** A dial was refused before authentication: the server's host key differs
- * from the pinned one (#241). No approval exists — this is an alert. */
-type HostKeyMismatchMessage = {
-  type: "host-key:mismatch";
-  endpointId: string;
-  endpointLabel: string;
-  endpointAddress: string;
-  keyType: string;
-  observedFingerprint: string;
-  pinnedFingerprint: string;
-  deepLink: string;
+/** A new entry in the account's notification log (#252) — e.g. a host-key
+ * mismatch (#241). Persisted server-side (GET /api/notifications) and pushed
+ * here for the live toast; toasts dedupe by notification id. */
+type NotificationMessage = {
+  type: "notification:new";
+  notification: AppNotification;
 };
 
 type ServerMessage =
@@ -67,7 +64,7 @@ type ServerMessage =
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
-  | HostKeyMismatchMessage
+  | NotificationMessage
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
@@ -171,21 +168,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
         clearAction(msg.actionId);
       }
 
-      if (msg.type === "host-key:mismatch") {
-        // High-severity, no auto-dismiss: the connection was already refused
-        // and no approval toast will ever appear for it. The toast holds a
-        // headline only; the fingerprints live behind "Details" (#252).
-        addToast({
-          variant: "error",
-          message: `Host key MISMATCH — connection to "${msg.endpointLabel}" blocked.`,
-          detail:
-            `Endpoint:   ${msg.endpointLabel} (${msg.endpointAddress})\n` +
-            `Presented:  ${msg.observedFingerprint} (${msg.keyType})\n` +
-            `Pinned:     ${msg.pinnedFingerprint}\n\n` +
-            `The connection was refused before authentication. If the host key ` +
-            `legitimately changed, forget the pinned key under Settings → Endpoints → Host key.`,
-          link: { href: msg.deepLink || "/settings/endpoints", label: "Review endpoint" },
-        });
+      if (msg.type === "notification:new") {
+        // The toast holds the headline; the long text sits behind "Details"
+        // and the action link derives from the notification's type (#252).
+        toastNotification(msg.notification);
       }
 
       if (msg.type === "error") {

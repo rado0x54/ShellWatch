@@ -50,15 +50,15 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
 
 ## Server → Client
 
-| `type`              | Fields                                                        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `terminal:output`   | `sessionId`, `data: string`, `offset: number`, `reset?: true` | Output chunk. `offset` is the absolute buffer offset after this chunk. `reset:true` means the client must clear its buffer first (offset was evicted).                                                                                                                                                                                                                                                                                                        |
-| `terminal:status`   | `sessionId`, `status`                                         | The session's status, sent **once** in the `terminal:attach` reply (the only emitter, `ws-message-router.ts`). It is **not** pushed on subsequent transitions — runtime status changes propagate via `sessions:changed`. `status ∈ {opening, open, closing, closed, error}`.                                                                                                                                                                                  |
-| `terminal:closed`   | `sessionId`                                                   | Session closed. Any buffered output not yet delivered to this connection is flushed as a final `terminal:output` frame immediately **before** this message (no extra frame when the connection is already caught up), and within the same attachment no `terminal:output` follows it (a later re-attach to a retained post-mortem session may legitimately fetch output again). _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_ |
-| `terminal:mode`     | `sessionId`, `mode`                                           | Control-mode change. `mode ∈ {control, observer}`.                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `sessions:changed`  | `sessions: SessionListEntry[]`                                | Full session-list snapshot for the account. Broadcast on any lifecycle change.                                                                                                                                                                                                                                                                                                                                                                                |
-| `error`             | `message: string`                                             | Non-fatal error (bad attach, input without control, etc.). No `code`, no `sessionId`.                                                                                                                                                                                                                                                                                                                                                                         |
-| `host-key:mismatch` | see below                                                     | A dial aborted **before authentication** because the server presented a host key that differs from the pinned one (#241). No pending action exists (there is nothing to approve), so this message — plus Web Push — is how the account is told. Recovery is the endpoint settings page (`deepLink`).                                                                                                                                                          |
+| `type`             | Fields                                                        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `terminal:output`  | `sessionId`, `data: string`, `offset: number`, `reset?: true` | Output chunk. `offset` is the absolute buffer offset after this chunk. `reset:true` means the client must clear its buffer first (offset was evicted).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `terminal:status`  | `sessionId`, `status`                                         | The session's status, sent **once** in the `terminal:attach` reply (the only emitter, `ws-message-router.ts`). It is **not** pushed on subsequent transitions — runtime status changes propagate via `sessions:changed`. `status ∈ {opening, open, closing, closed, error}`.                                                                                                                                                                                                                                                                                                                                                                           |
+| `terminal:closed`  | `sessionId`                                                   | Session closed. Any buffered output not yet delivered to this connection is flushed as a final `terminal:output` frame immediately **before** this message (no extra frame when the connection is already caught up), and within the same attachment no `terminal:output` follows it (a later re-attach to a retained post-mortem session may legitimately fetch output again). _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_                                                                                                                                                                                          |
+| `terminal:mode`    | `sessionId`, `mode`                                           | Control-mode change. `mode ∈ {control, observer}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `sessions:changed` | `sessions: SessionListEntry[]`                                | Full session-list snapshot for the account. Broadcast on any lifecycle change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `error`            | `message: string`                                             | Non-fatal error (bad attach, input without control, etc.). No `code`, no `sessionId`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `notification:new` | `notification: Notification`                                  | A new entry in the account's notification log (#252): a server-originated event the user must not miss, e.g. a host-key mismatch (#241) — no pending action exists for those, so this message plus Web Push is how the account is told. The same `Notification` object (OpenAPI schema) is persisted and readable at `GET /api/notifications`, so a reconnecting client catches up from the log; toasts dedupe by `notification.id` against the HTTP error that may carry the same id (`Error.notificationId`). Client behavior derives from `type` + `payload`, never from title/detail text; unknown types render title/detail with no typed action. |
 
 ### `SessionListEntry`
 
@@ -73,20 +73,42 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
 }
 ```
 
-### `host-key:mismatch` (#241)
+### `notification:new` (#252)
 
 ```ts
 {
-  type: "host-key:mismatch";
-  endpointId: string;
-  endpointLabel: string;
-  endpointAddress: string; // user@host:port
-  keyType: string; // the key the server presented, e.g. "ssh-ed25519"
-  observedFingerprint: string; // SHA256:...
-  pinnedFingerprint: string; // SHA256:...
-  deepLink: string; // "/settings/endpoints"
+  type: "notification:new";
+  notification: {
+    id: string;
+    accountId: string;
+    type: string; // e.g. "host-key-mismatch"; payload is typed per kind
+    severity: "info" | "warning" | "error";
+    title: string; // toast-sized headline
+    detail: string | null; // long-form preformatted text ("Details" view)
+    payload: object | null; // type-specific structured data
+    createdAt: string; // ISO-8601
+  }
 }
 ```
+
+Known `type` values and their `payload` shapes (clients ignore unknown types
+gracefully — render title/detail, no typed action):
+
+- `host-key-mismatch` (#241) — a dial aborted **before authentication**
+  because the server presented a host key that differs from the pinned one;
+  recovery is the endpoint settings page. Payload:
+
+  ```ts
+  {
+    endpointId: string;
+    endpointLabel: string;
+    endpointAddress: string; // user@host:port
+    keyType: string; // the key the server presented, e.g. "ssh-ed25519"
+    observedFingerprint: string; // SHA256:...
+    pinnedFingerprint: string; // SHA256:...
+    auditId: string; // the host-key-mismatch row in /api/audit/signings
+  }
+  ```
 
 ### Sign-request toasts and host keys (#241)
 

@@ -29,6 +29,27 @@ func (e EndpointUserVerification) Valid() bool {
 	}
 }
 
+// Defines values for NotificationSeverity.
+const (
+	NotificationSeverityError   NotificationSeverity = "error"
+	NotificationSeverityInfo    NotificationSeverity = "info"
+	NotificationSeverityWarning NotificationSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the NotificationSeverity enum.
+func (e NotificationSeverity) Valid() bool {
+	switch e {
+	case NotificationSeverityError:
+		return true
+	case NotificationSeverityInfo:
+		return true
+	case NotificationSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PendingActionViewStatus.
 const (
 	PendingActionViewStatusCompleted PendingActionViewStatus = "completed"
@@ -727,8 +748,40 @@ type EndpointHostKey struct {
 
 // Error Standard error envelope. Almost every 4xx/5xx returns this.
 type Error struct {
-	Error                string                 `json:"error"`
+	Error string `json:"error"`
+
+	// NotificationId Present when the failure was also published to the account's notification log (#252), e.g. a session create refused by a host-key mismatch. Clients deduplicate their error display against the notification:new WebSocket message by this id instead of matching error text.
+	NotificationId       *string                `json:"notificationId,omitempty"`
 	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// Notification One entry of the account notification log (#252): a server-originated event the user must not miss. Also pushed live as the notification:new WebSocket message (see docs/api/websocket-protocol.md). Client behavior (toast severity, action links) derives from type + payload, never from title/detail text.
+type Notification struct {
+	AccountId string `json:"accountId"`
+	CreatedAt string `json:"createdAt"`
+
+	// Detail Long-form preformatted text behind a Details view.
+	Detail *string `json:"detail"`
+	Id     string  `json:"id"`
+
+	// Payload Type-specific structured data (see `type`).
+	Payload  *map[string]interface{} `json:"payload"`
+	Severity NotificationSeverity    `json:"severity"`
+
+	// Title Short headline sized for a toast.
+	Title string `json:"title"`
+
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	Type string `json:"type"`
+}
+
+// NotificationSeverity defines model for Notification.Severity.
+type NotificationSeverity string
+
+// NotificationPage defines model for NotificationPage.
+type NotificationPage struct {
+	NextCursor *string        `json:"nextCursor"`
+	Rows       []Notification `json:"rows"`
 }
 
 // PendingActionView Client-safe projection of a pending signing action (resolve/reject omitted). Discriminated on `type`.
@@ -1109,6 +1162,14 @@ type RegisterOauthClient201JSONResponseBodyTokenEndpointAuthMethod string
 // RegisterOauthClient502JSONResponseBodyError defines parameters for RegisterOauthClient.
 type RegisterOauthClient502JSONResponseBodyError string
 
+// ListNotificationsParams defines parameters for ListNotifications.
+type ListNotificationsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // FinishInvitePasskeyRegistrationJSONBody defines parameters for FinishInvitePasskeyRegistration.
 type FinishInvitePasskeyRegistrationJSONBody struct {
 	ChallengeId string      `json:"challengeId"`
@@ -1317,6 +1378,14 @@ func (a *Error) UnmarshalJSON(b []byte) error {
 		delete(object, "error")
 	}
 
+	if raw, found := object["notificationId"]; found {
+		err = json.Unmarshal(raw, &a.NotificationId)
+		if err != nil {
+			return fmt.Errorf("error reading 'notificationId': %w", err)
+		}
+		delete(object, "notificationId")
+	}
+
 	if len(object) != 0 {
 		a.AdditionalProperties = make(map[string]interface{})
 		for fieldName, fieldBuf := range object {
@@ -1339,6 +1408,13 @@ func (a Error) MarshalJSON() ([]byte, error) {
 	object["error"], err = json.Marshal(a.Error)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'error': %w", err)
+	}
+
+	if a.NotificationId != nil {
+		object["notificationId"], err = json.Marshal(a.NotificationId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'notificationId': %w", err)
+		}
 	}
 
 	for fieldName, field := range a.AdditionalProperties {

@@ -9,8 +9,9 @@
   import { account } from "$lib/stores/account.js";
   import { endpoints } from "$lib/stores/endpoints.js";
   import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
+  import { ApiError } from "$lib/api.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
-  import { toastError } from "$lib/stores/toasts.js";
+  import { toastError, toastRequestError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { logout } from "$lib/stores/webauthn.js";
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
@@ -34,11 +35,13 @@
       onMobileClose?.();
     } catch (err) {
       console.error("Failed to create session:", err);
-      // A host-key mismatch already raised its own persistent alert via the
-      // host-key:mismatch WS message — don't double-report it (#252).
-      if (!errorMessage(err).includes("host key mismatch")) {
-        toastError(`Failed to create session: ${errorMessage(err)}`);
-      }
+      // A failure the server also published as a notification (#252) dedupes
+      // against the pushed toast by id — and still surfaces here when the WS
+      // alert was lost to a disconnect.
+      toastRequestError(
+        `Failed to create session: ${errorMessage(err)}`,
+        err instanceof ApiError ? err.notificationId : undefined,
+      );
     }
   }
 
@@ -297,6 +300,14 @@
       onclick={() => navTo("/audit")}
     >
       Audit
+    </button>
+    <button
+      type="button"
+      class="btn-nav"
+      class:active={currentPath.startsWith("/notifications")}
+      onclick={() => navTo("/notifications")}
+    >
+      Notifications
     </button>
     <button
       type="button"

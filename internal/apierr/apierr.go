@@ -32,6 +32,13 @@ func Write(w http.ResponseWriter, status int, msg string) {
 	write(w, status, map[string]string{"error": msg})
 }
 
+// WriteNotified renders {error, notificationId}: the failure was already
+// published to the account's notification log (#252), and the client dedupes
+// its toast against the pushed notification by that id.
+func WriteNotified(w http.ResponseWriter, status int, msg, notificationID string) {
+	write(w, status, map[string]string{"error": msg, "notificationId": notificationID})
+}
+
 // WriteCode renders the step-up {error, code} envelope.
 func WriteCode(w http.ResponseWriter, status int, msg, code string) {
 	write(w, status, map[string]string{"error": msg, "code": code})

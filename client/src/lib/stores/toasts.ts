@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
+
+import { notificationLink, type AppNotification } from "./notifications.js";
 
 export type ToastVariant = "info" | "error" | "sign-request";
 
@@ -53,6 +55,13 @@ export interface Toast {
    * preformatted in a modal with room to breathe.
    */
   detail?: string;
+  /**
+   * The server notification this toast renders or references (#252). One
+   * event can reach the client twice — the notification:new WS push and the
+   * HTTP error that carries Error.notificationId — and this id is what keeps
+   * it one toast, whichever path arrives first.
+   */
+  notificationId?: string;
 }
 
 let nextId = 0;
@@ -117,4 +126,50 @@ export function toastError(message: string, detail?: string): string {
 /** Convenience: show an info toast (auto-dismiss after 3s) */
 export function toastInfo(message: string): string {
   return addToast({ variant: "info", message, dismissAfterMs: 3000 });
+}
+
+/** Whether a toast for this server notification is already on screen. */
+export function hasNotificationToast(notificationId: string): boolean {
+  return get(toasts).some((t) => t.notificationId === notificationId);
+}
+
+/**
+ * Render a server notification as a toast (#252). Dedupes by notification id:
+ * if the HTTP-error fallback for the same event landed first, it is replaced
+ * by this richer, typed rendering. Error-severity notifications stay until
+ * dismissed — the event is already gone from the wire, this is its only
+ * live surface.
+ */
+export function toastNotification(n: AppNotification): string {
+  const existing = get(toasts).find((t) => t.notificationId === n.id);
+  if (existing) {
+    removeToast(existing.id);
+  }
+  return addToast({
+    variant: n.severity === "info" ? "info" : "error",
+    message: n.title,
+    detail: n.detail ?? undefined,
+    link: notificationLink(n),
+    notificationId: n.id,
+    dismissAfterMs: n.severity === "error" ? undefined : 10_000,
+  });
+}
+
+/**
+ * Error toast for a failed request (#252). When the failure references a
+ * published notification (Error.notificationId), it dedupes against that
+ * notification's toast; absent one (the WS alert was lost to a disconnect),
+ * the HTTP error still surfaces — tagged with the id so a late push cannot
+ * double-report.
+ */
+export function toastRequestError(message: string, notificationId?: string): string | null {
+  if (notificationId && hasNotificationToast(notificationId)) {
+    return null;
+  }
+  return addToast({
+    variant: "error",
+    ...splitLongMessage(message),
+    notificationId,
+    dismissAfterMs: 10_000,
+  });
 }

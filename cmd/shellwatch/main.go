@@ -34,6 +34,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/ids"
 	"github.com/rado0x54/shellwatch/internal/mcp"
+	"github.com/rado0x54/shellwatch/internal/notify"
 	"github.com/rado0x54/shellwatch/internal/push"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/seed"
@@ -159,6 +160,11 @@ func run() error {
 		OnPinned:  auditWriter.MarkHostKeyPinned,
 	}
 
+	// Notification log (#252): persisted first, pushed to connected tabs
+	// second. The hub attaches below once it exists.
+	notifSvc := notify.NewService(db, clk)
+	notifSvc.NewID = newUUID
+
 	// Ordering: build the hub first (needs a manager) but the manager's
 	// passkey factory needs the broker which needs the hub's WS channel. Break
 	// it with a manager built on a factory closure that reads the broker set
@@ -178,12 +184,14 @@ func run() error {
 		NewConnectionID: newUUID,
 		HostKeys:        hostKeySvc,
 		// Host-key mismatch (#241): the handshake died before authentication,
-		// so no approval toast exists — audit it and alert the account on the
-		// WS hub and every push channel.
-		OnHostKeyMismatch: func(ev sshx.HostKeyMismatchEvent) {
+		// so no approval toast exists — audit it, publish it to the account's
+		// notification log (which pushes notification:new to every tab, #252),
+		// and alert every push channel. The returned notification id rides on
+		// the connect error so the HTTP failure references the same event.
+		OnHostKeyMismatch: func(ev sshx.HostKeyMismatchEvent) string {
 			slog.Warn("host key mismatch — connection refused",
 				"endpoint", ev.EndpointID, "pinned", ev.PinnedFingerprint, "observed", ev.ObservedFingerprint)
-			auditWriter.RecordHostKeyEvent(audit.HostKeyEvent{
+			auditID := auditWriter.RecordHostKeyEvent(audit.HostKeyEvent{
 				Type: "host-key-mismatch", Source: "endpoint-auth",
 				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
 				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
@@ -191,18 +199,26 @@ func run() error {
 				SourceIP: ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
 				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
 			})
-			if wsHub != nil {
-				wsHub.SendToAccount(ev.AccountID, map[string]any{
-					"type":                "host-key:mismatch",
+			n := notifSvc.Publish(context.Background(), notify.PublishParams{
+				AccountID: ev.AccountID,
+				Type:      notify.TypeHostKeyMismatch,
+				Severity:  notify.SeverityError,
+				Title:     fmt.Sprintf("Host key MISMATCH — connection to %q blocked", ev.EndpointLabel),
+				Detail: fmt.Sprintf("Endpoint:   %s (%s)\nPresented:  %s (%s)\nPinned:     %s\n\n"+
+					"The connection was refused before authentication. If the host key legitimately changed, "+
+					"forget the pinned key under Settings → Endpoints → Host key.",
+					ev.EndpointLabel, ev.EndpointAddress,
+					ev.ObservedFingerprint, ev.ObservedKeyType, ev.PinnedFingerprint),
+				Payload: map[string]any{
 					"endpointId":          ev.EndpointID,
 					"endpointLabel":       ev.EndpointLabel,
 					"endpointAddress":     ev.EndpointAddress,
 					"keyType":             ev.ObservedKeyType,
 					"observedFingerprint": ev.ObservedFingerprint,
 					"pinnedFingerprint":   ev.PinnedFingerprint,
-					"deepLink":            "/settings/endpoints",
-				})
-			}
+					"auditId":             auditID,
+				},
+			})
 			if pushChannel != nil {
 				pushChannel.NotifyHostKeyMismatch(push.HostKeyMismatch{
 					AccountID: ev.AccountID, EndpointLabel: ev.EndpointLabel,
@@ -210,6 +226,7 @@ func run() error {
 					ObservedFingerprint: ev.ObservedFingerprint, PinnedFingerprint: ev.PinnedFingerprint,
 				})
 			}
+			return n.ID
 		},
 		// Dead terminal connection -> cancel its stranded sign prompts and
 		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
@@ -228,6 +245,7 @@ func run() error {
 	go manager.RunIdleJanitor(ctx, cfg.Sessions.CleanupInterval())
 	wsHub = ws.NewHub(manager)
 	defer wsHub.Close()
+	notifSvc.Hub = wsHub // publishes reach connected tabs from here on
 
 	// Human-in-the-loop signing (Phase 4 slice 2/3): the pending-action store +
 	// broker + WS channel are the approval path; the webauthn signer (proven
@@ -330,6 +348,7 @@ func run() error {
 			Sessions: audit.NewSessions(db),
 			Signings: audit.NewSignings(db),
 		},
+		Notifications: &rest.Notifications{Svc: notifSvc},
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
 			Now:       func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },

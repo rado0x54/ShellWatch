@@ -94,6 +94,17 @@ type Endpoint struct {
 	HostKeyPinnedBy    sql.NullString
 }
 
+type Notification struct {
+	ID        string
+	AccountID string
+	Type      string
+	Severity  string
+	Title     string
+	Detail    sql.NullString
+	Payload   sql.NullString
+	CreatedAt string
+}
+
 type PushSubscription struct {
 	ID        string
 	AccountID string

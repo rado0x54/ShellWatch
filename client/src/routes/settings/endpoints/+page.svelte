@@ -121,10 +121,14 @@
 
   async function handleForgetHostKey() {
     if (!hostKeyEndpoint || hostKeyBusy) return;
+    // Capture the target before any await: hostKeyEndpoint derives from the
+    // modal, and the step-up ceremony must not complete against a different
+    // endpoint's modal (closeModal also refuses to close while busy).
+    const endpointId = hostKeyEndpoint.id;
     hostKeyBusy = true;
     try {
       const token = await performStepUp("reset_host_key");
-      await forgetEndpointHostKey(hostKeyEndpoint.id, token);
+      await forgetEndpointHostKey(endpointId, token);
       hostKeyForgetArmed = false;
       toastInfo("Host key forgotten — the next connection re-prompts for approval");
     } catch (err) {
@@ -141,11 +145,14 @@
       toastError("Paste the host's public key line or its SHA256: fingerprint");
       return;
     }
+    // Same capture-before-await as handleForgetHostKey: never pin onto an
+    // endpoint other than the one this modal was opened for.
+    const endpointId = hostKeyEndpoint.id;
     hostKeyBusy = true;
     try {
       const token = await performStepUp("pin_host_key");
       const key = value.startsWith("SHA256:") ? { fingerprint: value } : { publicKey: value };
-      await pinEndpointHostKey(hostKeyEndpoint.id, key, token);
+      await pinEndpointHostKey(endpointId, key, token);
       formHostKey = "";
       toastInfo("Host key pinned");
     } catch (err) {
@@ -210,7 +217,9 @@
   }
 
   function closeModal() {
-    if (saving) return;
+    // A busy modal must not close (Escape/overlay-click included): a pending
+    // host-key step-up must never resolve against a different modal's target.
+    if (saving || hostKeyBusy) return;
     modal = null;
   }
 

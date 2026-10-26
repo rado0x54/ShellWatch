@@ -34,9 +34,9 @@ type SessionLister interface {
 }
 
 // HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
-// nil skips auditing — tests).
+// nil skips auditing — tests). The returned audit id is unused here.
 type HostKeyAuditor interface {
-	RecordHostKeyEvent(ev audit.HostKeyEvent)
+	RecordHostKeyEvent(ev audit.HostKeyEvent) string
 }
 
 // Endpoints wires the endpoint CRUD routes.

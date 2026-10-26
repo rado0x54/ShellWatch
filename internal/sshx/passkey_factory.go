@@ -66,8 +66,11 @@ type PasskeyFactoryParams struct {
 	HostKeys HostKeys
 	// OnHostKeyMismatch fires when a dial aborted because the server's key
 	// differed from the pin: no pending action exists, so the account must be
-	// told out-of-band (audit row + WS message + push).
-	OnHostKeyMismatch func(ev HostKeyMismatchEvent)
+	// told out-of-band (audit row + notification log + push). It returns the
+	// published notification's id ("" when none); the factory attaches it to
+	// the connect error as a NotifiedError so HTTP callers can reference the
+	// notification instead of re-reporting the text (#252).
+	OnHostKeyMismatch func(ev HostKeyMismatchEvent) string
 }
 
 // labeledFileKey is one admin file key selected for a connection.
@@ -132,7 +135,7 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		if err != nil {
 			var mismatch *HostKeyMismatchError
 			if errors.As(err, &mismatch) && p.OnHostKeyMismatch != nil {
-				p.OnHostKeyMismatch(HostKeyMismatchEvent{
+				notifID := p.OnHostKeyMismatch(HostKeyMismatchEvent{
 					AccountID:           fp.Endpoint.AccountID,
 					EndpointID:          fp.Endpoint.ID,
 					EndpointLabel:       fp.Endpoint.Label,
@@ -142,6 +145,9 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 					PinnedFingerprint:   mismatch.PinnedFingerprint,
 					Trigger:             fp.Trigger,
 				})
+				if notifID != "" {
+					err = &NotifiedError{NotificationID: notifID, Err: err}
+				}
 			}
 		}
 		if p.OnConnectionEnded == nil {
