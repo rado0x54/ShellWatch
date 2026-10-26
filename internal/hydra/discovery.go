@@ -19,10 +19,14 @@ type DiscoveryParams struct {
 	ExternalURL       func() string
 	HydraPublicURL    string
 	AgentProxyEnabled bool
-	// CimdEnabled points authorization_endpoint at ShellWatch's front door
-	// and advertises client_id_metadata_document_supported. When Hydra gains
-	// native CIMD support (ory/hydra#4061), turning this off hands the
-	// endpoint back to Hydra with no other change.
+	// CimdEnabled points authorization_endpoint at ShellWatch's front door and
+	// advertises client_id_metadata_document_supported.
+	//
+	// Turning it off is an operator kill switch, not a hand-off: Hydra cannot
+	// resolve a metadata document, so authorization goes straight to
+	// /oauth2/auth and a URL client_id stops working entirely (Hydra rejects it
+	// as an unknown client). Pre-registered and DCR clients are unaffected
+	// either way.
 	CimdEnabled bool
 }
 

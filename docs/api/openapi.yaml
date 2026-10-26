@@ -594,7 +594,9 @@ components:
           description: >-
             draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when
             ShellWatch resolves an https URL `client_id` as a Client ID Metadata
-            Document. Omitted entirely when CIMD is disabled.
+            Document. Omitted entirely when CIMD is disabled, in which case
+            `authorization_endpoint` is Hydra's own `/oauth2/auth` and a URL
+            `client_id` is rejected as an unknown client.
           example: true
       required: [issuer, authorization_endpoint, token_endpoint, registration_endpoint]
 
@@ -776,7 +778,8 @@ paths:
       summary: Blended AS metadata (RFC 8414)
       description: >-
         The token endpoint points at Hydra (the real issuer); the
-        `registration_endpoint` points at ShellWatch's mediated DCR, and
+        `registration_endpoint` points at ShellWatch's mediated DCR (Hydra's own
+        public registration endpoint is switched off), and
         `authorization_endpoint` at ShellWatch's CIMD front door
         (`/api/hydra/authorize`) whenever `client_id_metadata_document_supported`
         is `true`. With CIMD disabled, `authorization_endpoint` is Hydra's
@@ -848,10 +851,14 @@ paths:
       summary: Authorization front door — resolves a CIMD client_id, then hands off to Hydra
       description: >-
         Advertised as `authorization_endpoint` in the AS metadata when CIMD is
-        enabled. ShellWatch has to mediate because Hydra has no native support
-        for Client ID Metadata Documents (ory/hydra#4061): it rejects an https
-        URL `client_id` as an unknown client before ShellWatch ever sees the
-        request.
+        enabled. ShellWatch mediates client onboarding by design: Hydra's own
+        public registration endpoint is switched off and `/api/hydra/register`
+        mediates DCR, so that local policy — redirect-URI patterns, the scope
+        allowlist, never issuing a secret, the registration log — is enforced
+        before anything reaches Hydra. This endpoint is the same arrangement
+        for CIMD, and it is also a practical necessity: Hydra rejects an https
+        URL `client_id` as an unknown client before ShellWatch would ever see
+        the request.
 
 
         This endpoint issues no code and touches no session. For a `client_id`

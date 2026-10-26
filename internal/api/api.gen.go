@@ -729,7 +729,7 @@ type AuthSessionView struct {
 type AuthorizationServerMetadata struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 
-	// ClientIdMetadataDocumentSupported draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when ShellWatch resolves an https URL `client_id` as a Client ID Metadata Document. Omitted entirely when CIMD is disabled.
+	// ClientIdMetadataDocumentSupported draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when ShellWatch resolves an https URL `client_id` as a Client ID Metadata Document. Omitted entirely when CIMD is disabled, in which case `authorization_endpoint` is Hydra's own `/oauth2/auth` and a URL `client_id` is rejected as an unknown client.
 	//
 	// Example: true
 	ClientIdMetadataDocumentSupported *bool `json:"client_id_metadata_document_supported,omitempty"`

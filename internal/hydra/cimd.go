@@ -4,9 +4,16 @@
 // metadata document validation (§4). No I/O lives here; the strict fetcher is
 // in cimd_fetch.go and the Hydra provisioning in cimd_resolver.go.
 //
-// Hydra does not implement CIMD (ory/hydra#4061), so ShellWatch resolves the
+// ShellWatch owns client onboarding by design, not as a stopgap: Hydra's own
+// public registration endpoint is switched off (hydra.yml
+// dynamic_client_registration.enabled: false) and /api/hydra/register mediates
+// DCR instead, so that local policy — the redirect-URI patterns, the scope
+// allowlist, never issuing a secret, the registration log — is enforced before
+// anything reaches Hydra. CIMD follows the same shape: ShellWatch resolves the
 // URL client_id itself and provisions a Hydra client whose client_id IS the
-// URL — the same mediation shape as DCR (/api/hydra/register).
+// URL. Hydra gaining native CIMD (ory/hydra#4061) would not change this; it
+// would resolve documents without any of that policy, so it would be declined
+// for the same reason its DCR endpoint is.
 package hydra
 
 import (

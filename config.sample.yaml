@@ -192,13 +192,20 @@ hydra:
   # OAuth Client ID Metadata Documents (CIMD,
   # draft-ietf-oauth-client-id-metadata-document-02): the client_id IS an https
   # URL that serves the client's own metadata. The MCP 2026-07-28 authorization
-  # spec prefers this over DCR (which it deprecates). Hydra has no native CIMD
-  # support (ory/hydra#4061), so ShellWatch resolves the URL itself and
-  # provisions a Hydra client whose client_id is that URL — the same mediation
-  # shape as DCR above. The redirectUriPatterns and allowedScopes from `dcr` are
+  # spec prefers this over DCR (which it deprecates).
+  #
+  # ShellWatch resolves the URL itself and provisions a Hydra client whose
+  # client_id is that URL — the same mediation shape as DCR above, and for the
+  # same reason: client onboarding policy (the patterns and scopes below, never
+  # issuing a secret, the registration log under Audit -> OAuth clients) lives
+  # here, which is also why Hydra's own registration endpoint is switched off
+  # in hydra.yml. The redirectUriPatterns and allowedScopes from `dcr` are
   # reused as the CIMD policy; there is no separate copy.
   # cimd:
-  #   enabled: true                   # default true; false passes URL ids through to Hydra, which rejects them
+  #   # Default true. Setting false is a kill switch, not a hand-off: Hydra
+  #   # cannot resolve a metadata document, so URL client_ids simply stop
+  #   # working. Pre-registered and DCR clients are unaffected either way.
+  #   enabled: true
   #   allowedHosts: []                # optional EXACT-match allowlist of client_id hosts; empty = any public host
   #   blockedHosts: []                # always wins over allowedHosts
   #   cacheMinSeconds: 300            # fetched documents honour HTTP cache headers, clamped into this range
