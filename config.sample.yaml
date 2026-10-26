@@ -210,6 +210,12 @@ hydra:
   #   blockedHosts: []                # always wins over allowedHosts
   #   cacheMinSeconds: 300            # fetched documents honour HTTP cache headers, clamped into this range
   #   cacheMaxSeconds: 86400
+  #   # A private CA for an internal CIMD client's document host. APPENDED to the
+  #   # system trust store, never substituted for it, so publicly hosted clients
+  #   # keep working. Applies to document fetches only. An unreadable bundle, or
+  #   # one holding no certificate, fails at startup. This is also the only way to
+  #   # add a CA on macOS, where Go ignores SSL_CERT_FILE.
+  #   extraCaBundlePath: /path/to/internal-ca.pem
   #   # DEV/TEST ONLY — draft §8.6 forbids this in production. Permits fetching a
   #   # metadata document from a loopback address, re-opening the SSRF hole that
   #   # the dial-time guard otherwise closes. Leave false in any real deployment.

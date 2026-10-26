@@ -7,6 +7,7 @@
 package config
 
 import (
+	"crypto/x509"
 	"fmt"
 	"net/url"
 	"os"
@@ -169,6 +170,12 @@ type HydraCimd struct {
 	// honoured, then clamped into this range.
 	CacheMinSeconds int `yaml:"cacheMinSeconds"`
 	CacheMaxSeconds int `yaml:"cacheMaxSeconds"`
+	// ExtraCaBundlePath adds the PEM certificates in this file to the system
+	// trust store for metadata-document fetches — for a CIMD client hosted
+	// behind a private CA, and for the e2e suite's throwaway CA. The system
+	// roots are KEPT (see hydra.LoadExtraRoots), so publicly-hosted clients
+	// keep working.
+	ExtraCaBundlePath string `yaml:"extraCaBundlePath"`
 	// AllowLoopbackDocuments permits fetching a document from a loopback
 	// address. Draft §8.6 allows this for development and testing ONLY and
 	// forbids it in production — it re-opens the SSRF hole the dial-time guard
@@ -451,6 +458,16 @@ func (c *Config) validate() []string {
 	}
 	if min, max := c.Hydra.Cimd.CacheMinSeconds, c.Hydra.Cimd.CacheMaxSeconds; min < 1 || max < 1 || min > max {
 		add("hydra.cimd.cacheMinSeconds/cacheMaxSeconds: both must be >= 1 and min must not exceed max")
+	}
+	if p := c.Hydra.Cimd.ExtraCaBundlePath; p != "" {
+		// Checked here so a typo or an unreadable mount fails at startup rather
+		// than when the first client behind that CA tries to authorize.
+		switch raw, err := os.ReadFile(p); {
+		case err != nil:
+			add("hydra.cimd.extraCaBundlePath: cannot read %q: %v", p, err)
+		case !x509.NewCertPool().AppendCertsFromPEM(raw):
+			add("hydra.cimd.extraCaBundlePath: no PEM certificates found in %q", p)
+		}
 	}
 	for _, h := range append(append([]string{}, c.Hydra.Cimd.AllowedHosts...), c.Hydra.Cimd.BlockedHosts...) {
 		if strings.ContainsAny(h, "/:") || strings.TrimSpace(h) == "" {

@@ -8,10 +8,13 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -822,6 +825,34 @@ func TestResolveIsIdempotentAndCacheHitsSkipHydra(t *testing.T) {
 	}
 }
 
+// An unchanged document must report no write at all, or every authorization
+// after the first would add a log row.
+func TestResolveReportsNoWriteForAnUnchangedDocument(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+	}
+	r, _, url, _ := resolverFixture(t, &doc)
+
+	first, err := r.Resolve(context.Background(), url, "", "mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.FirstSeen || first.Refreshed {
+		t.Fatalf("first resolve: firstSeen=%v refreshed=%v", first.FirstSeen, first.Refreshed)
+	}
+	// Force a re-fetch of the same document: nothing changed, so nothing is
+	// written and nothing is reported.
+	r.fetcher.Invalidate(url)
+	again, err := r.Resolve(context.Background(), url, "", "mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.FirstSeen || again.Refreshed || again.MaterialChange {
+		t.Errorf("unchanged document reported a write: %+v", again)
+	}
+}
+
 func TestResolveConcurrentFirstSeenProvisionsOnce(t *testing.T) {
 	doc := map[string]any{
 		"client_name":   "Example App",
@@ -888,6 +919,15 @@ func TestResolveRefreshesAChangedDocument(t *testing.T) {
 	if res.MaterialChange {
 		t.Error("a name/redirect change is not material")
 	}
+	// Caught by the e2e scenario: a non-material refresh still WROTE to Hydra,
+	// so it has to be reported — otherwise a changed name or a new redirect URI
+	// silently never reaches the registration log.
+	if !res.Refreshed {
+		t.Error("a refresh that updated the Hydra client must report Refreshed")
+	}
+	if res.FirstSeen {
+		t.Error("an update is not a first sighting")
+	}
 	_, updates := admin.counts()
 	if updates != 1 {
 		t.Errorf("updates = %d, want 1", updates)
@@ -950,6 +990,9 @@ func TestResolveFlagsMaterialChanges(t *testing.T) {
 			}
 			if !res.MaterialChange {
 				t.Error("want MaterialChange")
+			}
+			if !res.Refreshed {
+				t.Error("a material change is also a refresh")
 			}
 		})
 	}
@@ -1020,5 +1063,64 @@ func TestResolveRejectsInvalidClientIDURL(t *testing.T) {
 		if _, err := r.Resolve(context.Background(), id, "", "mcp"); err == nil {
 			t.Errorf("Resolve(%q) must fail", id)
 		}
+	}
+}
+
+// LoadExtraRoots must ADD to the system store, never replace it: handing the
+// fetcher a bare private CA would silently stop every publicly-hosted client
+// from being trusted.
+func TestLoadExtraRootsAppendsToTheSystemStore(t *testing.T) {
+	system, err := x509.SystemCertPool()
+	if err != nil {
+		t.Skipf("no system trust store on this platform: %v", err)
+	}
+	baseline := len(system.Subjects())
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(srv.Close)
+	path := filepath.Join(t.TempDir(), "extra.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: srv.Certificate().Raw,
+	})
+	if err := os.WriteFile(path, pemBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pool, err := LoadExtraRoots(path)
+	if err != nil {
+		t.Fatalf("LoadExtraRoots: %v", err)
+	}
+	// Subjects() is deprecated and empty for a *system* pool on some platforms,
+	// so only compare when the platform populates it at all.
+	if baseline > 0 && len(pool.Subjects()) <= baseline {
+		t.Errorf("pool has %d subjects, want more than the system store's %d",
+			len(pool.Subjects()), baseline)
+	}
+
+	// The appended CA is actually usable for verification.
+	if _, err := srv.Certificate().Verify(x509.VerifyOptions{Roots: pool}); err != nil {
+		t.Errorf("appended certificate does not verify against the pool: %v", err)
+	}
+}
+
+func TestLoadExtraRootsRejectsUnusableBundles(t *testing.T) {
+	dir := t.TempDir()
+	notPEM := filepath.Join(dir, "not-pem.txt")
+	if err := os.WriteFile(notPEM, []byte("this is not a certificate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, path, wantErr string }{
+		{"missing file", filepath.Join(dir, "nope.pem"), "read CA bundle"},
+		{"no certificates", notPEM, "no PEM certificates"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadExtraRoots(tc.path)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }

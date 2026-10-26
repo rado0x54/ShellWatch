@@ -6,6 +6,7 @@
 package httpserver
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -53,6 +54,11 @@ type Params struct {
 	// non-account-scoped client log (satisfied by *audit.OAuthClients).
 	// nil drops them.
 	ClientLog ClientLogRecorder
+	// CimdRootCAs is the trust store for CIMD document fetches; nil uses the
+	// platform default. The composition root builds it from
+	// hydra.cimd.extraCaBundlePath via hydra.LoadExtraRoots, which keeps the
+	// system roots — so this must never be a bare private CA.
+	CimdRootCAs *x509.CertPool
 	// CimdFetcher overrides the document fetcher the CIMD front door uses.
 	// nil -> built from hydra.cimd. Tests inject one that trusts a local
 	// httptest CA; a deployment behind a private CA can do the same.
@@ -172,6 +178,7 @@ func New(p Params) http.Handler {
 					BlockedHosts:  c.BlockedHosts,
 					CacheMin:      time.Duration(c.CacheMinSeconds) * time.Second,
 					CacheMax:      time.Duration(c.CacheMaxSeconds) * time.Second,
+					RootCAs:       p.CimdRootCAs,
 					Clock:         clk,
 				})
 			}

@@ -109,6 +109,12 @@ export interface DriveOptions {
   jar: CookieJar;
   /** The flow is finished once the browser is sent to a URL with this prefix. */
   redirectUriPrefix: string;
+  /**
+   * Receives the consent page's HTML when one is rendered, so a scenario can
+   * assert what the human was actually shown (#242) without re-driving the
+   * redirect chain by hand. Not called when consent is skipped or auto-accepted.
+   */
+  onConsentHtml?: (html: string) => void;
 }
 
 /**
@@ -143,6 +149,20 @@ export async function driveAuthorize(
     }
 
     if (u.origin !== SERVER_URL) throw new Error(`unexpected redirect target: ${url}`);
+
+    if (u.pathname === "/api/hydra/authorize") {
+      // The CIMD front door: resolves the document, then 303s to Hydra. A
+      // rendered error here means resolution failed.
+      trace.steps.push("GET /api/hydra/authorize (CIMD front door)");
+      const res = await fetchManual(url, jar);
+      if (res.status < 300 || res.status >= 400) {
+        throw new Error(
+          `front door → ${res.status}: ${(await res.text()).slice(0, 300).replace(/\s+/g, " ")}`,
+        );
+      }
+      url = locationOf(res, url);
+      continue;
+    }
 
     if (u.pathname === "/api/hydra/error") {
       throw new Error(`Hydra sent the browser to the error page: ${u.search}`);
@@ -195,6 +215,7 @@ export async function driveAuthorize(
       if (page.status !== 200) {
         throw new Error(`consent page → ${page.status}: ${(await page.text()).slice(0, 300)}`);
       }
+      if (opts.onConsentHtml) opts.onConsentHtml(await page.text());
       // Fresh passkey login in this very flow → plain Approve; otherwise the
       // provider demands a passkey (option-1 in src/hydra/routes.ts).
       const approve = await postJson(`${SERVER_URL}/api/hydra/consent/approve`, {
@@ -241,6 +262,14 @@ export interface AuthorizeParams {
   identity: PasskeyIdentity;
   /** Reuse a jar to simulate the same browser (remembered Hydra login). */
   jar?: CookieJar;
+  /**
+   * Where to start the flow. Defaults to Hydra's own `/oauth2/auth`; a CIMD
+   * client starts at the discovered `authorization_endpoint`, which is
+   * ShellWatch's front door.
+   */
+  authorizeEndpoint?: string;
+  /** See DriveOptions.onConsentHtml. */
+  onConsentHtml?: (html: string) => void;
 }
 
 export async function authorizationCode(p: AuthorizeParams): Promise<{
@@ -263,10 +292,12 @@ export async function authorizationCode(p: AuthorizeParams): Promise<{
     code_challenge: challenge,
     code_challenge_method: "S256",
   });
-  const { finalUrl, trace } = await driveAuthorize(`${HYDRA_PUBLIC_URL}/oauth2/auth?${qs}`, {
+  const endpoint = p.authorizeEndpoint ?? `${HYDRA_PUBLIC_URL}/oauth2/auth`;
+  const { finalUrl, trace } = await driveAuthorize(`${endpoint}?${qs}`, {
     identity: p.identity,
     jar,
     redirectUriPrefix: p.redirectUri,
+    onConsentHtml: p.onConsentHtml,
   });
   const cb = new URL(finalUrl);
   if (cb.searchParams.get("error")) {
@@ -496,4 +527,45 @@ export async function selfRegister(
   });
   if (reg.status !== 200) throw new Error(`register → ${reg.status} ${JSON.stringify(reg.json)}`);
   return { accountId: reg.json.accountId as string };
+}
+
+/**
+ * Onboard a CIMD client end-to-end: NO registration call — the client's
+ * `client_id` is the document URL — then the front door, passkey login,
+ * consent, and the token exchange.
+ */
+export async function loginCimdClient(p: {
+  clientId: string;
+  scope: "mcp" | "agent";
+  identity: PasskeyIdentity;
+  jar?: CookieJar;
+  /** Loopback redirect with an ephemeral port, as a native client uses. */
+  redirectUri?: string;
+  /** Capture the consent page HTML (see DriveOptions.onConsentHtml). */
+  onConsentHtml?: (html: string) => void;
+}): Promise<{
+  tokens: TokenResponse;
+  redirectUri: string;
+  trace: FlowTrace;
+  jar: CookieJar;
+}> {
+  const redirectUri =
+    p.redirectUri ?? `http://127.0.0.1:${40000 + Math.floor(Math.random() * 20000)}/callback`;
+  const scope = `${p.scope} offline_access`;
+  const auth = await authorizationCode({
+    clientId: p.clientId,
+    redirectUri,
+    scope,
+    identity: p.identity,
+    jar: p.jar,
+    authorizeEndpoint: `${SERVER_URL}/api/hydra/authorize`,
+    onConsentHtml: p.onConsentHtml,
+  });
+  const tokens = await exchangeCode({
+    clientId: p.clientId,
+    code: auth.code,
+    verifier: auth.verifier,
+    redirectUri,
+  });
+  return { tokens, redirectUri, trace: auth.trace, jar: auth.jar };
 }

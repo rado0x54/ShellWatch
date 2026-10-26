@@ -53,10 +53,12 @@ func (p FrontDoorParams) handleAuthorize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Only a state change is worth a row: a cache hit on an unchanged document
-	// is every subsequent authorization, and logging those would bury the
-	// interesting events.
-	if res.FirstSeen || res.MaterialChange {
+	// Log every write to Hydra, and only writes: a cache hit on an unchanged
+	// document is every subsequent authorization, and logging those would bury
+	// the interesting events. A refresh counts even when it is not material —
+	// new redirect URIs or a new name are changes to the registration that an
+	// admin reading the log wants to see.
+	if res.FirstSeen || res.Refreshed {
 		ev := ClientEvent{
 			ClientID:     clientID,
 			Origin:       ClientOriginCIMD,

@@ -90,6 +90,11 @@ type Resolution struct {
 	// FirstSeen is true when this request is what brought the client into
 	// existence in Hydra (drives the consent page's "first time seen" hint).
 	FirstSeen bool
+	// Refreshed is true when the document changed and the Hydra client was
+	// updated. Any such write is a change to the client's registration — new
+	// redirect URIs, a new name — so it is worth recording even when it is not
+	// material.
+	Refreshed bool
 	// MaterialChange is true when the document changed its authentication
 	// shape or its keys (draft §9.2). The resolver cannot act on it — no
 	// subject exists before login — so the consent step consumes it.
@@ -136,7 +141,7 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 		return Resolution{Doc: doc}, nil
 	}
 
-	firstSeen, material, err := r.provision(ctx, clientIDURL, doc, scope)
+	out, err := r.provision(ctx, clientIDURL, doc, scope)
 	if err != nil {
 		// Do not keep a document we could not apply — the next attempt
 		// re-reads rather than serving a client Hydra does not have.
@@ -145,29 +150,42 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 			Code: "server_error", Description: err.Error(), RedirectValidated: redirectOK,
 		}
 	}
-	return Resolution{Doc: doc, FirstSeen: firstSeen, MaterialChange: material}, nil
+	return Resolution{
+		Doc: doc, FirstSeen: out.FirstSeen,
+		Refreshed: out.Refreshed, MaterialChange: out.Material,
+	}, nil
 }
 
-// provision creates or updates the Hydra client. It reports whether the client
-// was newly created, and whether an existing one changed materially.
-func (r *CIMDResolver) provision(ctx context.Context, clientIDURL string, doc ClientMetadata, scope []string) (firstSeen, material bool, err error) {
+// provisionOutcome is what provision reports about the Hydra write it made.
+type provisionOutcome struct {
+	// FirstSeen: the client did not exist and was created.
+	FirstSeen bool
+	// Refreshed: the client existed and was updated.
+	Refreshed bool
+	// Material: the update changed the client's authentication shape or keys.
+	Material bool
+}
+
+// provision creates or updates the Hydra client, reporting which write it made.
+func (r *CIMDResolver) provision(ctx context.Context, clientIDURL string, doc ClientMetadata, scope []string) (provisionOutcome, error) {
 	desired := r.desiredClient(clientIDURL, doc, scope)
+	failed := fmt.Errorf("client registration failed")
 
 	existing, err := r.admin.GetClient(ctx, clientIDURL)
 	if err != nil {
-		return false, false, fmt.Errorf("client registration failed")
+		return provisionOutcome{}, failed
 	}
 	if existing == nil {
 		if _, err := r.admin.CreateClient(ctx, desired); err == nil {
-			return true, false, nil
+			return provisionOutcome{FirstSeen: true}, nil
 		} else if apiErr, ok := err.(*APIError); !ok || apiErr.Status != http.StatusConflict {
-			return false, false, fmt.Errorf("client registration failed")
+			return provisionOutcome{}, failed
 		}
 		// A concurrent writer won the race (another process, or an operator).
 		// Re-read and fall through to the update path.
 		existing, err = r.admin.GetClient(ctx, clientIDURL)
 		if err != nil || existing == nil {
-			return false, false, fmt.Errorf("client registration failed")
+			return provisionOutcome{}, failed
 		}
 	}
 
@@ -176,16 +194,16 @@ func (r *CIMDResolver) provision(ctx context.Context, clientIDURL string, doc Cl
 		// authorization still proceeds against their registration.
 		slog.Warn("cimd: refusing to overwrite a client ShellWatch did not create from CIMD",
 			"client_id", clientIDURL)
-		return false, false, nil
+		return provisionOutcome{}, nil
 	}
 	if !clientChanged(existing, desired) {
-		return false, false, nil
+		return provisionOutcome{}, nil
 	}
-	material = materialChange(existing, desired)
+	material := materialChange(existing, desired)
 	if _, err := r.admin.UpdateClient(ctx, clientIDURL, desired); err != nil {
-		return false, false, fmt.Errorf("client registration failed")
+		return provisionOutcome{}, failed
 	}
-	return false, material, nil
+	return provisionOutcome{Refreshed: true, Material: material}, nil
 }
 
 func (r *CIMDResolver) desiredClient(clientIDURL string, doc ClientMetadata, scope []string) OAuth2Client {

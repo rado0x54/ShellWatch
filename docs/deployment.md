@@ -282,6 +282,24 @@ ways that can bite are not equally bad: a **missing** new root fails _closed_
 **distrusted** but Debian has not yet dropped keeps being accepted. The second
 is the one worth reacting to — hence this section.
 
+#### A private CA for an internal CIMD client
+
+If a CIMD client's metadata document is served by an internal host behind your
+own CA, point `hydra.cimd.extraCaBundlePath` at that CA's PEM bundle:
+
+```yaml
+hydra:
+  cimd:
+    extraCaBundlePath: /app/data/internal-ca.pem
+```
+
+It is **appended** to the system roots, never substituted for them, so publicly
+hosted clients keep working — unlike the environment variables below, which
+replace the store wholesale. It applies to metadata-document fetches only, and a
+bundle that cannot be read or holds no certificate fails at startup rather than
+when the first client behind that CA tries to authorize. This is also the only
+way to add a CA on macOS, where Go ignores `SSL_CERT_FILE`.
+
 #### Break-glass override
 
 Point `SSL_CERT_FILE` at a bundle you control. Build it from the roots the image

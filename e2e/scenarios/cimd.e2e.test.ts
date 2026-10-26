@@ -4,27 +4,32 @@
  * endpoint does with a `client_id` it is given, proven end to end rather than
  * in-process.
  *
- * Scope note — this file covers discovery, passthrough, and every **rejection**
- * path, all of which need no metadata-document host. The happy path (fetch →
- * provision → token → /mcp) needs the server to trust a throwaway CA, and
- * `SSL_CERT_FILE` is ignored by Go on macOS (`root_unix.go` excludes darwin, so
- * Security.framework decides), which means it needs a cross-platform hook that
- * does not exist yet. Until then the fetch-and-provision path is covered by the
- * in-process suites (`internal/hydra/cimd_test.go`,
- * `internal/httpserver/cimd_frontdoor_test.go`) and the live-Hydra spike
- * recorded on #242.
+ * A real HTTPS metadata-document host runs in-process (harness/cimd.ts) with a
+ * throwaway CA the server is pointed at via `hydra.cimd.extraCaBundlePath` —
+ * `SSL_CERT_FILE` would be the obvious hook but Go ignores it on macOS
+ * (`root_unix.go` excludes darwin). That makes the whole path testable here:
+ * fetch → validate → provision a Hydra client whose `client_id` IS the URL →
+ * authorization_code + PKCE → an `mcp` token that reaches `/mcp`.
  *
- * Everything asserted here is therefore about refusing things safely, which is
- * the half most worth testing against a real Hydra anyway: nothing may be
- * written to Hydra for a client that was refused.
+ * The other half is refusing things safely, and the reason to run that against
+ * a real Hydra rather than a fake is the assertion that closes each case:
+ * nothing may be written to Hydra for a client that was refused.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HYDRA_ADMIN_URL, HYDRA_PUBLIC_URL, SPA_CLIENT_ID } from "../harness/env.js";
 import { bootScenario, type Scenario } from "../harness/scenario.js";
-import { Api } from "../harness/clients.js";
-import { loginWebUi, registerClient, selfRegister } from "../harness/oauth.js";
+import { Api, rawMcpPing } from "../harness/clients.js";
+import {
+  CookieJar,
+  introspect,
+  loginCimdClient,
+  loginWebUi,
+  registerClient,
+  selfRegister,
+} from "../harness/oauth.js";
 import { createPasskeyIdentity } from "../harness/identity.js";
 import { recordScenario } from "../harness/out.js";
+import { startDocumentHost, type DocumentHost } from "../harness/cimd.js";
 
 /** One entry of the admin-only registration log (GET /api/audit/oauth-clients). */
 interface LogRow {
@@ -44,19 +49,38 @@ interface LogRow {
 
 describe("CIMD front door (real Hydra) — discovery, passthrough, rejections", () => {
   let sc: Scenario;
+  let host: DocumentHost;
   const rec = recordScenario("cimd", () => sc?.server);
 
   beforeAll(async () => {
+    host = await startDocumentHost({
+      client_name: "E2E CIMD Client",
+      // The port-less loopback entries cover any ephemeral port the client
+      // binds (RFC 8252 §7.3), which is what a native client needs.
+      redirect_uris: ["http://127.0.0.1/callback", "http://[::1]/callback"],
+      client_uri: "https://apps.example.com/",
+      // Deliberately present: it must never reach Hydra or the consent page.
+      logo_uri: "https://apps.example.com/logo.png",
+    });
     sc = await bootScenario({
       scenario: "cimd",
       targets: [],
       // A second, non-admin account to prove the registration log is admin-only.
       selfRegistrationEnabled: true,
+      cimd: {
+        // The system trust store PLUS the document host's throwaway CA.
+        extraCaBundlePath: host.caPath,
+        // The host is on loopback, which the SSRF guard refuses by default.
+        allowLoopbackDocuments: true,
+        cacheMinSeconds: 1,
+        cacheMaxSeconds: 2,
+      },
     });
   });
 
   afterAll(async () => {
     await sc?.stop();
+    await host?.stop();
   });
 
   /** GET the front door without following the hand-off, so Location is visible. */
@@ -196,6 +220,174 @@ describe("CIMD front door (real Hydra) — discovery, passthrough, rejections", 
       expect(await hydraClient(row.clientId), `${row.clientId} must not exist`).toBeNull();
     }
     rec.note(`${rejected.length} rejections logged, none provisioned`);
+  });
+
+  it("completes authorization for a URL client_id with no registration call, and the token reaches /mcp", async () => {
+    const before = host.hits();
+    const login = await loginCimdClient({
+      clientId: host.clientId,
+      scope: "mcp",
+      identity: sc.identity,
+      // An ephemeral loopback port, matched against the document's port-less
+      // entry by the RFC 8252 §7.3 exception.
+      redirectUri: "http://127.0.0.1:45678/callback",
+    });
+    expect(host.hits()).toBeGreaterThan(before);
+    expect(host.requests().at(-1)?.accept).toBe("application/json");
+
+    // The token's client is the URL itself — that is the whole point.
+    const t = await introspect(login.tokens.access_token);
+    expect(t).toMatchObject({ active: true, sub: sc.accountId, client_id: host.clientId });
+    expect(t.scope?.split(" ")).toEqual(expect.arrayContaining(["mcp", "offline_access"]));
+    expect(login.tokens.refresh_token).toBeTruthy();
+
+    // Acceptance criterion: a CIMD-only client reaches /mcp.
+    expect(await rawMcpPing(login.tokens.access_token)).not.toBe(401);
+
+    // Hydra holds a client whose client_id is the URL, marked as CIMD-origin,
+    // with the document's redirect URIs and the policy-filtered scope.
+    const client = await hydraClient(host.clientId);
+    expect(client).not.toBeNull();
+    expect(client?.client_id).toBe(host.clientId);
+    expect(client?.client_name).toBe("E2E CIMD Client");
+    expect(client?.token_endpoint_auth_method).toBe("none");
+    expect(client?.scope).toBe("mcp offline_access");
+    expect(client?.redirect_uris).toEqual(["http://127.0.0.1/callback", "http://[::1]/callback"]);
+    expect((client?.metadata as Record<string, unknown>)?.shellwatch).toMatchObject({
+      origin: "cimd",
+    });
+    // §9.3 — the document's logo_uri must not have been carried into Hydra.
+    expect(JSON.stringify(client)).not.toContain("logo.png");
+
+    const rows = await log(`clientId=${encodeURIComponent(host.clientId)}`);
+    expect(rows[rows.length - 1]).toMatchObject({
+      origin: "cimd",
+      event: "registered",
+      clientName: "E2E CIMD Client",
+      metadataHost: "127.0.0.1",
+      authMethod: "none",
+    });
+    rec.note(`CIMD login: ${login.trace.steps.join(" | ")}`);
+  });
+
+  it("re-approves every authorization for a URL client_id — the silent skip is refused", async () => {
+    // Same browser as the admin's web login, so Hydra has a remembered session
+    // AND remembered consent for this client from the previous test.
+    const jar = new CookieJar();
+    const first = await loginCimdClient({
+      clientId: host.clientId,
+      scope: "mcp",
+      identity: sc.identity,
+      jar,
+    });
+    expect(first.tokens.access_token).toBeTruthy();
+
+    const second = await loginCimdClient({
+      clientId: host.clientId,
+      scope: "mcp",
+      identity: sc.identity,
+      jar,
+    });
+    // The login itself may be remembered, but consent is asked again — a
+    // metadata document can change between authorizations.
+    expect(second.trace.loginSkipped).toBe(true);
+    expect(second.trace.consent).not.toBe("none");
+    expect(second.tokens.access_token).toBeTruthy();
+
+    // Remembering is still on, which is what keeps the client listed and
+    // revocable under Settings → Authorized clients.
+    const listed = await sc.api.get<{ sessions: { clientId: string }[] }>("/api/auth/sessions");
+    expect(listed.status).toBe(200);
+    expect(listed.body.sessions.map((x) => x.clientId)).toContain(host.clientId);
+  });
+
+  it("leads the consent page with the client_id hostname and renders no remote logo", async () => {
+    let html = "";
+    await loginCimdClient({
+      clientId: host.clientId,
+      scope: "mcp",
+      identity: sc.identity,
+      // A fresh browser, so consent is actually rendered rather than skipped.
+      jar: new CookieJar(),
+      onConsentHtml: (h) => {
+        html = h;
+      },
+    });
+    expect(html, "the consent page must be rendered for a CIMD client").not.toBe("");
+
+    // The hostname is shown, and before the self-assigned name.
+    const hostIdx = html.indexOf("127.0.0.1");
+    const nameIdx = html.indexOf("E2E CIMD Client");
+    expect(hostIdx).toBeGreaterThanOrEqual(0);
+    expect(nameIdx).toBeGreaterThan(hostIdx);
+    expect(html).toContain('class="cimd-host"');
+    expect(html).toContain("calls itself");
+    // client_uri's host differs from the client_id host, which is worth seeing.
+    expect(html).toContain("apps.example.com");
+    // §9.3: no client-supplied image, ever — the only <img> is ShellWatch's own.
+    expect(html).not.toContain("logo.png");
+    for (const tag of html.split("<img").slice(1)) {
+      expect(tag.slice(0, tag.indexOf(">"))).toContain('src="/logo.svg"');
+    }
+    // Freshly provisioned, so the "recently changed" hint is shown.
+    expect(html).toContain("less than an hour ago");
+  });
+
+  it("refreshes the Hydra client when the document changes, and logs the refresh", async () => {
+    host.setDocument({
+      client_name: "E2E CIMD Client v2",
+      redirect_uris: ["http://127.0.0.1/callback", "http://[::1]/callback"],
+      client_uri: "https://apps.example.com/",
+    });
+    // cacheMaxSeconds is 2 in this scenario, so the cached document expires.
+    await new Promise((r) => setTimeout(r, 2500));
+
+    await loginCimdClient({
+      clientId: host.clientId,
+      scope: "mcp",
+      identity: sc.identity,
+    });
+
+    const client = await hydraClient(host.clientId);
+    expect(client?.client_name).toBe("E2E CIMD Client v2");
+
+    const rows = await log(`clientId=${encodeURIComponent(host.clientId)}`);
+    expect(rows.map((r) => r.event)).toContain("refreshed");
+    // History is not rewritten: the original registration row is still there
+    // with the old name.
+    const registered = rows.filter((r) => r.event === "registered");
+    expect(registered).toHaveLength(1);
+    expect(registered[0].clientName).toBe("E2E CIMD Client");
+  });
+
+  it("refuses a document that fails validation, leaving the existing client untouched", async () => {
+    // A shared-secret auth method is forbidden outright (draft §4.1).
+    host.setDocument({
+      client_name: "E2E CIMD Client v2",
+      redirect_uris: ["http://127.0.0.1/callback"],
+      token_endpoint_auth_method: "client_secret_basic",
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const res = await authorize(
+      new URLSearchParams({
+        client_id: host.clientId,
+        redirect_uri: "http://127.0.0.1:45680/callback",
+        state: "bad-doc",
+      }).toString(),
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+
+    // The previously provisioned client is unchanged — a bad refresh must not
+    // damage a working registration.
+    const client = await hydraClient(host.clientId);
+    expect(client?.client_name).toBe("E2E CIMD Client v2");
+    expect(client?.token_endpoint_auth_method).toBe("none");
+
+    const rejected = await log(`clientId=${encodeURIComponent(host.clientId)}&event=rejected`);
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+    expect(rejected[0].reason).toMatch(/not supported|client_secret/);
   });
 
   it("records a mediated DCR registration and stamps its origin on the Hydra client", async () => {

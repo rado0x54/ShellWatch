@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,6 +37,31 @@ const (
 	cimdCacheCap = 512
 )
 
+// LoadExtraRoots returns the system trust store with the PEM certificates in
+// path appended. It APPENDS deliberately: tls.Config.RootCAs replaces the
+// system pool rather than adding to it, so handing the raw file to the fetcher
+// would silently stop every publicly-hosted client from being trusted.
+//
+// Setting this also takes the fetcher off the platform verifier, which is the
+// only way to trust a private CA on macOS — Go ignores SSL_CERT_FILE there
+// (root_unix.go excludes darwin).
+func LoadExtraRoots(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read CA bundle: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		// Refuse rather than fall back to the extra certs alone: that would
+		// quietly narrow the trust store to one CA.
+		return nil, fmt.Errorf("load system trust store: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no PEM certificates found in %s", path)
+	}
+	return pool, nil
+}
+
 // FetcherParams configures the strict document fetcher.
 type FetcherParams struct {
 	// AllowLoopback permits loopback and private destinations. Draft §8.6
@@ -50,9 +76,9 @@ type FetcherParams struct {
 	CacheMin     time.Duration
 	CacheMax     time.Duration
 	Clock        clock.Clock
-	// RootCAs overrides the trust store for document fetches, for a CIMD host
-	// behind a private CA. nil uses the system pool. HTTPS stays mandatory
-	// either way — this is not a verification bypass.
+	// RootCAs is the trust store for document fetches; nil uses the platform
+	// default. Build it with LoadExtraRoots so the system roots are kept.
+	// HTTPS stays mandatory either way — this is not a verification bypass.
 	RootCAs *x509.CertPool
 }
 

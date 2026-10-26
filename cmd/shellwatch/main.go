@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -164,6 +165,20 @@ func run() error {
 	// second. The hub attaches below once it exists.
 	notifSvc := notify.NewService(db, clk)
 	notifSvc.NewID = newUUID
+
+	// CIMD document-fetch trust store (#242): the system roots plus any extra
+	// bundle the operator configured. Appended, never substituted — and a bad
+	// bundle is fatal here rather than a deployment that looks fine until a
+	// client behind that CA first authorizes.
+	var cimdRootCAs *x509.CertPool
+	if p := cfg.Hydra.Cimd.ExtraCaBundlePath; p != "" {
+		pool, err := hydra.LoadExtraRoots(p)
+		if err != nil {
+			return fmt.Errorf("hydra.cimd.extraCaBundlePath: %w", err)
+		}
+		cimdRootCAs = pool
+		slog.Info("cimd: extra CA bundle added to the document-fetch trust store", "path", p)
+	}
 
 	// OAuth client registration log (#242): how each MCP/agent client came to
 	// exist in Hydra, via mediated DCR or CIMD. The only audit surface that is
@@ -385,10 +400,11 @@ func run() error {
 			Svc:         epSvc,
 			MaxSessions: store.NewAccounts(db).MaxSessions,
 		},
-		WSHub:     wsHub,
-		MCP:       mcpDeps,
-		Actions:   &rest.Actions{Store: actionStore},
-		ClientLog: oauthClientLog,
+		WSHub:       wsHub,
+		MCP:         mcpDeps,
+		Actions:     &rest.Actions{Store: actionStore},
+		ClientLog:   oauthClientLog,
+		CimdRootCAs: cimdRootCAs,
 		Audit: &rest.Audit{
 			Sessions:     audit.NewSessions(db),
 			Signings:     audit.NewSignings(db),
