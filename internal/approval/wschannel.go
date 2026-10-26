@@ -34,6 +34,11 @@ func (c *WSChannel) Notify(a *Action, deepLink string) {
 	if a.Context.EndpointAddress != "" {
 		payload["endpointAddress"] = a.Context.EndpointAddress
 	}
+	if a.Context.HostKey != nil {
+		// Host-key pinning (#241): the toast flags a first connection whose
+		// approval will pin the presented key.
+		payload["hostKey"] = a.Context.HostKey
+	}
 	switch a.Type {
 	case TypeWebAuthnSign:
 		payload["passkeyLabel"] = a.PasskeyLabel

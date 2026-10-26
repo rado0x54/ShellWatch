@@ -27,6 +27,12 @@ type approvedFileKeySigner struct {
 	actionCtx    approval.Context
 	redirectTo   string
 	ctx          context.Context
+
+	// Host-key pinning (#241): the key-approve click also pins a provisional
+	// host key, exactly like the passkey path.
+	endpointID string
+	hostKeys   HostKeys
+	hostState  *HostKeyState
 }
 
 var _ ssh.Signer = (*approvedFileKeySigner)(nil)
@@ -49,17 +55,24 @@ func newApprovedFileKeySigner(s *approvedFileKeySigner) ssh.Signer {
 func (s *approvedFileKeySigner) PublicKey() ssh.PublicKey { return s.signer.PublicKey() }
 
 // approve blocks on the human key-approve action; any rejection is returned
-// as a plain signer error (x/crypto falls through to the next key).
+// as a plain signer error (x/crypto falls through to the next key). On an
+// unpinned endpoint the same approval pins the observed host key before the
+// file key signs anything (#241).
 func (s *approvedFileKeySigner) approve() error {
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	fp := ssh.FingerprintSHA256(s.signer.PublicKey())
-	return s.broker.RequestKeyApproval(ctx, approval.KeyApproval{
+	actionCtx, provisional := withHostKeyContext(s.actionCtx, s.hostState)
+	actionID, err := s.broker.RequestKeyApproval(ctx, approval.KeyApproval{
 		AccountID: s.accountID, KeyLabel: s.label, KeyFingerprint: fp, ConnectionID: s.connectionID,
-		Context: s.actionCtx, RedirectTo: s.redirectTo,
+		Context: actionCtx, RedirectTo: s.redirectTo,
 	})
+	if err != nil {
+		return err
+	}
+	return pinAfterApproval(ctx, s.hostKeys, s.hostState, s.endpointID, provisional, "file-key:"+s.label, actionID)
 }
 
 func (s *approvedFileKeySigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {

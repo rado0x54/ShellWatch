@@ -20,7 +20,7 @@ type Audit struct {
 }
 
 var (
-	sourceValues  = map[string]bool{"endpoint-auth": true, "agent-forwarding": true, "agent-proxy": true}
+	sourceValues  = map[string]bool{"endpoint-auth": true, "agent-forwarding": true, "agent-proxy": true, "endpoint-admin": true}
 	outcomeValues = map[string]bool{"approved": true, "denied": true, "expired": true, "cancelled": true}
 )
 

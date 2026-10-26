@@ -165,6 +165,7 @@ func (e SigningRequestRowOutcome) Valid() bool {
 const (
 	SigningRequestRowSourceAgentForwarding SigningRequestRowSource = "agent-forwarding"
 	SigningRequestRowSourceAgentProxy      SigningRequestRowSource = "agent-proxy"
+	SigningRequestRowSourceEndpointAdmin   SigningRequestRowSource = "endpoint-admin"
 	SigningRequestRowSourceEndpointAuth    SigningRequestRowSource = "endpoint-auth"
 )
 
@@ -174,6 +175,8 @@ func (e SigningRequestRowSource) Valid() bool {
 	case SigningRequestRowSourceAgentForwarding:
 		return true
 	case SigningRequestRowSourceAgentProxy:
+		return true
+	case SigningRequestRowSourceEndpointAdmin:
 		return true
 	case SigningRequestRowSourceEndpointAuth:
 		return true
@@ -321,6 +324,7 @@ func (e DenyAction200JSONResponseBodyStatus) Valid() bool {
 const (
 	ListAuditSigningsParamsSourceAgentForwarding ListAuditSigningsParamsSource = "agent-forwarding"
 	ListAuditSigningsParamsSourceAgentProxy      ListAuditSigningsParamsSource = "agent-proxy"
+	ListAuditSigningsParamsSourceEndpointAdmin   ListAuditSigningsParamsSource = "endpoint-admin"
 	ListAuditSigningsParamsSourceEndpointAuth    ListAuditSigningsParamsSource = "endpoint-auth"
 )
 
@@ -330,6 +334,8 @@ func (e ListAuditSigningsParamsSource) Valid() bool {
 	case ListAuditSigningsParamsSourceAgentForwarding:
 		return true
 	case ListAuditSigningsParamsSourceAgentProxy:
+		return true
+	case ListAuditSigningsParamsSourceEndpointAdmin:
 		return true
 	case ListAuditSigningsParamsSourceEndpointAuth:
 		return true
@@ -572,7 +578,9 @@ func (e FinishPasskeyRegistration200JSONResponseBodyVerified) Valid() bool {
 // Defines values for StartStepUpJSONBodyAction.
 const (
 	StartStepUpJSONBodyActionConfirmPasskey    StartStepUpJSONBodyAction = "confirm_passkey"
+	StartStepUpJSONBodyActionPinHostKey        StartStepUpJSONBodyAction = "pin_host_key"
 	StartStepUpJSONBodyActionRegisterPasskey   StartStepUpJSONBodyAction = "register_passkey"
+	StartStepUpJSONBodyActionResetHostKey      StartStepUpJSONBodyAction = "reset_host_key"
 	StartStepUpJSONBodyActionRevokeAllSessions StartStepUpJSONBodyAction = "revoke_all_sessions"
 	StartStepUpJSONBodyActionRevokePasskey     StartStepUpJSONBodyAction = "revoke_passkey"
 	StartStepUpJSONBodyActionRevokeSession     StartStepUpJSONBodyAction = "revoke_session"
@@ -583,7 +591,11 @@ func (e StartStepUpJSONBodyAction) Valid() bool {
 	switch e {
 	case StartStepUpJSONBodyActionConfirmPasskey:
 		return true
+	case StartStepUpJSONBodyActionPinHostKey:
+		return true
 	case StartStepUpJSONBodyActionRegisterPasskey:
+		return true
+	case StartStepUpJSONBodyActionResetHostKey:
 		return true
 	case StartStepUpJSONBodyActionRevokeAllSessions:
 		return true
@@ -599,7 +611,9 @@ func (e StartStepUpJSONBodyAction) Valid() bool {
 // Defines values for FinishStepUpJSONBodyAction.
 const (
 	FinishStepUpJSONBodyActionConfirmPasskey    FinishStepUpJSONBodyAction = "confirm_passkey"
+	FinishStepUpJSONBodyActionPinHostKey        FinishStepUpJSONBodyAction = "pin_host_key"
 	FinishStepUpJSONBodyActionRegisterPasskey   FinishStepUpJSONBodyAction = "register_passkey"
+	FinishStepUpJSONBodyActionResetHostKey      FinishStepUpJSONBodyAction = "reset_host_key"
 	FinishStepUpJSONBodyActionRevokeAllSessions FinishStepUpJSONBodyAction = "revoke_all_sessions"
 	FinishStepUpJSONBodyActionRevokePasskey     FinishStepUpJSONBodyAction = "revoke_passkey"
 	FinishStepUpJSONBodyActionRevokeSession     FinishStepUpJSONBodyAction = "revoke_session"
@@ -610,7 +624,11 @@ func (e FinishStepUpJSONBodyAction) Valid() bool {
 	switch e {
 	case FinishStepUpJSONBodyActionConfirmPasskey:
 		return true
+	case FinishStepUpJSONBodyActionPinHostKey:
+		return true
 	case FinishStepUpJSONBodyActionRegisterPasskey:
+		return true
+	case FinishStepUpJSONBodyActionResetHostKey:
 		return true
 	case FinishStepUpJSONBodyActionRevokeAllSessions:
 		return true
@@ -675,9 +693,12 @@ type AuthorizationServerMetadata struct {
 
 // Endpoint Endpoint as listed by GET /api/endpoints.
 type Endpoint struct {
-	AgentForward     bool                     `json:"agentForward"`
-	Description      *string                  `json:"description"`
-	Host             string                   `json:"host"`
+	AgentForward bool    `json:"agentForward"`
+	Description  *string `json:"description"`
+	Host         string  `json:"host"`
+
+	// HostKey The endpoint's pinned SSH host key (#241). Pinned by the first approved connection (combined approval dialog), a manual pin, config-file provisioning, or the baked-in demo pin.
+	HostKey          *EndpointHostKey         `json:"hostKey"`
 	Id               string                   `json:"id"`
 	IsDemo           bool                     `json:"isDemo"`
 	Label            string                   `json:"label"`
@@ -688,6 +709,21 @@ type Endpoint struct {
 
 // EndpointUserVerification defines model for Endpoint.UserVerification.
 type EndpointUserVerification string
+
+// EndpointHostKey The endpoint's pinned SSH host key (#241). Pinned by the first approved connection (combined approval dialog), a manual pin, config-file provisioning, or the baked-in demo pin.
+type EndpointHostKey struct {
+	// Fingerprint SHA256:... fingerprint
+	Fingerprint string `json:"fingerprint"`
+
+	// PinnedAt ISO-8601; empty for demo pins
+	PinnedAt string `json:"pinnedAt"`
+
+	// PinnedBy Credential id of the approving passkey, "file-key:<label>" for a key-approve pin, or "manual" / "config" / "demo".
+	PinnedBy string `json:"pinnedBy"`
+
+	// Type SSH key type (e.g. ssh-ed25519); empty for fingerprint-only pins.
+	Type string `json:"type"`
+}
 
 // Error Standard error envelope. Almost every 4xx/5xx returns this.
 type Error struct {
@@ -786,36 +822,52 @@ type SigningRequestPage struct {
 
 // SigningRequestRow defines model for SigningRequestRow.
 type SigningRequestRow struct {
-	AccountId        *string                   `json:"accountId,omitempty"`
-	CancelReason     *string                   `json:"cancelReason,omitempty"`
-	ClientHostname   *string                   `json:"clientHostname,omitempty"`
-	ClientOs         *string                   `json:"clientOs,omitempty"`
-	ClientVersion    *string                   `json:"clientVersion,omitempty"`
-	CreatedAt        *string                   `json:"createdAt,omitempty"`
-	CredentialId     *string                   `json:"credentialId,omitempty"`
-	EndpointAddress  *string                   `json:"endpointAddress,omitempty"`
-	EndpointLabel    *string                   `json:"endpointLabel,omitempty"`
-	Id               *string                   `json:"id,omitempty"`
-	KeyFingerprint   *string                   `json:"keyFingerprint,omitempty"`
-	KeyLabel         *string                   `json:"keyLabel,omitempty"`
-	LatencyMs        *int                      `json:"latencyMs,omitempty"`
-	McpClientName    *string                   `json:"mcpClientName,omitempty"`
-	McpClientVersion *string                   `json:"mcpClientVersion,omitempty"`
-	McpReason        *string                   `json:"mcpReason,omitempty"`
-	Outcome          *SigningRequestRowOutcome `json:"outcome,omitempty"`
-	PasskeyLabel     *string                   `json:"passkeyLabel,omitempty"`
-	ResolvedAt       *string                   `json:"resolvedAt,omitempty"`
-	SessionId        *string                   `json:"sessionId,omitempty"`
-	Source           *SigningRequestRowSource  `json:"source,omitempty"`
-	SourceIp         *string                   `json:"sourceIp,omitempty"`
-	Type             *string                   `json:"type,omitempty"`
-	UserVerification *string                   `json:"userVerification,omitempty"`
+	AccountId       *string `json:"accountId,omitempty"`
+	CancelReason    *string `json:"cancelReason,omitempty"`
+	ClientHostname  *string `json:"clientHostname,omitempty"`
+	ClientOs        *string `json:"clientOs,omitempty"`
+	ClientVersion   *string `json:"clientVersion,omitempty"`
+	CreatedAt       *string `json:"createdAt,omitempty"`
+	CredentialId    *string `json:"credentialId,omitempty"`
+	EndpointAddress *string `json:"endpointAddress,omitempty"`
+
+	// EndpointId Set on host-key event rows (mismatch / cleared).
+	EndpointId    *string `json:"endpointId,omitempty"`
+	EndpointLabel *string `json:"endpointLabel,omitempty"`
+
+	// HostKeyFingerprint The observed host key for sign rows and mismatch rows; the cleared pin for host-key-cleared rows.
+	HostKeyFingerprint *string `json:"hostKeyFingerprint,omitempty"`
+
+	// HostKeyPinned True when this approval pinned the endpoint's host key.
+	HostKeyPinned *bool `json:"hostKeyPinned,omitempty"`
+
+	// HostKeyPriorFingerprint The pinned fingerprint a mismatch was checked against.
+	HostKeyPriorFingerprint *string                   `json:"hostKeyPriorFingerprint,omitempty"`
+	Id                      *string                   `json:"id,omitempty"`
+	KeyFingerprint          *string                   `json:"keyFingerprint,omitempty"`
+	KeyLabel                *string                   `json:"keyLabel,omitempty"`
+	LatencyMs               *int                      `json:"latencyMs,omitempty"`
+	McpClientName           *string                   `json:"mcpClientName,omitempty"`
+	McpClientVersion        *string                   `json:"mcpClientVersion,omitempty"`
+	McpReason               *string                   `json:"mcpReason,omitempty"`
+	Outcome                 *SigningRequestRowOutcome `json:"outcome,omitempty"`
+	PasskeyLabel            *string                   `json:"passkeyLabel,omitempty"`
+	ResolvedAt              *string                   `json:"resolvedAt,omitempty"`
+	SessionId               *string                   `json:"sessionId,omitempty"`
+
+	// Source endpoint-admin is used by host-key-cleared rows (#241).
+	Source   *SigningRequestRowSource `json:"source,omitempty"`
+	SourceIp *string                  `json:"sourceIp,omitempty"`
+
+	// Type webauthn-sign | key-approve, plus the host-key event types (#241): host-key-mismatch (a connection aborted before authentication because the presented key differed from the pin; outcome is "denied") and host-key-cleared (a pin removed — host/port change or a human forgetting the key; outcome stays null).
+	Type             *string `json:"type,omitempty"`
+	UserVerification *string `json:"userVerification,omitempty"`
 }
 
 // SigningRequestRowOutcome defines model for SigningRequestRow.Outcome.
 type SigningRequestRowOutcome string
 
-// SigningRequestRowSource defines model for SigningRequestRow.Source.
+// SigningRequestRowSource endpoint-admin is used by host-key-cleared rows (#241).
 type SigningRequestRowSource string
 
 // StatusCreated defines model for StatusCreated.
@@ -1014,6 +1066,27 @@ type UpdateEndpointJSONBody struct {
 // UpdateEndpointJSONBodyUserVerification defines parameters for UpdateEndpoint.
 type UpdateEndpointJSONBodyUserVerification string
 
+// DeleteEndpointHostKeyParams defines parameters for DeleteEndpointHostKey.
+type DeleteEndpointHostKeyParams struct {
+	// XShellWatchStepUpToken Single-use step-up token minted by POST /api/webauthn/stepup/verify, bound to the specific action. Sent on the header `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
+	XShellWatchStepUpToken StepUpTokenHeader `json:"X-ShellWatch-StepUp-Token"`
+}
+
+// PinEndpointHostKeyJSONBody defines parameters for PinEndpointHostKey.
+type PinEndpointHostKeyJSONBody struct {
+	// Fingerprint "SHA256:..." fingerprint (fingerprint-only pin)
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// PublicKey OpenSSH public-key line ("ssh-ed25519 AAAA... [comment]")
+	PublicKey *string `json:"publicKey,omitempty"`
+}
+
+// PinEndpointHostKeyParams defines parameters for PinEndpointHostKey.
+type PinEndpointHostKeyParams struct {
+	// XShellWatchStepUpToken Single-use step-up token minted by POST /api/webauthn/stepup/verify, bound to the specific action. Sent on the header `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
+	XShellWatchStepUpToken StepUpTokenHeader `json:"X-ShellWatch-StepUp-Token"`
+}
+
 // FinishHydraLoginJSONBody defines parameters for FinishHydraLogin.
 type FinishHydraLoginJSONBody struct {
 	ChallengeId    *string     `json:"challengeId,omitempty"`
@@ -1168,6 +1241,9 @@ type CreateEndpointJSONRequestBody CreateEndpointJSONBody
 
 // UpdateEndpointJSONRequestBody defines body for UpdateEndpoint for application/json ContentType.
 type UpdateEndpointJSONRequestBody UpdateEndpointJSONBody
+
+// PinEndpointHostKeyJSONRequestBody defines body for PinEndpointHostKey for application/json ContentType.
+type PinEndpointHostKeyJSONRequestBody PinEndpointHostKeyJSONBody
 
 // FinishHydraLoginJSONRequestBody defines body for FinishHydraLogin for application/json ContentType.
 type FinishHydraLoginJSONRequestBody FinishHydraLoginJSONBody

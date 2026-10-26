@@ -10,6 +10,26 @@ import (
 	"database/sql"
 )
 
+const clearEndpointHostKey = `-- name: ClearEndpointHostKey :execrows
+UPDATE endpoints SET host_key_type = NULL, host_key = NULL, host_key_fingerprint = NULL,
+  host_key_pinned_at = NULL, host_key_pinned_by = NULL, updated_at = ?
+WHERE id = ? AND account_id = ? AND host_key_fingerprint IS NOT NULL
+`
+
+type ClearEndpointHostKeyParams struct {
+	UpdatedAt string
+	ID        string
+	AccountID string
+}
+
+func (q *Queries) ClearEndpointHostKey(ctx context.Context, arg ClearEndpointHostKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearEndpointHostKey, arg.UpdatedAt, arg.ID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteEndpointForAccount = `-- name: DeleteEndpointForAccount :execrows
 UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ?
 `
@@ -31,7 +51,8 @@ func (q *Queries) DeleteEndpointForAccount(ctx context.Context, arg DeleteEndpoi
 }
 
 const getEndpointForAccount = `-- name: GetEndpointForAccount :one
-SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward
+SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
+  host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
 FROM endpoints WHERE id = ? AND account_id = ?
 `
 
@@ -41,15 +62,19 @@ type GetEndpointForAccountParams struct {
 }
 
 type GetEndpointForAccountRow struct {
-	ID               string
-	AccountID        string
-	Label            string
-	Host             string
-	Port             int64
-	Username         string
-	UserVerification string
-	Description      sql.NullString
-	AgentForward     int64
+	ID                 string
+	AccountID          string
+	Label              string
+	Host               string
+	Port               int64
+	Username           string
+	UserVerification   string
+	Description        sql.NullString
+	AgentForward       int64
+	HostKeyType        sql.NullString
+	HostKeyFingerprint sql.NullString
+	HostKeyPinnedAt    sql.NullString
+	HostKeyPinnedBy    sql.NullString
 }
 
 func (q *Queries) GetEndpointForAccount(ctx context.Context, arg GetEndpointForAccountParams) (GetEndpointForAccountRow, error) {
@@ -65,6 +90,38 @@ func (q *Queries) GetEndpointForAccount(ctx context.Context, arg GetEndpointForA
 		&i.UserVerification,
 		&i.Description,
 		&i.AgentForward,
+		&i.HostKeyType,
+		&i.HostKeyFingerprint,
+		&i.HostKeyPinnedAt,
+		&i.HostKeyPinnedBy,
+	)
+	return i, err
+}
+
+const getEndpointHostKey = `-- name: GetEndpointHostKey :one
+SELECT host_key_type, host_key, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
+FROM endpoints WHERE id = ?
+`
+
+type GetEndpointHostKeyRow struct {
+	HostKeyType        sql.NullString
+	HostKey            []byte
+	HostKeyFingerprint sql.NullString
+	HostKeyPinnedAt    sql.NullString
+	HostKeyPinnedBy    sql.NullString
+}
+
+// Connection-time pin lookup (#241). By id only: the endpoint was already
+// resolved account-scoped before any dial.
+func (q *Queries) GetEndpointHostKey(ctx context.Context, id string) (GetEndpointHostKeyRow, error) {
+	row := q.db.QueryRowContext(ctx, getEndpointHostKey, id)
+	var i GetEndpointHostKeyRow
+	err := row.Scan(
+		&i.HostKeyType,
+		&i.HostKey,
+		&i.HostKeyFingerprint,
+		&i.HostKeyPinnedAt,
+		&i.HostKeyPinnedBy,
 	)
 	return i, err
 }
@@ -118,22 +175,74 @@ func (q *Queries) InsertEndpoint(ctx context.Context, arg InsertEndpointParams) 
 	return err
 }
 
+const listEndpointsByAddress = `-- name: ListEndpointsByAddress :many
+SELECT id, host_key_fingerprint FROM endpoints
+WHERE account_id = ? AND host = ? AND port = ? AND username = ? AND enabled = 1
+`
+
+type ListEndpointsByAddressParams struct {
+	AccountID string
+	Host      string
+	Port      int64
+	Username  string
+}
+
+type ListEndpointsByAddressRow struct {
+	ID                 string
+	HostKeyFingerprint sql.NullString
+}
+
+// Config-file pin provisioning (#241): seedAdminEndpoints carry no stable id,
+// so a config hostKey is matched to DB rows by address tuple.
+func (q *Queries) ListEndpointsByAddress(ctx context.Context, arg ListEndpointsByAddressParams) ([]ListEndpointsByAddressRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEndpointsByAddress,
+		arg.AccountID,
+		arg.Host,
+		arg.Port,
+		arg.Username,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEndpointsByAddressRow
+	for rows.Next() {
+		var i ListEndpointsByAddressRow
+		if err := rows.Scan(&i.ID, &i.HostKeyFingerprint); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEndpointsForAccount = `-- name: ListEndpointsForAccount :many
 
-SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward
+SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
+  host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
 FROM endpoints WHERE account_id = ? AND enabled = 1 ORDER BY created_at, id
 `
 
 type ListEndpointsForAccountRow struct {
-	ID               string
-	AccountID        string
-	Label            string
-	Host             string
-	Port             int64
-	Username         string
-	UserVerification string
-	Description      sql.NullString
-	AgentForward     int64
+	ID                 string
+	AccountID          string
+	Label              string
+	Host               string
+	Port               int64
+	Username           string
+	UserVerification   string
+	Description        sql.NullString
+	AgentForward       int64
+	HostKeyType        sql.NullString
+	HostKeyFingerprint sql.NullString
+	HostKeyPinnedAt    sql.NullString
+	HostKeyPinnedBy    sql.NullString
 }
 
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
@@ -161,6 +270,10 @@ func (q *Queries) ListEndpointsForAccount(ctx context.Context, accountID string)
 			&i.UserVerification,
 			&i.Description,
 			&i.AgentForward,
+			&i.HostKeyType,
+			&i.HostKeyFingerprint,
+			&i.HostKeyPinnedAt,
+			&i.HostKeyPinnedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -175,16 +288,57 @@ func (q *Queries) ListEndpointsForAccount(ctx context.Context, accountID string)
 	return items, nil
 }
 
+const pinEndpointHostKey = `-- name: PinEndpointHostKey :execrows
+UPDATE endpoints SET host_key_type = ?, host_key = ?, host_key_fingerprint = ?,
+  host_key_pinned_at = ?, host_key_pinned_by = ?, updated_at = ?
+WHERE id = ? AND host_key_fingerprint IS NULL
+`
+
+type PinEndpointHostKeyParams struct {
+	HostKeyType        sql.NullString
+	HostKey            []byte
+	HostKeyFingerprint sql.NullString
+	HostKeyPinnedAt    sql.NullString
+	HostKeyPinnedBy    sql.NullString
+	UpdatedAt          string
+	ID                 string
+}
+
+// Compare-and-set (#241): writes only when no pin exists. 0 rows means a pin
+// landed first - the caller compares it against the observed key.
+func (q *Queries) PinEndpointHostKey(ctx context.Context, arg PinEndpointHostKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pinEndpointHostKey,
+		arg.HostKeyType,
+		arg.HostKey,
+		arg.HostKeyFingerprint,
+		arg.HostKeyPinnedAt,
+		arg.HostKeyPinnedBy,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateEndpoint = `-- name: UpdateEndpoint :execrows
-UPDATE endpoints SET label = ?, host = ?, port = ?, username = ?,
-  user_verification = ?, description = ?, agent_forward = ?, updated_at = ?
-WHERE id = ? AND account_id = ?
+UPDATE endpoints SET
+  host_key_type = CASE WHEN host = ?1 AND port = ?2 THEN host_key_type ELSE NULL END,
+  host_key = CASE WHEN host = ?1 AND port = ?2 THEN host_key ELSE NULL END,
+  host_key_fingerprint = CASE WHEN host = ?1 AND port = ?2 THEN host_key_fingerprint ELSE NULL END,
+  host_key_pinned_at = CASE WHEN host = ?1 AND port = ?2 THEN host_key_pinned_at ELSE NULL END,
+  host_key_pinned_by = CASE WHEN host = ?1 AND port = ?2 THEN host_key_pinned_by ELSE NULL END,
+  label = ?3, host = ?1, port = ?2, username = ?4,
+  user_verification = ?5, description = ?6,
+  agent_forward = ?7, updated_at = ?8
+WHERE id = ?9 AND account_id = ?10
 `
 
 type UpdateEndpointParams struct {
-	Label            string
 	Host             string
 	Port             int64
+	Label            string
 	Username         string
 	UserVerification string
 	Description      sql.NullString
@@ -194,11 +348,15 @@ type UpdateEndpointParams struct {
 	AccountID        string
 }
 
+// A host or port change invalidates the pinned host key (#241): the CASE
+// expressions see the row's pre-update values, so the pin survives only when
+// the new address equals the stored one. Clearing happens in the same
+// statement as the write - no window where the old pin covers a new address.
 func (q *Queries) UpdateEndpoint(ctx context.Context, arg UpdateEndpointParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateEndpoint,
-		arg.Label,
 		arg.Host,
 		arg.Port,
+		arg.Label,
 		arg.Username,
 		arg.UserVerification,
 		arg.Description,

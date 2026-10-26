@@ -44,45 +44,54 @@ type AuditSessionLifecycle struct {
 }
 
 type AuditSigningRequest struct {
-	ID               string
-	AccountID        string
-	Type             string
-	Source           string
-	CreatedAt        string
-	ResolvedAt       sql.NullString
-	Outcome          sql.NullString
-	LatencyMs        sql.NullInt64
-	SourceIp         sql.NullString
-	EndpointLabel    sql.NullString
-	EndpointAddress  sql.NullString
-	SessionID        sql.NullString
-	McpReason        sql.NullString
-	McpClientName    sql.NullString
-	McpClientVersion sql.NullString
-	ClientHostname   sql.NullString
-	ClientOs         sql.NullString
-	ClientVersion    sql.NullString
-	CredentialID     sql.NullString
-	PasskeyLabel     sql.NullString
-	UserVerification sql.NullString
-	KeyLabel         sql.NullString
-	KeyFingerprint   sql.NullString
-	CancelReason     sql.NullString
+	ID                      string
+	AccountID               string
+	Type                    string
+	Source                  string
+	CreatedAt               string
+	ResolvedAt              sql.NullString
+	Outcome                 sql.NullString
+	LatencyMs               sql.NullInt64
+	SourceIp                sql.NullString
+	EndpointLabel           sql.NullString
+	EndpointAddress         sql.NullString
+	SessionID               sql.NullString
+	McpReason               sql.NullString
+	McpClientName           sql.NullString
+	McpClientVersion        sql.NullString
+	ClientHostname          sql.NullString
+	ClientOs                sql.NullString
+	ClientVersion           sql.NullString
+	CredentialID            sql.NullString
+	PasskeyLabel            sql.NullString
+	UserVerification        sql.NullString
+	KeyLabel                sql.NullString
+	KeyFingerprint          sql.NullString
+	CancelReason            sql.NullString
+	EndpointID              sql.NullString
+	HostKeyFingerprint      sql.NullString
+	HostKeyPriorFingerprint sql.NullString
+	HostKeyPinned           sql.NullInt64
 }
 
 type Endpoint struct {
-	ID               string
-	AccountID        string
-	Label            string
-	Host             string
-	Port             int64
-	Username         string
-	Enabled          int64
-	CreatedAt        string
-	UpdatedAt        string
-	UserVerification string
-	Description      sql.NullString
-	AgentForward     int64
+	ID                 string
+	AccountID          string
+	Label              string
+	Host               string
+	Port               int64
+	Username           string
+	Enabled            int64
+	CreatedAt          string
+	UpdatedAt          string
+	UserVerification   string
+	Description        sql.NullString
+	AgentForward       int64
+	HostKeyType        sql.NullString
+	HostKey            []byte
+	HostKeyFingerprint sql.NullString
+	HostKeyPinnedAt    sql.NullString
+	HostKeyPinnedBy    sql.NullString
 }
 
 type PushSubscription struct {

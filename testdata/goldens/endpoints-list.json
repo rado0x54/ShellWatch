@@ -14,7 +14,8 @@
         "userVerification": "required",
         "agentForward": true,
         "description": null,
-        "isDemo": false
+        "isDemo": false,
+        "hostKey": null
       }
     ]
   }

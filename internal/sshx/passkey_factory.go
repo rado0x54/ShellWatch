@@ -8,6 +8,7 @@ package sshx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"golang.org/x/crypto/ssh"
@@ -61,6 +62,12 @@ type PasskeyFactoryParams struct {
 	// or when the established transport ends — so stranded sign prompts don't
 	// linger the full TTL (#91; create-factory.ts:147-156 -> index.ts:102-115).
 	OnConnectionEnded func(connectionID, reason string)
+	// HostKeys is the host-key pin store (#241). Required.
+	HostKeys HostKeys
+	// OnHostKeyMismatch fires when a dial aborted because the server's key
+	// differed from the pin: no pending action exists, so the account must be
+	// told out-of-band (audit row + WS message + push).
+	OnHostKeyMismatch func(ev HostKeyMismatchEvent)
 }
 
 // labeledFileKey is one admin file key selected for a connection.
@@ -102,7 +109,11 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		// One file-key selection per connection, shared by connection auth and
 		// the forwarding agent (Node gathers the list once too).
 		fileKeys := p.fileKeysFor(ctx, fp.Endpoint.AccountID)
-		signers, err := p.buildSigners(ctx, fp, connID, fileKeys)
+		// Per-connection host-key state (#241): the HostKeyCallback records the
+		// observed key here, the signers read it into the approval context and
+		// pin it on approval, and Connect fails closed if it stays provisional.
+		hostState := &HostKeyState{}
+		signers, err := p.buildSigners(ctx, fp, connID, fileKeys, hostState)
 		if err != nil {
 			return nil, err
 		}
@@ -115,8 +126,24 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 		}
 		transport, err := Connect(ctx, ConnectParams{
 			Host: fp.Endpoint.Host, Port: fp.Endpoint.Port, Username: fp.Endpoint.Username,
+			EndpointID: fp.Endpoint.ID, HostKeys: p.HostKeys, HostKeyState: hostState,
 			Signers: signers, AgentForward: fp.Endpoint.AgentForward, ForwardingAgent: fwdAgent,
 		})
+		if err != nil {
+			var mismatch *HostKeyMismatchError
+			if errors.As(err, &mismatch) && p.OnHostKeyMismatch != nil {
+				p.OnHostKeyMismatch(HostKeyMismatchEvent{
+					AccountID:           fp.Endpoint.AccountID,
+					EndpointID:          fp.Endpoint.ID,
+					EndpointLabel:       fp.Endpoint.Label,
+					EndpointAddress:     fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
+					ObservedKeyType:     mismatch.ObservedKeyType,
+					ObservedFingerprint: mismatch.ObservedFingerprint,
+					PinnedFingerprint:   mismatch.PinnedFingerprint,
+					Trigger:             fp.Trigger,
+				})
+			}
+		}
 		if p.OnConnectionEnded == nil {
 			return transport, err
 		}
@@ -154,7 +181,7 @@ type endWatchTransport struct {
 
 func (w *endWatchTransport) Events() <-chan terminal.Event { return w.events }
 
-func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey) ([]ssh.Signer, error) {
+func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey, hostState *HostKeyState) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
 
 	creds, err := p.Credentials.ActiveCredentialsForAuth(ctx, fp.Endpoint.AccountID)
@@ -181,6 +208,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		signers = append(signers, newApprovedFileKeySigner(&approvedFileKeySigner{
 			signer: fk.signer, broker: p.BrokerFunc(), accountID: fp.Endpoint.AccountID,
 			label: fk.label, connectionID: connID, actionCtx: actionCtx, redirectTo: redirectTo, ctx: ctx,
+			endpointID: fp.Endpoint.ID, hostKeys: p.HostKeys, hostState: hostState,
 		}))
 	}
 
@@ -194,6 +222,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 			CredentialID: c.CredentialID, RpID: p.RpID, Origin: p.Origin,
 			UVPolicy: fp.Endpoint.UserVerification, PasskeyLabel: c.Label,
 			ConnectionID: connID, ActionCtx: actionCtx, RedirectTo: redirectTo, Ctx: ctx,
+			EndpointID: fp.Endpoint.ID, HostKeys: p.HostKeys, HostState: hostState,
 		})
 	}
 	return signers, nil

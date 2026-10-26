@@ -98,7 +98,7 @@ func endpointFP() terminal.FactoryParams {
 func TestFileKeysNotOfferedToNonAdmin(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, false, actionStore)
-	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
+	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"), &HostKeyState{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestFileKeysNotOfferedToNonAdmin(t *testing.T) {
 func TestFileKeySelectionAdminEnabledOnDisk(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, true, actionStore)
-	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
+	signers, err := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"), &HostKeyState{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestFileKeySelectionAdminEnabledOnDisk(t *testing.T) {
 func TestFileKeySignRequiresApproval(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, signer := fileKeyParams(t, true, actionStore)
-	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
+	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"), &HostKeyState{})
 	fk := signers[0]
 
 	// Approve path: the pending key-approve action resolves -> real signature.
@@ -163,8 +163,8 @@ type stubKeyBroker struct{ err error }
 func (s stubKeyBroker) RequestSign(context.Context, string, signing.SignRequest, approval.Context, string) (signing.SignResponse, error) {
 	return signing.SignResponse{}, s.err
 }
-func (s stubKeyBroker) RequestKeyApproval(context.Context, approval.KeyApproval) error {
-	return s.err
+func (s stubKeyBroker) RequestKeyApproval(context.Context, approval.KeyApproval) (string, error) {
+	return "act", s.err
 }
 
 // An unanswered prompt (60s TTL expiry) surfaces as the broker's error; with
@@ -190,7 +190,7 @@ func TestFileKeyContextDeathAborts(t *testing.T) {
 func TestFileKeyDenyReturnsError(t *testing.T) {
 	actionStore := approval.NewStore(clock.Real{}, func() string { return "act" })
 	p, _ := fileKeyParams(t, true, actionStore)
-	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"))
+	signers, _ := p.buildSigners(context.Background(), endpointFP(), "conn-1", p.fileKeysFor(context.Background(), "acc"), &HostKeyState{})
 	fk := signers[0]
 
 	go func() {

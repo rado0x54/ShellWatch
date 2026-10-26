@@ -97,10 +97,11 @@ func TestBrokerCancelUnblocksBackgroundAwaiter(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.RequestKeyApproval(context.Background(), KeyApproval{
+		_, err := b.RequestKeyApproval(context.Background(), KeyApproval{
 			AccountID: "acc", KeyLabel: "key", KeyFingerprint: "SHA256:fp", ConnectionID: "c1",
 			Context: Context{Source: "agent-forwarding"},
 		})
+		done <- err
 	}()
 	// Wait for the action to exist, then cancel the connection.
 	deadline := time.Now().Add(3 * time.Second)

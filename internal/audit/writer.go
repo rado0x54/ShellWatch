@@ -12,6 +12,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/approval"
 	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/ids"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
@@ -19,6 +20,16 @@ import (
 type Writer struct {
 	db  *sql.DB
 	clk clock.Clock
+	// NewID mints ids for writer-originated rows (host-key events); defaults
+	// to a UUID. Actions carry their own ids.
+	NewID func() string
+}
+
+func (w *Writer) newEventID() string {
+	if w.NewID != nil {
+		return w.NewID()
+	}
+	return ids.NewUUID()
 }
 
 func NewWriter(db *sql.DB, clk clock.Clock) *Writer {
@@ -103,19 +114,79 @@ func (w *Writer) AttachStore(store *approval.Store) {
 }
 
 func (w *Writer) insertSigning(a *approval.Action) {
+	hostKeyFp := ""
+	if a.Context.HostKey != nil {
+		hostKeyFp = a.Context.HostKey.Fingerprint
+	}
 	_, err := w.db.Exec(
 		`INSERT INTO audit_signing_requests (id, account_id, type, source, created_at,
 			source_ip, endpoint_label, endpoint_address, session_id,
 			mcp_reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
-			credential_id, passkey_label, user_verification, key_label, key_fingerprint)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			credential_id, passkey_label, user_verification, key_label, key_fingerprint, host_key_fingerprint)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.AccountID, string(a.Type), a.Context.Source, a.CreatedAt.UTC().Format(isoMillis),
 		nz(a.Context.SourceIP), nz(a.Context.EndpointLabel), nz(a.Context.EndpointAddress), nz(a.Context.SessionID),
 		nz(a.Context.MCPReason), nz(a.Context.MCPClientName), nz(a.Context.MCPClientVer),
 		nz(a.Context.ClientHostname), nz(a.Context.ClientOS), nz(a.Context.ClientVersion),
-		nz(a.CredentialID), nz(a.PasskeyLabel), nz(a.UserVerification), nz(a.KeyLabel), nz(a.KeyFingerprint))
+		nz(a.CredentialID), nz(a.PasskeyLabel), nz(a.UserVerification), nz(a.KeyLabel), nz(a.KeyFingerprint),
+		nz(hostKeyFp))
 	if err != nil {
 		slog.Warn("audit: insert signing-created failed", "action", a.ID, "err", err)
+	}
+}
+
+// MarkHostKeyPinned flags the approval that pinned an endpoint's host key
+// (#241) — called by the pin store right after the compare-and-set lands.
+func (w *Writer) MarkHostKeyPinned(actionID string) {
+	if actionID == "" {
+		return
+	}
+	if _, err := w.db.Exec(
+		`UPDATE audit_signing_requests SET host_key_pinned = 1 WHERE id = ?`, actionID); err != nil {
+		slog.Warn("audit: mark host-key pinned failed", "action", actionID, "err", err)
+	}
+}
+
+// HostKeyEvent is a host-key audit record (#241): a mismatch that aborted a
+// handshake ('host-key-mismatch', outcome denied) or a pin removal
+// ('host-key-cleared' — host/port change or a human forgetting the key).
+type HostKeyEvent struct {
+	Type             string // "host-key-mismatch" | "host-key-cleared"
+	AccountID        string
+	EndpointID       string
+	EndpointLabel    string
+	EndpointAddress  string
+	Source           string // "endpoint-auth" (mismatch) | "endpoint-admin" (cleared)
+	Fingerprint      string // observed key (mismatch) / the cleared pin
+	PriorFingerprint string // the pinned key a mismatch was checked against
+	Reason           string // what cleared the pin (cancel_reason column)
+	SourceIP         string
+	MCPReason        string
+	MCPClientName    string
+	MCPClientVersion string
+}
+
+// RecordHostKeyEvent writes a host-key audit row. These rows are born
+// resolved: there is no pending phase (a mismatch is denied automatically; a
+// clear already happened).
+func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) {
+	now := w.clk.Now().UTC().Format(isoMillis)
+	outcome := sql.NullString{}
+	if ev.Type == "host-key-mismatch" {
+		outcome = sql.NullString{String: "denied", Valid: true}
+	}
+	_, err := w.db.Exec(
+		`INSERT INTO audit_signing_requests (id, account_id, type, source, created_at, resolved_at, outcome, latency_ms,
+			source_ip, endpoint_id, endpoint_label, endpoint_address,
+			mcp_reason, mcp_client_name, mcp_client_version,
+			host_key_fingerprint, host_key_prior_fingerprint, cancel_reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.newEventID(), ev.AccountID, ev.Type, ev.Source, now, now, outcome,
+		nz(ev.SourceIP), nz(ev.EndpointID), nz(ev.EndpointLabel), nz(ev.EndpointAddress),
+		nz(ev.MCPReason), nz(ev.MCPClientName), nz(ev.MCPClientVersion),
+		nz(ev.Fingerprint), nz(ev.PriorFingerprint), nz(ev.Reason))
+	if err != nil {
+		slog.Warn("audit: insert host-key event failed", "type", ev.Type, "endpoint", ev.EndpointID, "err", err)
 	}
 }
 

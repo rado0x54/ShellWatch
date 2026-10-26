@@ -24,6 +24,10 @@
     "userVerification": "required",
     "keyLabel": null,
     "keyFingerprint": null,
-    "cancelReason": null
+    "cancelReason": null,
+    "endpointId": null,
+    "hostKeyFingerprint": null,
+    "hostKeyPriorFingerprint": null,
+    "hostKeyPinned": null
   }
 }

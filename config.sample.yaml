@@ -38,18 +38,30 @@ keyDirectory: ./keys
 # agentForward defaults to true; set to false for hosts that disallow forwarding.
 # description is optional free-form context (max 1000 chars) surfaced to MCP
 # agents via the shellwatch_manage_endpoints list/read tool.
+# hostKey (optional) pre-pins the host's SSH key so the first connection never
+# goes through trust-on-first-use. Preferred form is the full OpenSSH public
+# key line (get it with `ssh-keyscan -t ed25519 <host>`); a bare
+# "SHA256:..." fingerprint also works but can't drive host-key-algorithm
+# selection. Applied on every boot with compare-and-set: an existing,
+# different pin is kept (forget it in Settings -> Endpoints first). Without
+# hostKey, the first connection's approval dialog pins whatever key the host
+# presents (TOFU) — see issue #241.
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
 #     description: "Personal dev sandbox. /srv/app holds the staging copy."
+#     hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... root@dev"
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222
 #     agentForward: false
 
 # Optional: virtual demo endpoints merged into every account's endpoint list.
-# Same shape as seedAdminEndpoints (including description). Never copied into
-# the database — config is the source of truth. Each account has a "Show demo
+# Same shape as seedAdminEndpoints (including description and hostKey; a demo
+# hostKey pin lives in process memory since demo endpoints are never
+# persisted, and known public demo hosts additionally carry a baked-in pin —
+# internal/demo). Never copied into the database — config is the source of
+# truth. Each account has a "Show demo
 # endpoints" toggle on the Endpoints page (default on); set demoEndpoints to
 # [] or omit to disable. Pairs with the rado0x54/shellwatch-demo-server
 # container — see issue #211.

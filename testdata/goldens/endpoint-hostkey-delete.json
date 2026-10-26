@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/endpoints/test-server/host-key"
+  },
+  "status": 200,
+  "body": {
+    "status": "deleted"
+  }
+}

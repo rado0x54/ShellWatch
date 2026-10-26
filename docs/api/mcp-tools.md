@@ -40,11 +40,19 @@ are rejected without writing. _(Node's tool schema used to silently strip
 `userVerification`/`agentForward` — that was a bug, not the contract; both
 backends now accept them.)_
 
+**Host keys (#241, Go only):** the agent can neither supply nor alter a host
+key pin — `create`/`update` take no host-key fields. `read` returns a
+read-only `hostKey` object (`{ type, fingerprint, pinnedAt, pinnedBy }`, or
+`null` when unpinned). **Updating `host` or `port` clears the pin** (the old
+key cannot vouch for a new address) and writes a `host-key-cleared` audit
+row; the next `shellwatch_create_session` then blocks on a human approving
+the new host's key.
+
 Per-action success payload (JSON in the text block):
 
 - `list` → `{ endpoints: [{ id, label, host, port, username, description }] }`
   _(note: no `userVerification`/`agentForward`/`isDemo` — narrower than REST)_
-- `read` → the raw endpoint object
+- `read` → the raw endpoint object (incl. the read-only `hostKey`, Go only)
 - `create` → `{ status: "created", id }` — **`id` is caller-supplied and required**
   _(diverges from REST `POST /api/endpoints`, which generates a UUID)_
 - `update` → `{ status: "updated", id }`
@@ -58,6 +66,19 @@ Input: `{ endpointId: string; reason: string /* ≤500, non-empty, trimmed */ }`
 `reason` is shown to the human approver. Success →
 `{ sessionId, endpointId, status }`. _(No `createdAt`/`source` — narrower than the
 REST/WS session object.)_
+
+Host-key errors (#241, Go only) surface as the usual `isError` text:
+
+- **Untrusted first connection** (human denied / prompt expired on an
+  unpinned endpoint): the error ends with
+  `the host key for this endpoint is not trusted yet; a human must approve the
+first connection on the ShellWatch sign page` — direct the user to the
+  ShellWatch UI; there is nothing the agent can retry on its own.
+- **Host-key mismatch** (pinned key differs from what the server presented):
+  a distinct error starting `SSH connection to <addr> refused: host key
+mismatch: …`. The connection was aborted before authentication and **no
+  retry path exists over MCP** — only a human can forget the pinned key in
+  Settings → Endpoints.
 
 ### `shellwatch_list_sessions`
 

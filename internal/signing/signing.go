@@ -37,6 +37,9 @@ type SignResponse struct {
 	AuthenticatorData []byte
 	Signature         []byte // DER ECDSA
 	ClientDataJSON    []byte
+	// ActionID is the pending action that produced this assertion, filled by
+	// the approval store at resolve time (host-key pin audit plumbing, #241).
+	ActionID string
 }
 
 // AuthDataFlagUV is the User-Verified bit in authenticatorData (byte 32).

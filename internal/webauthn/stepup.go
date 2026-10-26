@@ -24,6 +24,10 @@ const (
 	ActionConfirmPasskey    = "confirm_passkey"
 	ActionRevokeSession     = "revoke_session"
 	ActionRevokeAllSessions = "revoke_all_sessions"
+	// Host-key management (#241): forgetting and manually pinning an
+	// endpoint's SSH host key are trust decisions, so both are step-up gated.
+	ActionResetHostKey = "reset_host_key"
+	ActionPinHostKey   = "pin_host_key"
 )
 
 // ActionToPurpose maps a step-up action to its challenge purpose (each action
@@ -34,6 +38,8 @@ var ActionToPurpose = map[string]string{
 	ActionConfirmPasskey:    "stepup:confirm_passkey",
 	ActionRevokeSession:     "stepup:revoke_session",
 	ActionRevokeAllSessions: "stepup:revoke_all_sessions",
+	ActionResetHostKey:      "stepup:reset_host_key",
+	ActionPinHostKey:        "stepup:pin_host_key",
 }
 
 // IsStepUpAction reports whether s is a known action.

@@ -44,10 +44,12 @@ var goldenCoverage = map[string]coverage{
 	"getProtectedResourceMetadataAgentProxy": goldened("discovery-protected-resource-agent"),
 
 	// --- Endpoints ---
-	"listEndpoints":  goldened("endpoints-list"),
-	"createEndpoint": goldened("endpoints-create"),
-	"updateEndpoint": goldened("endpoint-update"),
-	"deleteEndpoint": goldened("endpoint-delete"),
+	"listEndpoints":         goldened("endpoints-list"),
+	"createEndpoint":        goldened("endpoints-create"),
+	"updateEndpoint":        goldened("endpoint-update"),
+	"deleteEndpoint":        goldened("endpoint-delete"),
+	"pinEndpointHostKey":    goldened("endpoint-hostkey-pin"),
+	"deleteEndpointHostKey": goldened("endpoint-hostkey-delete"),
 
 	// --- Sessions ---
 	"createSession":  goldened("session-create"),

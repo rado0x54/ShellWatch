@@ -26,7 +26,11 @@
         "userVerification": null,
         "keyLabel": null,
         "keyFingerprint": null,
-        "cancelReason": null
+        "cancelReason": null,
+        "endpointId": null,
+        "hostKeyFingerprint": null,
+        "hostKeyPriorFingerprint": null,
+        "hostKeyPinned": null
       },
       {
         "id": "act_0000000000000000000002",
@@ -52,7 +56,11 @@
         "userVerification": null,
         "keyLabel": "deploy key",
         "keyFingerprint": "<FINGERPRINT>",
-        "cancelReason": null
+        "cancelReason": null,
+        "endpointId": null,
+        "hostKeyFingerprint": null,
+        "hostKeyPriorFingerprint": null,
+        "hostKeyPinned": null
       }
     ],
     "nextCursor": "<CURSOR>"

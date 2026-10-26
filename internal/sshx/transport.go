@@ -102,23 +102,35 @@ type ConnectParams struct {
 	Host         string
 	Port         int
 	Username     string
+	EndpointID   string
 	Signers      []ssh.Signer
 	AgentForward bool
 	// ForwardingAgent services the remote's auth-agent@openssh.com channel when
 	// AgentForward is set — every forwarded sign routes through the broker.
 	ForwardingAgent agent.Agent
-	// HostKeyCallback defaults to InsecureIgnoreHostKey (ShellWatch brokers to
-	// operator-configured hosts; host-key pinning is tracked separately).
-	HostKeyCallback ssh.HostKeyCallback
+	// HostKeys is the pin store (#241). Required: a nil HostKeys is a
+	// programming error, never an accept-anything fallback.
+	HostKeys HostKeys
+	// HostKeyState is the per-connection host-key record, shared with the
+	// signers so the approval that authorizes the sign can pin the key.
+	// Connect allocates one when nil (callers without approval-driven pinning).
+	HostKeyState *HostKeyState
 }
 
 // Connect dials, opens a PTY shell, and returns a terminal.Transport. The
 // data pump runs until both streams EOF, then a single Closed event ends the
 // session's pump goroutine.
 func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
-	hostKey := p.HostKeyCallback
-	if hostKey == nil {
-		hostKey = ssh.InsecureIgnoreHostKey()
+	if p.HostKeys == nil {
+		return nil, errors.New("sshx: ConnectParams.HostKeys is required — host-key verification is mandatory (#241)")
+	}
+	state := p.HostKeyState
+	if state == nil {
+		state = &HostKeyState{}
+	}
+	pin, err := p.HostKeys.Lookup(ctx, p.EndpointID)
+	if err != nil {
+		return nil, fmt.Errorf("host key lookup for endpoint %s failed: %w", p.EndpointID, err)
 	}
 	// One publickey method per signer, handed out on demand (auth.go): a
 	// denied key fails its own method and x/crypto moves to the next one.
@@ -126,8 +138,11 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	cfg := &ssh.ClientConfig{
 		User:            p.Username,
 		AuthCallback:    keys.callback,
-		HostKeyCallback: hostKey,
-		Timeout:         connectionTimeout,
+		HostKeyCallback: hostKeyCallback(p.EndpointID, pin, state),
+		// Pin the negotiated host-key algorithm to the pinned key's, so a
+		// server with several host keys offers the one we can verify.
+		HostKeyAlgorithms: hostKeyAlgorithmsFor(pin),
+		Timeout:           connectionTimeout,
 	}
 
 	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
@@ -139,7 +154,30 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, keys.authError(err))
+		var mismatch *HostKeyMismatchError
+		if errors.As(err, &mismatch) {
+			// Distinct, pre-authentication failure: no auth wording, no
+			// pending action was ever created. The caller notifies the account
+			// out-of-band (no approval toast exists for this).
+			return nil, fmt.Errorf("SSH connection to %s refused: %w", addr, mismatch)
+		}
+		err = keys.authError(err)
+		if st, _, pinned := state.Snapshot(); st == HostKeyNew && !pinned {
+			// First contact with this host was not approved (denied, expired,
+			// or no usable key): tell the agent/user the host key is not yet
+			// trusted so they know approval happens in the ShellWatch UI.
+			err = fmt.Errorf("%w — the host key for this endpoint is not trusted yet; a human must approve the first connection on the ShellWatch sign page", err)
+		}
+		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, err)
+	}
+	// Fail closed (#241): a provisionally accepted host key must never yield
+	// an established session without a human approval having pinned it. This
+	// covers servers accepting "none" auth and any future auth path that
+	// bypasses the approval broker.
+	if st, observed, pinned := state.Snapshot(); st == HostKeyNew && !pinned {
+		sshConn.Close()
+		conn.Close()
+		return nil, fmt.Errorf("SSH connection to %s aborted: host key %s (%s) was accepted provisionally but no approval pinned it", addr, observed.Fingerprint, observed.Type)
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 

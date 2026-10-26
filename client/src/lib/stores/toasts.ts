@@ -3,12 +3,21 @@ import { writable } from "svelte/store";
 
 export type ToastVariant = "info" | "error" | "sign-request";
 
+/** Host-key context on an endpoint-auth sign request (#241). */
+export interface SignRequestHostKey {
+  type: string;
+  fingerprint: string;
+  /** "new": approving this action also pins the presented host key. */
+  status: "new" | "known";
+}
+
 interface SignRequestBase {
   actionId: string;
   deepLink: string;
   source: string;
   endpointLabel?: string;
   endpointAddress?: string;
+  hostKey?: SignRequestHostKey;
 }
 
 export interface WebAuthnSignRequestAction extends SignRequestBase {
@@ -35,6 +44,8 @@ export interface Toast {
   action?: SignRequestAction;
   /** Auto-dismiss after this many ms (not used for sign-request) */
   dismissAfterMs?: number;
+  /** Optional in-app link rendered after the message (e.g. host-key recovery). */
+  link?: { href: string; label: string };
 }
 
 let nextId = 0;

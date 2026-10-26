@@ -8,6 +8,8 @@ package sshx
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"golang.org/x/crypto/ssh"
@@ -21,7 +23,8 @@ import (
 type SignBroker interface {
 	RequestSign(ctx context.Context, accountID string, req signing.SignRequest, actionCtx approval.Context, redirectTo string) (signing.SignResponse, error)
 	// RequestKeyApproval gates a file-key sign — used by the forwarding agent.
-	RequestKeyApproval(ctx context.Context, p approval.KeyApproval) error
+	// The returned action id names the approval (host-key pin audit, #241).
+	RequestKeyApproval(ctx context.Context, p approval.KeyApproval) (string, error)
 }
 
 // WebAuthnSigner presents a passkey public key and signs via human approval.
@@ -41,6 +44,14 @@ type WebAuthnSigner struct {
 	ActionCtx    approval.Context
 	RedirectTo   string
 
+	// Host-key pinning (#241): HostState is this connection's observed-key
+	// record; a provisional ("new") key is pinned via HostKeys as part of the
+	// approval this signer collects. Both nil on paths without a dialed
+	// connection (agent forwarding), where no pin decision exists.
+	EndpointID string
+	HostKeys   HostKeys
+	HostState  *HostKeyState
+
 	// Ctx bounds the approval wait (the connection's dial context).
 	Ctx context.Context
 }
@@ -50,12 +61,15 @@ var _ ssh.Signer = (*WebAuthnSigner)(nil)
 func (s *WebAuthnSigner) PublicKey() ssh.PublicKey { return s.Pub }
 
 // Sign requests human approval for signing data, then builds the SSH signature
-// from the browser's WebAuthn assertion.
+// from the browser's WebAuthn assertion. On an unpinned endpoint the same
+// approval pins the observed host key — persisted BEFORE the signature is
+// returned, so no authentication completes against a host no human vouched for.
 func (s *WebAuthnSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	ctx := s.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	actionCtx, provisional := withHostKeyContext(s.ActionCtx, s.HostState)
 	resp, err := s.Broker.RequestSign(ctx, s.AccountID, signing.SignRequest{
 		CredentialID:     s.CredentialID,
 		DataToSign:       data,
@@ -63,7 +77,7 @@ func (s *WebAuthnSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) 
 		UserVerification: s.UVPolicy,
 		PasskeyLabel:     s.PasskeyLabel,
 		ConnectionID:     s.ConnectionID,
-	}, s.ActionCtx, s.RedirectTo)
+	}, actionCtx, s.RedirectTo)
 	if err != nil {
 		// Any rejection — deny, TTL expiry, store destroy — is returned as-is.
 		// Connect offers one publickey method per key (auth.go), so x/crypto
@@ -72,5 +86,48 @@ func (s *WebAuthnSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) 
 		// A dead dial context stops the key iteration there.
 		return nil, err
 	}
+	if err := pinAfterApproval(ctx, s.HostKeys, s.HostState, s.EndpointID, provisional, s.CredentialID, resp.ActionID); err != nil {
+		return nil, err
+	}
 	return signing.BuildSSHSignature(resp)
+}
+
+// withHostKeyContext annotates an endpoint-auth action context with this
+// connection's host-key state; the returned observed key is non-nil when the
+// approval must also pin it ("new").
+func withHostKeyContext(actionCtx approval.Context, state *HostKeyState) (approval.Context, *ObservedHostKey) {
+	if state == nil {
+		return actionCtx, nil
+	}
+	st, observed, pinned := state.Snapshot()
+	if st == HostKeyUnseen {
+		return actionCtx, nil
+	}
+	status := string(HostKeyKnown)
+	var provisional *ObservedHostKey
+	if st == HostKeyNew && !pinned {
+		status = string(HostKeyNew)
+		o := observed
+		provisional = &o
+	}
+	actionCtx.HostKey = &approval.HostKeyInfo{Type: observed.Type, Fingerprint: observed.Fingerprint, Status: status}
+	return actionCtx, provisional
+}
+
+// pinAfterApproval persists a provisional host key the human just approved.
+// Compare-and-set: if a different pin landed first (two concurrent first
+// connections, one possibly an attacker), the approval fails and the
+// connection aborts rather than riding on someone else's trust decision.
+func pinAfterApproval(ctx context.Context, hostKeys HostKeys, state *HostKeyState, endpointID string, provisional *ObservedHostKey, pinnedBy, actionID string) error {
+	if provisional == nil {
+		return nil
+	}
+	if hostKeys == nil {
+		return errors.New("host key pin required but no pin store is wired")
+	}
+	if err := hostKeys.Pin(ctx, endpointID, *provisional, pinnedBy, actionID); err != nil {
+		return fmt.Errorf("host key pin failed: %w", err)
+	}
+	state.MarkPinned()
+	return nil
 }

@@ -71,10 +71,16 @@ func TestMigrateAdoptsNodeDatabase(t *testing.T) {
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate over Node DB: %v", err)
 	}
-	// Goose stamped, data usable, and re-running stays clean.
+	// Goose stamped the baseline (1), then ran the post-baseline migrations on
+	// the adopted store (host-key pinning is 2). Bump this alongside new
+	// migrations.
 	var v int
-	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 1 {
+	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 2 {
 		t.Fatalf("goose stamp: v=%d err=%v", v, err)
+	}
+	// The adopted Node store gained the host-key columns.
+	if _, err := db.Exec(`SELECT host_key_fingerprint FROM endpoints LIMIT 1`); err != nil {
+		t.Fatalf("host-key columns missing after adoption: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO accounts (id,name,max_sessions,created_at,updated_at) VALUES ('a','A',5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("adopted DB unusable: %v", err)

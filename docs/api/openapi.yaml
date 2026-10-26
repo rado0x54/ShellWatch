@@ -200,6 +200,26 @@ components:
       # non-optional and the manager sets it at create time.
       required: [sessionId, endpointId, accountId, status, createdAt, lastActivityAt, source]
 
+    EndpointHostKey:
+      type: object
+      nullable: true
+      description: >-
+        The endpoint's pinned SSH host key (#241). Pinned by the first approved
+        connection (combined approval dialog), a manual pin, config-file
+        provisioning, or the baked-in demo pin.
+      properties:
+        type:
+          type: string
+          description: SSH key type (e.g. ssh-ed25519); empty for fingerprint-only pins.
+        fingerprint: { type: string, description: "SHA256:... fingerprint" }
+        pinnedAt: { type: string, description: ISO-8601; empty for demo pins }
+        pinnedBy:
+          type: string
+          description: >-
+            Credential id of the approving passkey, "file-key:<label>" for a
+            key-approve pin, or "manual" / "config" / "demo".
+      required: [type, fingerprint, pinnedAt, pinnedBy]
+
     Endpoint:
       type: object
       description: Endpoint as listed by GET /api/endpoints.
@@ -215,11 +235,24 @@ components:
         agentForward: { type: boolean }
         description: { type: string, nullable: true }
         isDemo: { type: boolean }
+        hostKey: { $ref: "#/components/schemas/EndpointHostKey" }
       # userVerification/agentForward/description are always emitted: DB columns
       # are NOT NULL with defaults (user_verification='required', agent_forward=true),
       # and the demo-endpoint synthesizer sets all three (description may be null).
+      # hostKey is always emitted; null when no host key is pinned (#241).
       required:
-        [id, label, host, port, username, userVerification, agentForward, description, isDemo]
+        [
+          id,
+          label,
+          host,
+          port,
+          username,
+          userVerification,
+          agentForward,
+          description,
+          isDemo,
+          hostKey,
+        ]
 
     AuthSessionView:
       type: object
@@ -309,8 +342,18 @@ components:
       properties:
         id: { type: string }
         accountId: { type: string }
-        type: { type: string }
-        source: { type: string, enum: [endpoint-auth, agent-forwarding, agent-proxy] }
+        type:
+          type: string
+          description: >-
+            webauthn-sign | key-approve, plus the host-key event types (#241):
+            host-key-mismatch (a connection aborted before authentication
+            because the presented key differed from the pin; outcome is
+            "denied") and host-key-cleared (a pin removed — host/port change
+            or a human forgetting the key; outcome stays null).
+        source:
+          type: string
+          enum: [endpoint-auth, agent-forwarding, agent-proxy, endpoint-admin]
+          description: endpoint-admin is used by host-key-cleared rows (#241).
         createdAt: { type: string, format: date-time }
         resolvedAt: { type: string, format: date-time, nullable: true }
         outcome:
@@ -334,6 +377,25 @@ components:
         keyLabel: { type: string, nullable: true }
         keyFingerprint: { type: string, nullable: true }
         cancelReason: { type: string, nullable: true }
+        # Host-key pinning (#241):
+        endpointId:
+          type: string
+          nullable: true
+          description: Set on host-key event rows (mismatch / cleared).
+        hostKeyFingerprint:
+          type: string
+          nullable: true
+          description: >-
+            The observed host key for sign rows and mismatch rows; the cleared
+            pin for host-key-cleared rows.
+        hostKeyPriorFingerprint:
+          type: string
+          nullable: true
+          description: The pinned fingerprint a mismatch was checked against.
+        hostKeyPinned:
+          type: boolean
+          nullable: true
+          description: True when this approval pinned the endpoint's host key.
 
     ProtectedResourceMetadata:
       type: object
@@ -984,6 +1046,10 @@ paths:
       operationId: updateEndpoint
       tags: [endpoints]
       summary: Update endpoint (demo ids rejected)
+      description: >-
+        Changing host or port clears the pinned host key (#241) and writes a
+        host-key-cleared audit row — the next connection re-prompts the human
+        for the new address's key.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1032,6 +1098,74 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /api/endpoints/{id}/host-key:
+    put:
+      operationId: pinEndpointHostKey
+      tags: [endpoints]
+      summary: Manually pin the endpoint's SSH host key (step-up gated, #241)
+      description: >-
+        Pins a host key before the first connection, from an OpenSSH public-key
+        line (preferred — enables host-key-algorithm pinning) or a bare
+        "SHA256:..." fingerprint (exactly one of the two). Compare-and-set: an
+        existing pin is never overwritten — delete it first ("replace" =
+        delete + pin). Recorded with pinnedBy "manual".
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                publicKey:
+                  type: string
+                  description: OpenSSH public-key line ("ssh-ed25519 AAAA... [comment]")
+                fingerprint:
+                  type: string
+                  description: '"SHA256:..." fingerprint (fingerprint-only pin)'
+      responses:
+        "200":
+          description: Pinned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusUpdated" }
+        "400":
+          description: Invalid body, unknown endpoint, or demo endpoint (read-only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
+        "409":
+          description: A host key is already pinned (delete it first)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deleteEndpointHostKey
+      tags: [endpoints]
+      summary: Forget the endpoint's pinned SSH host key (step-up gated, #241)
+      description: >-
+        The recovery path after a host-key mismatch: the next connection goes
+        through the first-connection approval again. Writes a
+        host-key-cleared audit row. Idempotent — deleting an absent pin is 200.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/StepUpTokenHeader" }
+      responses:
+        "200":
+          description: Forgotten (or no pin existed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusDeleted" }
+        "400":
+          description: Unknown endpoint, or demo endpoint (read-only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/StepUpRequired" }
 
   # -------------------------------------------------------------- sessions
   /api/sessions:
@@ -1238,7 +1372,11 @@ paths:
         - {
             name: source,
             in: query,
-            schema: { type: string, enum: [endpoint-auth, agent-forwarding, agent-proxy] },
+            schema:
+              {
+                type: string,
+                enum: [endpoint-auth, agent-forwarding, agent-proxy, endpoint-admin],
+              },
           }
         - {
             name: outcome,
@@ -1619,6 +1757,8 @@ paths:
                       confirm_passkey,
                       revoke_session,
                       revoke_all_sessions,
+                      reset_host_key,
+                      pin_host_key,
                     ]
               required: [action]
       responses:
@@ -1657,6 +1797,8 @@ paths:
                       confirm_passkey,
                       revoke_session,
                       revoke_all_sessions,
+                      reset_host_key,
+                      pin_host_key,
                     ]
               required: [challengeId, credential, action]
       responses:

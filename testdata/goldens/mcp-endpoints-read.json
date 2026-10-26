@@ -10,6 +10,7 @@
     "username": "testuser",
     "userVerification": "required",
     "agentForward": true,
-    "description": null
+    "description": null,
+    "hostKey": null
   }
 }
