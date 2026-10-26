@@ -243,9 +243,14 @@ export interface AuthorizeParams {
   jar?: CookieJar;
 }
 
-export async function authorizationCode(
-  p: AuthorizeParams,
-): Promise<{ code: string; verifier: string; jar: CookieJar; trace: FlowTrace }> {
+export async function authorizationCode(p: AuthorizeParams): Promise<{
+  code: string;
+  verifier: string;
+  jar: CookieJar;
+  trace: FlowTrace;
+  /** RFC 9207 `iss` on the authorization response, if Hydra emitted one. */
+  issParam: string | null;
+}> {
   const jar = p.jar ?? new CookieJar();
   const { verifier, challenge } = pkcePair();
   const state = randomBytes(12).toString("base64url");
@@ -272,7 +277,7 @@ export async function authorizationCode(
   if (cb.searchParams.get("state") !== state) throw new Error("state mismatch on callback");
   const code = cb.searchParams.get("code");
   if (!code) throw new Error(`callback without code: ${finalUrl}`);
-  return { code, verifier, jar, trace };
+  return { code, verifier, jar, trace, issParam: cb.searchParams.get("iss") };
 }
 
 async function tokenRequest(form: Record<string, string>): Promise<TokenResponse> {
@@ -417,6 +422,7 @@ export async function loginThirdPartyClient(p: {
   redirectUri: string;
   trace: FlowTrace;
   jar: CookieJar;
+  issParam: string | null;
 }> {
   const redirectUri =
     p.redirectUri ?? `http://127.0.0.1:${40000 + Math.floor(Math.random() * 20000)}/callback`;
@@ -435,7 +441,14 @@ export async function loginThirdPartyClient(p: {
     verifier: auth.verifier,
     redirectUri,
   });
-  return { tokens, clientId: dcr.client_id, redirectUri, trace: auth.trace, jar: auth.jar };
+  return {
+    tokens,
+    clientId: dcr.client_id,
+    redirectUri,
+    trace: auth.trace,
+    jar: auth.jar,
+    issParam: auth.issParam,
+  };
 }
 
 /** Mint a step-up token (sensitive actions) with the fake authenticator. */
