@@ -99,11 +99,13 @@ func (q *Queries) GetEndpointForAccount(ctx context.Context, arg GetEndpointForA
 }
 
 const getEndpointHostKey = `-- name: GetEndpointHostKey :one
-SELECT host_key_type, host_key, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
+SELECT host, port, host_key_type, host_key, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
 FROM endpoints WHERE id = ?
 `
 
 type GetEndpointHostKeyRow struct {
+	Host               string
+	Port               int64
 	HostKeyType        sql.NullString
 	HostKey            []byte
 	HostKeyFingerprint sql.NullString
@@ -112,11 +114,14 @@ type GetEndpointHostKeyRow struct {
 }
 
 // Connection-time pin lookup (#241). By id only: the endpoint was already
-// resolved account-scoped before any dial.
+// resolved account-scoped before any dial. host/port let PinHostKey tell a
+// lost CAS apart from an address change.
 func (q *Queries) GetEndpointHostKey(ctx context.Context, id string) (GetEndpointHostKeyRow, error) {
 	row := q.db.QueryRowContext(ctx, getEndpointHostKey, id)
 	var i GetEndpointHostKeyRow
 	err := row.Scan(
+		&i.Host,
+		&i.Port,
 		&i.HostKeyType,
 		&i.HostKey,
 		&i.HostKeyFingerprint,
@@ -291,7 +296,7 @@ func (q *Queries) ListEndpointsForAccount(ctx context.Context, accountID string)
 const pinEndpointHostKey = `-- name: PinEndpointHostKey :execrows
 UPDATE endpoints SET host_key_type = ?, host_key = ?, host_key_fingerprint = ?,
   host_key_pinned_at = ?, host_key_pinned_by = ?, updated_at = ?
-WHERE id = ? AND host_key_fingerprint IS NULL
+WHERE id = ? AND host_key_fingerprint IS NULL AND host = ? AND port = ?
 `
 
 type PinEndpointHostKeyParams struct {
@@ -302,10 +307,15 @@ type PinEndpointHostKeyParams struct {
 	HostKeyPinnedBy    sql.NullString
 	UpdatedAt          string
 	ID                 string
+	Host               string
+	Port               int64
 }
 
-// Compare-and-set (#241): writes only when no pin exists. 0 rows means a pin
-// landed first - the caller compares it against the observed key.
+// Compare-and-set (#241): writes only when no pin exists AND the endpoint
+// still points at the address the key was observed at - an approval that
+// waited while the endpoint moved to a new host/port must not vouch for it.
+// 0 rows means a pin landed first or the address changed; the caller
+// disambiguates via GetEndpointHostKey.
 func (q *Queries) PinEndpointHostKey(ctx context.Context, arg PinEndpointHostKeyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, pinEndpointHostKey,
 		arg.HostKeyType,
@@ -315,6 +325,8 @@ func (q *Queries) PinEndpointHostKey(ctx context.Context, arg PinEndpointHostKey
 		arg.HostKeyPinnedBy,
 		arg.UpdatedAt,
 		arg.ID,
+		arg.Host,
+		arg.Port,
 	)
 	if err != nil {
 		return 0, err

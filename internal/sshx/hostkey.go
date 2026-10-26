@@ -36,18 +36,33 @@ type PinnedHostKey struct {
 	Fingerprint string
 }
 
+// PinRequest is one approval-driven pin write. Host/Port are the address the
+// observing connection dialed: the store must refuse the write when the
+// endpoint's address changed while the approval was pending — a key observed
+// at the old address must never become the new address's pin. PinnedBy names
+// who approved (credential id, "file-key:<label>", "manual", "config",
+// "demo"); ActionID names the approval action for the audit trail ("" when
+// none).
+type PinRequest struct {
+	EndpointID string
+	Host       string
+	Port       int64
+	Observed   ObservedHostKey
+	PinnedBy   string
+	ActionID   string
+}
+
 // HostKeys is the pin store sshx depends on (implemented over the endpoints
 // table + the in-memory demo pins). A nil HostKeys on ConnectParams is a
 // programming error, never an open-door fallback.
 type HostKeys interface {
 	// Lookup returns the pin for an endpoint id (nil when unpinned).
 	Lookup(ctx context.Context, endpointID string) (*PinnedHostKey, error)
-	// Pin persists observed as the endpoint's pin, compare-and-set: it must
-	// never overwrite a different existing pin (return an error instead — the
-	// connection then aborts). pinnedBy names who approved (credential id,
-	// "manual", "config", "demo"); actionID names the approval action for the
-	// audit trail ("" when none).
-	Pin(ctx context.Context, endpointID string, observed ObservedHostKey, pinnedBy, actionID string) error
+	// Pin persists req.Observed as the endpoint's pin, compare-and-set: it
+	// must never overwrite a different existing pin, and never pin onto an
+	// endpoint whose address no longer matches req.Host/req.Port (return an
+	// error instead — the connection then aborts).
+	Pin(ctx context.Context, req PinRequest) error
 }
 
 // HostKeyStatus is the per-connection pin state the approval UI renders.
@@ -70,12 +85,29 @@ type HostKeyState struct {
 	status   HostKeyStatus
 	observed ObservedHostKey
 	pinned   bool
+	dialHost string
+	dialPort int64
 }
 
 func (s *HostKeyState) observe(status HostKeyStatus, key ObservedHostKey) {
 	s.mu.Lock()
 	s.status, s.observed = status, key
 	s.mu.Unlock()
+}
+
+// setDialAddress records the host/port this connection dials; the
+// approval-driven pin write is bound to it (the store refuses a pin for an
+// endpoint that moved to a different address while the approval was pending).
+func (s *HostKeyState) setDialAddress(host string, port int64) {
+	s.mu.Lock()
+	s.dialHost, s.dialPort = host, port
+	s.mu.Unlock()
+}
+
+func (s *HostKeyState) dialAddress() (string, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dialHost, s.dialPort
 }
 
 // MarkPinned records that an approval pinned this connection's provisional
@@ -156,6 +188,22 @@ func hostKeyCallback(endpointID string, pin *PinnedHostKey, state *HostKeyState)
 			Type:        key.Type(),
 			Key:         key.Marshal(),
 			Fingerprint: ssh.FingerprintSHA256(key),
+		}
+		// Rekeying runs this callback again on the same connection, and pin is
+		// the lookup from before the dial — stale by then. After the first
+		// exchange the connection's own observed key is the reference: any
+		// mid-connection change aborts, in particular on a first connection
+		// whose provisional key an approval pinned in the meantime.
+		if st, prev, _ := state.Snapshot(); st != HostKeyUnseen {
+			if !bytes.Equal(prev.Key, observed.Key) {
+				return &HostKeyMismatchError{
+					EndpointID:          endpointID,
+					ObservedKeyType:     observed.Type,
+					ObservedFingerprint: observed.Fingerprint,
+					PinnedFingerprint:   prev.Fingerprint,
+				}
+			}
+			return nil
 		}
 		if pin == nil {
 			state.observe(HostKeyNew, observed)

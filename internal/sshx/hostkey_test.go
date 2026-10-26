@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -108,6 +109,10 @@ func TestFirstConnectionPinsOnApproval(t *testing.T) {
 	}
 	if hostKeys.byWhom["e1"] != "file-key:test key" {
 		t.Errorf("pinnedBy = %q", hostKeys.byWhom["e1"])
+	}
+	// The pin write is bound to the address the connection dialed (#241 P2).
+	if want := net.JoinHostPort(host, strconv.Itoa(port)); hostKeys.byAddr["e1"] != want {
+		t.Errorf("pin address binding = %q, want %q", hostKeys.byAddr["e1"], want)
 	}
 	ctxs := broker.actionContexts()
 	if len(ctxs) != 1 || ctxs[0].HostKey == nil || ctxs[0].HostKey.Status != "new" ||

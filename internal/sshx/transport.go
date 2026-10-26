@@ -128,6 +128,10 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	if state == nil {
 		state = &HostKeyState{}
 	}
+	// Bind this connection's pin decision to the address it actually dials:
+	// an approval that outlives an endpoint host/port update must not pin the
+	// observed key onto the new address.
+	state.setDialAddress(p.Host, int64(p.Port))
 	pin, err := p.HostKeys.Lookup(ctx, p.EndpointID)
 	if err != nil {
 		return nil, fmt.Errorf("host key lookup for endpoint %s failed: %w", p.EndpointID, err)

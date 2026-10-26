@@ -275,7 +275,11 @@ func (e *Endpoints) pinHostKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "Endpoint not found")
 		return
 	}
-	if err := e.Svc.Endpoints.PinHostKey(r.Context(), id, rec, "manual"); err != nil {
+	// Bind the write to the address just read: a concurrent host/port update
+	// fails the CAS instead of landing the key on the new address.
+	if err := e.Svc.Endpoints.PinHostKey(r.Context(), store.PinHostKeyParams{
+		ID: id, Host: existing.Host, Port: existing.Port, Record: rec, PinnedBy: "manual",
+	}); err != nil {
 		if errors.Is(err, store.ErrHostKeyPinned) {
 			writeErr(w, 409, "A host key is already pinned for this endpoint — delete it first")
 			return

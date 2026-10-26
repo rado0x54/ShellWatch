@@ -31,6 +31,12 @@ type HostKeyRecord struct {
 // pinned (the compare-and-set lost against a conflicting pin).
 var ErrHostKeyPinned = errors.New("a different host key is already pinned for this endpoint")
 
+// ErrEndpointAddressChanged is returned by PinHostKey when the endpoint no
+// longer points at the host/port the key was observed at (#241): an approval
+// that waited while the endpoint moved must never pin the old host's key onto
+// the new address.
+var ErrEndpointAddressChanged = errors.New("the endpoint's address changed while the approval was pending; the observed host key was not pinned")
+
 // Endpoint is the wire/domain shape of an SSH endpoint.
 type Endpoint struct {
 	ID               string
@@ -154,20 +160,35 @@ func (e *Endpoints) GetHostKey(ctx context.Context, id string) (*HostKeyRecord, 
 	return &HostKeyRecord{Type: r.HostKeyType.String, Key: r.HostKey, Fingerprint: r.HostKeyFingerprint.String}, nil
 }
 
+// PinHostKeyParams is one host-key pin write (#241). Host/Port are the
+// address the key was observed at: the CAS refuses the write when the
+// endpoint has moved to a different address since.
+type PinHostKeyParams struct {
+	ID       string
+	Host     string
+	Port     int64
+	Record   HostKeyRecord
+	PinnedBy string
+}
+
 // PinHostKey compare-and-sets the endpoint's host key (#241): the write lands
-// only when no pin exists. When a pin already exists it must equal the
-// observed fingerprint (idempotent re-pin, e.g. two concurrent first
-// connections to the same honest host) — otherwise ErrHostKeyPinned.
-func (e *Endpoints) PinHostKey(ctx context.Context, id string, rec HostKeyRecord, pinnedBy string) error {
+// only when no pin exists and the endpoint still points at p.Host/p.Port.
+// When a pin already exists it must equal the observed fingerprint
+// (idempotent re-pin, e.g. two concurrent first connections to the same
+// honest host) — otherwise ErrHostKeyPinned. A changed address returns
+// ErrEndpointAddressChanged.
+func (e *Endpoints) PinHostKey(ctx context.Context, p PinHostKeyParams) error {
 	q := gen.New(e.db)
 	n, err := q.PinEndpointHostKey(ctx, gen.PinEndpointHostKeyParams{
-		HostKeyType:        nz(rec.Type),
-		HostKey:            rec.Key,
-		HostKeyFingerprint: sql.NullString{String: rec.Fingerprint, Valid: true},
+		HostKeyType:        nz(p.Record.Type),
+		HostKey:            p.Record.Key,
+		HostKeyFingerprint: sql.NullString{String: p.Record.Fingerprint, Valid: true},
 		HostKeyPinnedAt:    sql.NullString{String: e.clk.Now().UTC().Format(isoMillis), Valid: true},
-		HostKeyPinnedBy:    nz(pinnedBy),
+		HostKeyPinnedBy:    nz(p.PinnedBy),
 		UpdatedAt:          e.clk.Now().UTC().Format(isoMillis),
-		ID:                 id,
+		ID:                 p.ID,
+		Host:               p.Host,
+		Port:               p.Port,
 	})
 	if err != nil {
 		return err
@@ -175,14 +196,17 @@ func (e *Endpoints) PinHostKey(ctx context.Context, id string, rec HostKeyRecord
 	if n > 0 {
 		return nil
 	}
-	existing, err := q.GetEndpointHostKey(ctx, id)
+	existing, err := q.GetEndpointHostKey(ctx, p.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("endpoint not found")
 	}
 	if err != nil {
 		return err
 	}
-	if existing.HostKeyFingerprint.Valid && existing.HostKeyFingerprint.String == rec.Fingerprint {
+	if existing.Host != p.Host || existing.Port != p.Port {
+		return ErrEndpointAddressChanged
+	}
+	if existing.HostKeyFingerprint.Valid && existing.HostKeyFingerprint.String == p.Record.Fingerprint {
 		return nil // the same key won the race — nothing to do
 	}
 	return ErrHostKeyPinned

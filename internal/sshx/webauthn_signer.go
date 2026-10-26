@@ -125,7 +125,11 @@ func pinAfterApproval(ctx context.Context, hostKeys HostKeys, state *HostKeyStat
 	if hostKeys == nil {
 		return errors.New("host key pin required but no pin store is wired")
 	}
-	if err := hostKeys.Pin(ctx, endpointID, *provisional, pinnedBy, actionID); err != nil {
+	host, port := state.dialAddress()
+	if err := hostKeys.Pin(ctx, PinRequest{
+		EndpointID: endpointID, Host: host, Port: port,
+		Observed: *provisional, PinnedBy: pinnedBy, ActionID: actionID,
+	}); err != nil {
 		return fmt.Errorf("host key pin failed: %w", err)
 	}
 	state.MarkPinned()

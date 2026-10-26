@@ -40,16 +40,17 @@ func TestPinHostKeyCAS(t *testing.T) {
 	ctx := context.Background()
 	rec := HostKeyRecord{Type: "ssh-ed25519", Key: []byte{1, 2, 3}, Fingerprint: "SHA256:aaa"}
 
-	if err := eps.PinHostKey(ctx, "e1", rec, "cred-1"); err != nil {
+	if err := eps.PinHostKey(ctx, PinHostKeyParams{ID: "e1", Host: "h.example", Port: 22, Record: rec, PinnedBy: "cred-1"}); err != nil {
 		t.Fatalf("first pin: %v", err)
 	}
 	// Idempotent re-pin of the same fingerprint (two first connections to the
 	// same honest host).
-	if err := eps.PinHostKey(ctx, "e1", rec, "cred-2"); err != nil {
+	if err := eps.PinHostKey(ctx, PinHostKeyParams{ID: "e1", Host: "h.example", Port: 22, Record: rec, PinnedBy: "cred-2"}); err != nil {
 		t.Fatalf("same-key re-pin must be a no-op: %v", err)
 	}
 	// A different key loses the CAS.
-	err := eps.PinHostKey(ctx, "e1", HostKeyRecord{Type: "ssh-ed25519", Key: []byte{9}, Fingerprint: "SHA256:bbb"}, "cred-3")
+	err := eps.PinHostKey(ctx, PinHostKeyParams{ID: "e1", Host: "h.example", Port: 22,
+		Record: HostKeyRecord{Type: "ssh-ed25519", Key: []byte{9}, Fingerprint: "SHA256:bbb"}, PinnedBy: "cred-3"})
 	if !errors.Is(err, ErrHostKeyPinned) {
 		t.Fatalf("conflicting pin: %v", err)
 	}
@@ -79,7 +80,8 @@ func TestUpdateClearsPinOnAddressChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			eps := hostKeyTestDB(t)
-			if err := eps.PinHostKey(ctx, "e1", HostKeyRecord{Type: "ssh-ed25519", Key: []byte{1}, Fingerprint: "SHA256:aaa"}, "cred-1"); err != nil {
+			if err := eps.PinHostKey(ctx, PinHostKeyParams{ID: "e1", Host: "h.example", Port: 22,
+				Record: HostKeyRecord{Type: "ssh-ed25519", Key: []byte{1}, Fingerprint: "SHA256:aaa"}, PinnedBy: "cred-1"}); err != nil {
 				t.Fatal(err)
 			}
 			ep, _ := eps.GetForAccount(ctx, "e1", "acc")
@@ -107,7 +109,8 @@ func TestClearHostKeyAndAddressLookup(t *testing.T) {
 	if cleared, err := eps.ClearHostKey(ctx, "e1", "acc"); cleared || err != nil {
 		t.Fatalf("clear without pin: %v %v", cleared, err)
 	}
-	if err := eps.PinHostKey(ctx, "e1", HostKeyRecord{Fingerprint: "SHA256:aaa"}, "manual"); err != nil {
+	if err := eps.PinHostKey(ctx, PinHostKeyParams{ID: "e1", Host: "h.example", Port: 22,
+		Record: HostKeyRecord{Fingerprint: "SHA256:aaa"}, PinnedBy: "manual"}); err != nil {
 		t.Fatal(err)
 	}
 	// Foreign account cannot clear.

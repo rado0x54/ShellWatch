@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -47,10 +48,11 @@ type memHostKeys struct {
 	mu     sync.Mutex
 	pins   map[string]PinnedHostKey
 	byWhom map[string]string // endpointID -> pinnedBy
+	byAddr map[string]string // endpointID -> "host:port" the pin was bound to
 }
 
 func newMemHostKeys() *memHostKeys {
-	return &memHostKeys{pins: map[string]PinnedHostKey{}, byWhom: map[string]string{}}
+	return &memHostKeys{pins: map[string]PinnedHostKey{}, byWhom: map[string]string{}, byAddr: map[string]string{}}
 }
 
 func (m *memHostKeys) Lookup(_ context.Context, endpointID string) (*PinnedHostKey, error) {
@@ -63,18 +65,20 @@ func (m *memHostKeys) Lookup(_ context.Context, endpointID string) (*PinnedHostK
 	return nil, nil
 }
 
-func (m *memHostKeys) Pin(_ context.Context, endpointID string, o ObservedHostKey, pinnedBy, _ string) error {
+func (m *memHostKeys) Pin(_ context.Context, req PinRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if existing, ok := m.pins[endpointID]; ok {
+	o := req.Observed
+	if existing, ok := m.pins[req.EndpointID]; ok {
 		if existing.Fingerprint == o.Fingerprint {
 			return nil
 		}
-		return &HostKeyMismatchError{EndpointID: endpointID, ObservedKeyType: o.Type,
+		return &HostKeyMismatchError{EndpointID: req.EndpointID, ObservedKeyType: o.Type,
 			ObservedFingerprint: o.Fingerprint, PinnedFingerprint: existing.Fingerprint}
 	}
-	m.pins[endpointID] = PinnedHostKey{Type: o.Type, Key: o.Key, Fingerprint: o.Fingerprint}
-	m.byWhom[endpointID] = pinnedBy
+	m.pins[req.EndpointID] = PinnedHostKey{Type: o.Type, Key: o.Key, Fingerprint: o.Fingerprint}
+	m.byWhom[req.EndpointID] = req.PinnedBy
+	m.byAddr[req.EndpointID] = net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))
 	return nil
 }
 

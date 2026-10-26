@@ -47,16 +47,20 @@ WHERE id = sqlc.arg(id) AND account_id = sqlc.arg(account_id);
 
 -- name: GetEndpointHostKey :one
 -- Connection-time pin lookup (#241). By id only: the endpoint was already
--- resolved account-scoped before any dial.
-SELECT host_key_type, host_key, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
+-- resolved account-scoped before any dial. host/port let PinHostKey tell a
+-- lost CAS apart from an address change.
+SELECT host, port, host_key_type, host_key, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
 FROM endpoints WHERE id = ?;
 
 -- name: PinEndpointHostKey :execrows
--- Compare-and-set (#241): writes only when no pin exists. 0 rows means a pin
--- landed first - the caller compares it against the observed key.
+-- Compare-and-set (#241): writes only when no pin exists AND the endpoint
+-- still points at the address the key was observed at - an approval that
+-- waited while the endpoint moved to a new host/port must not vouch for it.
+-- 0 rows means a pin landed first or the address changed; the caller
+-- disambiguates via GetEndpointHostKey.
 UPDATE endpoints SET host_key_type = ?, host_key = ?, host_key_fingerprint = ?,
   host_key_pinned_at = ?, host_key_pinned_by = ?, updated_at = ?
-WHERE id = ? AND host_key_fingerprint IS NULL;
+WHERE id = ? AND host_key_fingerprint IS NULL AND host = ? AND port = ?;
 
 -- name: ClearEndpointHostKey :execrows
 UPDATE endpoints SET host_key_type = NULL, host_key = NULL, host_key_fingerprint = NULL,

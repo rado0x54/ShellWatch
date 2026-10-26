@@ -158,9 +158,11 @@ func ApplyHostKeyPins(ctx context.Context, endpoints *store.Endpoints, db *sql.D
 					"endpoint", row.ID, "pinned", row.PinnedFingerprint, "config", hk.Fingerprint)
 				continue
 			}
-			if err := endpoints.PinHostKey(ctx, row.ID, store.HostKeyRecord{
-				Type: hk.Type, Key: hk.Key, Fingerprint: hk.Fingerprint,
-			}, "config"); err != nil {
+			if err := endpoints.PinHostKey(ctx, store.PinHostKeyParams{
+				ID: row.ID, Host: ep.Parsed.Host, Port: int64(ep.Parsed.Port),
+				Record:   store.HostKeyRecord{Type: hk.Type, Key: hk.Key, Fingerprint: hk.Fingerprint},
+				PinnedBy: "config",
+			}); err != nil {
 				slog.Warn("seed: config hostKey pin failed", "endpoint", row.ID, "err", err)
 				continue
 			}

@@ -44,26 +44,32 @@ func (s *Service) Lookup(ctx context.Context, endpointID string) (*sshx.PinnedHo
 	return &sshx.PinnedHostKey{Type: rec.Type, Key: rec.Key, Fingerprint: rec.Fingerprint}, nil
 }
 
-// Pin compare-and-set-persists an observed key as the endpoint's pin.
-func (s *Service) Pin(ctx context.Context, endpointID string, observed sshx.ObservedHostKey, pinnedBy, actionID string) error {
-	if demo.IsID(endpointID) {
+// Pin compare-and-set-persists an observed key as the endpoint's pin, bound
+// to the address the observing connection dialed (req.Host/req.Port).
+func (s *Service) Pin(ctx context.Context, req sshx.PinRequest) error {
+	if demo.IsID(req.EndpointID) {
 		if s.Demo == nil {
-			return fmt.Errorf("unknown demo endpoint %s", endpointID)
+			return fmt.Errorf("unknown demo endpoint %s", req.EndpointID)
 		}
-		if err := s.Demo.PinHostKey(endpointID, demo.HostKey{
-			Type: observed.Type, Key: observed.Key, Fingerprint: observed.Fingerprint, PinnedBy: pinnedBy,
+		// Demo ids are derived from the address tuple (demo.stableID), so the
+		// pin is address-bound by construction: a different address is a
+		// different demo endpoint id.
+		if err := s.Demo.PinHostKey(req.EndpointID, demo.HostKey{
+			Type: req.Observed.Type, Key: req.Observed.Key, Fingerprint: req.Observed.Fingerprint, PinnedBy: req.PinnedBy,
 		}); err != nil {
 			return err
 		}
 	} else {
-		if err := s.Endpoints.PinHostKey(ctx, endpointID, store.HostKeyRecord{
-			Type: observed.Type, Key: observed.Key, Fingerprint: observed.Fingerprint,
-		}, pinnedBy); err != nil {
+		if err := s.Endpoints.PinHostKey(ctx, store.PinHostKeyParams{
+			ID: req.EndpointID, Host: req.Host, Port: req.Port,
+			Record:   store.HostKeyRecord{Type: req.Observed.Type, Key: req.Observed.Key, Fingerprint: req.Observed.Fingerprint},
+			PinnedBy: req.PinnedBy,
+		}); err != nil {
 			return err
 		}
 	}
 	if s.OnPinned != nil {
-		s.OnPinned(actionID)
+		s.OnPinned(req.ActionID)
 	}
 	return nil
 }
