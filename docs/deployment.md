@@ -253,6 +253,8 @@ docker run -d \
 | `SHELLWATCH_LOG_LEVEL`  | `info`                        | `debug` / `info` / `warn` / `error`         |
 | `SHELLWATCH_LOG_FORMAT` | `text`                        | `text` or `json`                            |
 | `SHELLWATCH_LOG_FILE`   | —                             | Also append logs to this file               |
+| `SSL_CERT_FILE`         | —                             | Override the CA trust store — see below     |
+| `SSL_CERT_DIR`          | —                             | Override the CA trust directory — see below |
 
 ### Image
 
@@ -260,6 +262,86 @@ The image is a distroless (no shell) base carrying one statically linked Go
 binary with the web UI embedded; `HEALTHCHECK` runs `shellwatch -healthcheck`,
 which probes `/health` on the configured port. There is nothing to `exec`
 into — use `docker logs` and the audit log.
+
+### CA trust store (and how to override it)
+
+**Normally there is nothing to do here.** The distroless base ships Debian's
+`ca-certificates` at `/etc/ssl/certs/ca-certificates.crt`, which is the first
+path Go's `x509.SystemCertPool()` reads on Linux, so public TLS verification
+works out of the box. Two things depend on it:
+
+- **Web Push** — notifications are delivered to the browser vendor's push
+  service over HTTPS (this has always been the case).
+- **CIMD document fetches** — resolving a URL `client_id` means fetching it
+  (see the CIMD notes under [Ory Hydra](#ory-hydra-oauth-authority)).
+
+The bundle tracks Debian stable, so it lags upstream Mozilla by weeks to months
+and is refreshed whenever the image is rebuilt against a newer base. The two
+ways that can bite are not equally bad: a **missing** new root fails _closed_
+(the fetch is refused, nothing is written), whereas a root that upstream has
+**distrusted** but Debian has not yet dropped keeps being accepted. The second
+is the one worth reacting to — hence this section.
+
+#### Break-glass override
+
+Point `SSL_CERT_FILE` at a bundle you control. Build it from the roots the image
+already has, so you keep public verification working:
+
+```bash
+# 1. Extract the roots the running image ships.
+cid=$(docker create ghcr.io/rado0x54/shellwatch:latest)
+docker cp "$cid":/etc/ssl/certs/ca-certificates.crt ./ca-roots.pem
+docker rm "$cid"
+
+# 2. Edit: append a CA you need, or delete the PEM block you no longer trust.
+cat ./ca-roots.pem ./my-extra-ca.pem > ./ca-bundle.pem
+
+# 3. Mount it read-only and point Go at it.
+docker run \
+  -v "$PWD/ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro" \
+  -e SSL_CERT_FILE=/etc/ssl/ca-bundle.pem \
+  ghcr.io/rado0x54/shellwatch:latest
+```
+
+```yaml
+services:
+  shellwatch:
+    volumes:
+      - ./ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro
+    environment:
+      - HOST=0.0.0.0
+      - SSL_CERT_FILE=/etc/ssl/ca-bundle.pem
+```
+
+Mounting over the image's own path works equally well and needs no env var —
+but mount the **file**, never the directory:
+
+```yaml
+- ./ca-bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro
+```
+
+Things that will catch you out:
+
+- **It replaces the trust store, it never appends to it.** A bundle containing
+  only your private CA makes every public host untrusted; a bundle containing
+  only the public roots will not trust your private CA. The file has to be
+  complete — which is why step 1 starts from the image's own roots.
+- **It applies to every outbound TLS connection**, so an incomplete bundle
+  breaks Web Push as well as CIMD. There is no CIMD-only trust store.
+- **Mount the file, not `/etc/ssl/certs/`.** On a Debian host that directory is
+  mostly symlinks into `/usr/share/ca-certificates/`; bind-mounting it into the
+  container yields dangling links and a _smaller_ trust store than you started
+  with. Host paths also differ by distro (`/etc/pki/tls/certs/ca-bundle.crt` on
+  RHEL), and on Docker Desktop the "host" is the Linux VM with its own minimal
+  store — so mounting host certs is a Linux-server technique, not a laptop one.
+- **Keep it world-readable.** The container runs as UID `1000`; `0644` is right.
+- `SSL_CERT_DIR` is honoured too (a directory of hash-named certs), but a single
+  bundle file is almost always what you want.
+
+To confirm it took effect, attempt an authorization from a CIMD client: a trust
+failure is recorded as a `rejected` row under **Audit → OAuth Clients** with the
+reason, and nothing is written to Hydra. To revert, drop the env var and the
+mount and restart — nothing is persisted.
 
 ### Running as non-root
 
