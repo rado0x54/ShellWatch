@@ -11,6 +11,26 @@ import (
 	"strings"
 )
 
+// clientIdentity is what the consent page shows about a client whose
+// client_id is a URL (CIMD). The hostname leads: it is the only part of a URL
+// client_id an attacker cannot choose freely
+// (draft-ietf-oauth-client-id-metadata-document-02 §9.1), whereas client_name
+// is a self-assigned claim, so the page presents it as a claim.
+//
+// No logo is ever rendered. §9.3 wants a logo_uri prefetched, cached and
+// moderated before display; ShellWatch does none of that, so it does not carry
+// logo_uri into Hydra at all and shows no image here.
+type clientIdentity struct {
+	// Host is the client_id URL's hostname.
+	Host string
+	// ClientURIHost is client_uri's host, shown only when it differs from Host
+	// (a mismatch is worth seeing).
+	ClientURIHost string
+	// Recent marks a client registered or materially changed within the last
+	// hour — the signal that this is new or just moved.
+	Recent bool
+}
+
 // ceremonyParams configure the passkey ceremony page.
 type ceremonyParams struct {
 	Title       string
@@ -23,6 +43,8 @@ type ceremonyParams struct {
 	ButtonLabel string
 	ShowButton  bool
 	RegisterURL string
+	// Identity is set for a URL client_id; nil for the SPA and DCR clients.
+	Identity *clientIdentity
 }
 
 func esc(s string) string { return html.EscapeString(s) }
@@ -50,7 +72,7 @@ func renderPasskeyPage(p ceremonyParams) string {
 	if p.RegisterURL != "" {
 		registerLink = `<p class="register-link"><a href="` + esc(p.RegisterURL) + `">Create new account</a></p>`
 	}
-	inner := consentBody(p.Description, p.ClientName, p.Scopes) + "\n" + button + registerLink +
+	inner := consentBody(p.Description, p.ClientName, p.Scopes, p.Identity) + "\n" + button + registerLink +
 		"\n" + `<div class="muted">Passkey-only authentication</div>`
 	return page(p.Title, inner, script)
 }
@@ -63,6 +85,7 @@ type approveParams struct {
 	ClientName  string
 	Scopes      []string
 	ButtonLabel string
+	Identity    *clientIdentity
 }
 
 func renderApprovePage(p approveParams) string {
@@ -70,7 +93,7 @@ func renderApprovePage(p approveParams) string {
 	if label == "" {
 		label = "Approve"
 	}
-	inner := consentBody("", p.ClientName, p.Scopes) + "\n" +
+	inner := consentBody("", p.ClientName, p.Scopes, p.Identity) + "\n" +
 		`<button id="go">` + esc(label) + `</button>
 <div id="status" class="status"></div>
 <div class="muted">You're signed in — approve to continue.</div>`
@@ -106,12 +129,33 @@ func page(title, inner, script string) string {
 </body></html>`
 }
 
-func consentBody(description, clientName string, scopes []string) string {
+func consentBody(description, clientName string, scopes []string, identity *clientIdentity) string {
 	var b strings.Builder
 	if description != "" {
 		b.WriteString(`<p>` + esc(description) + `</p>`)
 	}
-	if clientName != "" {
+	if identity != nil {
+		// Order matters (#242): hostname first, then the self-assigned name,
+		// then client_uri's host, then the scopes.
+		b.WriteString(`<div class="cimd-id">` +
+			`<div class="cimd-host-label">Client hosted at</div>` +
+			`<div class="cimd-host">` + esc(identity.Host) + `</div>`)
+		if clientName != "" {
+			b.WriteString(`<p class="cimd-meta">calls itself <span class="claim">` +
+				esc(clientName) + `</span></p>`)
+		}
+		if identity.ClientURIHost != "" {
+			b.WriteString(`<p class="cimd-meta">home page: <span class="claim">` +
+				esc(identity.ClientURIHost) + `</span></p>`)
+		}
+		b.WriteString(`</div>`)
+		if identity.Recent {
+			b.WriteString(`<p class="first-seen">This client was registered or last changed ` +
+				`less than an hour ago.</p>`)
+		}
+		b.WriteString(`<p class="lead">It is requesting access to your ShellWatch account ` +
+			`with these scopes:</p>`)
+	} else if clientName != "" {
 		b.WriteString(`<p class="lead"><span class="client">` + esc(clientName) +
 			`</span> is requesting access to your ShellWatch account with these scopes:</p>`)
 	}
