@@ -82,8 +82,12 @@ Add a `hydra:` section to `config.yaml` (see `config.sample.yaml`):
 
 ```yaml
 hydra:
-  publicUrl: http://localhost:4444 # must equal Hydra urls.self.issuer
+  # The SHARED public origin of app + OAuth (= server.externalUrl), not Hydra's
+  # listener: it must equal Hydra's urls.self.issuer, which the bundled
+  # hydra.yml sets to this value (see "One origin for app + OAuth" below).
+  publicUrl: http://localhost:3000
   adminUrl: http://localhost:4445 # trusted-network only
+  devProxyUpstream: http://localhost:4444 # LOCAL DEV ONLY — drop behind a real proxy
   spa:
     clientId: shellwatch-web # first-party public PKCE client (no secret)
 ```

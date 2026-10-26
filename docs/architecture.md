@@ -282,8 +282,9 @@ server:
   externalUrl: http://localhost:3000 # required — issuer/redirect base for OAuth
 
 hydra: # OAuth2/OIDC authority (required)
-  publicUrl: http://localhost:4444 # Hydra public issuer
+  publicUrl: http://localhost:3000 # shared public origin of app + OAuth (= Hydra urls.self.issuer)
   adminUrl: http://localhost:4445 # Hydra admin API (trusted-network only)
+  devProxyUpstream: http://localhost:4444 # local dev only: forward Hydra's public surface
   spa:
     clientId: shellwatch-web # first-party PKCE client (no secret)
 

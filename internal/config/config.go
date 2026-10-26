@@ -390,7 +390,7 @@ func (c *Config) validate() []string {
 	}
 
 	if !isURL(c.Hydra.PublicURL) {
-		add("hydra.publicUrl must be a valid URL (e.g. 'http://localhost:4444')")
+		add("hydra.publicUrl must be a valid URL — the shared public origin of app and OAuth, i.e. Hydra's urls.self.issuer (e.g. 'http://localhost:3000')")
 	}
 	if !isURL(c.Hydra.AdminURL) {
 		add("hydra.adminUrl must be a valid URL (e.g. 'http://localhost:4445')")
