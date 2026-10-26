@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
+import type { AppNotification } from "./notifications.js";
 import {
   addToast,
   clearAction,
   toastError,
+  toastNotification,
   type SignRequestAction,
   type SignRequestHostKey,
 } from "./toasts.js";
@@ -46,17 +48,12 @@ type SignRequestMessage = {
   keyFingerprint?: string;
 };
 
-/** A dial was refused before authentication: the server's host key differs
- * from the pinned one (#241). No approval exists — this is an alert. */
-type HostKeyMismatchMessage = {
-  type: "host-key:mismatch";
-  endpointId: string;
-  endpointLabel: string;
-  endpointAddress: string;
-  keyType: string;
-  observedFingerprint: string;
-  pinnedFingerprint: string;
-  deepLink: string;
+/** A new entry in the account's notification log (#252) — e.g. a host-key
+ * mismatch (#241). Persisted server-side (GET /api/notifications) and pushed
+ * here for the live toast; toasts dedupe by notification id. */
+type NotificationMessage = {
+  type: "notification:new";
+  notification: AppNotification;
 };
 
 type ServerMessage =
@@ -67,12 +64,17 @@ type ServerMessage =
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
-  | HostKeyMismatchMessage
+  | NotificationMessage
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
 export const sessions = writable<SessionListEntry[]>([]);
+
+/** Whether the socket is currently open (#252 review): pages that render a
+ * server-side log watch the false→true transition to refetch what a
+ * disconnect made them miss. */
+export const wsConnected = writable(false);
 
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
@@ -138,6 +140,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   // access logs (vs a query param). The bearer gate reads it from the header.
   ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
+  ws.onopen = () => {
+    wsConnected.set(true);
+  };
+
   ws.onmessage = (event) => {
     try {
       const msg: ServerMessage = JSON.parse(event.data);
@@ -171,17 +177,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
         clearAction(msg.actionId);
       }
 
-      if (msg.type === "host-key:mismatch") {
-        // High-severity, no auto-dismiss: the connection was already refused
-        // and no approval toast will ever appear for it.
-        addToast({
-          variant: "error",
-          message:
-            `Host key MISMATCH for "${msg.endpointLabel}" (${msg.endpointAddress}): ` +
-            `the server presented ${msg.observedFingerprint} but ${msg.pinnedFingerprint} is pinned. ` +
-            `The connection was refused.`,
-          link: { href: msg.deepLink || "/settings/endpoints", label: "Review endpoint" },
-        });
+      if (msg.type === "notification:new") {
+        // The toast holds the headline; the long text sits behind "Details"
+        // and the action link derives from the notification's type (#252).
+        toastNotification(msg.notification);
       }
 
       if (msg.type === "error") {
@@ -197,6 +196,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   };
 
   ws.onclose = () => {
+    wsConnected.set(false);
     scheduleReconnect();
   };
 }

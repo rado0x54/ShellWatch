@@ -3,6 +3,7 @@
   import { apiFetch } from "$lib/api.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import Modal from "$lib/components/Modal.svelte";
   import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
@@ -13,6 +14,27 @@
   } from "$lib/utils/webauthn-sign.js";
 
   let activeActionId = $state<string | null>(null);
+
+  // Long-form text of the toast whose "Details" is open (#252): toasts carry a
+  // headline only, the full message renders preformatted in this modal.
+  let openDetail = $state<{ message: string; detail: string } | null>(null);
+  let detailCopied = $state(false);
+
+  async function copyDetail() {
+    if (!openDetail) return;
+    try {
+      await navigator.clipboard.writeText(openDetail.detail);
+      detailCopied = true;
+      setTimeout(() => (detailCopied = false), 1500);
+    } catch (err) {
+      console.error("Copy failed:", err);
+    }
+  }
+
+  function closeDetail() {
+    openDetail = null;
+    detailCopied = false;
+  }
 
   // Collapse the middle of a long identifier for compact toast display.
   // Preserves a `prefix:` (e.g. `SHA256:`) when present.
@@ -169,6 +191,14 @@
             {/if}
             <span class="toast-message">
               {toast.message}
+              {#if toast.detail}
+                <button
+                  type="button"
+                  class="toast-link"
+                  onclick={() => (openDetail = { message: toast.message, detail: toast.detail! })}
+                  >Details</button
+                >
+              {/if}
               {#if toast.link}
                 <button
                   type="button"
@@ -192,6 +222,23 @@
         {/if}
       </div>
     {/each}
+  </div>
+{/if}
+
+{#if openDetail}
+  <!-- Full text of a long toast (#252): headline stays in the toast, the rest
+       renders preformatted here with room for fingerprints and error chains. -->
+  <div class="toast-detail-layer">
+    <Modal title="Details" onClose={closeDetail} width="640px">
+      <p class="toast-detail-headline">{openDetail.message}</p>
+      <pre class="toast-detail-pre">{openDetail.detail}</pre>
+      {#snippet actions()}
+        <button type="button" class="btn btn-secondary" onclick={copyDetail}>
+          {detailCopied ? "Copied" : "Copy"}
+        </button>
+        <button type="button" class="btn btn-primary" onclick={closeDetail}>Close</button>
+      {/snippet}
+    </Modal>
   </div>
 {/if}
 
@@ -343,6 +390,32 @@
 
   .toast-close:hover {
     color: var(--primary);
+  }
+
+  /* The detail modal must sit above the toast stack (overlay default: 1000,
+     toasts: 2000). */
+  .toast-detail-layer :global(.modal-overlay) {
+    z-index: 2100;
+  }
+
+  .toast-detail-headline {
+    font-size: var(--body-md);
+    color: var(--on-surface);
+    margin-bottom: var(--space-3);
+  }
+
+  .toast-detail-pre {
+    font-family: var(--font-mono);
+    font-size: var(--label-md);
+    color: var(--on-surface);
+    background: var(--surface-container);
+    border: 1px solid var(--outline-variant);
+    padding: var(--space-3);
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 50vh;
+    overflow-y: auto;
   }
 
   @keyframes slide-in {

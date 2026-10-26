@@ -166,11 +166,13 @@ type HostKeyEvent struct {
 	MCPClientVersion string
 }
 
-// RecordHostKeyEvent writes a host-key audit row. These rows are born
-// resolved: there is no pending phase (a mismatch is denied automatically; a
-// clear already happened).
-func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) {
+// RecordHostKeyEvent writes a host-key audit row and returns its id ("" when
+// the insert failed) so a notification can reference the audit record in its
+// typed payload (#252). These rows are born resolved: there is no pending
+// phase (a mismatch is denied automatically; a clear already happened).
+func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) string {
 	now := w.clk.Now().UTC().Format(isoMillis)
+	id := w.newEventID()
 	outcome := sql.NullString{}
 	if ev.Type == "host-key-mismatch" {
 		outcome = sql.NullString{String: "denied", Valid: true}
@@ -181,13 +183,15 @@ func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) {
 			mcp_reason, mcp_client_name, mcp_client_version,
 			host_key_fingerprint, host_key_prior_fingerprint, cancel_reason)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.newEventID(), ev.AccountID, ev.Type, ev.Source, now, now, outcome,
+		id, ev.AccountID, ev.Type, ev.Source, now, now, outcome,
 		nz(ev.SourceIP), nz(ev.EndpointID), nz(ev.EndpointLabel), nz(ev.EndpointAddress),
 		nz(ev.MCPReason), nz(ev.MCPClientName), nz(ev.MCPClientVersion),
 		nz(ev.Fingerprint), nz(ev.PriorFingerprint), nz(ev.Reason))
 	if err != nil {
 		slog.Warn("audit: insert host-key event failed", "type", ev.Type, "endpoint", ev.EndpointID, "err", err)
+		return ""
 	}
+	return id
 }
 
 func (w *Writer) recordResolution(ev approval.ResolvedEvent) {

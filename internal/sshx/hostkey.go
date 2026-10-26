@@ -150,6 +150,19 @@ type HostKeyMismatchEvent struct {
 	Trigger             terminal.Trigger
 }
 
+// NotifiedError marks an error whose event was already published to the
+// account's notification log (#252). HTTP surfaces include the id in the
+// error body so the client dedupes against the pushed notification by
+// identity instead of matching message text; it changes nothing about the
+// error message itself (MCP and logs see the plain chain).
+type NotifiedError struct {
+	NotificationID string
+	Err            error
+}
+
+func (e *NotifiedError) Error() string { return e.Err.Error() }
+func (e *NotifiedError) Unwrap() error { return e.Err }
+
 func (e *HostKeyMismatchError) Error() string {
 	return fmt.Sprintf("host key mismatch: the server presented %s (%s) but %s is pinned for this endpoint; "+
 		"connection refused before authentication. If the host key legitimately changed, a human must forget "+

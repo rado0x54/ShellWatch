@@ -30,6 +30,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/hydratest"
 	"github.com/rado0x54/shellwatch/internal/mcp"
+	"github.com/rado0x54/shellwatch/internal/notify"
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
@@ -82,7 +83,7 @@ func fullHandler(t *testing.T) chi.Router {
 		WSHub:        hub,
 		MCP:          &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
 		Actions:      &rest.Actions{Store: actionStore},
-		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db)},
+		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Notify: notify.NewService(db, nil)},
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},
 		Accounts:     &rest.Accounts{Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc, Now: func() string { return "" }},
 		Credentials:  &rest.Credentials{Store: credStore, Admin: fake, StepUp: stepUp},

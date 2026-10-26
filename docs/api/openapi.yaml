@@ -65,7 +65,7 @@ tags:
   - name: actions
     description: Human-in-the-loop signing approvals
   - name: audit
-    description: Session-lifecycle + signing-request audit log
+    description: Session-lifecycle + signing-request audit log + notification log
   - name: keys
     description: File-based SSH key listing (admin)
   - name: push
@@ -153,6 +153,14 @@ components:
       required: [error]
       properties:
         error: { type: string }
+        notificationId:
+          type: string
+          description: >-
+            Present when the failure was also published to the account's
+            notification log (#252), e.g. a session create refused by a
+            host-key mismatch. Clients deduplicate their error display against
+            the notification:new WebSocket message by this id instead of
+            matching error text.
       additionalProperties: true
 
     StatusCreated:
@@ -336,6 +344,55 @@ components:
           items: { $ref: "#/components/schemas/SigningRequestRow" }
         nextCursor: { type: string, nullable: true }
       required: [rows, nextCursor]
+
+    NotificationPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/Notification" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    Notification:
+      type: object
+      description: >-
+        One entry of the account notification log (#252): a server-originated
+        event the user must not miss. Also pushed live as the notification:new
+        WebSocket message (see docs/api/websocket-protocol.md). Client behavior
+        (toast severity, action links) derives from type + payload, never from
+        title/detail text.
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        type:
+          type: string
+          description: >-
+            Notification kind; payload shape is typed per kind. Known kinds:
+            host-key-mismatch — a dial was refused before authentication
+            because the server presented a key that differs from the pin
+            (payload: endpointId, endpointLabel, endpointAddress, keyType,
+            observedFingerprint, pinnedFingerprint, auditId of the
+            host-key-mismatch audit row); session-connect-failed — any other
+            failed SSH connect, whatever the trigger (payload: endpointId,
+            endpointLabel, endpointAddress, trigger, mcpClientName,
+            mcpClientVersion, mcpReason, sourceIp, error). Clients must ignore
+            unknown kinds gracefully (render title/detail, no typed action).
+        severity: { type: string, enum: [info, warning, error] }
+        title:
+          type: string
+          description: Short headline sized for a toast.
+        detail:
+          type: string
+          nullable: true
+          description: Long-form preformatted text behind a Details view.
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Type-specific structured data (see `type`).
+        createdAt: { type: string, format: date-time }
+      required: [id, accountId, type, severity, title, detail, payload, createdAt]
 
     SigningRequestRow:
       type: object
@@ -1421,6 +1478,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /api/audit/notifications:
+    get:
+      operationId: listAuditNotifications
+      tags: [audit]
+      summary: Account notification log
+      description: >-
+        The third audit surface (#252): append-only, keyset-paginated, newest
+        first. Live delivery happens over the WebSocket (notification:new);
+        this log is what a reconnecting client reads to catch up on what a
+        closed tab missed.
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side: non-finite or ≤0 → 50; values
+            above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Page of notifications
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPage" }
 
   # ------------------------------------------------------------------ keys
   /api/keys:

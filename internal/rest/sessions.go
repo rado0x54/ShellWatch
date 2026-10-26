@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -14,8 +15,10 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/api"
+	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/realip"
+	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
@@ -78,6 +81,14 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("session create failed",
 			"endpointId", ref.ID, "endpointLabel", ref.Label, "address",
 			ref.Username+"@"+ref.Host, "err", err)
+		// A failure that was already published to the notification log (e.g. a
+		// host-key mismatch) carries the notification id (#252): the client
+		// dedupes its error toast against the pushed notification by identity.
+		var notified *sshx.NotifiedError
+		if errors.As(err, &notified) {
+			apierr.WriteNotified(w, 400, err.Error(), notified.NotificationID)
+			return
+		}
 		writeErr(w, 400, err.Error())
 		return
 	}
