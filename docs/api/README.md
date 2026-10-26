@@ -182,7 +182,22 @@ to ssh2) and has no `hostKey` on the endpoint shape, no
 `host-key-cleared` audit types. Node is frozen pre-cutover and will not grow
 them; the spec documents the Go behavior.
 
+### L. The Go MCP surface is stateless and dropped the custom notifications ([#243])
+
+Node spoke only the handshake-era protocol with per-connection
+`Mcp-Session-Id` state, a standalone GET SSE stream, MCP sessions that closed
+their terminal sessions on disconnect, and the custom
+`notifications/shellwatch/{output_available,session_status}` methods. The Go
+backend implements spec revision `2026-07-28` (plus the `2025-11-25`/
+`2025-06-18` handshake eras) **statelessly**: no `Mcp-Session-Id`, GET/DELETE
+405, terminal sessions owned by `(account, OAuth client)` and surviving
+disconnects, custom notifications removed in every era in favour of
+`shellwatch://sessions` resources over `subscriptions/listen` and
+`shellwatch_read_output` `waitMs` long-polling. Node is frozen pre-cutover;
+[`mcp-tools.md`](./mcp-tools.md) documents the Go behavior.
+
 [#210]: https://github.com/rado0x54/ShellWatch/issues/210
+[#243]: https://github.com/rado0x54/ShellWatch/issues/243
 [#241]: https://github.com/rado0x54/ShellWatch/issues/241
 [#225]: https://github.com/rado0x54/ShellWatch/issues/225
 [#244]: https://github.com/rado0x54/ShellWatch/issues/244

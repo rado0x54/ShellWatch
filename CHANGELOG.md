@@ -1,5 +1,30 @@
 ## v2.0.0 (unreleased)
 
+### ⚠️ Breaking: MCP implements spec revision 2026-07-28, statelessly (#243)
+
+The `/mcp` surface now serves MCP `2026-07-28` alongside the `2025-11-25` and
+`2025-06-18` handshake eras — **stateless** in every era, as the new revision
+requires:
+
+- **No protocol-level sessions.** No `Mcp-Session-Id` is minted or honoured;
+  `GET`/`DELETE /mcp` answer 405. Terminal sessions are owned by the agent's
+  **OAuth client** (`(account, client_id)`) and survive reconnects; they end
+  via `shellwatch_close_session`, remote hangup, the idle janitor
+  (`sessions.idleTimeoutMinutes`), account deletion, or revoking the client's
+  consent in Settings → Sessions. `mcp.sessionTimeoutMinutes` was removed and
+  now fails config validation.
+- **`notifications/shellwatch/output_available` / `session_status` are gone in
+  every era** (the stateless transport has no standalone SSE stream to carry
+  them). Replacements: sessions are resources (`shellwatch://sessions`,
+  `shellwatch://sessions/{id}`) emitting `notifications/resources/updated`
+  over `subscriptions/listen` (2026-07-28 clients), and
+  `shellwatch_read_output` gained `waitMs` (0–30000) to long-poll for output
+  in any era.
+- Agent attribution falls back to the OAuth `client_id` when a request carries
+  no `_meta` `clientInfo` (all pre-2026-07-28 clients); the REST/WS session
+  shape gained `ownerClientId`, and the 401 challenge advertises
+  `scope="mcp"`.
+
 ### ⚠️ Breaking: the Node backend is replaced by a single Go binary (#210)
 
 ShellWatch's server is now **one static Go binary** that embeds the built web
@@ -7,8 +32,8 @@ UI — the Node/Fastify backend, its drizzle migration runtime, and the patched
 `ssh2` fork are gone. Node.js remains a **build-time** dependency only (the
 SvelteKit client); at runtime there is nothing to install besides the binary
 (or the distroless container image) and Ory Hydra. Everything moved: REST,
-WebSocket, MCP (streamable HTTP, now including server→client
-`output_available` / `session_status` notifications), the SSH broker (passkey
+WebSocket, MCP (streamable HTTP; see the 2026-07-28 entry above for the
+notification model), the SSH broker (passkey
 and file-key signing through human approval, agent forwarding, the
 `/agent-proxy` bridge), WebAuthn ceremonies, Hydra login/consent +
 introspection, the audit log, and Web Push.

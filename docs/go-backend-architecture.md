@@ -246,8 +246,12 @@ ordering (`opening → open → closed`) is observable in the WS goldens.
 Idle cleanup: one janitor goroutine per Manager (60s tick, 30min idle close),
 on the injected clock.
 
-`AgentSession` ports as-is: ownership set, scoped create/list/read/close,
-`Destroy` closing owned sessions. MCP gets one per `ServerSession`.
+`AgentSession` (#243): built per request from the principal's
+`(account, client_id)`; ownership lives on `terminal.Session.OwnerClientID`
+(set at create), so it survives connections and needs no in-memory set. There
+is no `Destroy`/disconnect teardown — sessions end via close_session, remote
+hangup, the idle janitor, account deletion, or consent revocation
+(`Manager.CloseAllForClient`).
 
 ### 5.3 OutputBuffer — bytes, not strings (W6)
 
@@ -434,13 +438,21 @@ Faithful port, cleaned names:
 
 ### 5.10 MCP (`internal/mcp`) and agent proxy (`internal/agentproxy`)
 
-**MCP:** official go-sdk, streamable HTTP mounted at `/mcp` behind bearer
-gate + IP allowlist. One `AgentSession` + one notifier per `ServerSession`;
-cross-account session-ID probing returns the same indistinguishable 404 as
-today. The seven tools port 1:1 against `mcp-tools.md`; tool responses are
-goldened. Client name/version flow into `endpoint-auth` triggers as
-call-path values, not a mutable box (W11). Account-deleted teardown
-subscribes to the same lifecycle event the HTTP layer uses.
+**MCP (#243):** official go-sdk `StreamableHTTPHandler` in **stateless** mode
+mounted at `/mcp` behind bearer gate + IP allowlist, serving `2026-07-28` plus
+the `2025-11-25`/`2025-06-18` handshake eras. One SDK `Server` + `AgentSession`
+per request; no `Mcp-Session-Id`, GET/DELETE 405. Isolation is per
+`(account, OAuth client)` on the terminal sessions themselves — foreign ids get
+the uniform "session not found" tool error. The seven tools port against
+`mcp-tools.md` (tool responses goldened); `read_output` long-polls via
+`waitMs`. Sessions are resources (`shellwatch://sessions[/{id}]`) whose
+`resources/updated` notifications ride `subscriptions/listen`; the per-server
+watcher attaches to the Manager only while subscriptions exist, and every
+registration unwinds with the subscribe call's request context. Client
+name/version come from per-request `_meta` `clientInfo`, falling back to the
+OAuth `client_id`. Account deletion needs no MCP teardown (the Manager close
+handles the terminals); consent revocation closes the revoked client's
+sessions via `Manager.CloseAllForClient`.
 
 **Agent proxy:** `/agent-proxy` upgrades to WS (bearer, `agent` scope),
 frames binary messages into an `io.ReadWriter`, and runs

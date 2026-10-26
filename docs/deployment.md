@@ -104,6 +104,14 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > **Allowed redirect URIs** for DCR clients are configurable under
 > `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
 > callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+>
+> **MCP streams through proxies (#243):** `/mcp` responses can be long-lived SSE
+> streams (`subscriptions/listen`, `read_output` long-polls). The proxy must not
+> buffer them (nginx: `proxy_buffering off;` — or
+> `add_header X-Accel-Buffering no;` — on the `/mcp` location) and must forward
+> all `Mcp-*` request headers unchanged — `2026-07-28` clients send required
+> `Mcp-Method` / `Mcp-Name` / `Mcp-Protocol-Version` headers that the server
+> validates.
 
 ### Manual verification
 
