@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import {
@@ -9,6 +10,7 @@
     type AppNotification,
   } from "$lib/stores/notifications.js";
   import { toastError } from "$lib/stores/toasts.js";
+  import { onWsMessage, wsConnected } from "$lib/stores/ws.js";
   import { errorMessage } from "$lib/utils/error-message.js";
 
   let rows = $state<AppNotification[]>([]);
@@ -17,6 +19,24 @@
 
   onMount(() => {
     void load(true);
+    // Live log (#252 review): a pushed notification prepends to the visible
+    // list (the id check covers the race with an in-flight refetch)…
+    const offMessage = onWsMessage((msg) => {
+      if (msg.type === "notification:new" && !rows.some((r) => r.id === msg.notification.id)) {
+        rows = [msg.notification, ...rows];
+      }
+    });
+    // …and a reconnect refetches from the top, catching up on everything a
+    // disconnect made this tab miss.
+    let wasConnected = get(wsConnected);
+    const offConnected = wsConnected.subscribe((up) => {
+      if (up && !wasConnected) void load(true);
+      wasConnected = up;
+    });
+    return () => {
+      offMessage();
+      offConnected();
+    };
   });
 
   async function load(reset: boolean) {

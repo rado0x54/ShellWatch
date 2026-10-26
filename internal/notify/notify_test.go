@@ -108,6 +108,25 @@ func TestListPaginatesNewestFirst(t *testing.T) {
 	}
 }
 
+// Regression (#252 review): deleting an account must take its notification
+// rows with it (endpoint addresses, fingerprints, and MCP client details must
+// not outlive the account) — same ON DELETE cascade as the other audit tables.
+func TestAccountDeletionCascadesIntoLog(t *testing.T) {
+	svc, _ := testService(t)
+	ctx := context.Background()
+	svc.Publish(ctx, PublishParams{
+		AccountID: "acc", Type: TypeHostKeyMismatch, Severity: SeverityError,
+		Title: "Host key MISMATCH", Detail: "Pinned: SHA256:y",
+	})
+	if _, err := svc.db.Exec(`DELETE FROM accounts WHERE id = 'acc'`); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	var count int
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM notifications`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("notifications survived account deletion: count=%d err=%v", count, err)
+	}
+}
+
 // Notifications are an audit surface: append-only, nothing is pruned.
 func TestLogIsAppendOnly(t *testing.T) {
 	svc, _ := testService(t)

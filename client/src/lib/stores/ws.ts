@@ -71,6 +71,11 @@ type MessageHandler = (msg: ServerMessage) => void;
 
 export const sessions = writable<SessionListEntry[]>([]);
 
+/** Whether the socket is currently open (#252 review): pages that render a
+ * server-side log watch the false→true transition to refetch what a
+ * disconnect made them miss. */
+export const wsConnected = writable(false);
+
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
 const lastOffsetBySession = new Map<string, number>();
@@ -135,6 +140,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   // access logs (vs a query param). The bearer gate reads it from the header.
   ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
+  ws.onopen = () => {
+    wsConnected.set(true);
+  };
+
   ws.onmessage = (event) => {
     try {
       const msg: ServerMessage = JSON.parse(event.data);
@@ -187,6 +196,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   };
 
   ws.onclose = () => {
+    wsConnected.set(false);
     scheduleReconnect();
   };
 }

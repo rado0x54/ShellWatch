@@ -18,7 +18,8 @@ CREATE TABLE "notifications" (
 	"title" text NOT NULL,
 	"detail" text,
 	"payload" text,
-	"created_at" text NOT NULL
+	"created_at" text NOT NULL,
+	FOREIGN KEY ("account_id") REFERENCES "accounts"("id") ON UPDATE no action ON DELETE cascade
 );
 CREATE INDEX "idx_notifications_account_created" ON "notifications" ("account_id", "created_at" DESC, "id" DESC);
 
