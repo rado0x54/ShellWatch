@@ -42,6 +42,22 @@ export async function fetchNotifications(cursor?: string, limit = 50): Promise<N
 }
 
 /**
+ * Merge notifications pushed over the WS while a page-one refetch was in
+ * flight (#252 review): the pushed ones (newest first) that the fetched page
+ * does not already contain stay on top, so a fetch can never erase a live
+ * notification. Also self-dedupes the pushed buffer by id.
+ */
+export function mergeLivePage(
+  pushed: AppNotification[],
+  pageRows: AppNotification[],
+): AppNotification[] {
+  const extras = pushed.filter(
+    (n, i) => pushed.findIndex((p) => p.id === n.id) === i && !pageRows.some((r) => r.id === n.id),
+  );
+  return [...extras, ...pageRows];
+}
+
+/**
  * The typed action a notification kind offers (#252). Unknown kinds get none:
  * they still render title/detail, so an older client degrades gracefully when
  * the server grows new producers.

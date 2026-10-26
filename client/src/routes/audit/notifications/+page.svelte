@@ -6,6 +6,7 @@
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import {
     fetchNotifications,
+    mergeLivePage,
     notificationLink,
     type AppNotification,
   } from "$lib/stores/notifications.js";
@@ -16,14 +17,25 @@
   let rows = $state<AppNotification[]>([]);
   let nextCursor = $state<string | null>(null);
   let loading = $state(false);
+  // Race accounting (#252 review): pushes that land while a reset fetch is in
+  // flight are buffered and merged into the fresh page (a fetch must never
+  // erase a live notification), and a reset requested mid-fetch is queued
+  // instead of dropped.
+  let pushedDuringReset: AppNotification[] | null = null;
+  let pendingReset = false;
 
   onMount(() => {
     void load(true);
     // Live log (#252 review): a pushed notification prepends to the visible
-    // list (the id check covers the race with an in-flight refetch)…
+    // list.
     const offMessage = onWsMessage((msg) => {
-      if (msg.type === "notification:new" && !rows.some((r) => r.id === msg.notification.id)) {
-        rows = [msg.notification, ...rows];
+      if (msg.type !== "notification:new") return;
+      const n = msg.notification;
+      if (pushedDuringReset !== null) {
+        pushedDuringReset = [n, ...pushedDuringReset];
+      }
+      if (!rows.some((r) => r.id === n.id)) {
+        rows = [n, ...rows];
       }
     });
     // …and a reconnect refetches from the top, catching up on everything a
@@ -40,16 +52,25 @@
   });
 
   async function load(reset: boolean) {
-    if (loading) return;
+    if (loading) {
+      if (reset) pendingReset = true;
+      return;
+    }
     loading = true;
+    if (reset) pushedDuringReset = [];
     try {
       const page = await fetchNotifications(reset ? undefined : (nextCursor ?? undefined));
-      rows = reset ? page.rows : [...rows, ...page.rows];
+      rows = reset ? mergeLivePage(pushedDuringReset ?? [], page.rows) : [...rows, ...page.rows];
       nextCursor = page.nextCursor;
     } catch (err) {
       toastError(errorMessage(err));
     } finally {
+      pushedDuringReset = null;
       loading = false;
+      if (pendingReset) {
+        pendingReset = false;
+        void load(true);
+      }
     }
   }
 
