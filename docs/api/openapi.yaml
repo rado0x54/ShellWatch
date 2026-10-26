@@ -486,9 +486,11 @@ components:
     AuthorizationServerMetadata:
       type: object
       description: >-
-        RFC 8414 authorization-server metadata, blended: issuer + auth/token/jwks/
-        revocation point at Hydra; registration_endpoint points at ShellWatch's
-        mediated DCR (/api/hydra/register).
+        RFC 8414 authorization-server metadata, blended: issuer + token/jwks/
+        revocation point at Hydra; `registration_endpoint` points at ShellWatch's
+        mediated DCR (/api/hydra/register) and, when CIMD is enabled (the
+        default), `authorization_endpoint` points at ShellWatch's CIMD front
+        door (/api/hydra/authorize) rather than Hydra's /oauth2/auth.
       properties:
         issuer: { type: string }
         authorization_endpoint: { type: string }
@@ -504,9 +506,21 @@ components:
         code_challenge_methods_supported: { type: array, items: { type: string }, example: [S256] }
         token_endpoint_auth_methods_supported:
           type: array
+          description: >-
+            ShellWatch never issues a client secret — not via DCR, and CIMD
+            forbids it outright (draft-ietf-oauth-client-id-metadata-document-02
+            §4.1) — so the shared-secret methods Hydra would accept are not
+            advertised.
           items: { type: string }
-          example: [none, client_secret_basic, client_secret_post]
+          example: [none, private_key_jwt]
         scopes_supported: { type: array, items: { type: string } }
+        client_id_metadata_document_supported:
+          type: boolean
+          description: >-
+            draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when
+            ShellWatch resolves an https URL `client_id` as a Client ID Metadata
+            Document. Omitted entirely when CIMD is disabled.
+          example: true
       required: [issuer, authorization_endpoint, token_endpoint, registration_endpoint]
 
     WebAuthnRegistrationOptions:
@@ -686,8 +700,12 @@ paths:
       security: []
       summary: Blended AS metadata (RFC 8414)
       description: >-
-        authorization/token endpoints point at Hydra (the real issuer); the
-        `registration_endpoint` points at ShellWatch's mediated DCR. `scopes_supported`
+        The token endpoint points at Hydra (the real issuer); the
+        `registration_endpoint` points at ShellWatch's mediated DCR, and
+        `authorization_endpoint` at ShellWatch's CIMD front door
+        (`/api/hydra/authorize`) whenever `client_id_metadata_document_supported`
+        is `true`. With CIMD disabled, `authorization_endpoint` is Hydra's
+        `/oauth2/auth` and the CIMD flag is absent. `scopes_supported`
         includes the bearer scopes (`mcp`, plus `agent` when the proxy is enabled)
         and `offline_access`.
       responses:
@@ -746,6 +764,91 @@ paths:
               schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
         "404":
           description: Agent proxy disabled — route not mounted.
+
+  /api/hydra/authorize:
+    get:
+      operationId: authorizeOauthClient
+      tags: [discovery]
+      security: []
+      summary: Authorization front door — resolves a CIMD client_id, then hands off to Hydra
+      description: >-
+        Advertised as `authorization_endpoint` in the AS metadata when CIMD is
+        enabled. ShellWatch has to mediate because Hydra has no native support
+        for Client ID Metadata Documents (ory/hydra#4061): it rejects an https
+        URL `client_id` as an unknown client before ShellWatch ever sees the
+        request.
+
+
+        This endpoint issues no code and touches no session. For a `client_id`
+        that is **not** an `https://` URL — the first-party SPA, every DCR
+        client — it redirects straight to Hydra's `/oauth2/auth` with the query
+        string forwarded verbatim. For a URL `client_id` it first resolves the
+        Client ID Metadata Document (fetch, validate, provision a Hydra client
+        whose `client_id` **is** the URL), then redirects the same way.
+
+
+        Query parameters are those of an OAuth 2.0 authorization request
+        (RFC 6749 §4.1.1 plus PKCE); they are passed through unchanged rather
+        than re-serialized, and are documented here only as far as CIMD reads
+        them.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: >-
+            An `https://` URL is resolved as a Client ID Metadata Document
+            (draft-ietf-oauth-client-id-metadata-document-02 §3: https, a path
+            component, no userinfo, no query, no fragment, no dot segments,
+            at most 255 characters). Anything else is passed through to Hydra.
+        - name: redirect_uri
+          in: query
+          schema: { type: string }
+          description: >-
+            Must match one of the document's `redirect_uris` exactly, with the
+            RFC 8252 §7.3 loopback exception (a registered `http://127.0.0.1/…`
+            or `http://[::1]/…` entry matches any port; `localhost` does not).
+        - name: scope
+          in: query
+          schema: { type: string }
+          description: Space-delimited; filtered through `hydra.dcr.allowedScopes`, then `offline_access` is appended.
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: response_type
+          in: query
+          schema: { type: string, example: code }
+        - name: code_challenge
+          in: query
+          schema: { type: string }
+        - name: code_challenge_method
+          in: query
+          schema: { type: string, example: S256 }
+      responses:
+        "303":
+          description: >-
+            Hand-off. Normally to Hydra's `/oauth2/auth` with the query string
+            intact. If CIMD resolution failed **after** the requested
+            `redirect_uri` was validated against the document (an unsatisfiable
+            `scope`, or a Hydra write failure), the redirect instead goes to
+            that `redirect_uri` carrying `error`, `error_description` and the
+            original `state` (RFC 6749 §4.1.2.1).
+          headers:
+            Location:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+        "400":
+          description: >-
+            HTML error page. Used for every failure that happens **before** the
+            requested `redirect_uri` could be validated against the document —
+            an invalid Client Identifier URL, an unreachable, oversize,
+            non-JSON, invalid or SSRF-blocked document, or a `redirect_uri` that
+            is not registered. Such a `redirect_uri` is attacker-chosen, so the
+            error is never redirected to it.
+          content:
+            text/html:
+              schema: { type: string }
 
   /api/hydra/register:
     post:

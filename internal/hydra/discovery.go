@@ -19,6 +19,11 @@ type DiscoveryParams struct {
 	ExternalURL       func() string
 	HydraPublicURL    string
 	AgentProxyEnabled bool
+	// CimdEnabled points authorization_endpoint at ShellWatch's front door
+	// and advertises client_id_metadata_document_supported. When Hydra gains
+	// native CIMD support (ory/hydra#4061), turning this off hands the
+	// endpoint back to Hydra with no other change.
+	CimdEnabled bool
 }
 
 type resourceMetadata struct {
@@ -42,6 +47,9 @@ type asMetadata struct {
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	ScopesSupported                   []string `json:"scopes_supported"`
+	// ClientIDMetadataDocumentSupported is draft §6. Omitted entirely when
+	// CIMD is off, rather than advertised as false.
+	ClientIDMetadataDocumentSupported bool `json:"client_id_metadata_document_supported,omitempty"`
 }
 
 // MountDiscovery registers the /.well-known documents on the router.
@@ -76,20 +84,30 @@ func MountDiscovery(r chi.Router, p DiscoveryParams) {
 			scopes = append(scopes, "agent")
 		}
 		scopes = append(scopes, "mcp", "offline_access")
+		// With CIMD on, authorization goes through ShellWatch's front door:
+		// Hydra cannot resolve a URL client_id itself. Everything else still
+		// points at Hydra, so token/refresh/revoke are untouched.
+		authorizeEndpoint := hydraPub + "/oauth2/auth"
+		if p.CimdEnabled {
+			authorizeEndpoint = ext() + "/api/hydra/authorize"
+		}
+		// ShellWatch never issues a client secret — not via DCR, not via CIMD
+		// (draft §4.1 forbids it outright) — so the shared-secret methods
+		// Hydra would otherwise accept are not advertised.
+		authMethods := []string{"none", "private_key_jwt"}
 		writeJSON(w, asMetadata{
-			Issuer:                        hydraPub,
-			AuthorizationEndpoint:         hydraPub + "/oauth2/auth",
-			TokenEndpoint:                 hydraPub + "/oauth2/token",
-			RegistrationEndpoint:          ext() + "/api/hydra/register",
-			JwksURI:                       hydraPub + "/.well-known/jwks.json",
-			RevocationEndpoint:            hydraPub + "/oauth2/revoke",
-			ResponseTypesSupported:        []string{"code"},
-			GrantTypesSupported:           []string{"authorization_code", "refresh_token"},
-			CodeChallengeMethodsSupported: []string{"S256"},
-			TokenEndpointAuthMethodsSupported: []string{
-				"none", "client_secret_basic", "client_secret_post",
-			},
-			ScopesSupported: scopes,
+			Issuer:                            hydraPub,
+			AuthorizationEndpoint:             authorizeEndpoint,
+			TokenEndpoint:                     hydraPub + "/oauth2/token",
+			RegistrationEndpoint:              ext() + "/api/hydra/register",
+			JwksURI:                           hydraPub + "/.well-known/jwks.json",
+			RevocationEndpoint:                hydraPub + "/oauth2/revoke",
+			ResponseTypesSupported:            []string{"code"},
+			GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
+			CodeChallengeMethodsSupported:     []string{"S256"},
+			TokenEndpointAuthMethodsSupported: authMethods,
+			ScopesSupported:                   scopes,
+			ClientIDMetadataDocumentSupported: p.CimdEnabled,
 		})
 	})
 }

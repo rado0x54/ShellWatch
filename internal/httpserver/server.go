@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,6 +47,12 @@ type Params struct {
 	// HasPasskeys reports whether any passkey exists (drives the login page's
 	// create-account link). nil -> assume passkeys exist.
 	HasPasskeys func() bool
+	// Clock drives the CIMD document cache's TTLs. nil -> clock.Real.
+	Clock clock.Clock
+	// CimdFetcher overrides the document fetcher the CIMD front door uses.
+	// nil -> built from hydra.cimd. Tests inject one that trusts a local
+	// httptest CA; a deployment behind a private CA can do the same.
+	CimdFetcher *hydra.Fetcher
 	// Endpoints mounts the endpoint CRUD routes (nil-able).
 	Endpoints *rest.Endpoints
 	// Sessions mounts the session routes (nil-able).
@@ -102,10 +109,18 @@ func New(p Params) http.Handler {
 	// etc. from here to start its PKCE flow (port of app.ts /config.js).
 	r.Get("/config.js", configJS(p.Config, p.BuildInfo))
 
+	clk := p.Clock
+	if clk == nil {
+		clk = clock.Real{}
+	}
+	// hydra.cimd.enabled defaults to TRUE, and an unset pointer must mean the
+	// default for any Config — not just one the loader filled in.
+	cimdEnabled := p.Config.Hydra.Cimd.Enabled == nil || *p.Config.Hydra.Cimd.Enabled
 	hydra.MountDiscovery(r, hydra.DiscoveryParams{
 		ExternalURL:       externalURL,
 		HydraPublicURL:    p.Config.Hydra.PublicURL,
 		AgentProxyEnabled: agentProxy,
+		CimdEnabled:       cimdEnabled,
 	})
 
 	// Dev single-origin mode (#243): forward Hydra's public surface so one
@@ -131,6 +146,47 @@ func New(p Params) http.Handler {
 			AllowedScopes:           p.Config.Hydra.Dcr.AllowedScopes,
 			RedirectURIPatterns:     p.Config.Hydra.Dcr.RedirectURIPatterns,
 			AgentProxyEnabled:       agentProxy,
+		})
+
+	}
+
+	if p.HydraAdmin != nil {
+		// The CIMD authorization front door. It is mounted whether or not CIMD
+		// is enabled: with the resolver nil it is a pure passthrough to Hydra,
+		// so a client that cached the endpoint from discovery keeps working
+		// after CIMD is turned off.
+		var cimd *hydra.CIMDResolver
+		if cimdEnabled {
+			c := p.Config.Hydra.Cimd
+			fetcher := p.CimdFetcher
+			if fetcher == nil {
+				fetcher = hydra.NewFetcher(hydra.FetcherParams{
+					AllowLoopback: c.AllowLoopbackDocuments,
+					AllowedHosts:  c.AllowedHosts,
+					BlockedHosts:  c.BlockedHosts,
+					CacheMin:      time.Duration(c.CacheMinSeconds) * time.Second,
+					CacheMax:      time.Duration(c.CacheMaxSeconds) * time.Second,
+					Clock:         clk,
+				})
+			}
+			cimd = hydra.NewCIMDResolver(hydra.CIMDResolverParams{
+				Admin:   p.HydraAdmin,
+				Fetcher: fetcher,
+				Policy: hydra.NewClientPolicy(
+					p.Config.Hydra.Dcr.RedirectURIPatterns,
+					p.Config.Hydra.Dcr.AllowedScopes,
+					agentProxy,
+				),
+				Clock: clk,
+			})
+			if c.AllowLoopbackDocuments {
+				slog.Warn("hydra.cimd.allowLoopbackDocuments is enabled — DEV/TEST ONLY; " +
+					"draft-ietf-oauth-client-id-metadata-document-02 §8.6 forbids it in production")
+			}
+		}
+		hydra.MountFrontDoor(r, hydra.FrontDoorParams{
+			Resolver:          cimd,
+			HydraAuthorizeURL: strings.TrimRight(p.Config.Hydra.PublicURL, "/") + "/oauth2/auth",
 		})
 	}
 
@@ -197,6 +253,10 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 	loginOpts := mk(rl.LoginOptions)
 	loginVerify := mk(rl.LoginVerify)
 	dcr := func() *ratelimit.Limiter { return ratelimit.New(10, 15*time.Minute, clk) }
+	// The CIMD front door triggers an outbound document fetch on a cache miss,
+	// so it needs a ceiling — but it is also a user-facing redirect in a normal
+	// login, so the bucket is far wider than DCR's.
+	cimdAuthorize := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
 
 	return []ratelimit.Rule{
 		// selfRegister bucket (self-register.ts).
@@ -223,6 +283,8 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 		{Method: "POST", Path: "/api/webauthn/stepup/verify", Limiter: loginVerify()},
 		// Mediated DCR: fixed 10/15min (routes.ts:186).
 		{Method: "POST", Path: "/api/hydra/register", Limiter: dcr()},
+		// CIMD authorization front door: fixed 60/15min.
+		{Method: "GET", Path: "/api/hydra/authorize", Limiter: cimdAuthorize()},
 	}
 }
 

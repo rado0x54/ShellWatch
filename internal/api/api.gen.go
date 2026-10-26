@@ -689,9 +689,14 @@ type AuthSessionView struct {
 	Scopes  []string `json:"scopes"`
 }
 
-// AuthorizationServerMetadata RFC 8414 authorization-server metadata, blended: issuer + auth/token/jwks/ revocation point at Hydra; registration_endpoint points at ShellWatch's mediated DCR (/api/hydra/register).
+// AuthorizationServerMetadata RFC 8414 authorization-server metadata, blended: issuer + token/jwks/ revocation point at Hydra; `registration_endpoint` points at ShellWatch's mediated DCR (/api/hydra/register) and, when CIMD is enabled (the default), `authorization_endpoint` points at ShellWatch's CIMD front door (/api/hydra/authorize) rather than Hydra's /oauth2/auth.
 type AuthorizationServerMetadata struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
+
+	// ClientIdMetadataDocumentSupported draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when ShellWatch resolves an https URL `client_id` as a Client ID Metadata Document. Omitted entirely when CIMD is disabled.
+	//
+	// Example: true
+	ClientIdMetadataDocumentSupported *bool `json:"client_id_metadata_document_supported,omitempty"`
 
 	// CodeChallengeMethodsSupported Example: ["S256"]
 	CodeChallengeMethodsSupported *[]string `json:"code_challenge_methods_supported,omitempty"`
@@ -708,7 +713,9 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported        *[]string `json:"scopes_supported,omitempty"`
 	TokenEndpoint          string    `json:"token_endpoint"`
 
-	// TokenEndpointAuthMethodsSupported Example: ["none","client_secret_basic","client_secret_post"]
+	// TokenEndpointAuthMethodsSupported ShellWatch never issues a client secret — not via DCR, and CIMD forbids it outright (draft-ietf-oauth-client-id-metadata-document-02 §4.1) — so the shared-secret methods Hydra would accept are not advertised.
+	//
+	// Example: ["none","private_key_jwt"]
 	TokenEndpointAuthMethodsSupported *[]string `json:"token_endpoint_auth_methods_supported,omitempty"`
 }
 
@@ -1149,6 +1156,22 @@ type PinEndpointHostKeyJSONBody struct {
 type PinEndpointHostKeyParams struct {
 	// XShellWatchStepUpToken Single-use step-up token minted by POST /api/webauthn/stepup/verify, bound to the specific action. Sent on the header `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
 	XShellWatchStepUpToken StepUpTokenHeader `json:"X-ShellWatch-StepUp-Token"`
+}
+
+// AuthorizeOauthClientParams defines parameters for AuthorizeOauthClient.
+type AuthorizeOauthClientParams struct {
+	// ClientId An `https://` URL is resolved as a Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document-02 §3: https, a path component, no userinfo, no query, no fragment, no dot segments, at most 255 characters). Anything else is passed through to Hydra.
+	ClientId string `form:"client_id" json:"client_id"`
+
+	// RedirectUri Must match one of the document's `redirect_uris` exactly, with the RFC 8252 §7.3 loopback exception (a registered `http://127.0.0.1/…` or `http://[::1]/…` entry matches any port; `localhost` does not).
+	RedirectUri *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
+
+	// Scope Space-delimited; filtered through `hydra.dcr.allowedScopes`, then `offline_access` is appended.
+	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
+	State               *string `form:"state,omitempty" json:"state,omitempty"`
+	ResponseType        *string `form:"response_type,omitempty" json:"response_type,omitempty"`
+	CodeChallenge       *string `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
+	CodeChallengeMethod *string `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
 }
 
 // FinishHydraLoginJSONBody defines parameters for FinishHydraLogin.

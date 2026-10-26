@@ -67,6 +67,23 @@ func NewCIMDResolver(p CIMDResolverParams) *CIMDResolver {
 	}
 }
 
+// ResolveError is a CIMD failure carrying the OAuth error code to report and,
+// crucially, whether the request's redirect_uri had already been checked
+// against the document when the failure happened. The front door may only
+// redirect an error to a redirect_uri it has validated.
+type ResolveError struct {
+	Code              string
+	Description       string
+	RedirectValidated bool
+}
+
+func (e *ResolveError) Error() string { return e.Code + ": " + e.Description }
+
+// resolveErr builds a pre-validation failure (rendered, never redirected).
+func resolveErr(code string, err error) *ResolveError {
+	return &ResolveError{Code: code, Description: err.Error()}
+}
+
 // Resolution is what the front door needs to carry on with the authorization.
 type Resolution struct {
 	Doc ClientMetadata
@@ -88,7 +105,7 @@ type Resolution struct {
 // and the front door must not redirect to an unvalidated URI).
 func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedirectURI, requestedScope string) (Resolution, error) {
 	if _, err := ValidateClientIDURL(clientIDURL); err != nil {
-		return Resolution{}, err
+		return Resolution{}, resolveErr("invalid_client", err)
 	}
 
 	unlock := r.lockFor(clientIDURL)
@@ -96,14 +113,21 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 
 	doc, cached, err := r.fetcher.Fetch(ctx, clientIDURL, r.policy)
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, resolveErr("invalid_client", err)
 	}
+	// Until this check passes, the requested redirect_uri is attacker-chosen:
+	// every failure above and including it must be RENDERED, not redirected.
 	if requestedRedirectURI != "" && !MatchRedirectURI(doc.RedirectURIs, requestedRedirectURI) {
-		return Resolution{}, fmt.Errorf("redirect_uri is not registered in the client metadata document")
+		return Resolution{}, resolveErr("invalid_request",
+			fmt.Errorf("redirect_uri is not registered in the client metadata document"))
 	}
+	redirectOK := requestedRedirectURI != ""
+
 	scope, err := GrantedScope(requestedScope, r.policy.AllowedScopes)
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, &ResolveError{
+			Code: "invalid_scope", Description: err.Error(), RedirectValidated: redirectOK,
+		}
 	}
 
 	// A cache hit means we already provisioned this exact document; skip the
@@ -117,7 +141,9 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 		// Do not keep a document we could not apply — the next attempt
 		// re-reads rather than serving a client Hydra does not have.
 		r.fetcher.Invalidate(clientIDURL)
-		return Resolution{}, err
+		return Resolution{}, &ResolveError{
+			Code: "server_error", Description: err.Error(), RedirectValidated: redirectOK,
+		}
 	}
 	return Resolution{Doc: doc, FirstSeen: firstSeen, MaterialChange: material}, nil
 }
