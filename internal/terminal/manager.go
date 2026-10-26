@@ -19,7 +19,10 @@ import (
 )
 
 type managed struct {
-	session   *Session
+	session *Session
+	// transport is nil until Create's factory returns (the session is
+	// registered first so sweeps can find it); non-nil from before the Open
+	// broadcast on. Guarded by Manager.mu.
 	transport Transport
 	output    *OutputBuffer
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
@@ -30,6 +33,11 @@ type managed struct {
 	// buffer the close already cleared (memory for a session that is gone —
 	// possibly a deleted account's).
 	abandoned atomic.Bool
+	// cancelSetup aborts the in-flight transport factory (connection + human
+	// approval wait); non-nil only while Create is inside the factory.
+	// Guarded by Manager.mu. Close calls it so revocation, account deletion,
+	// and shutdown reach sessions that are still connecting.
+	cancelSetup context.CancelFunc
 }
 
 // StatusEvent is emitted on every status transition (guaranteed, ordered).
@@ -206,13 +214,14 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		sess.MCPClientVer = trigger.MCPClientVer
 	}
 
-	transport, err := m.factory(ctx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
-	if err != nil {
-		sess.Status = StatusError
-		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
-	}
-
-	mg := &managed{session: sess, transport: transport, output: NewOutputBuffer(m.maxBufferSize), pumpDone: make(chan struct{})}
+	// Register BEFORE the factory runs: connecting can block for minutes
+	// (human approval of the SSH signature), and every sweep — consent
+	// revocation, account deletion, Destroy — must find a session that is
+	// still connecting and be able to cancel it. Close on a registered entry
+	// with no transport cancels setupCtx; the tail below finalizes.
+	setupCtx, cancelSetup := context.WithCancel(ctx)
+	defer cancelSetup()
+	mg := &managed{session: sess, output: NewOutputBuffer(m.maxBufferSize), pumpDone: make(chan struct{}), cancelSetup: cancelSetup}
 	m.mu.Lock()
 	if m.destroyed {
 		// Destroy already snapshotted the registry: registering now would
@@ -220,11 +229,42 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// racing shutdown). Refuse at the owner — HTTP-layer ordering
 		// (srv.Close before Destroy) narrows this window but cannot close it.
 		m.mu.Unlock()
-		_ = transport.Close()
 		return nil, fmt.Errorf("server is shutting down")
 	}
 	m.terminals[sess.SessionID] = mg
 	m.mu.Unlock()
+
+	transport, err := m.factory(setupCtx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
+
+	// Adopt the transport and the abort check in one critical section: a
+	// Close that already moved the session to closing owns its fate — the
+	// transport must not be adopted after that, or nothing would close it.
+	m.mu.Lock()
+	mg.cancelSetup = nil
+	aborted := sess.Status != StatusOpening // a Close raced the setup
+	if err == nil && !aborted {
+		mg.transport = transport
+	}
+	m.mu.Unlock()
+
+	if err != nil {
+		if aborted {
+			// beginClosing already broadcast closing; balance it with closed
+			// (before removal, same ordering invariant as Close).
+			m.setStatus(mg, StatusClosed, "")
+		}
+		// No lifecycle was broadcast otherwise — the session never opened.
+		m.removeEntry(sess.SessionID)
+		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
+	}
+	if aborted {
+		// The factory outran the cancellation (or ignored it) — the revoked /
+		// deleted / shut-down session must not go live now.
+		_ = transport.Close()
+		m.setStatus(mg, StatusClosed, "")
+		m.removeEntry(sess.SessionID)
+		return nil, fmt.Errorf("session was closed during connection setup (%s)", sess.CloseReason)
+	}
 
 	// Open BEFORE the pump starts (and snapshot before it can touch the
 	// session): a transport that dies immediately finalizes the session from
@@ -350,7 +390,15 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
-	return mg.transport.Resize(cols, rows)
+	m.mu.Lock()
+	transport := mg.transport
+	status := mg.session.Status
+	m.mu.Unlock()
+	if transport == nil {
+		// Still connecting — registered before the factory finished.
+		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
+	}
+	return transport.Resize(cols, rows)
 }
 
 // ListSessions returns a snapshot of all non-closed sessions. Closed sessions
@@ -440,7 +488,21 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	if !m.beginClosing(mg, reason) {
 		return
 	}
-	_ = mg.transport.Close()
+	m.mu.Lock()
+	cancelSetup := mg.cancelSetup
+	transport := mg.transport
+	m.mu.Unlock()
+	if transport == nil {
+		// The session is still connecting (Create is inside the factory).
+		// Cancel the setup; Create's tail observes the closing status, closes
+		// any transport the factory still returns, broadcasts closed, and
+		// removes the entry.
+		if cancelSetup != nil {
+			cancelSetup()
+		}
+		return
+	}
+	_ = transport.Close()
 	// Join the pump: it drains every event the transport already delivered
 	// (appending data and notifying output subscribers, in order) and then
 	// broadcasts Closed itself on the way out — so the Closed broadcast, and
@@ -464,12 +526,18 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// On the join path the pump finalized Closed itself; on the timeout path
 	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
-	// Clear and remove in one critical section: no reader can observe a
-	// cleared-but-still-listed session. The removed hooks fire only when THIS
-	// call performed the delete — a concurrent RemoveForAccount may have won,
-	// and each removal must notify exactly once (the WS hub sweep keys on it).
+	m.removeEntry(sessionID)
+}
+
+// removeEntry clears a registered session's buffer and deletes it from the
+// registry in one critical section (no reader can observe a cleared-but-
+// still-listed session), then fires the removed hooks. The hooks fire only
+// when THIS call performed the delete — a concurrent RemoveForAccount may
+// have won, and each removal must notify exactly once (the WS hub sweep keys
+// on it).
+func (m *Manager) removeEntry(sessionID string) {
 	m.mu.Lock()
-	_, present := m.terminals[sessionID]
+	mg, present := m.terminals[sessionID]
 	var removed []func(string)
 	if present {
 		mg.output.Clear()
