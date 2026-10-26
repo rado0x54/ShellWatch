@@ -72,11 +72,17 @@ describe("Hydra (real) — discovery, login/consent branches, tokens", () => {
   it("agrees with Hydra's own openid-configuration on issuer and endpoints", async () => {
     const ours = (await (
       await fetch(`${sc.server.url}/.well-known/oauth-authorization-server`)
-    ).json()) as Record<string, string>;
+    ).json()) as Record<string, unknown>;
     const hydra = await hydraOpenIdConfiguration();
     expect(ours.issuer).toBe(hydra.issuer);
     expect(ours.token_endpoint).toBe(hydra.token_endpoint);
-    expect(ours.authorization_endpoint).toBe(hydra.authorization_endpoint);
+    // authorization_endpoint is deliberately NOT Hydra's (#242): with CIMD
+    // enabled it is ShellWatch's front door, which resolves a URL client_id and
+    // then redirects to Hydra's own /oauth2/auth. Everything else still points
+    // straight at Hydra.
+    expect(ours.authorization_endpoint).toBe(`${sc.server.url}/api/hydra/authorize`);
+    expect(hydra.authorization_endpoint).toBe(`${HYDRA_PUBLIC_URL}/oauth2/auth`);
+    expect(ours.client_id_metadata_document_supported).toBe(true);
     expect(ours.jwks_uri).toBe(hydra.jwks_uri);
     expect(ours.revocation_endpoint).toBe(hydra.revocation_endpoint);
     // Hydra's native DCR is off; ours is the mediated endpoint.

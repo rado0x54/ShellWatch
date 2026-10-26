@@ -144,16 +144,34 @@ approval concurrently.
 
 ### Scenarios
 
-| File                            | sshd   | Covers                                                                                                                                                                                                                                           |
-| ------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `session-lifecycle.e2e.test.ts` | both   | endpoint → session (key approval) → WS attach → `$SSH_CONNECTION` → `exit` → `closed` + audit; `terminal:resize` vs `stty size`; server push; concurrent sessions; unknown user / wrong key; sshd restart                                        |
-| `idle-timeout.e2e.test.ts`      | first  | `sessions.idleTimeoutMinutes` janitor → `closeReason: idle-timeout`, sshd sees the disconnect                                                                                                                                                    |
-| `passkey-signing.e2e.test.ts`   | modern | webauthn-sk signature accepted by sshd (`Accepted publickey … ECDSA-SK`); UV-required rejects a UV-less assertion; deny; 60 s expiry before `LoginGraceTime`; derived key line parity                                                            |
-| `agent-forwarding.e2e.test.ts`  | modern | `ssh-add -L` inside the session lists both keys; second hop `ssh passkey@localhost` → `agent-forwarding` sign request; `agentForward: false` → no agent                                                                                          |
-| `identity-skip.e2e.test.ts`     | modern | a user with **two** authorized keys: deny the file-key approval, approve the passkey → login succeeds (#91 skip semantics) on endpoint-auth, forwarding and proxy, with no signed attempt for the denied key on any path; asserted on sshd's log |
-| `agent-proxy.e2e.test.ts`       | modern | Go agent with an `agent`-scoped Hydra token; host `ssh` via file key (and passkey when host OpenSSH ≥ 10.3); deny; authorized-client listing; headless `shellwatch-agent login` (Linux)                                                          |
-| `mcp.e2e.test.ts`               | first  | official SDK client with a DCR+PKCE token: endpoints CRUD, create session (approval), send_keys, read_output offsets, notification, close; audit `source: mcp` + client name/version; cross-account isolation                                    |
-| `hydra.e2e.test.ts`             | —      | discovery vs committed goldens and vs Hydra's own metadata; remembered-login/consent branches; DCR policy; refresh rotation + reuse detection; revocation; step-up revoke-all                                                                    |
+| File                            | sshd   | Covers                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-lifecycle.e2e.test.ts` | both   | endpoint → session (key approval) → WS attach → `$SSH_CONNECTION` → `exit` → `closed` + audit; `terminal:resize` vs `stty size`; server push; concurrent sessions; unknown user / wrong key; sshd restart                                                                                                                                                                       |
+| `idle-timeout.e2e.test.ts`      | first  | `sessions.idleTimeoutMinutes` janitor → `closeReason: idle-timeout`, sshd sees the disconnect                                                                                                                                                                                                                                                                                   |
+| `passkey-signing.e2e.test.ts`   | modern | webauthn-sk signature accepted by sshd (`Accepted publickey … ECDSA-SK`); UV-required rejects a UV-less assertion; deny; 60 s expiry before `LoginGraceTime`; derived key line parity                                                                                                                                                                                           |
+| `agent-forwarding.e2e.test.ts`  | modern | `ssh-add -L` inside the session lists both keys; second hop `ssh passkey@localhost` → `agent-forwarding` sign request; `agentForward: false` → no agent                                                                                                                                                                                                                         |
+| `identity-skip.e2e.test.ts`     | modern | a user with **two** authorized keys: deny the file-key approval, approve the passkey → login succeeds (#91 skip semantics) on endpoint-auth, forwarding and proxy, with no signed attempt for the denied key on any path; asserted on sshd's log                                                                                                                                |
+| `agent-proxy.e2e.test.ts`       | modern | Go agent with an `agent`-scoped Hydra token; host `ssh` via file key (and passkey when host OpenSSH ≥ 10.3); deny; authorized-client listing; headless `shellwatch-agent login` (Linux)                                                                                                                                                                                         |
+| `mcp.e2e.test.ts`               | first  | official SDK client with a DCR+PKCE token: endpoints CRUD, create session (approval), send_keys, read_output offsets, notification, close; audit `source: mcp` + client name/version; cross-account isolation                                                                                                                                                                   |
+| `hydra.e2e.test.ts`             | —      | discovery vs committed goldens and vs Hydra's own metadata; remembered-login/consent branches; DCR policy; refresh rotation + reuse detection; revocation; step-up revoke-all                                                                                                                                                                                                   |
+| `cimd.e2e.test.ts`              | —      | CIMD front door: discovery flags; non-URL `client_id` passthrough byte-for-byte; every rejection path (draft §3 URL rules, SSRF destinations, unresolvable host) renders instead of redirecting and writes nothing to Hydra; the registration log (DCR `registered` row + Hydra `metadata.shellwatch.origin`, rejection rows, admin-only 403, keyset paging, filter validation) |
+
+**Not covered end to end: the CIMD happy path** (fetch a metadata document →
+provision the Hydra client → token → `/mcp`). The server would have to trust a
+throwaway CA for a document served from the harness, and `SSL_CERT_FILE` — the
+obvious hook — is ignored by Go on macOS: `root_unix.go` excludes darwin, so
+Security.framework decides and the variable has no effect. Verified:
+
+```
+macOS host, no SSL_CERT_FILE      -> REJECTED (x509: "127.0.0.1" certificate is not trusted)
+macOS host, SSL_CERT_FILE=ca.pem  -> REJECTED   # ignored
+```
+
+A cross-platform hook (an `extraCaBundlePath`-style config option feeding the
+fetcher's root pool) would close this; until then the fetch-and-provision path
+is covered by `internal/hydra/cimd_test.go` and
+`internal/httpserver/cimd_frontdoor_test.go`, which serve a document from
+`httptest` and inject the test CA directly.
 
 ### Adding a scenario
 
