@@ -208,3 +208,59 @@ func TestTrustProxyForms(t *testing.T) {
 		t.Errorf("hop count: expected a trustProxy validation error, got %v", err)
 	}
 }
+
+// Host-key config values (#241): a full OpenSSH line, a bare SHA256:
+// fingerprint, and rejection of anything else.
+func TestParseHostKey(t *testing.T) {
+	hk, err := ParseHostKey("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLKV/zrLbSGFbSEOz6h3NwcnZ2TV1lLgcdB2z/+xwj7 comment")
+	if err != nil || hk.Type != "ssh-ed25519" || len(hk.Key) == 0 || !strings.HasPrefix(hk.Fingerprint, "SHA256:") {
+		t.Fatalf("public-key line: %+v err=%v", hk, err)
+	}
+	hk, err = ParseHostKey("SHA256:0Sf9Z6PSKJix1OTfTbJn9ZMumizbbeKkZN8wCRchemk")
+	if err != nil || hk.Type != "" || hk.Key != nil || hk.Fingerprint != "SHA256:0Sf9Z6PSKJix1OTfTbJn9ZMumizbbeKkZN8wCRchemk" {
+		t.Fatalf("fingerprint pin: %+v err=%v", hk, err)
+	}
+	for _, bad := range []string{"", "not-a-key", "md5:abc"} {
+		if _, err := ParseHostKey(bad); err == nil {
+			t.Errorf("ParseHostKey(%q) should fail", bad)
+		}
+	}
+}
+
+// A seed endpoint's hostKey is parsed at load time; an invalid one fails the
+// config load with a pointed error.
+func TestSeedEndpointHostKeyParsing(t *testing.T) {
+	dir := t.TempDir()
+	write := func(hostKey string) string {
+		p := filepath.Join(dir, "config.yaml")
+		body := `server:
+  externalUrl: http://localhost:3000
+security:
+  rpId: localhost
+  trustedWebauthnOrigins: ["http://localhost:3000"]
+hydra:
+  publicUrl: http://localhost:4444
+  adminUrl: http://localhost:4445
+seedAdminEndpoints:
+  - label: Box
+    address: u@h:22
+    hostKey: "` + hostKey + `"
+`
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLKV/zrLbSGFbSEOz6h3NwcnZ2TV1lLgcdB2z/+xwj7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SeedAdminEndpoints[0].ParsedHostKey == nil || cfg.SeedAdminEndpoints[0].ParsedHostKey.Type != "ssh-ed25519" {
+		t.Fatalf("hostKey not parsed: %+v", cfg.SeedAdminEndpoints[0].ParsedHostKey)
+	}
+
+	if _, err := Load(write("garbage")); err == nil || !strings.Contains(err.Error(), "hostKey") {
+		t.Fatalf("invalid hostKey must fail the load: %v", err)
+	}
+}

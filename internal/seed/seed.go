@@ -18,6 +18,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
@@ -124,4 +125,48 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ApplyHostKeyPins writes config-provisioned host-key pins (#241) for admin
+// endpoints, matched by address tuple (seed endpoints carry no stable id).
+// Runs on every boot, not just first-run: a hostKey added to an existing
+// deployment's config takes effect on restart. Compare-and-set semantics: a
+// conflicting existing pin is logged and NOT overwritten — the operator must
+// forget it via the settings UI first. Failures are logged, never fatal.
+func ApplyHostKeyPins(ctx context.Context, endpoints *store.Endpoints, db *sql.DB, cfg *config.Config) {
+	var adminID string
+	if err := db.QueryRowContext(ctx,
+		`SELECT account_id FROM admin_account WHERE singleton = 1`).Scan(&adminID); err != nil {
+		return // no admin yet (fresh DB with no seed) — nothing to pin onto
+	}
+	for _, ep := range cfg.SeedAdminEndpoints {
+		hk := ep.ParsedHostKey
+		if hk == nil {
+			continue
+		}
+		rows, err := endpoints.ListByAddress(ctx, adminID, ep.Parsed.Host, int64(ep.Parsed.Port), ep.Parsed.Username)
+		if err != nil {
+			slog.Warn("seed: hostKey pin lookup failed", "endpoint", ep.Label, "err", err)
+			continue
+		}
+		for _, row := range rows {
+			if row.PinnedFingerprint == hk.Fingerprint {
+				continue // already pinned to the config key
+			}
+			if row.PinnedFingerprint != "" {
+				slog.Warn("seed: config hostKey conflicts with the existing pin — keeping the existing pin (forget it in Settings -> Endpoints to apply the config key)",
+					"endpoint", row.ID, "pinned", row.PinnedFingerprint, "config", hk.Fingerprint)
+				continue
+			}
+			if err := endpoints.PinHostKey(ctx, store.PinHostKeyParams{
+				ID: row.ID, Host: ep.Parsed.Host, Port: int64(ep.Parsed.Port),
+				Record:   store.HostKeyRecord{Type: hk.Type, Key: hk.Key, Fingerprint: hk.Fingerprint},
+				PinnedBy: "config",
+			}); err != nil {
+				slog.Warn("seed: config hostKey pin failed", "endpoint", row.ID, "err", err)
+				continue
+			}
+			slog.Info("seed: pinned host key from config", "endpoint", row.ID, "fingerprint", hk.Fingerprint)
+		}
+	}
 }

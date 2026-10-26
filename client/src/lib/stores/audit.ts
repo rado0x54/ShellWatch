@@ -78,6 +78,11 @@ export interface SigningRequestRow {
   keyLabel: string | null;
   keyFingerprint: string | null;
   cancelReason: string | null;
+  // Host-key pinning (#241).
+  endpointId: string | null;
+  hostKeyFingerprint: string | null;
+  hostKeyPriorFingerprint: string | null;
+  hostKeyPinned: boolean | null;
 }
 
 export interface SigningsPage {

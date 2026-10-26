@@ -94,7 +94,7 @@ func strOrEmpty(p *string) string {
 func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 	srv.AddTool(&mcpsdk.Tool{
 		Name:        "shellwatch_manage_endpoints",
-		Description: "Manage SSH endpoints. Actions: list, read, create, update, delete.",
+		Description: "Manage SSH endpoints. Actions: list, read, create, update, delete. Updating host or port clears the endpoint's pinned SSH host key (audited); the next session then requires a human to approve the new host's key.",
 		InputSchema: objSchema(map[string]any{
 			"action": map[string]any{"type": "string", "enum": []string{"list", "read", "create", "update", "delete"}},
 			"id":     map[string]any{"type": "string"},
@@ -227,10 +227,19 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 }
 
 func endpointFull(e store.Endpoint) map[string]any {
+	// hostKey is read-only over MCP (#241): the agent can see the pin but
+	// never supply or alter one (create/update take no host-key fields).
+	var hostKey any
+	if e.HostKey != nil {
+		hostKey = map[string]any{
+			"type": e.HostKey.Type, "fingerprint": e.HostKey.Fingerprint,
+			"pinnedAt": e.HostKey.PinnedAt, "pinnedBy": e.HostKey.PinnedBy,
+		}
+	}
 	return map[string]any{
 		"id": e.ID, "accountId": e.AccountID, "label": e.Label, "host": e.Host, "port": e.Port,
 		"username": e.Username, "userVerification": e.UserVerification,
-		"agentForward": e.AgentForward, "description": e.Description,
+		"agentForward": e.AgentForward, "description": e.Description, "hostKey": hostKey,
 	}
 }
 

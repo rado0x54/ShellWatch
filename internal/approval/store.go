@@ -35,6 +35,15 @@ const (
 	StatusDenied    Status = "denied"
 )
 
+// HostKeyInfo rides on an endpoint-auth action (#241): the host key the
+// connection observed during key exchange, and whether it is already pinned
+// ("known") or will be pinned by this very approval ("new").
+type HostKeyInfo struct {
+	Type        string `json:"type"`
+	Fingerprint string `json:"fingerprint"`
+	Status      string `json:"status"` // "new" | "known"
+}
+
 // Context is the discriminated source context (SignRequestContext).
 type Context struct {
 	Source          string `json:"source"`
@@ -45,6 +54,8 @@ type Context struct {
 	ClientHostname  string `json:"clientHostname,omitempty"`
 	ClientOS        string `json:"clientOs,omitempty"`
 	ClientVersion   string `json:"clientVersion,omitempty"`
+	// HostKey is set on endpoint-auth actions (#241).
+	HostKey *HostKeyInfo `json:"-"`
 	// Trigger metadata (endpoint-auth).
 	TriggerKind   string `json:"-"`
 	MCPReason     string `json:"-"`
@@ -65,6 +76,9 @@ func (c Context) MarshalJSON() ([]byte, error) {
 	}
 	if c.SessionID != "" {
 		m["sessionId"] = c.SessionID
+	}
+	if c.HostKey != nil {
+		m["hostKey"] = c.HostKey
 	}
 	switch c.Source {
 	case "endpoint-auth":
@@ -241,6 +255,7 @@ func (s *Store) ResolveSign(id string, resp signing.SignResponse) ClaimResult {
 	if a == nil {
 		return res
 	}
+	resp.ActionID = a.ID // audit plumbing: the signer names this action when it pins a host key
 	if a.resolveSign != nil {
 		a.resolveSign(resp)
 	}

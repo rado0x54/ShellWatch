@@ -7,6 +7,7 @@ package sshx
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -15,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -26,14 +28,75 @@ import (
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
+// newHostKeySigner generates a fresh ed25519 host key for a test server.
+func newHostKeySigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
+}
+
+// memHostKeys is an in-memory sshx.HostKeys for tests (CAS semantics like the
+// endpoints table). pinned records the action ids that pinned.
+type memHostKeys struct {
+	mu     sync.Mutex
+	pins   map[string]PinnedHostKey
+	byWhom map[string]string // endpointID -> pinnedBy
+	byAddr map[string]string // endpointID -> "host:port" the pin was bound to
+}
+
+func newMemHostKeys() *memHostKeys {
+	return &memHostKeys{pins: map[string]PinnedHostKey{}, byWhom: map[string]string{}, byAddr: map[string]string{}}
+}
+
+func (m *memHostKeys) Lookup(_ context.Context, endpointID string) (*PinnedHostKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if pin, ok := m.pins[endpointID]; ok {
+		p := pin
+		return &p, nil
+	}
+	return nil, nil
+}
+
+func (m *memHostKeys) Pin(_ context.Context, req PinRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	o := req.Observed
+	if existing, ok := m.pins[req.EndpointID]; ok {
+		if existing.Fingerprint == o.Fingerprint {
+			return nil
+		}
+		return &HostKeyMismatchError{EndpointID: req.EndpointID, ObservedKeyType: o.Type,
+			ObservedFingerprint: o.Fingerprint, PinnedFingerprint: existing.Fingerprint}
+	}
+	m.pins[req.EndpointID] = PinnedHostKey{Type: o.Type, Key: o.Key, Fingerprint: o.Fingerprint}
+	m.byWhom[req.EndpointID] = req.PinnedBy
+	m.byAddr[req.EndpointID] = net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))
+	return nil
+}
+
+func (m *memHostKeys) prePin(endpointID string, pub ssh.PublicKey) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pins[endpointID] = PinnedHostKey{Type: pub.Type(), Key: pub.Marshal(), Fingerprint: ssh.FingerprintSHA256(pub)}
+}
+
 // startEchoServer starts an in-process SSH server whose "shell" echoes input
-// back line by line, with a PTY. Returns its address and a stop func.
-func startEchoServer(t *testing.T) (host string, port int) {
+// back line by line, with a PTY. Returns its address and its host public key.
+func startEchoServer(t *testing.T) (host string, port int, hostPub ssh.PublicKey) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostSigner := newHostKeySigner(t)
 	srv := &gliderssh.Server{
 		Handler: func(s gliderssh.Session) {
 			_, _, isPty := s.Pty()
@@ -55,10 +118,11 @@ func startEchoServer(t *testing.T) (host string, port int) {
 		},
 		PublicKeyHandler: func(gliderssh.Context, gliderssh.PublicKey) bool { return true },
 	}
+	srv.AddHostKey(hostSigner)
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
 	addr := ln.Addr().(*net.TCPAddr)
-	return "127.0.0.1", addr.Port
+	return "127.0.0.1", addr.Port, hostSigner.PublicKey()
 }
 
 // writeTestKey writes a throwaway ed25519... use ECDSA P-256 (broad support)
@@ -82,7 +146,7 @@ func writeTestKeyDir(t *testing.T) *KeyDir {
 }
 
 func TestSSHTransportEndToEnd(t *testing.T) {
-	host, port := startEchoServer(t)
+	host, port, hostPub := startEchoServer(t)
 	kd := writeTestKeyDir(t)
 
 	// Sanity: the key parses into a signer.
@@ -94,7 +158,11 @@ func TestSSHTransportEndToEnd(t *testing.T) {
 		t.Fatal("bad signer")
 	}
 
-	factory := NewFileKeyFactory(kd)
+	// The file-key factory has no approval loop, so the endpoint is pre-pinned
+	// (config/manual provisioning path) — TOFU requires an approval (#241).
+	hostKeys := newMemHostKeys()
+	hostKeys.prePin("e1", hostPub)
+	factory := NewFileKeyFactory(kd, hostKeys)
 	mgr := terminal.NewManager(factory, clock.Real{}, 0)
 
 	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: host, Port: port, Username: "u"}
@@ -134,6 +202,7 @@ func TestServerHangupClosesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostSigner := newHostKeySigner(t)
 	srv := &gliderssh.Server{
 		Handler: func(s gliderssh.Session) {
 			s.Pty()
@@ -142,12 +211,15 @@ func TestServerHangupClosesSession(t *testing.T) {
 		},
 		PublicKeyHandler: func(gliderssh.Context, gliderssh.PublicKey) bool { return true },
 	}
+	srv.AddHostKey(hostSigner)
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
 	addr := ln.Addr().(*net.TCPAddr)
 
 	kd := writeTestKeyDir(t)
-	mgr := terminal.NewManager(NewFileKeyFactory(kd), clock.Real{}, 0)
+	hostKeys := newMemHostKeys()
+	hostKeys.prePin("e1", hostSigner.PublicKey())
+	mgr := terminal.NewManager(NewFileKeyFactory(kd, hostKeys), clock.Real{}, 0)
 	var statusMu sync.Mutex
 	var lastStatus terminal.Status
 	mgr.SubscribeStatus(func(e terminal.StatusEvent) {

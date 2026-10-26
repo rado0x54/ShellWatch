@@ -29,10 +29,10 @@ func (f *fakeBroker) RequestSign(_ context.Context, _ string, _ signing.SignRequ
 	return signing.SignResponse{AuthenticatorData: []byte{0x04}, Signature: []byte("s"), ClientDataJSON: []byte("{}")}, nil
 }
 
-func (f *fakeBroker) RequestKeyApproval(_ context.Context, p approval.KeyApproval) error {
+func (f *fakeBroker) RequestKeyApproval(_ context.Context, p approval.KeyApproval) (string, error) {
 	f.approved = true
 	f.approveCtx = p.Context
-	return nil
+	return "act", nil
 }
 
 func TestAgentRoutesFileKeyThroughApproval(t *testing.T) {

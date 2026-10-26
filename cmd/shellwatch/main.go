@@ -29,6 +29,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
+	"github.com/rado0x54/shellwatch/internal/hostkeys"
 	"github.com/rado0x54/shellwatch/internal/httpserver"
 	"github.com/rado0x54/shellwatch/internal/hydra"
 	"github.com/rado0x54/shellwatch/internal/ids"
@@ -120,6 +121,9 @@ func run() error {
 	if res.SeededAdminAccount || res.SeededAdminPasskey {
 		slog.Info("seeded from config", "adminAccount", res.SeededAdminAccount, "adminPasskey", res.SeededAdminPasskey)
 	}
+	// Config-provisioned host-key pins (#241): applied on every boot so a
+	// hostKey added to an existing deployment takes effect on restart.
+	seed.ApplyHostKeyPins(ctx, store.NewEndpoints(db, clk), db, cfg)
 	webauthnDeps := &webauthn.Deps{
 		Credentials:    store.NewCredentials(db, clk),
 		Challenges:     webauthn.NewChallengeStore(clk),
@@ -141,11 +145,28 @@ func run() error {
 		return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	})
 
+	// Audit writer built early: the host-key pin store flags pinning approvals
+	// through it, and the factory's mismatch hook writes audit rows. Its
+	// manager/store subscriptions attach below once those exist.
+	auditWriter := audit.NewWriter(db, clk)
+
+	// Host-key pin store (#241): endpoints table for persistent endpoints,
+	// demo service for virtual ones; a successful pin flags the approving
+	// action in the audit log.
+	hostKeySvc := &hostkeys.Service{
+		Endpoints: endpointStore,
+		Demo:      demoSvc,
+		OnPinned:  auditWriter.MarkHostKeyPinned,
+	}
+
 	// Ordering: build the hub first (needs a manager) but the manager's
 	// passkey factory needs the broker which needs the hub's WS channel. Break
 	// it with a manager built on a factory closure that reads the broker set
-	// just below (all resolved before the first session opens).
+	// just below (all resolved before the first session opens). wsHub and
+	// pushChannel resolve lazily the same way for the mismatch hook.
 	var signBroker *approval.Broker
+	var wsHub *ws.Hub
+	var pushChannel *push.Channel
 	factory := sshx.NewPasskeyFactory(sshx.PasskeyFactoryParams{
 		BrokerFunc:      func() sshx.SignBroker { return signBroker },
 		Credentials:     credStore,
@@ -155,6 +176,41 @@ func run() error {
 		RpID:            cfg.Security.RpID,
 		Origin:          firstOrigin(cfg.Security.TrustedWebauthnOrigins),
 		NewConnectionID: newUUID,
+		HostKeys:        hostKeySvc,
+		// Host-key mismatch (#241): the handshake died before authentication,
+		// so no approval toast exists — audit it and alert the account on the
+		// WS hub and every push channel.
+		OnHostKeyMismatch: func(ev sshx.HostKeyMismatchEvent) {
+			slog.Warn("host key mismatch — connection refused",
+				"endpoint", ev.EndpointID, "pinned", ev.PinnedFingerprint, "observed", ev.ObservedFingerprint)
+			auditWriter.RecordHostKeyEvent(audit.HostKeyEvent{
+				Type: "host-key-mismatch", Source: "endpoint-auth",
+				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
+				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
+				Fingerprint: ev.ObservedFingerprint, PriorFingerprint: ev.PinnedFingerprint,
+				SourceIP: ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
+				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
+			})
+			if wsHub != nil {
+				wsHub.SendToAccount(ev.AccountID, map[string]any{
+					"type":                "host-key:mismatch",
+					"endpointId":          ev.EndpointID,
+					"endpointLabel":       ev.EndpointLabel,
+					"endpointAddress":     ev.EndpointAddress,
+					"keyType":             ev.ObservedKeyType,
+					"observedFingerprint": ev.ObservedFingerprint,
+					"pinnedFingerprint":   ev.PinnedFingerprint,
+					"deepLink":            "/settings/endpoints",
+				})
+			}
+			if pushChannel != nil {
+				pushChannel.NotifyHostKeyMismatch(push.HostKeyMismatch{
+					AccountID: ev.AccountID, EndpointLabel: ev.EndpointLabel,
+					EndpointAddress:     ev.EndpointAddress,
+					ObservedFingerprint: ev.ObservedFingerprint, PinnedFingerprint: ev.PinnedFingerprint,
+				})
+			}
+		},
 		// Dead terminal connection -> cancel its stranded sign prompts and
 		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
 		OnConnectionEnded: func(connID, reason string) {
@@ -170,7 +226,7 @@ func run() error {
 	// Idle janitor: auto-close sessions idle longer than sessions.idleTimeoutMinutes.
 	manager.SetIdleTimeout(cfg.Sessions.IdleTimeout())
 	go manager.RunIdleJanitor(ctx, cfg.Sessions.CleanupInterval())
-	wsHub := ws.NewHub(manager)
+	wsHub = ws.NewHub(manager)
 	defer wsHub.Close()
 
 	// Human-in-the-loop signing (Phase 4 slice 2/3): the pending-action store +
@@ -184,9 +240,10 @@ func run() error {
 	if cfg.Vapid != nil {
 		// Web Push delivery (H7): approval prompts reach subscribed browsers
 		// without an open tab (index.ts:78-86).
-		channels = append(channels, push.NewChannel(pushSubs, push.Vapid{
+		pushChannel = push.NewChannel(pushSubs, push.Vapid{
 			Subject: cfg.Vapid.Subject, PublicKey: cfg.Vapid.PublicKey, PrivateKey: cfg.Vapid.PrivateKey,
-		}))
+		})
+		channels = append(channels, pushChannel)
 		slog.Info("web push notifications enabled (VAPID configured)")
 	}
 	signBroker = approval.NewBroker(actionStore,
@@ -194,13 +251,12 @@ func run() error {
 		channels...)
 
 	// Audit writers subscribe to the manager + action store (guaranteed hooks).
-	auditWriter := audit.NewWriter(db, clk)
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
-		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc},
+		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
 		Keys:           store.NewSSHKeys(db),
 		NewID:          newUUID,
 		Version:        buildInfo.Display,
@@ -259,6 +315,8 @@ func run() error {
 			Svc:      epSvc,
 			Sessions: manager,
 			NewID:    newUUID,
+			StepUp:   webauthnDeps.StepUp,
+			Audit:    auditWriter,
 		},
 		Sessions: &rest.Sessions{
 			Manager:     manager,

@@ -173,6 +173,16 @@ Only `…/credentials/:id/label` uses `PATCH`; every other partial update
 (`PUT /api/endpoints/:id`, `PUT /api/auth/me`) uses `PUT`. Minor, but a client's
 method-selection logic has to special-case it.
 
+### K. Host-key pinning ([#241]) exists only in the Go backend
+
+The Node implementation never verified SSH host keys (no `hostVerifier` passed
+to ssh2) and has no `hostKey` on the endpoint shape, no
+`/api/endpoints/:id/host-key` routes, no `hostKey` in `SignRequestContext`, no
+`host-key:mismatch` WS message, and no `host-key-mismatch` /
+`host-key-cleared` audit types. Node is frozen pre-cutover and will not grow
+them; the spec documents the Go behavior.
+
 [#210]: https://github.com/rado0x54/ShellWatch/issues/210
+[#241]: https://github.com/rado0x54/ShellWatch/issues/241
 [#225]: https://github.com/rado0x54/ShellWatch/issues/225
 [#244]: https://github.com/rado0x54/ShellWatch/issues/244

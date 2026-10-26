@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
-import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
+import {
+  addToast,
+  clearAction,
+  toastError,
+  type SignRequestAction,
+  type SignRequestHostKey,
+} from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
 const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
@@ -28,6 +34,8 @@ type SignRequestMessage = {
   source: string;
   endpointLabel?: string;
   endpointAddress?: string;
+  // host-key pinning (#241): set on endpoint-auth actions
+  hostKey?: SignRequestHostKey;
   // webauthn-sign fields
   passkeyLabel?: string;
   credentialId?: string;
@@ -38,6 +46,19 @@ type SignRequestMessage = {
   keyFingerprint?: string;
 };
 
+/** A dial was refused before authentication: the server's host key differs
+ * from the pinned one (#241). No approval exists — this is an alert. */
+type HostKeyMismatchMessage = {
+  type: "host-key:mismatch";
+  endpointId: string;
+  endpointLabel: string;
+  endpointAddress: string;
+  keyType: string;
+  observedFingerprint: string;
+  pinnedFingerprint: string;
+  deepLink: string;
+};
+
 type ServerMessage =
   | { type: "terminal:output"; sessionId: string; data: string; offset: number; reset?: true }
   | { type: "terminal:status"; sessionId: string; status: string }
@@ -46,6 +67,7 @@ type ServerMessage =
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
+  | HostKeyMismatchMessage
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
@@ -63,6 +85,7 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
     source: msg.source,
     endpointLabel: msg.endpointLabel,
     endpointAddress: msg.endpointAddress,
+    hostKey: msg.hostKey,
   };
 
   if (msg.actionType === "key-approve") {
@@ -146,6 +169,19 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
 
       if (msg.type === "sign:resolved") {
         clearAction(msg.actionId);
+      }
+
+      if (msg.type === "host-key:mismatch") {
+        // High-severity, no auto-dismiss: the connection was already refused
+        // and no approval toast will ever appear for it.
+        addToast({
+          variant: "error",
+          message:
+            `Host key MISMATCH for "${msg.endpointLabel}" (${msg.endpointAddress}): ` +
+            `the server presented ${msg.observedFingerprint} but ${msg.pinnedFingerprint} is pinned. ` +
+            `The connection was refused.`,
+          link: { href: msg.deepLink || "/settings/endpoints", label: "Review endpoint" },
+        });
       }
 
       if (msg.type === "error") {

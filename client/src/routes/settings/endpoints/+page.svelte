@@ -10,14 +10,16 @@
     endpoints,
     ENDPOINT_DESCRIPTION_MAX_LENGTH,
     fetchEndpoints,
+    forgetEndpointHostKey,
+    pinEndpointHostKey,
     updateEndpoint,
     USER_VERIFICATION_OPTIONS,
     type Endpoint,
     type UserVerification,
   } from "$lib/stores/endpoints.js";
   import { account, fetchAccount, updateShowDemoEndpoints } from "$lib/stores/account.js";
-  import { credentials, fetchCredentials } from "$lib/stores/webauthn.js";
-  import { toastError } from "$lib/stores/toasts.js";
+  import { credentials, fetchCredentials, performStepUp } from "$lib/stores/webauthn.js";
+  import { toastError, toastInfo } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import SettingsList from "$lib/components/SettingsList.svelte";
@@ -30,7 +32,8 @@
     | { kind: "create" }
     | { kind: "edit"; id: string }
     | { kind: "wizard-server" }
-    | { kind: "wizard-form" };
+    | { kind: "wizard-form" }
+    | { kind: "host-key"; id: string };
 
   let modal = $state<ModalMode | null>(null);
   let saving = $state(false);
@@ -84,6 +87,71 @@
         return "Edit Endpoint";
       case "wizard-server":
         return "Set up your SSH server";
+      case "host-key":
+        return "SSH Host Key";
+    }
+  }
+
+  // --- Host-key management (#241) ---
+
+  let hostKeyBusy = $state(false);
+  let hostKeyForgetArmed = $state(false);
+  let formHostKey = $state("");
+
+  // Live endpoint behind the host-key modal (re-resolved from the store so a
+  // pin/forget re-render shows the fresh state).
+  const hostKeyEndpoint = $derived.by(() => {
+    const m = modal;
+    if (m?.kind !== "host-key") return null;
+    return $endpoints.find((e) => e.id === m.id) ?? null;
+  });
+
+  /** Resolve a pin's pinnedBy to something human: the approving passkey's
+   * label when it is a credential id, else the raw marker (manual/config/…). */
+  function pinnedByLabel(pinnedBy: string): string {
+    const cred = $credentials.find((c) => c.credentialId === pinnedBy);
+    return cred ? `passkey "${cred.label}"` : pinnedBy;
+  }
+
+  function openHostKey(ep: Endpoint) {
+    formHostKey = "";
+    hostKeyForgetArmed = false;
+    modal = { kind: "host-key", id: ep.id };
+  }
+
+  async function handleForgetHostKey() {
+    if (!hostKeyEndpoint || hostKeyBusy) return;
+    hostKeyBusy = true;
+    try {
+      const token = await performStepUp("reset_host_key");
+      await forgetEndpointHostKey(hostKeyEndpoint.id, token);
+      hostKeyForgetArmed = false;
+      toastInfo("Host key forgotten — the next connection re-prompts for approval");
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      hostKeyBusy = false;
+    }
+  }
+
+  async function handlePinHostKey() {
+    if (!hostKeyEndpoint || hostKeyBusy) return;
+    const value = formHostKey.trim();
+    if (!value) {
+      toastError("Paste the host's public key line or its SHA256: fingerprint");
+      return;
+    }
+    hostKeyBusy = true;
+    try {
+      const token = await performStepUp("pin_host_key");
+      const key = value.startsWith("SHA256:") ? { fingerprint: value } : { publicKey: value };
+      await pinEndpointHostKey(hostKeyEndpoint.id, key, token);
+      formHostKey = "";
+      toastInfo("Host key pinned");
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      hostKeyBusy = false;
     }
   }
 
@@ -227,9 +295,15 @@
           <span class="badge" class:badge-available={ep.agentForward}>
             forward: {ep.agentForward ? "on" : "off"}
           </span>
+          <span class="badge" class:badge-available={ep.hostKey !== null}>
+            host key: {ep.hostKey ? "pinned" : "unpinned"}
+          </span>
         {/snippet}
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
+          <button type="button" class="btn btn-secondary" onclick={() => openHostKey(ep)}
+            >Host key</button
+          >
           <button type="button" class="btn btn-secondary" onclick={() => openEdit(ep)}>Edit</button>
           <button type="button" class="btn btn-secondary" onclick={() => openDelete(ep)}
             >Delete</button
@@ -274,6 +348,9 @@
               <span class="badge" class:badge-available={ep.agentForward}>
                 forward: {ep.agentForward ? "on" : "off"}
               </span>
+              <span class="badge" class:badge-available={ep.hostKey !== null}>
+                host key: {ep.hostKey ? "pinned" : "unpinned"}
+              </span>
             {/snippet}
             {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
           </SettingsRow>
@@ -310,6 +387,111 @@
       {#snippet actions()}
         <button type="button" class="btn btn-secondary" onclick={closeModal}>Cancel</button>
         <button type="button" class="btn btn-primary" onclick={continueWizard}>Continue</button>
+      {/snippet}
+    </Modal>
+  {/if}
+
+  {#if modal && modal.kind === "host-key" && hostKeyEndpoint}
+    <Modal title={modalTitle(modal)} onClose={closeModal} width="520px">
+      <p class="modal-desc">
+        <strong>{hostKeyEndpoint.label}</strong> ({formatEndpointAddress(hostKeyEndpoint)})
+      </p>
+      {#if hostKeyEndpoint.hostKey}
+        <div class="hostkey-details">
+          <div class="hostkey-field">
+            <span class="hostkey-label">Key type</span>
+            <span class="hostkey-value hostkey-mono"
+              >{hostKeyEndpoint.hostKey.type || "(fingerprint-only pin)"}</span
+            >
+          </div>
+          <div class="hostkey-field">
+            <span class="hostkey-label">Fingerprint</span>
+            <span class="hostkey-value hostkey-mono">{hostKeyEndpoint.hostKey.fingerprint}</span>
+          </div>
+          {#if hostKeyEndpoint.hostKey.pinnedAt}
+            <div class="hostkey-field">
+              <span class="hostkey-label">Pinned at</span>
+              <span class="hostkey-value">{hostKeyEndpoint.hostKey.pinnedAt}</span>
+            </div>
+          {/if}
+          <div class="hostkey-field">
+            <span class="hostkey-label">Pinned by</span>
+            <span class="hostkey-value">{pinnedByLabel(hostKeyEndpoint.hostKey.pinnedBy)}</span>
+          </div>
+        </div>
+        {#if hostKeyForgetArmed}
+          <p class="modal-desc hostkey-warning">
+            Forget <span class="hostkey-mono">{hostKeyEndpoint.hostKey.fingerprint}</span>? The next
+            connection goes through first-connection approval again — only do this if the host's key
+            legitimately changed. Confirming requires a passkey assertion.
+          </p>
+        {:else}
+          <p class="modal-desc">
+            Connections to this endpoint only succeed while the server presents this key. To replace
+            it, forget it first, then pin the new key (or let the next connection's approval pin
+            it).
+          </p>
+        {/if}
+      {:else}
+        <p class="modal-desc">
+          No host key pinned yet — the first connection will show the presented key in the approval
+          dialog, and approving pins it. You can also pin it up front: paste the host's public key
+          line (<span class="hostkey-mono">ssh-keyscan -t ed25519 {hostKeyEndpoint.host}</span>) or
+          a <span class="hostkey-mono">SHA256:</span> fingerprint. Pinning requires a passkey assertion.
+        </p>
+        <div class="field">
+          <label for="ep-hostkey">Public key line or SHA256: fingerprint</label>
+          <textarea
+            id="ep-hostkey"
+            rows="3"
+            placeholder="ssh-ed25519 AAAA... or SHA256:..."
+            bind:value={formHostKey}
+          ></textarea>
+        </div>
+      {/if}
+
+      {#snippet actions()}
+        <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={hostKeyBusy}>
+          Close
+        </button>
+        {#if hostKeyEndpoint?.hostKey}
+          {#if hostKeyForgetArmed}
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick={() => (hostKeyForgetArmed = false)}
+              disabled={hostKeyBusy}
+            >
+              Keep key
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              onclick={handleForgetHostKey}
+              disabled={hostKeyBusy}
+            >
+              {hostKeyBusy ? "Forgetting…" : "Forget key"}
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick={() => (hostKeyForgetArmed = true)}
+              disabled={hostKeyBusy}
+            >
+              Forget key…
+            </button>
+          {/if}
+        {:else}
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={handlePinHostKey}
+            disabled={hostKeyBusy}
+          >
+            {hostKeyBusy ? "Pinning…" : "Pin key"}
+          </button>
+        {/if}
       {/snippet}
     </Modal>
   {/if}
@@ -604,5 +786,50 @@
     font-size: 0.85rem;
     margin: 0 0 var(--space-3);
     line-height: 1.5;
+  }
+
+  /* Host-key modal (#241) */
+  .hostkey-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    background: var(--surface-container);
+    padding: 0.75rem 1rem;
+    margin-bottom: var(--space-4);
+  }
+
+  .hostkey-field {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+  }
+
+  .hostkey-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 6.5rem;
+    flex-shrink: 0;
+  }
+
+  .hostkey-value {
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+
+  .hostkey-mono {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--primary);
+    overflow-wrap: anywhere;
+  }
+
+  .hostkey-warning {
+    border: 1px solid rgba(255, 196, 0, 0.45);
+    background: rgba(255, 196, 0, 0.08);
+    padding: 0.6rem 0.75rem;
   }
 </style>

@@ -3,6 +3,7 @@ package seed
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -81,4 +82,69 @@ func TestFromConfigSeedsAccountPasskeyEndpoint(t *testing.T) {
 	if creds != 1 {
 		t.Errorf("passkey count after re-seed = %d, want 1", creds)
 	}
+}
+
+// Config-provisioned host-key pins (#241): applied by address match with CAS
+// semantics (a conflicting existing pin is kept, not overwritten).
+func TestApplyHostKeyPins(t *testing.T) {
+	db, err := store.Open("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	line := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLKV/zrLbSGFbSEOz6h3NwcnZ2TV1lLgcdB2z/+xwj7 pinned"
+	hk, err := config.ParseHostKey(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.SeedAdminEndpoints = []config.SeedEndpoint{{
+		Label: "Box", Address: "u@h:22",
+		Parsed:        config.EndpointAddress{Username: "u", Host: "h", Port: 22},
+		ParsedHostKey: hk,
+	}}
+
+	n := 0
+	newID := func() string { n++; return "id-" + string(rune('a'+n)) }
+	if _, err := FromConfig(ctx, db, cfg, newID, time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	eps := store.NewEndpoints(db, nil)
+
+	ApplyHostKeyPins(ctx, eps, db, cfg)
+	rows, err := eps.ListByAddress(ctx, mustAdminID(t, db), "h", 22, "u")
+	if err != nil || len(rows) != 1 || rows[0].PinnedFingerprint != hk.Fingerprint {
+		t.Fatalf("config pin not applied: %+v err=%v", rows, err)
+	}
+	// Re-running is idempotent.
+	ApplyHostKeyPins(ctx, eps, db, cfg)
+
+	// A conflicting existing pin is kept.
+	otherLine := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICoQ8Nw5e21H+lQOQEUHRXS2+9szdyCvpTi4rc073z4g other"
+	otherHK, err := config.ParseHostKey(otherLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SeedAdminEndpoints[0].ParsedHostKey = otherHK
+	ApplyHostKeyPins(ctx, eps, db, cfg)
+	rows, _ = eps.ListByAddress(ctx, mustAdminID(t, db), "h", 22, "u")
+	if rows[0].PinnedFingerprint != hk.Fingerprint {
+		t.Fatalf("conflicting config key must not overwrite the pin: %+v", rows)
+	}
+}
+
+func mustAdminID(t *testing.T, db interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRowContext(context.Background(), `SELECT account_id FROM admin_account WHERE singleton = 1`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

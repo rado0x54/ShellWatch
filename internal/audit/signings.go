@@ -34,6 +34,11 @@ type SigningRow struct {
 	KeyLabel         *string `json:"keyLabel"`
 	KeyFingerprint   *string `json:"keyFingerprint"`
 	CancelReason     *string `json:"cancelReason"`
+	// Host-key pinning (#241).
+	EndpointID              *string `json:"endpointId"`
+	HostKeyFingerprint      *string `json:"hostKeyFingerprint"`
+	HostKeyPriorFingerprint *string `json:"hostKeyPriorFingerprint"`
+	HostKeyPinned           *bool   `json:"hostKeyPinned"`
 }
 
 // SigningFilters narrow a signing-request page.
@@ -54,16 +59,19 @@ func NewSignings(db *sql.DB) *Signings { return &Signings{db: db} }
 const signingColumns = `id, account_id, type, source, created_at, resolved_at, outcome,
 	latency_ms, source_ip, endpoint_label, endpoint_address, session_id,
 	mcp_reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
-	credential_id, passkey_label, user_verification, key_label, key_fingerprint, cancel_reason`
+	credential_id, passkey_label, user_verification, key_label, key_fingerprint, cancel_reason,
+	endpoint_id, host_key_fingerprint, host_key_prior_fingerprint, host_key_pinned`
 
 func scanSigning(sc interface{ Scan(...any) error }) (SigningRow, error) {
 	var r SigningRow
 	var resolvedAt, outcome, sourceIP, epLabel, epAddr, sessID, mcpReason, mcpName, mcpVer,
-		cHost, cOS, cVer, credID, passLabel, uv, keyLabel, keyFp, cancel sql.NullString
-	var latency sql.NullInt64
+		cHost, cOS, cVer, credID, passLabel, uv, keyLabel, keyFp, cancel,
+		epID, hkFp, hkPrior sql.NullString
+	var latency, hkPinned sql.NullInt64
 	if err := sc.Scan(&r.ID, &r.AccountID, &r.Type, &r.Source, &r.CreatedAt, &resolvedAt, &outcome,
 		&latency, &sourceIP, &epLabel, &epAddr, &sessID, &mcpReason, &mcpName, &mcpVer,
-		&cHost, &cOS, &cVer, &credID, &passLabel, &uv, &keyLabel, &keyFp, &cancel); err != nil {
+		&cHost, &cOS, &cVer, &credID, &passLabel, &uv, &keyLabel, &keyFp, &cancel,
+		&epID, &hkFp, &hkPrior, &hkPinned); err != nil {
 		return SigningRow{}, err
 	}
 	r.ResolvedAt, r.Outcome, r.LatencyMs = ns(resolvedAt), ns(outcome), ni(latency)
@@ -72,6 +80,11 @@ func scanSigning(sc interface{ Scan(...any) error }) (SigningRow, error) {
 	r.ClientHostname, r.ClientOS, r.ClientVersion = ns(cHost), ns(cOS), ns(cVer)
 	r.CredentialID, r.PasskeyLabel, r.UserVerification = ns(credID), ns(passLabel), ns(uv)
 	r.KeyLabel, r.KeyFingerprint, r.CancelReason = ns(keyLabel), ns(keyFp), ns(cancel)
+	r.EndpointID, r.HostKeyFingerprint, r.HostKeyPriorFingerprint = ns(epID), ns(hkFp), ns(hkPrior)
+	if hkPinned.Valid {
+		b := hkPinned.Int64 != 0
+		r.HostKeyPinned = &b
+	}
 	return r, nil
 }
 

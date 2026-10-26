@@ -68,14 +68,41 @@ func (c *Channel) Notify(action *approval.Action, deepLink string) {
 // Resolved is a no-op (Node's PushChannel doesn't notify resolution).
 func (c *Channel) Resolved(*approval.Action) {}
 
+// HostKeyMismatch is the push payload input for a host-key mismatch (#241).
+type HostKeyMismatch struct {
+	AccountID           string
+	EndpointLabel       string
+	EndpointAddress     string
+	ObservedFingerprint string
+	PinnedFingerprint   string
+}
+
+// NotifyHostKeyMismatch pushes a high-priority host-key-mismatch alert: the
+// connection died before authentication, so no approval toast exists — this
+// (plus the WS message) is how the human learns a possible MITM was blocked.
+// Fire-and-forget like Notify.
+func (c *Channel) NotifyHostKeyMismatch(m HostKeyMismatch) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		raw, err := json.Marshal(payload{
+			Title: "SSH host key MISMATCH blocked",
+			Body: `"` + m.EndpointLabel + `" (` + m.EndpointAddress + `) presented ` + m.ObservedFingerprint +
+				` but ` + m.PinnedFingerprint + ` is pinned. The connection was refused. Review it in Settings -> Endpoints.`,
+			DeepLink:   "/settings/endpoints",
+			ActionType: "host-key-mismatch",
+		})
+		if err != nil {
+			return
+		}
+		c.sendToAccount(ctx, m.AccountID, raw, "host-key-mismatch")
+	}()
+}
+
 func (c *Channel) deliver(action *approval.Action, deepLink string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	subs, err := c.Subs.ListForAccount(ctx, action.AccountID)
-	if err != nil || len(subs) == 0 {
-		return
-	}
 	title := "SSH Key Approval Requested"
 	body := `Approve "` + action.KeyLabel + `" for ` + action.Context.Source
 	if action.Type == approval.TypeWebAuthnSign {
@@ -86,6 +113,9 @@ func (c *Channel) deliver(action *approval.Action, deepLink string) {
 		}
 		body = `Sign with "` + label + `" for ` + action.Context.Source
 	}
+	if hk := action.Context.HostKey; hk != nil && hk.Status == "new" {
+		body += ` — FIRST connection to this host: approving pins host key ` + hk.Fingerprint
+	}
 	raw, err := json.Marshal(payload{
 		Title: title, Body: body, ActionID: action.ID,
 		DeepLink: toPath(deepLink), ActionType: string(action.Type),
@@ -93,7 +123,16 @@ func (c *Channel) deliver(action *approval.Action, deepLink string) {
 	if err != nil {
 		return
 	}
+	c.sendToAccount(ctx, action.AccountID, raw, action.ID)
+}
 
+// sendToAccount delivers one payload to every subscription of an account,
+// pruning expired subscriptions. logRef names the trigger in logs.
+func (c *Channel) sendToAccount(ctx context.Context, accountID string, raw []byte, logRef string) {
+	subs, err := c.Subs.ListForAccount(ctx, accountID)
+	if err != nil || len(subs) == 0 {
+		return
+	}
 	sent := 0
 	for _, sub := range subs {
 		status, err := c.send(ctx, raw, &webpush.Subscription{
@@ -106,12 +145,12 @@ func (c *Channel) deliver(action *approval.Action, deepLink string) {
 			TTL:             60,
 		})
 		if err != nil {
-			slog.Warn("web-push send failed", "action", action.ID, "err", err)
+			slog.Warn("web-push send failed", "ref", logRef, "err", err)
 			continue
 		}
 		// 410 Gone / 404: the subscription expired — clean it up.
 		if status == 404 || status == 410 {
-			_ = c.Subs.Delete(ctx, action.AccountID, sub.Endpoint)
+			_ = c.Subs.Delete(ctx, accountID, sub.Endpoint)
 			slog.Info("removed expired push subscription", "endpoint", truncate(sub.Endpoint, 60))
 			continue
 		}
@@ -120,7 +159,7 @@ func (c *Channel) deliver(action *approval.Action, deepLink string) {
 		}
 	}
 	if sent > 0 {
-		slog.Info("sent push notifications", "action", action.ID, "count", sent)
+		slog.Info("sent push notifications", "ref", logRef, "count", sent)
 	}
 }
 

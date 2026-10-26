@@ -97,8 +97,9 @@ type KeyApproval struct {
 // RequestKeyApproval handles a file-key sign request: creates a key-approve
 // action, dispatches, and blocks until a human approves (no silent auto-sign
 // on the agent-proxy path — the whole point is human-in-the-loop). On approval
-// the caller does the actual signing with the file key.
-func (b *Broker) RequestKeyApproval(ctx context.Context, p KeyApproval) error {
+// the caller does the actual signing with the file key; the returned action id
+// names the approval (host-key pin audit plumbing, #241).
+func (b *Broker) RequestKeyApproval(ctx context.Context, p KeyApproval) (string, error) {
 	okCh := make(chan struct{}, 1)
 	errCh := make(chan error, 1)
 
@@ -117,12 +118,12 @@ func (b *Broker) RequestKeyApproval(ctx context.Context, p KeyApproval) error {
 	select {
 	case <-okCh:
 		b.notifyResolved(action)
-		return nil
+		return action.ID, nil
 	case err := <-errCh:
 		b.notifyResolved(action)
-		return err
+		return action.ID, err
 	case <-ctx.Done():
-		return ctx.Err()
+		return action.ID, ctx.Err()
 	}
 }
 

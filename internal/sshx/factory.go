@@ -23,8 +23,10 @@ type SignerSource interface {
 
 // NewFileKeyFactory returns a TransportFactory that authenticates with file
 // keys from src. Endpoints with no usable signer fail to connect (the passkey
-// path is Phase 4).
-func NewFileKeyFactory(src SignerSource) terminal.TransportFactory {
+// path is Phase 4). This factory has no approval loop, so it can never pin a
+// host key: endpoints must be pinned up front (config/manual) or every first
+// connection fails closed (#241).
+func NewFileKeyFactory(src SignerSource, hostKeys HostKeys) terminal.TransportFactory {
 	return func(ctx context.Context, p terminal.FactoryParams) (terminal.Transport, error) {
 		signers, err := src.Signers()
 		if err != nil {
@@ -37,6 +39,8 @@ func NewFileKeyFactory(src SignerSource) terminal.TransportFactory {
 			Host:         p.Endpoint.Host,
 			Port:         p.Endpoint.Port,
 			Username:     p.Endpoint.Username,
+			EndpointID:   p.Endpoint.ID,
+			HostKeys:     hostKeys,
 			Signers:      signers,
 			AgentForward: p.Endpoint.AgentForward,
 		})

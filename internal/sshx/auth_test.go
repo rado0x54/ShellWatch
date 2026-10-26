@@ -47,12 +47,13 @@ func (l *authLog) publickeyAttempts() (total, failed int) {
 }
 
 // startLoggingServer accepts any public key and records auth attempts.
-func startLoggingServer(t *testing.T) (port int, log *authLog) {
+func startLoggingServer(t *testing.T) (port int, log *authLog, hostPub ssh.PublicKey) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostSigner := newHostKeySigner(t)
 	log = &authLog{}
 	srv := &gliderssh.Server{
 		Handler: func(s gliderssh.Session) {
@@ -72,9 +73,10 @@ func startLoggingServer(t *testing.T) (port int, log *authLog) {
 			}}
 		},
 	}
+	srv.AddHostKey(hostSigner)
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
-	return ln.Addr().(*net.TCPAddr).Port, log
+	return ln.Addr().(*net.TCPAddr).Port, log, hostSigner.PublicKey()
 }
 
 // rejectingSigner advertises a real public key and rejects every sign with
@@ -96,12 +98,17 @@ func (r *rejectingSigner) Sign(io.Reader, []byte) (*ssh.Signature, error) {
 }
 
 func TestDeniedKeyFallsThroughWithoutSignedAttempt(t *testing.T) {
-	port, log := startLoggingServer(t)
+	port, log, hostPub := startLoggingServer(t)
 	denied := &rejectingSigner{pub: newTestSigner(t).PublicKey(), err: approval.ErrDenied}
 	good := newTestSigner(t)
 
+	// Pre-pinned endpoint: this test is about auth fall-through, and the plain
+	// `good` signer carries no approval that could pin a provisional key.
+	hostKeys := newMemHostKeys()
+	hostKeys.prePin("e1", hostPub)
 	tr, err := Connect(context.Background(), ConnectParams{
-		Host: "127.0.0.1", Port: port, Username: "u", Signers: []ssh.Signer{denied, good},
+		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+		Signers: []ssh.Signer{denied, good},
 	})
 	if err != nil {
 		t.Fatalf("connect must succeed via the second key: %v", err)
@@ -121,12 +128,13 @@ func TestDeniedKeyFallsThroughWithoutSignedAttempt(t *testing.T) {
 }
 
 func TestAllKeysDeniedReportsTheDenial(t *testing.T) {
-	port, _ := startLoggingServer(t)
+	port, _, _ := startLoggingServer(t)
 	a := &rejectingSigner{pub: newTestSigner(t).PublicKey(), err: approval.ErrDenied}
 	b := &rejectingSigner{pub: newTestSigner(t).PublicKey(), err: approval.ErrExpired}
 
 	_, err := Connect(context.Background(), ConnectParams{
-		Host: "127.0.0.1", Port: port, Username: "u", Signers: []ssh.Signer{a, b},
+		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: newMemHostKeys(),
+		Signers: []ssh.Signer{a, b},
 	})
 	if err == nil {
 		t.Fatal("connect must fail when every key is rejected")
@@ -143,7 +151,7 @@ func TestAllKeysDeniedReportsTheDenial(t *testing.T) {
 }
 
 func TestDialContextDeathStopsKeyIteration(t *testing.T) {
-	port, _ := startLoggingServer(t)
+	port, _, _ := startLoggingServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// The first key's prompt is cancelled with the dial context (session
@@ -152,7 +160,8 @@ func TestDialContextDeathStopsKeyIteration(t *testing.T) {
 	second := &rejectingSigner{pub: newTestSigner(t).PublicKey(), err: approval.ErrDenied}
 
 	_, err := Connect(ctx, ConnectParams{
-		Host: "127.0.0.1", Port: port, Username: "u", Signers: []ssh.Signer{first, second},
+		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: newMemHostKeys(),
+		Signers: []ssh.Signer{first, second},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)

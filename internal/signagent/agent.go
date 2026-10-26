@@ -37,7 +37,7 @@ type Identity struct {
 // by *approval.Broker and the sshx.SignBroker facade).
 type Broker interface {
 	RequestSign(ctx context.Context, accountID string, req signing.SignRequest, actionCtx approval.Context, redirectTo string) (signing.SignResponse, error)
-	RequestKeyApproval(ctx context.Context, p approval.KeyApproval) error
+	RequestKeyApproval(ctx context.Context, p approval.KeyApproval) (string, error)
 }
 
 // Agent is the broker-backed read-only ssh/agent.Agent.
@@ -148,7 +148,7 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 		return signing.BuildSSHSignature(resp)
 	}
 	fp := ssh.FingerprintSHA256(id.Signer.PublicKey())
-	if err := a.broker.RequestKeyApproval(a.ctx, approval.KeyApproval{
+	if _, err := a.broker.RequestKeyApproval(a.ctx, approval.KeyApproval{
 		AccountID: a.accountID, KeyLabel: id.Label, KeyFingerprint: fp, ConnectionID: a.connectionID,
 		Context: a.actionCtx, RedirectTo: a.redirectTo,
 	}); err != nil {

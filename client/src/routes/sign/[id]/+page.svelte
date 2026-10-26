@@ -42,6 +42,8 @@
         endpointLabel: string;
         endpointAddress: string;
         trigger: EndpointAuthTrigger;
+        // Host-key pinning (#241): "new" means approving pins the key.
+        hostKey?: { type: string; fingerprint: string; status: "new" | "known" };
       }
     | {
         source: "agent-forwarding";
@@ -270,6 +272,26 @@
     <div class="sign-card">
       <h2>{isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}</h2>
 
+      {#if ctx && ctx.source === "endpoint-auth" && ctx.hostKey?.status === "new"}
+        <div class="sign-hostkey-banner" role="alert">
+          <div class="sign-hostkey-title">First connection to this host</div>
+          <p>
+            No SSH host key is pinned for <strong>{ctx.endpointLabel}</strong>
+            <span class="sign-muted">({ctx.endpointAddress})</span> yet. Approving this request will
+            <strong>pin</strong> the key the server presented — verify the fingerprint against the host
+            before approving:
+          </p>
+          <div class="sign-field">
+            <span class="sign-label">Key type</span>
+            <span class="sign-value sign-mono">{ctx.hostKey.type}</span>
+          </div>
+          <div class="sign-field">
+            <span class="sign-label">Fingerprint</span>
+            <span class="sign-value sign-mono">{ctx.hostKey.fingerprint}</span>
+          </div>
+        </div>
+      {/if}
+
       <div class="sign-fields">
         <div class="sign-field">
           <span class="sign-label">Source</span>
@@ -283,6 +305,13 @@
               {ctx.endpointLabel}
               <span class="sign-muted">({ctx.endpointAddress})</span>
             </span>
+          </div>
+        {/if}
+
+        {#if ctx && ctx.source === "endpoint-auth" && ctx.hostKey?.status === "known"}
+          <div class="sign-field">
+            <span class="sign-label">Known host</span>
+            <span class="sign-value sign-mono">{ctx.hostKey.type} {ctx.hostKey.fingerprint}</span>
           </div>
         {/if}
 
@@ -426,6 +455,29 @@
     flex-direction: column;
     gap: 0.6rem;
     margin-bottom: 1.5rem;
+  }
+
+  .sign-hostkey-banner {
+    border: 1px solid rgba(255, 196, 0, 0.45);
+    background: rgba(255, 196, 0, 0.08);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .sign-hostkey-banner p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .sign-hostkey-title {
+    font-family: var(--font-display);
+    font-size: var(--body-md);
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   .sign-preview {

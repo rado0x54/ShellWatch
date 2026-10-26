@@ -9,18 +9,29 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
+	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/util"
 )
 
+// HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
+// nil skips auditing — tests).
+type HostKeyAuditor interface {
+	RecordHostKeyEvent(ev audit.HostKeyEvent)
+}
+
 // Deps are the collaborators an AgentSession needs.
 type Deps struct {
 	Manager *terminal.Manager
 	Svc     *endpointsvc.Service
+	// Audit records the host-key-cleared event when an MCP endpoint update
+	// changes host/port (#241); may be nil.
+	Audit HostKeyAuditor
 }
 
 // Session isolates one agent connection's terminal sessions.
@@ -139,7 +150,24 @@ func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointP
 	if patch.DescriptionSet {
 		merged.Description = patch.Description
 	}
-	return s.deps.Svc.Endpoints.Update(ctx, merged)
+	ok, err := s.deps.Svc.Endpoints.Update(ctx, merged)
+	// The store cleared the pinned host key atomically when host/port changed
+	// (#241): the agent cannot carry a pin over to a new address. Audit it —
+	// this is the only way MCP can touch a pin, and it must leave a trace.
+	if ok && err == nil && s.deps.Audit != nil && existing.HostKey != nil &&
+		(existing.Host != merged.Host || existing.Port != merged.Port) {
+		s.deps.Audit.RecordHostKeyEvent(audit.HostKeyEvent{
+			Type: "host-key-cleared", Source: "endpoint-admin",
+			AccountID: existing.AccountID, EndpointID: existing.ID, EndpointLabel: existing.Label,
+			EndpointAddress:  existing.Username + "@" + existing.Host + ":" + strconv.FormatInt(existing.Port, 10),
+			Fingerprint:      existing.HostKey.Fingerprint,
+			Reason:           "endpoint host/port updated via MCP",
+			MCPClientName:    s.clientName,
+			MCPClientVersion: s.clientVer,
+			SourceIP:         s.sourceIP,
+		})
+	}
+	return ok, err
 }
 
 // DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing

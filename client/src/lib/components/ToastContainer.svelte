@@ -75,6 +75,14 @@
               {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
             </span>
           </div>
+          {#if toast.action.hostKey?.status === "new"}
+            <div class="toast-hostkey-banner">
+              First connection to this host — approving will <strong>pin</strong> its key
+              <span class="toast-mono" title={toast.action.hostKey.fingerprint}
+                >{shortFingerprint(toast.action.hostKey.fingerprint)}</span
+              >
+            </div>
+          {/if}
           <div class="toast-body">
             <div class="toast-field">
               <span class="toast-label">Source</span>
@@ -159,7 +167,24 @@
             {:else}
               <span class="toast-icon toast-icon-info">&#8505;</span>
             {/if}
-            <span class="toast-message">{toast.message}</span>
+            <span class="toast-message">
+              {toast.message}
+              {#if toast.link}
+                <button
+                  type="button"
+                  class="toast-link"
+                  onclick={() => {
+                    const href = toast.link!.href;
+                    removeToast(toast.id);
+                    // Server-supplied path (typed routes can't validate a
+                    // runtime string) — same guard as the sign page redirect.
+                    if (href.startsWith("/") && !href.startsWith("//")) {
+                      window.location.href = href;
+                    }
+                  }}>{toast.link.label}</button
+                >
+              {/if}
+            </span>
             <button type="button" class="toast-close" onclick={() => removeToast(toast.id)}
               >&#10005;</button
             >
@@ -278,6 +303,26 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+
+  .toast-hostkey-banner {
+    border: 1px solid rgba(255, 196, 0, 0.45);
+    background: rgba(255, 196, 0, 0.08);
+    color: var(--on-surface);
+    font-size: var(--label-md);
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+
+  .toast-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: var(--body-md);
+    text-decoration: underline;
+    padding: 0;
+    margin-left: var(--space-2);
   }
 
   .toast-message {

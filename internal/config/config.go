@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"golang.org/x/crypto/ssh"
 )
 
 // EndpointAddress is the parsed [user@]host[:port] form
@@ -25,16 +26,46 @@ type EndpointAddress struct {
 	Port     int
 }
 
+// HostKeyLine is a parsed config hostKey (#241): a full OpenSSH public-key
+// line (preferred — enables host-key-algorithm pinning) or a bare
+// "SHA256:..." fingerprint (Type empty, Key nil; compares on fingerprint).
+type HostKeyLine struct {
+	Type        string
+	Key         []byte
+	Fingerprint string
+}
+
+// ParseHostKey parses a hostKey config value: an OpenSSH public-key line
+// ("ssh-ed25519 AAAA... [comment]") or a "SHA256:..." fingerprint.
+func ParseHostKey(s string) (*HostKeyLine, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("hostKey must not be empty")
+	}
+	if strings.HasPrefix(s, "SHA256:") {
+		return &HostKeyLine{Fingerprint: s}, nil
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(s))
+	if err != nil {
+		return nil, fmt.Errorf("hostKey must be an OpenSSH public-key line or a SHA256: fingerprint: %v", err)
+	}
+	return &HostKeyLine{Type: key.Type(), Key: key.Marshal(), Fingerprint: ssh.FingerprintSHA256(key)}, nil
+}
+
 // SeedEndpoint mirrors SeedEndpointSchema: label + address (parsed at load
-// time, like zod's transform) + agentForward (default true) + description.
+// time, like zod's transform) + agentForward (default true) + description +
+// optional hostKey (#241, pinned at load with compare-and-set).
 type SeedEndpoint struct {
 	Label        string  `yaml:"label"`
 	Address      string  `yaml:"address"`
 	AgentForward *bool   `yaml:"agentForward"`
 	Description  *string `yaml:"description"`
+	HostKey      *string `yaml:"hostKey"`
 
 	// Parsed is filled by Load from Address.
 	Parsed EndpointAddress `yaml:"-"`
+	// ParsedHostKey is filled by Load from HostKey (nil when absent).
+	ParsedHostKey *HostKeyLine `yaml:"-"`
 }
 
 type SeedAdminPasskey struct {
@@ -422,5 +453,12 @@ func (e *SeedEndpoint) parseAddress() error {
 		return err
 	}
 	e.Parsed = parsed
+	if e.HostKey != nil {
+		hk, err := ParseHostKey(*e.HostKey)
+		if err != nil {
+			return err
+		}
+		e.ParsedHostKey = hk
+	}
 	return nil
 }
