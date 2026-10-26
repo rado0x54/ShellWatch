@@ -173,13 +173,17 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
 
       if (msg.type === "host-key:mismatch") {
         // High-severity, no auto-dismiss: the connection was already refused
-        // and no approval toast will ever appear for it.
+        // and no approval toast will ever appear for it. The toast holds a
+        // headline only; the fingerprints live behind "Details" (#252).
         addToast({
           variant: "error",
-          message:
-            `Host key MISMATCH for "${msg.endpointLabel}" (${msg.endpointAddress}): ` +
-            `the server presented ${msg.observedFingerprint} but ${msg.pinnedFingerprint} is pinned. ` +
-            `The connection was refused.`,
+          message: `Host key MISMATCH — connection to "${msg.endpointLabel}" blocked.`,
+          detail:
+            `Endpoint:   ${msg.endpointLabel} (${msg.endpointAddress})\n` +
+            `Presented:  ${msg.observedFingerprint} (${msg.keyType})\n` +
+            `Pinned:     ${msg.pinnedFingerprint}\n\n` +
+            `The connection was refused before authentication. If the host key ` +
+            `legitimately changed, forget the pinned key under Settings → Endpoints → Host key.`,
           link: { href: msg.deepLink || "/settings/endpoints", label: "Review endpoint" },
         });
       }

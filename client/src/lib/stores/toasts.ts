@@ -46,6 +46,13 @@ export interface Toast {
   dismissAfterMs?: number;
   /** Optional in-app link rendered after the message (e.g. host-key recovery). */
   link?: { href: string; label: string };
+  /**
+   * Full long-form text behind a "Details" affordance (#252). Toasts hold a
+   * short headline only; anything that doesn't read at a glance — error
+   * chains, fingerprints, raw server messages — goes here and is rendered
+   * preformatted in a modal with room to breathe.
+   */
+  detail?: string;
 }
 
 let nextId = 0;
@@ -72,9 +79,39 @@ export function clearAction(actionId: string): void {
   toasts.update((t) => t.filter((toast) => toast.action?.actionId !== actionId));
 }
 
-/** Convenience: show an error toast (auto-dismiss after 10s) */
-export function toastError(message: string): string {
-  return addToast({ variant: "error", message, dismissAfterMs: 10_000 });
+/** A toast message longer than this is summarized; the full text moves to
+ * `detail` (#252). Roughly two lines at the toast's width. */
+export const TOAST_SUMMARY_MAX = 160;
+
+/**
+ * Split a long message into a toast-sized summary + full-text detail (#252).
+ * Short messages pass through unchanged. The summary breaks at a sentence or
+ * clause boundary when one exists in range, else at a word boundary.
+ */
+export function splitLongMessage(message: string): { message: string; detail?: string } {
+  if (message.length <= TOAST_SUMMARY_MAX) {
+    return { message };
+  }
+  const head = message.slice(0, TOAST_SUMMARY_MAX);
+  // Prefer the last sentence/clause boundary, then the last word boundary.
+  let cut = Math.max(head.lastIndexOf(". "), head.lastIndexOf(": "), head.lastIndexOf("; "));
+  if (cut < TOAST_SUMMARY_MAX / 3) {
+    cut = head.lastIndexOf(" ");
+  }
+  if (cut < TOAST_SUMMARY_MAX / 3) {
+    cut = TOAST_SUMMARY_MAX;
+  }
+  return { message: `${message.slice(0, cut).trimEnd()}…`, detail: message };
+}
+
+/**
+ * Convenience: show an error toast (auto-dismiss after 10s). A long message
+ * is summarized automatically with the full text behind "Details"; an
+ * explicit detail skips the auto-split.
+ */
+export function toastError(message: string, detail?: string): string {
+  const split = detail === undefined ? splitLongMessage(message) : { message, detail };
+  return addToast({ variant: "error", ...split, dismissAfterMs: 10_000 });
 }
 
 /** Convenience: show an info toast (auto-dismiss after 3s) */

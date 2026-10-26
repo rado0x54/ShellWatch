@@ -34,7 +34,11 @@
       onMobileClose?.();
     } catch (err) {
       console.error("Failed to create session:", err);
-      toastError(`Failed to create session: ${errorMessage(err)}`);
+      // A host-key mismatch already raised its own persistent alert via the
+      // host-key:mismatch WS message — don't double-report it (#252).
+      if (!errorMessage(err).includes("host key mismatch")) {
+        toastError(`Failed to create session: ${errorMessage(err)}`);
+      }
     }
   }
 
