@@ -114,8 +114,9 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 >
 > 1. `config.yaml`: set `hydra.publicUrl` to `server.externalUrl`
 >    (`http://localhost:3000`) and `hydra.devProxyUpstream: http://localhost:4444`.
-> 2. Start Hydra with its public identity on the app origin:
->    `HYDRA_PUBLIC_ORIGIN=http://localhost:3000 docker compose up -d hydra`.
+> 2. Start Hydra with its public identity on the app origin via the opt-in
+>    overlay (the base compose never overrides a customized `hydra.yml`):
+>    `docker compose -f docker-compose.yml -f docker-compose.single-origin.yml up -d hydra`.
 > 3. Restart the app and log out/in once — tokens minted under the `:4444`
 >    issuer are not valid for the new one.
 >

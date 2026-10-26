@@ -71,13 +71,10 @@ services:
       # `_fk=true` enables foreign-key enforcement (Hydra relies on it).
       DSN: ${HYDRA_DSN:-sqlite:///data/hydra.sqlite?_fk=true}
       SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:-this-is-a-dev-only-system-secret-change-me}
-      # Single-origin dev (strict OAuth discovery, RFC 8414 §3.3): set
-      # HYDRA_PUBLIC_ORIGIN=http://localhost:3000 and enable
-      # hydra.devProxyUpstream in config.yaml so ShellWatch forwards /oauth2/*
-      # itself — Hydra's public identity then lives on the app's origin, like
-      # the production reverse proxy (docs/deployment.md). Default: unchanged.
-      URLS_SELF_ISSUER: ${HYDRA_PUBLIC_ORIGIN:-http://localhost:4444}
-      URLS_SELF_PUBLIC: ${HYDRA_PUBLIC_ORIGIN:-http://localhost:4444}
+      # urls.self.* live in hydra.yml and stay authoritative here. For the
+      # single-origin dev mode (hydra.devProxyUpstream in config.yaml), add the
+      # opt-in overlay instead of editing either file:
+      #   docker compose -f docker-compose.yml -f docker-compose.single-origin.yml up -d hydra
       # `--dev` accepts the http:// issuer without TLS; only for local dev.
     command: serve all --dev --config /etc/config/hydra.yml
     volumes:
