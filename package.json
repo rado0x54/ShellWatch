@@ -8,7 +8,7 @@
     "dev:server": "go run ./cmd/shellwatch 2>&1 | tee logs/dev.log",
     "build": "pnpm build:client && pnpm build:server",
     "build:server": "go build -o shellwatch ./cmd/shellwatch",
-    "build:client": "cd client && npx svelte-kit sync && npx vite build",
+    "build:client": "cd client && npx svelte-kit sync && npx vite build && node ../scripts/keep-web-dist.mjs",
     "start": "./shellwatch",
     "typecheck": "tsc --noEmit",
     "check:svelte": "cd client && npx svelte-kit sync && npx svelte-check",
