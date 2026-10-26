@@ -41,8 +41,9 @@ type CIMDResolver struct {
 	policy  ClientPolicy
 	clk     clock.Clock
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	// locks serializes work per client_id and keeps only the ids currently in
+	// flight — see keyedMutex.
+	locks *keyedMutex
 }
 
 // CIMDResolverParams wires the resolver.
@@ -63,7 +64,7 @@ func NewCIMDResolver(p CIMDResolverParams) *CIMDResolver {
 		fetcher: p.Fetcher,
 		policy:  p.Policy,
 		clk:     clk,
-		locks:   map[string]*sync.Mutex{},
+		locks:   newKeyedMutex(),
 	}
 }
 
@@ -113,7 +114,7 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedire
 		return Resolution{}, resolveErr("invalid_client", err)
 	}
 
-	unlock := r.lockFor(clientIDURL)
+	unlock := r.locks.lock(clientIDURL)
 	defer unlock()
 
 	// The cache-hit flag is deliberately ignored: see the note at provision
@@ -249,17 +250,60 @@ func (r *CIMDResolver) desiredClient(clientIDURL string, doc ClientMetadata, sco
 	}
 }
 
-// lockFor serializes work on one client_id and returns the unlock func.
-func (r *CIMDResolver) lockFor(key string) func() {
-	r.mu.Lock()
-	m, ok := r.locks[key]
-	if !ok {
-		m = &sync.Mutex{}
-		r.locks[key] = m
+// keyedMutex serializes work per key while holding entries only for the keys
+// currently in use.
+//
+// The naive version — a map of mutexes that is never pruned — grows for every
+// distinct key ever seen, and the keys here are attacker-supplied: any
+// syntactically valid https URL reaches this point, including ones the host
+// policy or the SSRF guard then refuses, so walking distinct URLs would retain
+// a mutex each. The document cache is capacity-bounded; this map was not.
+// Entries are therefore reference-counted and dropped by the last releaser, so
+// the map is bounded by concurrency in flight rather than by history.
+type keyedMutex struct {
+	mu      sync.Mutex
+	entries map[string]*keyedEntry
+}
+
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newKeyedMutex() *keyedMutex {
+	return &keyedMutex{entries: map[string]*keyedEntry{}}
+}
+
+// lock blocks until key is free and returns its release func. refs is taken
+// under the map lock before blocking, so a concurrent caller for the same key
+// finds this entry instead of racing a fresh one, and the entry cannot be
+// deleted while anyone holds or awaits it.
+func (k *keyedMutex) lock(key string) func() {
+	k.mu.Lock()
+	e := k.entries[key]
+	if e == nil {
+		e = &keyedEntry{}
+		k.entries[key] = e
 	}
-	r.mu.Unlock()
-	m.Lock()
-	return m.Unlock
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+		k.mu.Unlock()
+	}
+}
+
+// len reports the entries currently held or awaited (tests).
+func (k *keyedMutex) len() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return len(k.entries)
 }
 
 // isCIMDClient reports whether ShellWatch provisioned this client from CIMD.

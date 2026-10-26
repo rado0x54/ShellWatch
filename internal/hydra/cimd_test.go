@@ -1251,3 +1251,122 @@ func TestLoadExtraRootsRejectsUnusableBundles(t *testing.T) {
 		})
 	}
 }
+
+// Regression (review finding): the per-client_id lock map must not grow with
+// history. Every syntactically valid https URL reaches the lock, including the
+// ones the host policy and the SSRF guard then refuse, so an unauthenticated
+// caller walking distinct URLs would otherwise retain a mutex each.
+func TestResolverDoesNotRetainLocksForRejectedURLs(t *testing.T) {
+	// Every rejection below is decided before any network I/O, so the test
+	// stays fast: the host allow/block lists are checked before the request is
+	// built, and the SSRF guard refuses a literal address at dial time.
+	r := NewCIMDResolver(CIMDResolverParams{
+		Admin: newFakeAdmin(),
+		Fetcher: NewFetcher(FetcherParams{
+			AllowedHosts: []string{"169.254.169.254"},
+			BlockedHosts: []string{"blocked.example.com"},
+		}),
+		Policy: testPolicy(),
+	})
+
+	// Refused by the host allowlist.
+	for i := 0; i < 1000; i++ {
+		id := fmt.Sprintf("https://host-%d.example.com/client.json", i)
+		if _, err := r.Resolve(context.Background(), id, "", "mcp"); err == nil {
+			t.Fatalf("%s: expected a rejection", id)
+		}
+	}
+	// Refused by the blocklist, and by the dial-time SSRF guard respectively —
+	// both after the lock was taken.
+	for _, id := range []string{
+		"https://blocked.example.com/client.json",
+		"https://169.254.169.254/client.json",
+	} {
+		if _, err := r.Resolve(context.Background(), id, "", "mcp"); err == nil {
+			t.Fatalf("%s: expected a rejection", id)
+		}
+	}
+
+	if n := r.locks.len(); n != 0 {
+		t.Fatalf("retained %d locks after 1002 rejected URLs, want 0", n)
+	}
+}
+
+func TestResolverReleasesLocksAfterSuccess(t *testing.T) {
+	doc := map[string]any{
+		"client_name":   "Example App",
+		"redirect_uris": []string{"http://127.0.0.1/callback"},
+	}
+	r, _, url, _ := resolverFixture(t, &doc)
+
+	for i := 0; i < 5; i++ {
+		if _, err := r.Resolve(context.Background(), url, "", "mcp"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := r.locks.len(); n != 0 {
+		t.Errorf("retained %d locks after successful resolves, want 0", n)
+	}
+
+	// Concurrency still serializes on the same key, and drains afterwards.
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = r.Resolve(context.Background(), url, "", "mcp")
+		}()
+	}
+	wg.Wait()
+	if n := r.locks.len(); n != 0 {
+		t.Errorf("retained %d locks after concurrent resolves, want 0", n)
+	}
+}
+
+// The entry must survive for as long as it is held or awaited, or the
+// serialization it exists for would not happen.
+func TestKeyedMutexRetainsHeldEntriesAndSerializes(t *testing.T) {
+	k := newKeyedMutex()
+	release := k.lock("a")
+	if n := k.len(); n != 1 {
+		t.Fatalf("len = %d while held, want 1", n)
+	}
+
+	// A second waiter on the same key must block, and must not be able to make
+	// the entry vanish under the holder.
+	entered := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		r2 := k.lock("a")
+		close(entered)
+		r2()
+		close(done)
+	}()
+	select {
+	case <-entered:
+		t.Fatal("a second holder acquired the same key while it was locked")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if n := k.len(); n != 1 {
+		t.Errorf("len = %d with one holder and one waiter, want 1", n)
+	}
+
+	release()
+	<-entered
+	<-done
+	if n := k.len(); n != 0 {
+		t.Errorf("len = %d after everyone released, want 0", n)
+	}
+
+	// Distinct keys do not serialize against each other.
+	a := k.lock("a")
+	b := k.lock("b")
+	if n := k.len(); n != 2 {
+		t.Errorf("len = %d with two distinct keys held, want 2", n)
+	}
+	a()
+	b()
+	if n := k.len(); n != 0 {
+		t.Errorf("len = %d after release, want 0", n)
+	}
+}
