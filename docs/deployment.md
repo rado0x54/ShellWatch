@@ -105,6 +105,25 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
 > callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
 >
+> **Mirroring the single-origin deployment locally (#243):** 2026-07-28-era MCP
+> clients validate RFC 8414 §3.3 — the authorization-server metadata's `issuer`
+> must equal the origin it was fetched from — which the split
+> `localhost:3000` / `localhost:4444` dev layout cannot satisfy (the blended
+> doc at ShellWatch's origin names Hydra's). Instead of running a local reverse
+> proxy, let ShellWatch forward Hydra's public surface itself:
+>
+> 1. `config.yaml`: set `hydra.publicUrl` to `server.externalUrl`
+>    (`http://localhost:3000`) and `hydra.devProxyUpstream: http://localhost:4444`.
+> 2. Start Hydra with its public identity on the app origin:
+>    `HYDRA_PUBLIC_ORIGIN=http://localhost:3000 docker compose up -d hydra`.
+> 3. Restart the app and log out/in once — tokens minted under the `:4444`
+>    issuer are not valid for the new one.
+>
+> ShellWatch then proxies `/oauth2/*`, `/userinfo`, `/.well-known/jwks.json`,
+> and `/.well-known/openid-configuration` to Hydra — the same split as the
+> production proxy — and discovery is self-consistent on one origin. Dev only;
+> leave `devProxyUpstream` unset wherever a real proxy fronts both services.
+>
 > **MCP streams through proxies (#243):** `/mcp` responses can be long-lived SSE
 > streams (`subscriptions/listen`, `read_output` long-polls). The proxy must not
 > buffer them (nginx: `proxy_buffering off;` — or

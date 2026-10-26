@@ -156,6 +156,16 @@ hydra:
   # Admin API URL — login/consent acceptance, client CRUD, token introspection.
   # NEVER expose this to the internet; bind it to a trusted network only.
   adminUrl: http://localhost:4445
+  # Single-origin local dev (docs/deployment.md "Mirroring the single-origin
+  # deployment locally"): strict MCP clients validate RFC 8414 §3.3 — the
+  # authorization-server metadata's issuer must equal the origin it came from —
+  # which the split :3000/:4444 layout cannot satisfy. Setting devProxyUpstream
+  # makes ShellWatch itself forward Hydra's public surface (/oauth2/*,
+  # /userinfo, /.well-known/{jwks.json,openid-configuration}), so one origin
+  # serves both, like the production reverse proxy. Then set publicUrl to
+  # server.externalUrl and start Hydra with
+  # HYDRA_PUBLIC_ORIGIN=http://localhost:3000. Leave unset in production.
+  # devProxyUpstream: http://localhost:4444
   spa:
     # First-party PUBLIC client the web UI uses for its PKCE flow (no secret).
     # ShellWatch ensures it exists in Hydra on boot.

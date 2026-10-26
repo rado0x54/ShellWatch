@@ -159,6 +159,15 @@ type Hydra struct {
 	Spa                     HydraSpa `yaml:"spa"`
 	IntrospectionCacheTtlMs *int     `yaml:"introspectionCacheTtlMs"`
 	Dcr                     HydraDcr `yaml:"dcr"`
+	// DevProxyUpstream (local dev): when set, ShellWatch itself reverse-proxies
+	// Hydra's public surface (/oauth2/*, /userinfo, /.well-known/jwks.json,
+	// /.well-known/openid-configuration) to this address — one origin for app
+	// and OAuth, like the production reverse proxy, with no extra container.
+	// Set publicUrl to the shared origin (= server.externalUrl) and point this
+	// at the real Hydra listener (e.g. 'http://localhost:4444'); Hydra's own
+	// urls.self.issuer/public must be the shared origin too (see
+	// docker-compose.yml / docs/deployment.md). Leave unset in production.
+	DevProxyUpstream string `yaml:"devProxyUpstream"`
 }
 
 type Vapid struct {
@@ -388,6 +397,9 @@ func (c *Config) validate() []string {
 	}
 	if c.Hydra.Spa.RedirectURI != "" && !isURL(c.Hydra.Spa.RedirectURI) {
 		add("hydra.spa.redirectUri: must be a valid URL")
+	}
+	if c.Hydra.DevProxyUpstream != "" && !isURL(c.Hydra.DevProxyUpstream) {
+		add("hydra.devProxyUpstream: must be a valid URL (e.g. 'http://localhost:4444')")
 	}
 	if ttl := *c.Hydra.IntrospectionCacheTtlMs; ttl < 0 || ttl > 300_000 {
 		add("hydra.introspectionCacheTtlMs: must be between 0 and 300000")

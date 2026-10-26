@@ -28,7 +28,9 @@ urls:
   self:
     # Public issuer — advertised in discovery, embedded in tokens, and reached
     # by the web UI, MCP clients, and the agent-client for /oauth2/token.
-    # Browser- and host-reachable.
+    # Browser- and host-reachable. docker-compose.yml overrides both via
+    # HYDRA_PUBLIC_ORIGIN for the single-origin dev mode
+    # (hydra.devProxyUpstream — see config.sample.yaml).
     issuer: http://localhost:4444
     public: http://localhost:4444
   # ShellWatch login + consent providers (passkey-gated). Browser-reachable.
