@@ -28,6 +28,41 @@ The server is a **stateless dual-era** MCP streamable-HTTP server (#243):
 - Auth scope: `mcp` via `Authorization: Bearer <token>`. Additionally fronted by
   the IP allowlist (`config.security.allowedNetworks`). The 401 challenge
   advertises `resource_metadata` (RFC 9728) and `scope="mcp"`.
+- **Onboarding: CIMD is the recommended path; DCR is the deprecated fallback.**
+  The `2026-07-28` authorization spec says clients and servers SHOULD support
+  **Client ID Metadata Documents** (`draft-ietf-oauth-client-id-metadata-document-02`)
+  and deprecates RFC 7591 DCR, keeping it only for backwards compatibility.
+  ShellWatch serves both:
+  - **CIMD** — the `client_id` **is** an `https` URL serving the client's own
+    metadata. `/.well-known/oauth-authorization-server` advertises
+    `client_id_metadata_document_supported: true` and points
+    `authorization_endpoint` at `GET /api/hydra/authorize`, which resolves the
+    document and provisions a Hydra client whose `client_id` is that URL. There
+    is **no registration call at all** on this path. Requirements on the URL and
+    the document (https only, a path component, no query or fragment, no
+    `client_secret`, `token_endpoint_auth_method` ∈ {`none`, `private_key_jwt`},
+    a 5 KB read cap, no redirects followed, and exact `redirect_uri` matching
+    with the RFC 8252 §7.3 loopback-port exception) are in
+    [`openapi.yaml`](./openapi.yaml) under `authorizeOauthClient`.
+    The client's **registered scope comes from the document**, not from the
+    authorization request: declare `"scope": "agent"` (or `"mcp agent"`) in the
+    document if the client needs more than the default `mcp`, since a request
+    may not exceed what the document registered.
+  - **DCR** — `POST /api/hydra/register`, unchanged and still supported. Note
+    that each call mints a **new** Hydra client, so repeated registrations of
+    the same software accumulate rows; CIMD collapses them onto one identity
+    keyed by the URL.
+
+  Either way the same local policy applies — `hydra.dcr.redirectUriPatterns` and
+  `hydra.dcr.allowedScopes` are shared, ShellWatch never issues a client secret,
+  and every registration, refresh and rejection is recorded in the admin-only
+  log at `GET /api/audit/oauth-clients` (Audit → OAuth Clients).
+
+  One consequence of CIMD worth planning for: because the URL is the identity,
+  **all installs of a client share one Hydra client row**, so revoking it under
+  Settings → Authorized clients revokes every install for that account. With DCR
+  each install was separately revocable.
+
 - **Ownership is `(account, OAuth client_id)`** — the `client_id` from token
   introspection. A terminal session created over MCP belongs to that client:
   only requests authenticated for the same account **and** client can

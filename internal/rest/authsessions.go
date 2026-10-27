@@ -7,6 +7,7 @@ package rest
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"sort"
 
 	"github.com/go-chi/chi/v5"
@@ -95,7 +96,19 @@ func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 
 func (a *AuthSessions) revoke(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
-	clientID := chi.URLParam(r, "clientId")
+	// chi hands back the route segment still percent-encoded, which matters now
+	// that a CIMD client_id IS a URL (#242): the caller must encode it, so
+	// without decoding here Hydra would be asked to revoke a client literally
+	// named "https%3A%2F%2F…" and the terminal cleanup below would match none
+	// of the client's sessions.
+	//
+	// The error branch is defence in depth only: net/http answers a malformed
+	// escape with its own 400 before routing, so a handler never sees one.
+	clientID, err := url.PathUnescape(chi.URLParam(r, "clientId"))
+	if err != nil {
+		writeErr(w, 400, "invalid clientId encoding")
+		return
+	}
 	if err := a.Admin.RevokeConsentSessions(r.Context(), acct, clientID); err != nil {
 		writeErr(w, 500, "internal error")
 		return

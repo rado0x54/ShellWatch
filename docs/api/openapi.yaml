@@ -351,6 +351,81 @@ components:
         nextCursor: { type: string, nullable: true }
       required: [rows, nextCursor]
 
+    OAuthClientRegistrationPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/OAuthClientRegistration" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    OAuthClientRegistration:
+      type: object
+      description: >-
+        One entry of the OAuth client registration log (#242): how an MCP or
+        agent client came to exist in Hydra, via mediated DCR
+        (POST /api/hydra/register) or CIMD document resolution
+        (GET /api/hydra/authorize).
+
+
+        This is the only audit surface that is **not account-scoped**. Both
+        onboarding paths run before any account is identified — there is no
+        subject, no bearer token, only a peer address and a `client_id` — so
+        reads are gated on the admin role instead of an account filter.
+
+
+        It is a **log, not a registry**: current client state stays in Hydra
+        (`GET /admin/clients` serves name, scope, redirect URIs, `created_at`
+        and the `metadata.shellwatch.origin` marker ShellWatch writes). Rows
+        here are a snapshot denormalized at write time and are never
+        reconciled, so a client deleted in Hydra keeps its history.
+      properties:
+        id: { type: string }
+        clientId:
+          type: string
+          description: >-
+            Hydra's `client_id` — a UUID for DCR, the Client Identifier URL for
+            CIMD. The link to Hydra's own data model. Not unique in this table:
+            a client appears once per event.
+        origin:
+          type: string
+          enum: [dcr, cimd]
+          description: Which onboarding path produced the event.
+        event:
+          type: string
+          description: >-
+            `registered` — the client was created in Hydra; `refreshed` — a
+            CIMD document changed and the Hydra client was updated;
+            `rejected` — the registration was refused, so **no Hydra client
+            exists** for this row. Not enum-constrained: #255 adds `blocked`.
+          example: registered
+        clientName: { type: string, nullable: true }
+        metadataHost:
+          type: string
+          nullable: true
+          description: >-
+            The CIMD Client Identifier URL's hostname — the identity cue
+            draft-ietf-oauth-client-id-metadata-document-02 §9.1 wants
+            surfaced. Null for DCR, which has no metadata document.
+        authMethod: { type: string, nullable: true, example: none }
+        redirectUris:
+          type: array
+          items: { type: string }
+          description: Empty on a rejection, where no document was accepted.
+        scope: { type: string, nullable: true }
+        reason:
+          type: string
+          nullable: true
+          description: >-
+            The cause for `rejected`, or what changed for `refreshed`.
+        sourceIp:
+          type: string
+          nullable: true
+          description: Peer address resolved under the server's trustProxy policy.
+        createdAt: { type: string }
+      required: [id, clientId, origin, event, createdAt]
+
     NotificationPage:
       type: object
       properties:
@@ -486,9 +561,11 @@ components:
     AuthorizationServerMetadata:
       type: object
       description: >-
-        RFC 8414 authorization-server metadata, blended: issuer + auth/token/jwks/
-        revocation point at Hydra; registration_endpoint points at ShellWatch's
-        mediated DCR (/api/hydra/register).
+        RFC 8414 authorization-server metadata, blended: issuer + token/jwks/
+        revocation point at Hydra; `registration_endpoint` points at ShellWatch's
+        mediated DCR (/api/hydra/register) and, when CIMD is enabled (the
+        default), `authorization_endpoint` points at ShellWatch's CIMD front
+        door (/api/hydra/authorize) rather than Hydra's /oauth2/auth.
       properties:
         issuer: { type: string }
         authorization_endpoint: { type: string }
@@ -504,9 +581,23 @@ components:
         code_challenge_methods_supported: { type: array, items: { type: string }, example: [S256] }
         token_endpoint_auth_methods_supported:
           type: array
+          description: >-
+            ShellWatch never issues a client secret — not via DCR, and CIMD
+            forbids it outright (draft-ietf-oauth-client-id-metadata-document-02
+            §4.1) — so the shared-secret methods Hydra would accept are not
+            advertised.
           items: { type: string }
-          example: [none, client_secret_basic, client_secret_post]
+          example: [none, private_key_jwt]
         scopes_supported: { type: array, items: { type: string } }
+        client_id_metadata_document_supported:
+          type: boolean
+          description: >-
+            draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when
+            ShellWatch resolves an https URL `client_id` as a Client ID Metadata
+            Document. Omitted entirely when CIMD is disabled, in which case
+            `authorization_endpoint` is Hydra's own `/oauth2/auth` and a URL
+            `client_id` is rejected as an unknown client.
+          example: true
       required: [issuer, authorization_endpoint, token_endpoint, registration_endpoint]
 
     WebAuthnRegistrationOptions:
@@ -686,8 +777,13 @@ paths:
       security: []
       summary: Blended AS metadata (RFC 8414)
       description: >-
-        authorization/token endpoints point at Hydra (the real issuer); the
-        `registration_endpoint` points at ShellWatch's mediated DCR. `scopes_supported`
+        The token endpoint points at Hydra (the real issuer); the
+        `registration_endpoint` points at ShellWatch's mediated DCR (Hydra's own
+        public registration endpoint is switched off), and
+        `authorization_endpoint` at ShellWatch's CIMD front door
+        (`/api/hydra/authorize`) whenever `client_id_metadata_document_supported`
+        is `true`. With CIMD disabled, `authorization_endpoint` is Hydra's
+        `/oauth2/auth` and the CIMD flag is absent. `scopes_supported`
         includes the bearer scopes (`mcp`, plus `agent` when the proxy is enabled)
         and `offline_access`.
       responses:
@@ -746,6 +842,110 @@ paths:
               schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
         "404":
           description: Agent proxy disabled — route not mounted.
+
+  /api/hydra/authorize:
+    get:
+      operationId: authorizeOauthClient
+      tags: [discovery]
+      security: []
+      summary: Authorization front door — resolves a CIMD client_id, then hands off to Hydra
+      description: >-
+        Advertised as `authorization_endpoint` in the AS metadata when CIMD is
+        enabled. ShellWatch mediates client onboarding by design: Hydra's own
+        public registration endpoint is switched off and `/api/hydra/register`
+        mediates DCR, so that local policy — redirect-URI patterns, the scope
+        allowlist, never issuing a secret, the registration log — is enforced
+        before anything reaches Hydra. This endpoint is the same arrangement
+        for CIMD, and it is also a practical necessity: Hydra rejects an https
+        URL `client_id` as an unknown client before ShellWatch would ever see
+        the request.
+
+
+        This endpoint issues no code and touches no session. For a `client_id`
+        that is **not** an `https://` URL — the first-party SPA, every DCR
+        client — it redirects straight to Hydra's `/oauth2/auth` with the query
+        string forwarded verbatim. For a URL `client_id` it first resolves the
+        Client ID Metadata Document (fetch, validate, provision a Hydra client
+        whose `client_id` **is** the URL), then redirects the same way.
+
+
+        Query parameters are those of an OAuth 2.0 authorization request
+        (RFC 6749 §4.1.1 plus PKCE); they are passed through unchanged rather
+        than re-serialized, and are documented here only as far as CIMD reads
+        them.
+
+
+        Resolution runs on every authorization, not only the first. The document
+        cache (see `hydra.cimd.cacheMinSeconds`) decides whether the document is
+        re-fetched; it never decides whether Hydra holds the client, so a
+        request refused after the fetch cannot leave a later valid one without a
+        registration.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: >-
+            An `https://` URL is resolved as a Client ID Metadata Document
+            (draft-ietf-oauth-client-id-metadata-document-02 §3: https, a path
+            component, no userinfo, no query, no fragment, no dot segments,
+            at most 255 characters). Anything else is passed through to Hydra.
+        - name: redirect_uri
+          in: query
+          schema: { type: string }
+          description: >-
+            Must match one of the document's `redirect_uris` exactly, with the
+            RFC 8252 §7.3 loopback exception (a registered `http://127.0.0.1/…`
+            or `http://[::1]/…` entry matches any port; `localhost` does not).
+        - name: scope
+          in: query
+          schema: { type: string }
+          description: >-
+            Space-delimited, and must stay within the scope the client's
+            **document** registered, else `invalid_scope`. The registered scope
+            is the document's own `scope` (RFC 7591 client metadata) filtered
+            through `hydra.dcr.allowedScopes`, defaulting to `mcp` when the
+            document declares none, plus `offline_access` — so a client that
+            wants `agent` has to say so in its document. It is deliberately not
+            derived from this parameter: otherwise whichever authorization
+            arrived first would cap the client permanently.
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: response_type
+          in: query
+          schema: { type: string, example: code }
+        - name: code_challenge
+          in: query
+          schema: { type: string }
+        - name: code_challenge_method
+          in: query
+          schema: { type: string, example: S256 }
+      responses:
+        "303":
+          description: >-
+            Hand-off. Normally to Hydra's `/oauth2/auth` with the query string
+            intact. If CIMD resolution failed **after** the requested
+            `redirect_uri` was validated against the document (an unsatisfiable
+            `scope`, or a Hydra write failure), the redirect instead goes to
+            that `redirect_uri` carrying `error`, `error_description` and the
+            original `state` (RFC 6749 §4.1.2.1).
+          headers:
+            Location:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+        "400":
+          description: >-
+            HTML error page. Used for every failure that happens **before** the
+            requested `redirect_uri` could be validated against the document —
+            an invalid Client Identifier URL, an unreachable, oversize,
+            non-JSON, invalid or SSRF-blocked document, or a `redirect_uri` that
+            is not registered. Such a `redirect_uri` is attacker-chosen, so the
+            error is never redirected to it.
+          content:
+            text/html:
+              schema: { type: string }
 
   /api/hydra/register:
     post:
@@ -1509,6 +1709,62 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NotificationPage" }
+
+  /api/audit/oauth-clients:
+    get:
+      operationId: listAuditOAuthClients
+      tags: [audit]
+      summary: OAuth client registration log (admin only)
+      description: >-
+        The fourth audit surface (#242): append-only, keyset-paginated, newest
+        first. Records every DCR registration and every CIMD document
+        resolution, including rejections.
+
+
+        **Admin only, and not account-scoped.** Every other audit route filters
+        on the caller's account; these rows are pre-account by nature (DCR and
+        CIMD both run before a subject exists), so the admin role is the only
+        thing in front of them. A non-admin caller gets 403.
+
+
+        Runtime allow/deny policy over these clients is tracked separately in
+        #255.
+      parameters:
+        - name: clientId
+          in: query
+          description: Exact Hydra `client_id` — the full history of one client.
+          schema: { type: string }
+        - name: origin
+          in: query
+          description: "`dcr` or `cimd`; any other value is a 400."
+          schema: { type: string, enum: [dcr, cimd] }
+        - name: event
+          in: query
+          description: "`registered`, `refreshed` or `rejected`; any other value is a 400."
+          schema: { type: string }
+        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side: non-finite or ≤0 → 50; values
+            above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Page of registration events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthClientRegistrationPage" }
+        "400":
+          description: Invalid origin or event filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Caller does not hold the admin role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ------------------------------------------------------------------ keys
   /api/keys:

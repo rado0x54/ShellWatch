@@ -1,0 +1,368 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+// CIMD → Hydra provisioning: turn a resolved Client ID Metadata Document into
+// a Hydra client whose client_id IS the Client Identifier URL, so Hydra's
+// authorize / token / refresh / revoke / introspect paths all work unchanged.
+//
+// Ownership rule: ShellWatch only ever writes a client it created itself from
+// CIMD, marked by metadata.shellwatch.origin == "cimd". An admin- or
+// DCR-created client that happens to use a URL id keeps its registration.
+package hydra
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/rado0x54/shellwatch/internal/clock"
+)
+
+// OriginCIMD marks clients provisioned from a Client ID Metadata Document.
+const OriginCIMD = "cimd"
+
+// ShellWatchMetadata is the shape ShellWatch stores under Hydra's per-client
+// `metadata` object. Origin is the discriminator the consent page and the
+// authorized-clients view read.
+type ShellWatchMetadata struct {
+	Origin    string `json:"origin"`
+	FetchedAt string `json:"fetched_at,omitempty"`
+}
+
+// CIMDResolver resolves URL client_ids and keeps the matching Hydra client in
+// sync. Safe for concurrent use: work on one client_id is serialized, so N
+// simultaneous first-time authorizations provision exactly once.
+type CIMDResolver struct {
+	admin   Admin
+	fetcher *Fetcher
+	policy  ClientPolicy
+	clk     clock.Clock
+
+	// locks serializes work per client_id and keeps only the ids currently in
+	// flight — see keyedMutex.
+	locks *keyedMutex
+}
+
+// CIMDResolverParams wires the resolver.
+type CIMDResolverParams struct {
+	Admin   Admin
+	Fetcher *Fetcher
+	Policy  ClientPolicy
+	Clock   clock.Clock
+}
+
+func NewCIMDResolver(p CIMDResolverParams) *CIMDResolver {
+	clk := p.Clock
+	if clk == nil {
+		clk = clock.Real{}
+	}
+	return &CIMDResolver{
+		admin:   p.Admin,
+		fetcher: p.Fetcher,
+		policy:  p.Policy,
+		clk:     clk,
+		locks:   newKeyedMutex(),
+	}
+}
+
+// ResolveError is a CIMD failure carrying the OAuth error code to report and,
+// crucially, whether the request's redirect_uri had already been checked
+// against the document when the failure happened. The front door may only
+// redirect an error to a redirect_uri it has validated.
+type ResolveError struct {
+	Code              string
+	Description       string
+	RedirectValidated bool
+}
+
+func (e *ResolveError) Error() string { return e.Code + ": " + e.Description }
+
+// resolveErr builds a pre-validation failure (rendered, never redirected).
+func resolveErr(code string, err error) *ResolveError {
+	return &ResolveError{Code: code, Description: err.Error()}
+}
+
+// Resolution is what the front door needs to carry on with the authorization.
+type Resolution struct {
+	Doc ClientMetadata
+	// FirstSeen is true when this request is what brought the client into
+	// existence in Hydra (drives the consent page's "first time seen" hint).
+	FirstSeen bool
+	// Refreshed is true when the document changed and the Hydra client was
+	// updated. Any such write is a change to the client's registration — new
+	// redirect URIs, a new name — so it is worth recording even when it is not
+	// material.
+	Refreshed bool
+	// MaterialChange is true when the document changed its authentication
+	// shape or its keys (draft §9.2). The resolver cannot act on it — no
+	// subject exists before login — so the consent step consumes it.
+	MaterialChange bool
+}
+
+// Resolve validates the Client Identifier URL, fetches and validates its
+// document, checks the request's redirect_uri against it, and provisions or
+// refreshes the Hydra client.
+//
+// requestedRedirectURI and requestedScope come from the authorization request;
+// an empty redirect_uri skips the match (Hydra then rejects the request itself,
+// and the front door must not redirect to an unvalidated URI).
+func (r *CIMDResolver) Resolve(ctx context.Context, clientIDURL, requestedRedirectURI, requestedScope string) (Resolution, error) {
+	if _, err := ValidateClientIDURL(clientIDURL); err != nil {
+		return Resolution{}, resolveErr("invalid_client", err)
+	}
+
+	unlock := r.locks.lock(clientIDURL)
+	defer unlock()
+
+	// The cache-hit flag is deliberately ignored: see the note at provision
+	// below for why it must not gate provisioning.
+	doc, _, err := r.fetcher.Fetch(ctx, clientIDURL, r.policy)
+	if err != nil {
+		return Resolution{}, resolveErr("invalid_client", err)
+	}
+	// Until this check passes, the requested redirect_uri is attacker-chosen:
+	// every failure above and including it must be RENDERED, not redirected.
+	if requestedRedirectURI != "" && !MatchRedirectURI(doc.RedirectURIs, requestedRedirectURI) {
+		return Resolution{}, resolveErr("invalid_request",
+			fmt.Errorf("redirect_uri is not registered in the client metadata document"))
+	}
+	redirectOK := requestedRedirectURI != ""
+
+	// The scope the client is REGISTERED with is a function of its document
+	// alone (RFC 7591 lists `scope` as client metadata), never of the request
+	// that happened to arrive first. Deriving it from the request would make
+	// the Hydra registration oscillate with whatever each authorization asked
+	// for, and would mean the first request silently capped the client.
+	registered, err := GrantedScope(doc.Scope, r.policy.AllowedScopes)
+	if err != nil {
+		// A document asking only for scopes this deployment does not grant is
+		// an unusable document, not a bad request.
+		return Resolution{}, resolveErr("invalid_client", err)
+	}
+	// This authorization must stay inside what the document registered.
+	if _, err := GrantedScope(requestedScope, setOf(registered)); err != nil {
+		return Resolution{}, &ResolveError{
+			Code: "invalid_scope", Description: err.Error(), RedirectValidated: redirectOK,
+		}
+	}
+
+	// provision runs on EVERY authorization, cache hit or not. The document
+	// cache says the document has not changed; it says nothing about whether
+	// Hydra holds the client. Treating the two as the same thing meant a
+	// request rejected after the fetch (a bad redirect_uri, an out-of-policy
+	// scope) left the document cached but nothing provisioned, so the next
+	// valid request skipped provisioning and Hydra rejected it as an unknown
+	// client until the cache expired. provision is a no-op read when nothing
+	// changed, so this costs one admin GET, not a write or a log row.
+	out, err := r.provision(ctx, clientIDURL, doc, registered)
+	if err != nil {
+		// Do not keep a document we could not apply — the next attempt
+		// re-reads rather than serving a client Hydra does not have.
+		r.fetcher.Invalidate(clientIDURL)
+		return Resolution{}, &ResolveError{
+			Code: "server_error", Description: err.Error(), RedirectValidated: redirectOK,
+		}
+	}
+	return Resolution{
+		Doc: doc, FirstSeen: out.FirstSeen,
+		Refreshed: out.Refreshed, MaterialChange: out.Material,
+	}, nil
+}
+
+// provisionOutcome is what provision reports about the Hydra write it made.
+type provisionOutcome struct {
+	// FirstSeen: the client did not exist and was created.
+	FirstSeen bool
+	// Refreshed: the client existed and was updated.
+	Refreshed bool
+	// Material: the update changed the client's authentication shape or keys.
+	Material bool
+}
+
+// provision creates or updates the Hydra client, reporting which write it made.
+func (r *CIMDResolver) provision(ctx context.Context, clientIDURL string, doc ClientMetadata, scope []string) (provisionOutcome, error) {
+	desired := r.desiredClient(clientIDURL, doc, scope)
+	failed := fmt.Errorf("client registration failed")
+
+	existing, err := r.admin.GetClient(ctx, clientIDURL)
+	if err != nil {
+		return provisionOutcome{}, failed
+	}
+	if existing == nil {
+		if _, err := r.admin.CreateClient(ctx, desired); err == nil {
+			return provisionOutcome{FirstSeen: true}, nil
+		} else if apiErr, ok := err.(*APIError); !ok || apiErr.Status != http.StatusConflict {
+			return provisionOutcome{}, failed
+		}
+		// A concurrent writer won the race (another process, or an operator).
+		// Re-read and fall through to the update path.
+		existing, err = r.admin.GetClient(ctx, clientIDURL)
+		if err != nil || existing == nil {
+			return provisionOutcome{}, failed
+		}
+	}
+
+	if !isCIMDClient(existing) {
+		// Someone else owns this id. Leave it completely alone; the
+		// authorization still proceeds against their registration.
+		slog.Warn("cimd: refusing to overwrite a client ShellWatch did not create from CIMD",
+			"client_id", clientIDURL)
+		return provisionOutcome{}, nil
+	}
+	if !clientChanged(existing, desired) {
+		return provisionOutcome{}, nil
+	}
+	material := materialChange(existing, desired)
+	if _, err := r.admin.UpdateClient(ctx, clientIDURL, desired); err != nil {
+		return provisionOutcome{}, failed
+	}
+	return provisionOutcome{Refreshed: true, Material: material}, nil
+}
+
+func (r *CIMDResolver) desiredClient(clientIDURL string, doc ClientMetadata, scope []string) OAuth2Client {
+	meta, _ := json.Marshal(map[string]any{
+		"shellwatch": ShellWatchMetadata{
+			Origin:    OriginCIMD,
+			FetchedAt: r.clk.Now().UTC().Format(clock.ISOMillis),
+		},
+	})
+	var metadata map[string]any
+	_ = json.Unmarshal(meta, &metadata)
+
+	return OAuth2Client{
+		ClientID:                clientIDURL,
+		ClientName:              doc.ClientName,
+		GrantTypes:              doc.GrantTypes,
+		ResponseTypes:           doc.ResponseTypes,
+		Scope:                   strings.Join(scope, " "),
+		RedirectURIs:            doc.RedirectURIs,
+		TokenEndpointAuthMethod: doc.TokenEndpointAuthMethod,
+		JwksURI:                 doc.JwksURI,
+		Jwks:                    doc.Jwks,
+		ClientURI:               doc.ClientURI,
+		// logo_uri is deliberately NOT carried over: the consent page renders
+		// no remote logo (draft §9.3 — phishing and cross-domain tracking),
+		// and prefetching/moderating one is out of scope.
+		Metadata: metadata,
+	}
+}
+
+// keyedMutex serializes work per key while holding entries only for the keys
+// currently in use.
+//
+// The naive version — a map of mutexes that is never pruned — grows for every
+// distinct key ever seen, and the keys here are attacker-supplied: any
+// syntactically valid https URL reaches this point, including ones the host
+// policy or the SSRF guard then refuses, so walking distinct URLs would retain
+// a mutex each. The document cache is capacity-bounded; this map was not.
+// Entries are therefore reference-counted and dropped by the last releaser, so
+// the map is bounded by concurrency in flight rather than by history.
+type keyedMutex struct {
+	mu      sync.Mutex
+	entries map[string]*keyedEntry
+}
+
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newKeyedMutex() *keyedMutex {
+	return &keyedMutex{entries: map[string]*keyedEntry{}}
+}
+
+// lock blocks until key is free and returns its release func. refs is taken
+// under the map lock before blocking, so a concurrent caller for the same key
+// finds this entry instead of racing a fresh one, and the entry cannot be
+// deleted while anyone holds or awaits it.
+func (k *keyedMutex) lock(key string) func() {
+	k.mu.Lock()
+	e := k.entries[key]
+	if e == nil {
+		e = &keyedEntry{}
+		k.entries[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+		k.mu.Unlock()
+	}
+}
+
+// len reports the entries currently held or awaited (tests).
+func (k *keyedMutex) len() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return len(k.entries)
+}
+
+// isCIMDClient reports whether ShellWatch provisioned this client from CIMD.
+func isCIMDClient(c *OAuth2Client) bool {
+	if c == nil {
+		return false
+	}
+	sw, ok := c.Metadata["shellwatch"].(map[string]any)
+	if !ok {
+		return false
+	}
+	origin, _ := sw["origin"].(string)
+	return origin == OriginCIMD
+}
+
+// clientChanged compares the fields CIMD owns, ignoring `metadata` (whose
+// fetched_at changes on every refresh and would force a pointless write).
+func clientChanged(existing *OAuth2Client, desired OAuth2Client) bool {
+	return existing.ClientName != desired.ClientName ||
+		existing.Scope != desired.Scope ||
+		existing.TokenEndpointAuthMethod != desired.TokenEndpointAuthMethod ||
+		existing.JwksURI != desired.JwksURI ||
+		existing.ClientURI != desired.ClientURI ||
+		!sameStrings(existing.RedirectURIs, desired.RedirectURIs) ||
+		!sameStrings(existing.GrantTypes, desired.GrantTypes) ||
+		!sameStrings(existing.ResponseTypes, desired.ResponseTypes) ||
+		!sameJSON(existing.Jwks, desired.Jwks)
+}
+
+// materialChange reports a change that invalidates remembered consent: the
+// client's authentication shape or its keys. Changed redirect_uris just
+// replace (the user approved the client, not its port).
+func materialChange(existing *OAuth2Client, desired OAuth2Client) bool {
+	return existing.TokenEndpointAuthMethod != desired.TokenEndpointAuthMethod ||
+		existing.JwksURI != desired.JwksURI ||
+		!sameJSON(existing.Jwks, desired.Jwks)
+}
+
+// sameStrings compares as sets — Hydra may reorder on round-trip.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameJSON(a, b map[string]any) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}

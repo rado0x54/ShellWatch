@@ -28,6 +28,16 @@ type OAuth2Client struct {
 	Scope                   string   `json:"scope,omitempty"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	// JwksURI/Jwks carry a CIMD client's public keys for private_key_jwt
+	// authentication (draft §8.2). Never any private material.
+	JwksURI string         `json:"jwks_uri,omitempty"`
+	Jwks    map[string]any `json:"jwks,omitempty"`
+	// ClientURI is the client's human-facing home page, shown on consent.
+	ClientURI string `json:"client_uri,omitempty"`
+	// Metadata is Hydra's free-form per-client object. ShellWatch stores
+	// {"shellwatch":{"origin":…}} there to mark what it provisioned and from
+	// where (see ShellWatchMetadata).
+	Metadata map[string]any `json:"metadata,omitempty"`
 	// CreatedAt is Hydra's DCR registration timestamp (read-only; surfaced by
 	// /api/auth/sessions).
 	CreatedAt string `json:"created_at,omitempty"`

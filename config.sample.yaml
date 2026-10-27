@@ -189,3 +189,34 @@ hydra:
   #     - "^http://\\[::1\\](:\\d+)?(/.*)?$"
   #     - "^https://claude\\.ai/api/mcp/auth_callback$"
   #     - "^https://claude\\.com/api/mcp/auth_callback$"
+  # OAuth Client ID Metadata Documents (CIMD,
+  # draft-ietf-oauth-client-id-metadata-document-02): the client_id IS an https
+  # URL that serves the client's own metadata. The MCP 2026-07-28 authorization
+  # spec prefers this over DCR (which it deprecates).
+  #
+  # ShellWatch resolves the URL itself and provisions a Hydra client whose
+  # client_id is that URL — the same mediation shape as DCR above, and for the
+  # same reason: client onboarding policy (the patterns and scopes below, never
+  # issuing a secret, the registration log under Audit -> OAuth clients) lives
+  # here, which is also why Hydra's own registration endpoint is switched off
+  # in hydra.yml. The redirectUriPatterns and allowedScopes from `dcr` are
+  # reused as the CIMD policy; there is no separate copy.
+  # cimd:
+  #   # Default true. Setting false is a kill switch, not a hand-off: Hydra
+  #   # cannot resolve a metadata document, so URL client_ids simply stop
+  #   # working. Pre-registered and DCR clients are unaffected either way.
+  #   enabled: true
+  #   allowedHosts: []                # optional EXACT-match allowlist of client_id hosts; empty = any public host
+  #   blockedHosts: []                # always wins over allowedHosts
+  #   cacheMinSeconds: 300            # fetched documents honour HTTP cache headers, clamped into this range
+  #   cacheMaxSeconds: 86400
+  #   # A private CA for an internal CIMD client's document host. APPENDED to the
+  #   # system trust store, never substituted for it, so publicly hosted clients
+  #   # keep working. Applies to document fetches only. An unreadable bundle, or
+  #   # one holding no certificate, fails at startup. This is also the only way to
+  #   # add a CA on macOS, where Go ignores SSL_CERT_FILE.
+  #   extraCaBundlePath: /path/to/internal-ca.pem
+  #   # DEV/TEST ONLY — draft §8.6 forbids this in production. Permits fetching a
+  #   # metadata document from a loopback address, re-opening the SSRF hole that
+  #   # the dial-time guard otherwise closes. Leave false in any real deployment.
+  #   allowLoopbackDocuments: false

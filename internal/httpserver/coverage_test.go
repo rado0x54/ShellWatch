@@ -78,12 +78,20 @@ func fullHandler(t *testing.T) chi.Router {
 		Config: cfg, Resolve: auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
 		StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WebAuthn: waDeps, HydraAdmin: fake, HasPasskeys: func() bool { return true },
-		Endpoints:    &rest.Endpoints{Svc: epSvc, Sessions: manager, NewID: func() string { return "id" }, StepUp: stepUp},
-		Sessions:     &rest.Sessions{Manager: manager, Svc: epSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
-		WSHub:        hub,
-		MCP:          &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
-		Actions:      &rest.Actions{Store: actionStore},
-		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Notify: notify.NewService(db, nil)},
+		Endpoints: &rest.Endpoints{Svc: epSvc, Sessions: manager, NewID: func() string { return "id" }, StepUp: stepUp},
+		Sessions:  &rest.Sessions{Manager: manager, Svc: epSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
+		WSHub:     hub,
+		MCP:       &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
+		Actions:   &rest.Actions{Store: actionStore},
+		Audit: &rest.Audit{
+			Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db),
+			Notify: notify.NewService(db, nil),
+			// The OAuth client log route is admin-gated and only mounted when
+			// both are supplied; the gate itself is covered by
+			// oauthclients_test.go.
+			OAuthClients: audit.NewOAuthClients(db, nil),
+			IsAdmin:      fakeAdminCheck{},
+		},
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},
 		Accounts:     &rest.Accounts{Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc, Now: func() string { return "" }},
 		Credentials:  &rest.Credentials{Store: credStore, Admin: fake, StepUp: stepUp},

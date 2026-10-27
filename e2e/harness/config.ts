@@ -36,6 +36,19 @@ export interface ServerConfigOptions {
   sessions?: { idleTimeoutMinutes?: number; cleanupIntervalSeconds?: number };
   /** Bearer-introspection cache TTL. Default 0 so revocations are observable immediately. */
   introspectionCacheTtlMs?: number;
+  /**
+   * CIMD (#242). `extraCaBundlePath` is how the server is made to trust the
+   * document host's throwaway CA — `SSL_CERT_FILE` is ignored by Go on macOS.
+   * `allowLoopbackDocuments` is needed because the host runs on loopback, which
+   * the SSRF guard refuses by default (draft §8.6 allows it for testing only).
+   */
+  cimd?: {
+    enabled?: boolean;
+    extraCaBundlePath?: string;
+    allowLoopbackDocuments?: boolean;
+    cacheMinSeconds?: number;
+    cacheMaxSeconds?: number;
+  };
 }
 
 export function writeServerConfig(dir: string, opts: ServerConfigOptions): string {
@@ -69,6 +82,7 @@ export function writeServerConfig(dir: string, opts: ServerConfigOptions): strin
       adminUrl: HYDRA_ADMIN_URL,
       spa: { clientId: SPA_CLIENT_ID },
       introspectionCacheTtlMs: opts.introspectionCacheTtlMs ?? 0,
+      ...(opts.cimd && { cimd: opts.cimd }),
     },
   };
   const path = join(dir, "config.yaml");

@@ -1,0 +1,64 @@
+{
+  "body": {
+    "nextCursor": null,
+    "rows": [
+      {
+        "authMethod": null,
+        "clientId": "https://evil.example.net/client.json",
+        "clientName": null,
+        "createdAt": "\u003cTS\u003e",
+        "event": "rejected",
+        "id": "ocr_0000000000000000000004",
+        "metadataHost": "evil.example.net",
+        "origin": "cimd",
+        "reason": "invalid_client: client metadata unavailable",
+        "redirectUris": [],
+        "scope": null,
+        "sourceIp": "203.0.113.9"
+      },
+      {
+        "authMethod": "private_key_jwt",
+        "clientId": "https://apps.example.com/.well-known/client.json",
+        "clientName": "Example MCP Client",
+        "createdAt": "\u003cTS\u003e",
+        "event": "refreshed",
+        "id": "ocr_0000000000000000000003",
+        "metadataHost": "apps.example.com",
+        "origin": "cimd",
+        "reason": "authentication keys or method changed",
+        "redirectUris": ["http://127.0.0.1/callback", "http://[::1]/callback"],
+        "scope": "mcp offline_access",
+        "sourceIp": "203.0.113.2"
+      },
+      {
+        "authMethod": "none",
+        "clientId": "https://apps.example.com/.well-known/client.json",
+        "clientName": "Example MCP Client",
+        "createdAt": "\u003cTS\u003e",
+        "event": "registered",
+        "id": "ocr_0000000000000000000002",
+        "metadataHost": "apps.example.com",
+        "origin": "cimd",
+        "reason": null,
+        "redirectUris": ["http://127.0.0.1/callback", "http://[::1]/callback"],
+        "scope": "mcp offline_access",
+        "sourceIp": "203.0.113.2"
+      },
+      {
+        "authMethod": "none",
+        "clientId": "\u003cUUID\u003e",
+        "clientName": "MCP Inspector",
+        "createdAt": "\u003cTS\u003e",
+        "event": "registered",
+        "id": "ocr_0000000000000000000001",
+        "metadataHost": null,
+        "origin": "dcr",
+        "reason": null,
+        "redirectUris": ["http://localhost:6274/oauth/callback"],
+        "scope": "mcp offline_access",
+        "sourceIp": "203.0.113.1"
+      }
+    ]
+  },
+  "status": 200
+}

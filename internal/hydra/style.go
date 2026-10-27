@@ -65,4 +65,20 @@ button:disabled { background: var(--surface-container-high); color: var(--on-sur
 .register-link { margin-top: var(--space-5); font-size: var(--body-md); color: var(--on-surface-variant); }
 .register-link a { color: var(--primary); text-decoration: none; }
 .register-link a:hover { text-decoration: underline; }
+/* CIMD client identity (#242). The hostname leads, because it is the only part
+   of a URL client_id an attacker cannot choose freely
+   (draft-ietf-oauth-client-id-metadata-document-02 §9.1); client_name is a
+   self-assigned claim and is presented as one. */
+.cimd-id { background: var(--surface-container); border: 1px solid var(--outline-variant);
+  padding: var(--space-4); margin: 0 0 var(--space-5); text-align: left; }
+.cimd-host-label { color: var(--on-surface-faint); font-size: var(--label-sm);
+  text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: var(--space-2); }
+.cimd-host { font-family: var(--font-mono); font-size: 1rem; font-weight: 600;
+  color: var(--on-surface); overflow-wrap: anywhere; }
+.cimd-meta { color: var(--on-surface-variant); font-size: var(--body-md);
+  margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
+.cimd-meta .claim { font-family: var(--font-mono); color: var(--on-surface); }
+.first-seen { background: rgba(255, 196, 0, 0.08); border: 1px solid rgba(255, 196, 0, 0.3);
+  color: var(--on-surface); font-size: var(--body-md); text-align: left;
+  padding: var(--space-4); margin: 0 0 var(--space-5); }
 `

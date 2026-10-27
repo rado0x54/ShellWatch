@@ -102,11 +102,19 @@ var goldenCoverage = map[string]coverage{
 	"revokeAuthorizedClient":     goldened("auth-session-revoke"),
 	"revokeAllAuthorizedClients": goldened("auth-session-revoke-all"),
 	"registerOauthClient":        goldened("dcr-register"),
-	"approveHydraConsent":        goldened("consent-approve"),
-	"startHydraConsent":          excluded(optionsPassthrough),
+	"authorizeOauthClient": excluded("The CIMD front door has no JSON body to pin: every outcome is a 303 " +
+		"Location hand-off or an HTML error page, and the happy path needs a live metadata-document host. " +
+		"Characterized instead by the in-process suite in internal/httpserver/cimd_frontdoor_test.go " +
+		"(passthrough byte-for-byte, provisioning, error routing) and internal/hydra/cimd_test.go."),
+	"approveHydraConsent": goldened("consent-approve"),
+	"startHydraConsent":   excluded(optionsPassthrough),
 	"finishHydraConsent": excluded("The { redirectTo } success envelope is already characterized by " +
 		"webauthn-login-verify (identical accept-consent → redirect construction); the success path " +
 		"additionally requires a full DB-enrolled WebAuthn assertion ceremony. Dedicated capture deferred."),
+
+	// --- OAuth client registration log (#242) ---
+	"listAuditOAuthClients": goldened("audit-oauth-clients",
+		"audit-oauth-clients-forbidden", "audit-oauth-clients-invalid-origin"),
 
 	// --- Pending actions + push ---
 	"getAction":              goldened("action-get"),

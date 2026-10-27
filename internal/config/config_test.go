@@ -251,3 +251,121 @@ seedAdminEndpoints:
 		t.Fatalf("invalid hostKey must fail the load: %v", err)
 	}
 }
+
+// hydraConfig renders a valid config whose hydra block carries extra keys
+// (minimalConfig ends with a list, so keys cannot just be appended).
+func hydraConfig(extra string) string {
+	return `
+security:
+  rpId: localhost
+  trustedWebauthnOrigins:
+    - http://localhost:3000
+server:
+  externalUrl: http://localhost:3000
+hydra:
+  publicUrl: http://localhost:4444
+  adminUrl: http://localhost:4445
+` + extra + `
+seedAdminEndpoints:
+  - label: Dev Box
+    address: ubuntu@dev.example.com:2222
+`
+}
+
+// A CA bundle that exists but holds no certificate must fail at load, not when
+// the first client behind that CA tries to authorize.
+func TestCimdExtraCaBundleValidation(t *testing.T) {
+	dir := t.TempDir()
+	junk := filepath.Join(dir, "junk.pem")
+	if err := os.WriteFile(junk, []byte("not a certificate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(writeConfig(t, hydraConfig("  cimd:\n    extraCaBundlePath: "+junk)))
+	if err == nil || !strings.Contains(err.Error(), "no PEM certificates found") {
+		t.Fatalf("want a no-certificates error, got %v", err)
+	}
+
+	// A real bundle loads.
+	real := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(real, []byte(testCAPem), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(writeConfig(t, hydraConfig("  cimd:\n    extraCaBundlePath: "+real)))
+	if err != nil {
+		t.Fatalf("valid bundle rejected: %v", err)
+	}
+	if cfg.Hydra.Cimd.ExtraCaBundlePath != real {
+		t.Errorf("extraCaBundlePath = %q", cfg.Hydra.Cimd.ExtraCaBundlePath)
+	}
+}
+
+func TestCimdConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hydra.Cimd.Enabled == nil || !*cfg.Hydra.Cimd.Enabled {
+		t.Error("hydra.cimd.enabled must default to true")
+	}
+	if cfg.Hydra.Cimd.CacheMinSeconds != 300 || cfg.Hydra.Cimd.CacheMaxSeconds != 86400 {
+		t.Errorf("cache bounds: got %d/%d, want 300/86400",
+			cfg.Hydra.Cimd.CacheMinSeconds, cfg.Hydra.Cimd.CacheMaxSeconds)
+	}
+	if cfg.Hydra.Cimd.AllowLoopbackDocuments {
+		t.Error("allowLoopbackDocuments must default to false (draft §8.6 forbids it in production)")
+	}
+
+	// An explicit false is preserved, not re-defaulted.
+	cfg, err = Load(writeConfig(t, hydraConfig("  cimd:\n    enabled: false")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hydra.Cimd.Enabled == nil || *cfg.Hydra.Cimd.Enabled {
+		t.Error("hydra.cimd.enabled: an explicit false must be preserved")
+	}
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{"min above max", "  cimd:\n    cacheMinSeconds: 900\n    cacheMaxSeconds: 300", "cacheMinSeconds"},
+		{"negative min", "  cimd:\n    cacheMinSeconds: -1", "cacheMinSeconds"},
+		{"host as URL", "  cimd:\n    allowedHosts: ['https://apps.example.com']", "bare hostnames"},
+		{"host with port", "  cimd:\n    blockedHosts: ['apps.example.com:443']", "bare hostnames"},
+		{"bad dcr pattern", "  dcr:\n    redirectUriPatterns: ['([']", "not a valid regular expression"},
+		{"missing ca bundle", "  cimd:\n    extraCaBundlePath: /nonexistent/ca.pem", "cannot read"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, hydraConfig(tc.yaml)))
+			if err == nil {
+				t.Fatalf("want error containing %q, got none", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// testCAPem is a throwaway CA used only to prove a valid bundle is accepted.
+const testCAPem = `-----BEGIN CERTIFICATE-----
+MIIC+zCCAeOgAwIBAgIUfEEs97dogwazhvozMbP8HOZG3R8wDQYJKoZIhvcNAQEL
+BQAwJDEiMCAGA1UEAwwZU2hlbGxXYXRjaCBjb25maWcgdGVzdCBDQTAgFw0yNjEw
+MjYyMjUwNTlaGA8yMTI2MTAwMjIyNTA1OVowJDEiMCAGA1UEAwwZU2hlbGxXYXRj
+aCBjb25maWcgdGVzdCBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ANPnGw8xB4Rj7ND/6YEsGj40STz67KN+t0zvDqi+r3VGg+OkKHSL1OVb7/ukyLfB
+VE9jMF4OS4sHCp4blnly7O89TYggcAdcvFs8JloqnIxAEIq3wf30zfPm8bmRRIxY
+5uRhdzKNZJiS6RD0pVD+g63bNKrd3ElsMXuKyG6MUNMxBHm5aQfSu5Z/xi0ug5B5
+1Nrth2M6qwbz1y5yFCibkhG+61SfxixxfWzQONCT1j32S2W5+Bu4ODyROMeF3+fW
+ifvY7eNCsaz0U5LwsMGmFppnYLFK5z/W3iOrhhWNk9QHsoxyCFrj7lLSObzBljEc
+sxoBNT9BV01esoH0Ot6I0hkCAwEAAaMjMCEwDwYDVR0TAQH/BAUwAwEB/zAOBgNV
+HQ8BAf8EBAMCAgQwDQYJKoZIhvcNAQELBQADggEBALIp+yzWEpLhsI+EgQ6Dpq1q
+FT8urauAucibIBmksBPPgSk94n0PN6SgD5MuSv01FbYdUNTpBsKSqHxGqk+UhDuD
+050e0IOM0TlNlkJOml9x91mJQZOPDYnbKhSdhDWrO5iWfgtt9JhHhmE43cAo1W12
+vMQVLBeqcFYF0+EBfaz1mMBSo9igy85w1puFDvNeoV0xiDLoU7J/iu9W7iwOzZ/Y
++I7LrRijmkdyOyu0rks3dN4z2saw+wFDGl6jXT2w1UnJ0r48AS4LMAhpSnbMbPlI
+r5ivhFClgaczf/CHVzjUbEkcFEG4qMlQCSYr8yONVixqvur6cTm7Z3KMd/KcX5s=
+-----END CERTIFICATE-----
+`

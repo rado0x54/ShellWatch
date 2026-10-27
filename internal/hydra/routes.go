@@ -7,6 +7,7 @@
 package hydra
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
@@ -37,6 +39,9 @@ type ProviderParams struct {
 	AgentProxyEnabled   bool
 	// Clock injected so the DCR client_id_issued_at is testable (Date.now()).
 	Now func() time.Time
+	// OnEvent records the registration in the non-account-scoped client log
+	// (see clientevents.go). nil drops events.
+	OnEvent ClientEventSink
 }
 
 // mountProviderPages registers the server-rendered GET login/consent/logout
@@ -95,10 +100,21 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 			writeHTML(w, 400, renderErrorPage("invalid_consent_challenge", ""))
 			return
 		}
+		// A URL client_id (CIMD) never takes the silent path: its metadata
+		// document can change at any time, so the human re-approves every
+		// authorization and sees who they are approving.
+		//
+		// This refuses `skip`, NOT `remember`. The grant is still remembered on
+		// accept, because the remembered consent session is what lists the
+		// client under Settings -> Authorized clients and makes it revocable;
+		// dropping that would hide CIMD clients from the one screen where a
+		// user can cut them off.
+		identity := p.cimdIdentity(r.Context(), cr.Client)
+
 		// First-party SPA (and remembered sessions) auto-accept — no second
 		// passkey. remember/remember_for keep the SPA client in "Authorized
 		// clients" and renew remembered skips (routes.ts:360-370, M13).
-		if cr.Client.ClientID == p.SPAClientID || cr.Skip {
+		if cr.Client.ClientID == p.SPAClientID || (cr.Skip && identity == nil) {
 			redir, err := p.Admin.AcceptConsentRequest(r.Context(), challenge, AcceptConsent{
 				GrantScope: cr.RequestedScope, GrantAccessTokenAudience: cr.RequestedAccessTokenAudience,
 				Remember: true, RememberFor: rememberFor,
@@ -112,7 +128,10 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 		}
 		// Third-party: passkey step-up unless the login was fresh (then approve).
 		clientName := cr.Client.ClientName
-		if clientName == "" {
+		if clientName == "" && identity == nil {
+			// DCR clients without a name fall back to their opaque id; a CIMD
+			// client already shows its hostname, so repeating the URL adds
+			// nothing.
 			clientName = cr.Client.ClientID
 		}
 		fresh := cr.Context["freshLogin"] == true
@@ -120,7 +139,7 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 			writeHTML(w, 200, renderApprovePage(approveParams{
 				Title: "Authorize · ShellWatch", ApproveURL: "/api/hydra/consent/approve",
 				Extra:      map[string]string{"consent_challenge": challenge},
-				ClientName: clientName, Scopes: cr.RequestedScope,
+				ClientName: clientName, Scopes: cr.RequestedScope, Identity: identity,
 			}))
 			return
 		}
@@ -129,6 +148,7 @@ func mountProviderPages(r chi.Router, p ProviderParams) {
 			OptionsURL: "/api/hydra/consent/options", VerifyURL: "/api/hydra/consent/verify",
 			Extra:      map[string]string{"consent_challenge": challenge},
 			ShowButton: true, ClientName: clientName, Scopes: cr.RequestedScope,
+			Identity: identity,
 		}))
 	})
 }
@@ -259,6 +279,57 @@ func MountProviders(r chi.Router, p ProviderParams) {
 
 	mountProviderPages(r, p)
 	mountLogoutError(r, p)
+}
+
+// cimdIdentity builds the consent-page identity for a URL client_id, or nil
+// when the client is not CIMD-shaped (the SPA, every DCR client).
+//
+// Detection is on the client_id's shape rather than on
+// metadata.shellwatch.origin, so an operator-created client that happens to use
+// a URL id gets the same hostname-first treatment — for a URL identity that is
+// the right thing to show either way.
+func (p ProviderParams) cimdIdentity(ctx context.Context, c OAuth2Client) *clientIdentity {
+	if !IsClientIDURL(c.ClientID) {
+		return nil
+	}
+	id := &clientIdentity{Host: hostOf(c.ClientID)}
+	if h := hostOf(c.ClientURI); h != "" && h != id.Host {
+		id.ClientURIHost = h
+	}
+	meta := c.Metadata
+	if meta == nil && p.Admin != nil {
+		// Hydra's consent request may not echo the client's metadata object;
+		// read the client when it is missing, so the "recently changed" hint
+		// does not silently disappear.
+		if full, err := p.Admin.GetClient(ctx, c.ClientID); err == nil && full != nil {
+			meta = full.Metadata
+			if id.ClientURIHost == "" {
+				if h := hostOf(full.ClientURI); h != "" && h != id.Host {
+					id.ClientURIHost = h
+				}
+			}
+		}
+	}
+	sw, _ := meta["shellwatch"].(map[string]any)
+	if sw == nil {
+		return id
+	}
+	// fetched_at only moves when ShellWatch creates or updates the client — a
+	// cache hit on an unchanged document writes nothing — so a recent value
+	// means "new or just changed", which is what the hint claims.
+	raw, _ := sw["fetched_at"].(string)
+	if t, err := time.Parse(clock.ISOMillis, raw); err == nil && p.nowTime().Sub(t) < time.Hour {
+		id.Recent = true
+	}
+	return id
+}
+
+// nowTime is ProviderParams.Now with the time.Now default applied.
+func (p ProviderParams) nowTime() time.Time {
+	if p.Now != nil {
+		return p.Now()
+	}
+	return time.Now()
 }
 
 func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {
@@ -396,8 +467,21 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 		Scope:                   clientScope,
 		RedirectURIs:            body.RedirectURIs,
 		TokenEndpointAuthMethod: "none",
+		// Stamp the origin so an admin reading Hydra's client list can tell a
+		// DCR client from a CIMD one (clients registered before this landed
+		// have an empty metadata object and read as origin unknown).
+		Metadata: map[string]any{
+			"shellwatch": map[string]any{"origin": ClientOriginDCR},
+		},
 	})
 	if err != nil {
+		if p.OnEvent != nil {
+			p.OnEvent(r, ClientEvent{
+				Origin: ClientOriginDCR, Event: ClientEventRejected,
+				ClientName: clientName, RedirectURIs: body.RedirectURIs,
+				Scope: clientScope, Reason: "server_error: client registration failed",
+			})
+		}
 		apierr.WriteOAuth(w, 502, "server_error", "client registration failed")
 		return
 	}
@@ -408,6 +492,13 @@ func (p ProviderParams) handleDCR(w http.ResponseWriter, r *http.Request, patter
 	scope := created.Scope
 	if scope == "" {
 		scope = clientScope
+	}
+	if p.OnEvent != nil {
+		p.OnEvent(r, ClientEvent{
+			ClientID: created.ClientID, Origin: ClientOriginDCR,
+			Event: ClientEventRegistered, ClientName: clientName,
+			AuthMethod: "none", RedirectURIs: redirectURIs, Scope: scope,
+		})
 	}
 	writeJSONStatus(w, 201, map[string]any{
 		"client_id":                  created.ClientID,

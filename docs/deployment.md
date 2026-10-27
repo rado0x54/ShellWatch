@@ -97,17 +97,59 @@ ShellWatch provisions the public SPA client in Hydra automatically on boot
 `oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
 login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 
-> **Reverse-proxy note:** ShellWatch's mediated DCR endpoint lives under its own
-> namespace at `POST /api/hydra/register`, so ownership is unambiguous when
-> ShellWatch and Hydra share a hostname behind one proxy: everything under
+> **Reverse-proxy note:** ShellWatch's client-onboarding endpoints live under
+> its own namespace — `POST /api/hydra/register` (mediated DCR) and
+> `GET /api/hydra/authorize` (the CIMD front door) — so ownership is unambiguous
+> when ShellWatch and Hydra share a hostname behind one proxy: everything under
 > `/oauth2/*` (`/oauth2/auth`, `/oauth2/token`, `/oauth2/revoke`,
-> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including
-> `/api/hydra/register`) routes to ShellWatch. Hydra's own native DCR stays
-> disabled.
+> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including both
+> `/api/hydra/*` endpoints above) routes to ShellWatch. Hydra's own native DCR
+> stays disabled.
 >
-> **Allowed redirect URIs** for DCR clients are configurable under
-> `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
-> callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+> **The advertised `authorization_endpoint` is ShellWatch's, not Hydra's**, while
+> CIMD is enabled (the default): a URL `client_id` has to be resolved into a
+> Hydra client before Hydra sees the request, since Hydra would otherwise reject
+> it as an unknown client. A non-URL `client_id` — the first-party SPA, every DCR
+> client — is passed straight through to `/oauth2/auth` with the query string
+> forwarded verbatim, so those flows are unchanged. `/oauth2/auth` must still
+> route to Hydra: the front door redirects to it.
+>
+> Setting `hydra.cimd.enabled: false` is an operator kill switch, not a hand-off
+> — `authorization_endpoint` reverts to Hydra's `/oauth2/auth` and URL
+> `client_id`s stop working entirely, because Hydra cannot resolve a metadata
+> document.
+>
+> **Outbound requests on the login path (CIMD):** resolving a document means
+> ShellWatch fetches the `client_id` URL itself — HTTPS only, no redirects
+> followed, 5 s deadline, 5 KB read cap, and a dial-time guard that refuses
+> loopback, link-local, RFC 1918, ULA, CGNAT, multicast and other special-use
+> destinations **after** DNS resolution, so a rebinding answer cannot reach an
+> internal address. Documents are cached per RFC 9111 headers, clamped into
+> `hydra.cimd.cacheMinSeconds`…`cacheMaxSeconds`; errors and invalid documents are
+> never cached. Restrict which clients may onboard with
+> `hydra.cimd.allowedHosts` / `blockedHosts` (exact hostnames; blocked wins). If
+> outbound HTTPS is not available to the server, leave CIMD off and use DCR.
+>
+> `hydra.cimd.allowLoopbackDocuments` exists for development and testing only —
+> the CIMD draft (§8.6) forbids it in production, and it re-opens the SSRF hole
+> the dial-time guard closes. The server logs a warning when it is on.
+>
+> **Allowed redirect URIs** are configurable under
+> `hydra.dcr.redirectUriPatterns` (default: loopback only) and are shared by DCR
+> **and** CIMD — a document's `redirect_uris` are filtered through the same
+> patterns, so a published metadata document can never widen your policy. Add a
+> hosted client's callback (e.g. Claude.ai) explicitly — see
+> `config.sample.yaml`. A registered loopback entry matches any port (RFC 8252
+> §7.3); `localhost` does not, because it can resolve anywhere.
+>
+> **Auditing who onboarded:** every registration, document refresh and rejection
+> is recorded in an append-only log, readable by admins at
+> `GET /api/audit/oauth-clients` (UI: Audit → OAuth Clients). It is the one audit
+> surface that is not account-scoped — onboarding happens before anyone signs in
+> — so it is gated on the admin role instead of an account filter. Current client
+> state stays in Hydra (`GET /admin/clients`), tagged with
+> `metadata.shellwatch.origin` = `cimd` or `dcr`; clients registered before this
+> landed have an empty metadata object and read as origin unknown.
 >
 > **One origin for app + OAuth (#243):** 2026-07-28-era MCP clients enforce
 > RFC 8414 §3.3 — the authorization-server metadata's `issuer` must equal the
@@ -211,6 +253,8 @@ docker run -d \
 | `SHELLWATCH_LOG_LEVEL`  | `info`                        | `debug` / `info` / `warn` / `error`         |
 | `SHELLWATCH_LOG_FORMAT` | `text`                        | `text` or `json`                            |
 | `SHELLWATCH_LOG_FILE`   | —                             | Also append logs to this file               |
+| `SSL_CERT_FILE`         | —                             | Override the CA trust store — see below     |
+| `SSL_CERT_DIR`          | —                             | Override the CA trust directory — see below |
 
 ### Image
 
@@ -218,6 +262,104 @@ The image is a distroless (no shell) base carrying one statically linked Go
 binary with the web UI embedded; `HEALTHCHECK` runs `shellwatch -healthcheck`,
 which probes `/health` on the configured port. There is nothing to `exec`
 into — use `docker logs` and the audit log.
+
+### CA trust store (and how to override it)
+
+**Normally there is nothing to do here.** The distroless base ships Debian's
+`ca-certificates` at `/etc/ssl/certs/ca-certificates.crt`, which is the first
+path Go's `x509.SystemCertPool()` reads on Linux, so public TLS verification
+works out of the box. Two things depend on it:
+
+- **Web Push** — notifications are delivered to the browser vendor's push
+  service over HTTPS (this has always been the case).
+- **CIMD document fetches** — resolving a URL `client_id` means fetching it
+  (see the CIMD notes under [Ory Hydra](#ory-hydra-oauth-authority)).
+
+The bundle tracks Debian stable, so it lags upstream Mozilla by weeks to months
+and is refreshed whenever the image is rebuilt against a newer base. The two
+ways that can bite are not equally bad: a **missing** new root fails _closed_
+(the fetch is refused, nothing is written), whereas a root that upstream has
+**distrusted** but Debian has not yet dropped keeps being accepted. The second
+is the one worth reacting to — hence this section.
+
+#### A private CA for an internal CIMD client
+
+If a CIMD client's metadata document is served by an internal host behind your
+own CA, point `hydra.cimd.extraCaBundlePath` at that CA's PEM bundle:
+
+```yaml
+hydra:
+  cimd:
+    extraCaBundlePath: /app/data/internal-ca.pem
+```
+
+It is **appended** to the system roots, never substituted for them, so publicly
+hosted clients keep working — unlike the environment variables below, which
+replace the store wholesale. It applies to metadata-document fetches only, and a
+bundle that cannot be read or holds no certificate fails at startup rather than
+when the first client behind that CA tries to authorize. This is also the only
+way to add a CA on macOS, where Go ignores `SSL_CERT_FILE`.
+
+#### Break-glass override
+
+Point `SSL_CERT_FILE` at a bundle you control. Build it from the roots the image
+already has, so you keep public verification working:
+
+```bash
+# 1. Extract the roots the running image ships.
+cid=$(docker create ghcr.io/rado0x54/shellwatch:latest)
+docker cp "$cid":/etc/ssl/certs/ca-certificates.crt ./ca-roots.pem
+docker rm "$cid"
+
+# 2. Edit: append a CA you need, or delete the PEM block you no longer trust.
+cat ./ca-roots.pem ./my-extra-ca.pem > ./ca-bundle.pem
+
+# 3. Mount it read-only and point Go at it.
+docker run \
+  -v "$PWD/ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro" \
+  -e SSL_CERT_FILE=/etc/ssl/ca-bundle.pem \
+  ghcr.io/rado0x54/shellwatch:latest
+```
+
+```yaml
+services:
+  shellwatch:
+    volumes:
+      - ./ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro
+    environment:
+      - HOST=0.0.0.0
+      - SSL_CERT_FILE=/etc/ssl/ca-bundle.pem
+```
+
+Mounting over the image's own path works equally well and needs no env var —
+but mount the **file**, never the directory:
+
+```yaml
+- ./ca-bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro
+```
+
+Things that will catch you out:
+
+- **It replaces the trust store, it never appends to it.** A bundle containing
+  only your private CA makes every public host untrusted; a bundle containing
+  only the public roots will not trust your private CA. The file has to be
+  complete — which is why step 1 starts from the image's own roots.
+- **It applies to every outbound TLS connection**, so an incomplete bundle
+  breaks Web Push as well as CIMD. There is no CIMD-only trust store.
+- **Mount the file, not `/etc/ssl/certs/`.** On a Debian host that directory is
+  mostly symlinks into `/usr/share/ca-certificates/`; bind-mounting it into the
+  container yields dangling links and a _smaller_ trust store than you started
+  with. Host paths also differ by distro (`/etc/pki/tls/certs/ca-bundle.crt` on
+  RHEL), and on Docker Desktop the "host" is the Linux VM with its own minimal
+  store — so mounting host certs is a Linux-server technique, not a laptop one.
+- **Keep it world-readable.** The container runs as UID `1000`; `0644` is right.
+- `SSL_CERT_DIR` is honoured too (a directory of hash-named certs), but a single
+  bundle file is almost always what you want.
+
+To confirm it took effect, attempt an authorization from a CIMD client: a trust
+failure is recorded as a `rejected` row under **Audit → OAuth Clients** with the
+reason, and nothing is written to Hydra. To revert, drop the env var and the
+mount and restart — nothing is persisted.
 
 ### Running as non-root
 

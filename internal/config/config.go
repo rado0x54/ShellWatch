@@ -7,10 +7,12 @@
 package config
 
 import (
+	"crypto/x509"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -153,12 +155,41 @@ type HydraDcr struct {
 	RedirectURIPatterns []string `yaml:"redirectUriPatterns"`
 }
 
+// HydraCimd configures OAuth Client ID Metadata Documents (CIMD,
+// draft-ietf-oauth-client-id-metadata-document-02). CIMD reuses the DCR
+// policy below for redirect-URI patterns and allowed scopes.
+type HydraCimd struct {
+	// Enabled defaults to true. When false, a URL client_id is passed through
+	// to Hydra, which rejects it as an unknown client.
+	Enabled *bool `yaml:"enabled"`
+	// AllowedHosts, when non-empty, is an exact-match allowlist of client_id
+	// hosts. BlockedHosts always wins.
+	AllowedHosts []string `yaml:"allowedHosts"`
+	BlockedHosts []string `yaml:"blockedHosts"`
+	// Cache bounds for fetched documents (draft §5.2): HTTP cache headers are
+	// honoured, then clamped into this range.
+	CacheMinSeconds int `yaml:"cacheMinSeconds"`
+	CacheMaxSeconds int `yaml:"cacheMaxSeconds"`
+	// ExtraCaBundlePath adds the PEM certificates in this file to the system
+	// trust store for metadata-document fetches — for a CIMD client hosted
+	// behind a private CA, and for the e2e suite's throwaway CA. The system
+	// roots are KEPT (see hydra.LoadExtraRoots), so publicly-hosted clients
+	// keep working.
+	ExtraCaBundlePath string `yaml:"extraCaBundlePath"`
+	// AllowLoopbackDocuments permits fetching a document from a loopback
+	// address. Draft §8.6 allows this for development and testing ONLY and
+	// forbids it in production — it re-opens the SSRF hole the dial-time guard
+	// closes. The e2e suite needs it to serve a document locally.
+	AllowLoopbackDocuments bool `yaml:"allowLoopbackDocuments"`
+}
+
 type Hydra struct {
-	PublicURL               string   `yaml:"publicUrl"`
-	AdminURL                string   `yaml:"adminUrl"`
-	Spa                     HydraSpa `yaml:"spa"`
-	IntrospectionCacheTtlMs *int     `yaml:"introspectionCacheTtlMs"`
-	Dcr                     HydraDcr `yaml:"dcr"`
+	PublicURL               string    `yaml:"publicUrl"`
+	AdminURL                string    `yaml:"adminUrl"`
+	Spa                     HydraSpa  `yaml:"spa"`
+	IntrospectionCacheTtlMs *int      `yaml:"introspectionCacheTtlMs"`
+	Dcr                     HydraDcr  `yaml:"dcr"`
+	Cimd                    HydraCimd `yaml:"cimd"`
 	// DevProxyUpstream (local dev): when set, ShellWatch itself reverse-proxies
 	// Hydra's public surface (/oauth2/*, /userinfo, /.well-known/jwks.json,
 	// /.well-known/openid-configuration) to this address — one origin for app
@@ -208,6 +239,12 @@ var (
 )
 
 const defaultIntrospectionCacheTtlMs = 60_000
+
+// CIMD document-cache bounds (draft §5.2 lets the AS set its own).
+const (
+	defaultCimdCacheMinSeconds = 300
+	defaultCimdCacheMaxSeconds = 86_400
+)
 
 // Session housekeeping defaults (sessionsDefaults in the original schema):
 // 30 min idle timeout, janitor every 60 s.
@@ -310,6 +347,16 @@ func (c *Config) applyDefaults() {
 	if c.Hydra.Dcr.RedirectURIPatterns == nil {
 		c.Hydra.Dcr.RedirectURIPatterns = append([]string(nil), defaultDcrRedirectURIPatterns...)
 	}
+	if c.Hydra.Cimd.Enabled == nil {
+		v := true
+		c.Hydra.Cimd.Enabled = &v
+	}
+	if c.Hydra.Cimd.CacheMinSeconds == 0 {
+		c.Hydra.Cimd.CacheMinSeconds = defaultCimdCacheMinSeconds
+	}
+	if c.Hydra.Cimd.CacheMaxSeconds == 0 {
+		c.Hydra.Cimd.CacheMaxSeconds = defaultCimdCacheMaxSeconds
+	}
 	for i := range c.SeedAdminPasskeys {
 		if c.SeedAdminPasskeys[i].Label == "" {
 			c.SeedAdminPasskeys[i].Label = "Admin Passkey"
@@ -403,6 +450,29 @@ func (c *Config) validate() []string {
 	}
 	if ttl := *c.Hydra.IntrospectionCacheTtlMs; ttl < 0 || ttl > 300_000 {
 		add("hydra.introspectionCacheTtlMs: must be between 0 and 300000")
+	}
+	for _, p := range c.Hydra.Dcr.RedirectURIPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			add("hydra.dcr.redirectUriPatterns: %q is not a valid regular expression: %v", p, err)
+		}
+	}
+	if min, max := c.Hydra.Cimd.CacheMinSeconds, c.Hydra.Cimd.CacheMaxSeconds; min < 1 || max < 1 || min > max {
+		add("hydra.cimd.cacheMinSeconds/cacheMaxSeconds: both must be >= 1 and min must not exceed max")
+	}
+	if p := c.Hydra.Cimd.ExtraCaBundlePath; p != "" {
+		// Checked here so a typo or an unreadable mount fails at startup rather
+		// than when the first client behind that CA tries to authorize.
+		switch raw, err := os.ReadFile(p); {
+		case err != nil:
+			add("hydra.cimd.extraCaBundlePath: cannot read %q: %v", p, err)
+		case !x509.NewCertPool().AppendCertsFromPEM(raw):
+			add("hydra.cimd.extraCaBundlePath: no PEM certificates found in %q", p)
+		}
+	}
+	for _, h := range append(append([]string{}, c.Hydra.Cimd.AllowedHosts...), c.Hydra.Cimd.BlockedHosts...) {
+		if strings.ContainsAny(h, "/:") || strings.TrimSpace(h) == "" {
+			add("hydra.cimd.allowedHosts/blockedHosts: entries are bare hostnames, not URLs or host:port (got %q)", h)
+		}
 	}
 
 	for i, e := range c.SeedAdminEndpoints {

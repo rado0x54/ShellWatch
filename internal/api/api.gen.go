@@ -50,6 +50,24 @@ func (e NotificationSeverity) Valid() bool {
 	}
 }
 
+// Defines values for OAuthClientRegistrationOrigin.
+const (
+	OAuthClientRegistrationOriginCimd OAuthClientRegistrationOrigin = "cimd"
+	OAuthClientRegistrationOriginDcr  OAuthClientRegistrationOrigin = "dcr"
+)
+
+// Valid indicates whether the value is a known member of the OAuthClientRegistrationOrigin enum.
+func (e OAuthClientRegistrationOrigin) Valid() bool {
+	switch e {
+	case OAuthClientRegistrationOriginCimd:
+		return true
+	case OAuthClientRegistrationOriginDcr:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PendingActionViewStatus.
 const (
 	PendingActionViewStatusCompleted PendingActionViewStatus = "completed"
@@ -335,6 +353,24 @@ func (e DenyAction200JSONResponseBodyStatus) Valid() bool {
 	case DenyAction200JSONResponseBodyStatusDenied:
 		return true
 	case DenyAction200JSONResponseBodyStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAuditOAuthClientsParamsOrigin.
+const (
+	ListAuditOAuthClientsParamsOriginCimd ListAuditOAuthClientsParamsOrigin = "cimd"
+	ListAuditOAuthClientsParamsOriginDcr  ListAuditOAuthClientsParamsOrigin = "dcr"
+)
+
+// Valid indicates whether the value is a known member of the ListAuditOAuthClientsParamsOrigin enum.
+func (e ListAuditOAuthClientsParamsOrigin) Valid() bool {
+	switch e {
+	case ListAuditOAuthClientsParamsOriginCimd:
+		return true
+	case ListAuditOAuthClientsParamsOriginDcr:
 		return true
 	default:
 		return false
@@ -689,9 +725,14 @@ type AuthSessionView struct {
 	Scopes  []string `json:"scopes"`
 }
 
-// AuthorizationServerMetadata RFC 8414 authorization-server metadata, blended: issuer + auth/token/jwks/ revocation point at Hydra; registration_endpoint points at ShellWatch's mediated DCR (/api/hydra/register).
+// AuthorizationServerMetadata RFC 8414 authorization-server metadata, blended: issuer + token/jwks/ revocation point at Hydra; `registration_endpoint` points at ShellWatch's mediated DCR (/api/hydra/register) and, when CIMD is enabled (the default), `authorization_endpoint` points at ShellWatch's CIMD front door (/api/hydra/authorize) rather than Hydra's /oauth2/auth.
 type AuthorizationServerMetadata struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
+
+	// ClientIdMetadataDocumentSupported draft-ietf-oauth-client-id-metadata-document-02 §6. `true` when ShellWatch resolves an https URL `client_id` as a Client ID Metadata Document. Omitted entirely when CIMD is disabled, in which case `authorization_endpoint` is Hydra's own `/oauth2/auth` and a URL `client_id` is rejected as an unknown client.
+	//
+	// Example: true
+	ClientIdMetadataDocumentSupported *bool `json:"client_id_metadata_document_supported,omitempty"`
 
 	// CodeChallengeMethodsSupported Example: ["S256"]
 	CodeChallengeMethodsSupported *[]string `json:"code_challenge_methods_supported,omitempty"`
@@ -708,7 +749,9 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported        *[]string `json:"scopes_supported,omitempty"`
 	TokenEndpoint          string    `json:"token_endpoint"`
 
-	// TokenEndpointAuthMethodsSupported Example: ["none","client_secret_basic","client_secret_post"]
+	// TokenEndpointAuthMethodsSupported ShellWatch never issues a client secret — not via DCR, and CIMD forbids it outright (draft-ietf-oauth-client-id-metadata-document-02 §4.1) — so the shared-secret methods Hydra would accept are not advertised.
+	//
+	// Example: ["none","private_key_jwt"]
 	TokenEndpointAuthMethodsSupported *[]string `json:"token_endpoint_auth_methods_supported,omitempty"`
 }
 
@@ -782,6 +825,52 @@ type NotificationSeverity string
 type NotificationPage struct {
 	NextCursor *string        `json:"nextCursor"`
 	Rows       []Notification `json:"rows"`
+}
+
+// OAuthClientRegistration One entry of the OAuth client registration log (#242): how an MCP or agent client came to exist in Hydra, via mediated DCR (POST /api/hydra/register) or CIMD document resolution (GET /api/hydra/authorize).
+//
+// This is the only audit surface that is **not account-scoped**. Both onboarding paths run before any account is identified — there is no subject, no bearer token, only a peer address and a `client_id` — so reads are gated on the admin role instead of an account filter.
+//
+// It is a **log, not a registry**: current client state stays in Hydra (`GET /admin/clients` serves name, scope, redirect URIs, `created_at` and the `metadata.shellwatch.origin` marker ShellWatch writes). Rows here are a snapshot denormalized at write time and are never reconciled, so a client deleted in Hydra keeps its history.
+type OAuthClientRegistration struct {
+	// AuthMethod Example: none
+	AuthMethod *string `json:"authMethod,omitempty"`
+
+	// ClientId Hydra's `client_id` — a UUID for DCR, the Client Identifier URL for CIMD. The link to Hydra's own data model. Not unique in this table: a client appears once per event.
+	ClientId   string  `json:"clientId"`
+	ClientName *string `json:"clientName,omitempty"`
+	CreatedAt  string  `json:"createdAt"`
+
+	// Event `registered` — the client was created in Hydra; `refreshed` — a CIMD document changed and the Hydra client was updated; `rejected` — the registration was refused, so **no Hydra client exists** for this row. Not enum-constrained: #255 adds `blocked`.
+	//
+	// Example: registered
+	Event string `json:"event"`
+	Id    string `json:"id"`
+
+	// MetadataHost The CIMD Client Identifier URL's hostname — the identity cue draft-ietf-oauth-client-id-metadata-document-02 §9.1 wants surfaced. Null for DCR, which has no metadata document.
+	MetadataHost *string `json:"metadataHost,omitempty"`
+
+	// Origin Which onboarding path produced the event.
+	Origin OAuthClientRegistrationOrigin `json:"origin"`
+
+	// Reason The cause for `rejected`, or what changed for `refreshed`.
+	Reason *string `json:"reason,omitempty"`
+
+	// RedirectUris Empty on a rejection, where no document was accepted.
+	RedirectUris *[]string `json:"redirectUris,omitempty"`
+	Scope        *string   `json:"scope,omitempty"`
+
+	// SourceIp Peer address resolved under the server's trustProxy policy.
+	SourceIp *string `json:"sourceIp,omitempty"`
+}
+
+// OAuthClientRegistrationOrigin Which onboarding path produced the event.
+type OAuthClientRegistrationOrigin string
+
+// OAuthClientRegistrationPage defines model for OAuthClientRegistrationPage.
+type OAuthClientRegistrationPage struct {
+	NextCursor *string                   `json:"nextCursor"`
+	Rows       []OAuthClientRegistration `json:"rows"`
 }
 
 // PendingActionView Client-safe projection of a pending signing action (resolve/reject omitted). Discriminated on `type`.
@@ -1034,6 +1123,25 @@ type ListAuditNotificationsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListAuditOAuthClientsParams defines parameters for ListAuditOAuthClients.
+type ListAuditOAuthClientsParams struct {
+	// ClientId Exact Hydra `client_id` — the full history of one client.
+	ClientId *string `form:"clientId,omitempty" json:"clientId,omitempty"`
+
+	// Origin `dcr` or `cimd`; any other value is a 400.
+	Origin *ListAuditOAuthClientsParamsOrigin `form:"origin,omitempty" json:"origin,omitempty"`
+
+	// Event `registered`, `refreshed` or `rejected`; any other value is a 400.
+	Event  *string `form:"event,omitempty" json:"event,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAuditOAuthClientsParamsOrigin defines parameters for ListAuditOAuthClients.
+type ListAuditOAuthClientsParamsOrigin string
+
 // ListAuditSessionsParams defines parameters for ListAuditSessions.
 type ListAuditSessionsParams struct {
 	EndpointId *string `form:"endpointId,omitempty" json:"endpointId,omitempty"`
@@ -1149,6 +1257,22 @@ type PinEndpointHostKeyJSONBody struct {
 type PinEndpointHostKeyParams struct {
 	// XShellWatchStepUpToken Single-use step-up token minted by POST /api/webauthn/stepup/verify, bound to the specific action. Sent on the header `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
 	XShellWatchStepUpToken StepUpTokenHeader `json:"X-ShellWatch-StepUp-Token"`
+}
+
+// AuthorizeOauthClientParams defines parameters for AuthorizeOauthClient.
+type AuthorizeOauthClientParams struct {
+	// ClientId An `https://` URL is resolved as a Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document-02 §3: https, a path component, no userinfo, no query, no fragment, no dot segments, at most 255 characters). Anything else is passed through to Hydra.
+	ClientId string `form:"client_id" json:"client_id"`
+
+	// RedirectUri Must match one of the document's `redirect_uris` exactly, with the RFC 8252 §7.3 loopback exception (a registered `http://127.0.0.1/…` or `http://[::1]/…` entry matches any port; `localhost` does not).
+	RedirectUri *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
+
+	// Scope Space-delimited, and must stay within the scope the client's **document** registered, else `invalid_scope`. The registered scope is the document's own `scope` (RFC 7591 client metadata) filtered through `hydra.dcr.allowedScopes`, defaulting to `mcp` when the document declares none, plus `offline_access` — so a client that wants `agent` has to say so in its document. It is deliberately not derived from this parameter: otherwise whichever authorization arrived first would cap the client permanently.
+	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
+	State               *string `form:"state,omitempty" json:"state,omitempty"`
+	ResponseType        *string `form:"response_type,omitempty" json:"response_type,omitempty"`
+	CodeChallenge       *string `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
+	CodeChallengeMethod *string `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
 }
 
 // FinishHydraLoginJSONBody defines parameters for FinishHydraLogin.
