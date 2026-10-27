@@ -36,6 +36,12 @@ const (
 // it — nothing outside this package reads it.
 var connectionTimeout = 90 * time.Second
 
+// handshakeWatcherGate, when non-nil, runs inside the cancellation watcher
+// below before it selects. Only the handshake tests set it, to hold the watcher
+// back until cancellation and handshake completion are both ready; nothing
+// outside this package reads it.
+var handshakeWatcherGate func()
+
 // sshTransport implements terminal.Transport over one ssh.Session.
 type sshTransport struct {
 	client  *ssh.Client
@@ -179,11 +185,36 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	keys.extendDeadline = func() {
 		_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
 	}
+	// setupDone fences the watcher against the socket it guards: once setup has
+	// handed the connection over, cancellation must never close it.
+	// terminal.Manager cancels setupCtx the moment Create returns (manager.go:
+	// `defer cancelSetup()`), so on EVERY successful session ctx.Done() and
+	// handshakeDone end up ready together — and select picks between two ready
+	// cases at random. Closing handshakeDone is therefore not enough on its own:
+	// a watcher that had not yet reached its select would tear down a live
+	// session's socket about half the time it lost that scheduling race.
+	var (
+		setupMu   sync.Mutex
+		setupDone bool
+	)
 	handshakeDone := make(chan struct{})
-	defer close(handshakeDone)
+	defer func() {
+		setupMu.Lock()
+		setupDone = true
+		setupMu.Unlock()
+		close(handshakeDone)
+	}()
 	go func() {
+		if handshakeWatcherGate != nil {
+			handshakeWatcherGate()
+		}
 		select {
 		case <-ctx.Done():
+			setupMu.Lock()
+			defer setupMu.Unlock()
+			if setupDone {
+				return // setup won the race; the connection is not ours to close
+			}
 			_ = conn.Close() // the only way to unblock NewClientConn
 		case <-handshakeDone:
 		}

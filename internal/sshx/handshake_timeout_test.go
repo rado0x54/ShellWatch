@@ -9,6 +9,7 @@ package sshx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -171,5 +172,60 @@ func TestApprovalSlowerThanTheDeadlineStillAuthenticates(t *testing.T) {
 	}
 	if log == nil {
 		t.Fatal("no auth log")
+	}
+}
+
+// terminal.Manager cancels the setup context the moment Create returns
+// (manager.go: `defer cancelSetup()`), so on EVERY successful session the
+// watcher's two cases become ready together — and select picks between two
+// ready cases at random. It must never pick cancellation's socket close: by
+// then the connection belongs to a live session (#257 review).
+func TestCancellationAfterSetupLeavesTheSessionAlive(t *testing.T) {
+	host, port, hostPub := startEchoServer(t)
+	kd := writeTestKeyDir(t)
+
+	// Hold the watcher back until the test says so, which is the only way to
+	// force the both-ready interleaving instead of waiting for the scheduler
+	// to produce it. parked also orders the watcher's read of the hook before
+	// the cleanup that clears it.
+	parked := make(chan struct{})
+	gates := make(chan chan struct{}, 1)
+	handshakeWatcherGate = func() {
+		parked <- struct{}{}
+		<-(<-gates)
+	}
+	t.Cleanup(func() { handshakeWatcherGate = nil })
+
+	hostKeys := newMemHostKeys()
+	hostKeys.prePin("e1", hostPub)
+	mgr := terminal.NewManager(NewFileKeyFactory(kd, hostKeys), clock.Real{}, 0)
+	t.Cleanup(mgr.Destroy)
+	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: host, Port: port, Username: "u"}
+
+	// Unguarded, the close is a coin flip per session, so a single round would
+	// pass half the time with the bug present.
+	const rounds = 20
+	for i := range rounds {
+		release := make(chan struct{})
+		gates <- release
+
+		sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+		if err != nil {
+			t.Fatalf("round %d: create: %v", i, err)
+		}
+		waitForOutput(t, mgr, sess.SessionID, "ready")
+
+		<-parked       // the watcher is at the gate; Create has already cancelled
+		close(release) // let it select, with both cases ready
+
+		marker := fmt.Sprintf("alive-%d", i)
+		if err := mgr.SendKeys(sess.SessionID, []string{"text:" + marker, "enter"}); err != nil {
+			t.Fatalf("round %d: setup cancellation closed the handed-off connection: %v", i, err)
+		}
+		waitForOutput(t, mgr, sess.SessionID, marker)
+		if s := mgr.GetSession(sess.SessionID); s == nil || s.Status != terminal.StatusOpen {
+			t.Fatalf("round %d: session is not open after setup cancellation: %+v", i, s)
+		}
+		mgr.Close(sess.SessionID, terminal.CloseClientUI)
 	}
 }
