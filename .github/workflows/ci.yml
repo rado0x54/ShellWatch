@@ -78,6 +78,26 @@ jobs:
       # are pinned via `overrides` in pnpm-workspace.yaml.
       - run: pnpm audit --audit-level moderate
 
+  # Go counterpart of the pnpm audit: govulncheck over both Go modules (server
+  # + agent-client). Fails only on vulnerabilities reachable from our code,
+  # including the standard library of the toolchain pinned in each go.mod.
+  govulncheck:
+    name: Go Vulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [., agent-client]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   svelte-check:
     name: Svelte Check
     runs-on: ubuntu-latest

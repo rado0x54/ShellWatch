@@ -1,6 +1,6 @@
 module github.com/rado0x54/shellwatch-agent
 
-go 1.24.3
+go 1.27.3
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
