@@ -346,7 +346,8 @@ constraint is now one greppable package.
   The 404-not-403 disclosure convention stays in handlers, but a handler
   _cannot_ forget scoping — the generated function signature demands it.
 - `store.WithTx(ctx, fn)` wraps `database/sql` transactions. Account
-  deletion (route + inactive-account cleanup) is transactional (W9).
+  deletion (admin route; inactive-account auto-cleanup was removed in #261)
+  is transactional (W9).
 - Synchronous, honest API — no cosmetic async (W7). `database/sql` pooling:
   a single writer connection (SQLite) + WAL readers; the last-used
   touch keeps its Node batching semantics as an explicit write-behind map

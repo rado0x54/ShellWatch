@@ -161,7 +161,7 @@ Actions expire after 60 s; a denial or expiry is returned to the SSH client as "
 - Admin account (single, created on first passkey registration or seeded from config)
 - Non-admin accounts (via self-registration or passkey invite)
 - Passkey-first authentication — no passwords
-- Inactive account cleanup (90+ days, admin exempt); deleting an account closes its sessions, drops its MCP transports and revokes its Hydra sessions
+- Accounts are never deleted automatically — only by an explicit admin action; deleting an account closes its sessions, drops its MCP transports and revokes its Hydra sessions
 
 ### OAuth2 / OIDC — fully delegated to Ory Hydra (`internal/hydra`, `internal/auth`)
 
