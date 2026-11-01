@@ -21,8 +21,9 @@ overrides:
   # body-parser <2.4.0 (runtime, via MCP sdk > express).
   body-parser: ^2.4.0
   # --- moderate advisories ---
-  # @hono/node-server serveStatic path-bypass (runtime, via MCP sdk); stay on 1.x (MCP expects ^1).
-  "@hono/node-server": ^1.19.15
+  # @hono/node-server serveStatic double-decode middleware bypass (GHSA-rmxm-3fg6-px4f), fixed only
+  # in 2.1.3+; MCP sdk accepts ^1.19.9 || ^2.0.5 (e2e/test-only, via MCP sdk).
+  "@hono/node-server": ^2.1.3
   # ip-address XSS in Address6 HTML methods + Address4 leading-zero octets (runtime, via
   # MCP sdk > express-rate-limit).
   ip-address: ^10.7.4
@@ -41,5 +42,8 @@ overrides:
   cookie: ^0.7.0
   # brace-expansion range-DoS; scope to the vulnerable 4.x/5.0.x window so other majors are untouched.
   "brace-expansion@>=4.0.0 <5.0.12": ^5.0.12
+  # minimatch globparts-amplification DoS (GHSA-g3hv-75wg-m249), fixed only in 11.0.1+; eslint and
+  # typescript-eslint still ask for ^10 (dev-only).
+  minimatch: ^11.0.1
 onlyBuiltDependencies:
   - esbuild
