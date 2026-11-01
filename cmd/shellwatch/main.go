@@ -348,7 +348,7 @@ func run() error {
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
 	// the account's live terminal sessions, drop its MCP transports, and revoke
 	// its Hydra login/consent sessions so live grants die with the account.
-	// Fired by the admin DELETE route and the 90-day inactivity cleanup alike.
+	// Fired by the admin DELETE route — the only way an account is deleted.
 	accountDeleted := func(accountID string) {
 		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
 			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
@@ -369,12 +369,6 @@ func run() error {
 			}
 		}()
 	}
-	go store.RunCleanupJob(ctx, db, clk, func(ids []string) {
-		slog.Info("cleaned up inactive accounts", "count", len(ids))
-		for _, id := range ids {
-			accountDeleted(id)
-		}
-	})
 
 	handler := httpserver.New(httpserver.Params{
 		Config:        cfg,
