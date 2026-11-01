@@ -32,6 +32,13 @@ type keyAuth struct {
 	ctx     context.Context
 	signers []ssh.Signer
 
+	// extendDeadline pushes the handshake deadline forward, set by Connect
+	// once the socket exists (#257). Each callback invocation may block on a
+	// human approving one key, so the bound has to be per round rather than
+	// one window for the whole handshake. nil in tests that drive the
+	// callback directly.
+	extendDeadline func()
+
 	mu      sync.Mutex
 	next    int
 	lastErr error
@@ -47,6 +54,12 @@ func newKeyAuth(ctx context.Context, signers []ssh.Signer) *keyAuth {
 func (k *keyAuth) callback(actx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
 	if err := k.ctx.Err(); err != nil {
 		return nil, err // dial context died (session-create cancelled)
+	}
+	// A new auth round starts here, and it may wait on a human (approval.
+	// ActionTTL). Give it a fresh window: the deadline exists to catch a peer
+	// that stops talking, not to cap how many keys a host may offer.
+	if k.extendDeadline != nil {
+		k.extendDeadline()
 	}
 	if len(actx.AllowedMethods) > 0 && !slices.Contains(actx.AllowedMethods, "publickey") {
 		return nil, nil // server will not take public keys at all

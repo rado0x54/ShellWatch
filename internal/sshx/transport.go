@@ -27,11 +27,20 @@ const (
 	ptyTerm = "xterm-256color"
 	ptyCols = 80
 	ptyRows = 24
-	// connectionTimeout is Node's WEBAUTHN_CONNECTION_TIMEOUT: a single 90s
-	// window covering dial + auth, sized for a human passkey touch. File-key
-	// auth resolves instantly, but the constant is shared.
-	connectionTimeout = 90 * time.Second
 )
+
+// connectionTimeout is Node's WEBAUTHN_CONNECTION_TIMEOUT: a 90s window for
+// the dial and for each auth round, sized for a human passkey touch (comfortably
+// above approval.ActionTTL). File-key auth resolves instantly, but the value is
+// shared. A var, not a const, only so the handshake-deadline tests can shorten
+// it — nothing outside this package reads it.
+var connectionTimeout = 90 * time.Second
+
+// handshakeWatcherGate, when non-nil, runs inside the cancellation watcher
+// below before it selects. Only the handshake tests set it, to hold the watcher
+// back until cancellation and handshake completion are both ready; nothing
+// outside this package reads it.
+var handshakeWatcherGate func()
 
 // sshTransport implements terminal.Transport over one ssh.Session.
 type sshTransport struct {
@@ -155,6 +164,62 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, err)
 	}
+	// Bound the SSH handshake, and make cancellation able to interrupt it
+	// (#257). Neither is true by default:
+	//
+	//   - ClientConfig.Timeout does NOT cover the handshake. x/crypto
+	//     documents it as "the maximum amount of time for the TCP connection
+	//     to establish" and only ssh.Dial consults it, so a peer that accepts
+	//     TCP and then says nothing blocks NewClientConn forever.
+	//   - NewClientConn takes no context, so cancelling setupCtx cannot reach
+	//     it. Closing the socket is the only thing that can — without it a
+	//     Close of a still-connecting session left the entry parked in
+	//     `closing` with the socket and goroutine retained, because the
+	//     factory never returned for terminal.Manager's tail to finalize.
+	//
+	// The deadline is refreshed at the start of every auth round (keyAuth.
+	// extendDeadline), since a round may legitimately block for up to
+	// approval.ActionTTL while a human approves one key, and a host may offer
+	// several. So it bounds silence, not the total handshake.
+	_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
+	keys.extendDeadline = func() {
+		_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
+	}
+	// setupDone fences the watcher against the socket it guards: once setup has
+	// handed the connection over, cancellation must never close it.
+	// terminal.Manager cancels setupCtx the moment Create returns (manager.go:
+	// `defer cancelSetup()`), so on EVERY successful session ctx.Done() and
+	// handshakeDone end up ready together — and select picks between two ready
+	// cases at random. Closing handshakeDone is therefore not enough on its own:
+	// a watcher that had not yet reached its select would tear down a live
+	// session's socket about half the time it lost that scheduling race.
+	var (
+		setupMu   sync.Mutex
+		setupDone bool
+	)
+	handshakeDone := make(chan struct{})
+	defer func() {
+		setupMu.Lock()
+		setupDone = true
+		setupMu.Unlock()
+		close(handshakeDone)
+	}()
+	go func() {
+		if handshakeWatcherGate != nil {
+			handshakeWatcherGate()
+		}
+		select {
+		case <-ctx.Done():
+			setupMu.Lock()
+			defer setupMu.Unlock()
+			if setupDone {
+				return // setup won the race; the connection is not ours to close
+			}
+			_ = conn.Close() // the only way to unblock NewClientConn
+		case <-handshakeDone:
+		}
+	}()
+
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
@@ -174,6 +239,12 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 		}
 		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, err)
 	}
+	// Setup is over: drop the deadline. It bounded the handshake only — an
+	// established session is long-lived and idles by design (a terminal with
+	// nobody typing), so leaving it set would tear every session down
+	// mid-life. keyAuth cannot extend it any more either; auth has returned.
+	_ = conn.SetDeadline(time.Time{})
+
 	// Fail closed (#241): a provisionally accepted host key must never yield
 	// an established session without a human approval having pinned it. This
 	// covers servers accepting "none" auth and any future auth path that
