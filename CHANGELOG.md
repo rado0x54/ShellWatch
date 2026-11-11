@@ -126,7 +126,7 @@ collapse to a headline with a Details view.
   buffered whole (#264).
 - Every response carries baseline security headers: `X-Frame-Options: DENY`,
   `Content-Security-Policy: frame-ancestors 'none'`, `X-Content-Type-Options:
-nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and HSTS when
+nosniff`, `Referrer-Policy: no-referrer`, and HSTS when
   `server.externalUrl` is HTTPS (#264).
 - CI gains a `govulncheck` gate; Go and pnpm dependencies cleared of known
   advisories (#260).
