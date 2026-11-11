@@ -39,9 +39,12 @@ type Deps struct {
 	NewConnectionID func() string
 }
 
+// MaxPayloadBytes is the documented cap on one agent frame's payload.
+const MaxPayloadBytes = 256 << 10
+
 // MaxFrameBytes caps one inbound /agent-proxy WS message: the 4-byte length
-// prefix plus the documented 256 KiB maximum payload.
-const MaxFrameBytes = 4 + 256<<10
+// prefix plus MaxPayloadBytes.
+const MaxFrameBytes = 4 + MaxPayloadBytes
 
 // Handler upgrades /agent-proxy to WebSocket and serves the SSH agent protocol.
 // The bearer gate (upstream) already authorized the `agent` scope.
@@ -58,9 +61,9 @@ func (d *Deps) Handler() http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		// One WS message = one agent frame: 4-byte length + payload, with the
-		// payload capped at 256 KiB by the protocol contract (and OpenSSH's
-		// own agent limit). Larger frames close with 1009.
+		// One WS message = one agent frame. The read limit stops an oversized
+		// message from being buffered (1009); wsReadWriter then rejects any
+		// message that isn't exactly one frame within the payload cap (4000).
 		wsc.SetReadLimit(MaxFrameBytes)
 		ctx := r.Context()
 
