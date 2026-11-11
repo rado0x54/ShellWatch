@@ -124,7 +124,7 @@ func TestSecurityHeaders(t *testing.T) {
 			"X-Frame-Options":         "DENY",
 			"Content-Security-Policy": "frame-ancestors 'none'",
 			"X-Content-Type-Options":  "nosniff",
-			"Referrer-Policy":         "strict-origin-when-cross-origin",
+			"Referrer-Policy":         "no-referrer",
 		}
 		for k, v := range want {
 			if got := res.Header.Get(k); got != v {

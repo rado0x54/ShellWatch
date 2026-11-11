@@ -25,10 +25,9 @@ func securityHeaders(externalURL func() string) func(http.Handler) http.Handler 
 			// Deliberately the only directive: a full CSP is a separate change.
 			h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 			h.Set("X-Content-Type-Options", "nosniff")
-			// Not no-referrer: under no-referrer / same-origin browsers send
-			// `Origin: null` on cross-origin form POSTs, which would break the
-			// OAuth login/consent round trips through Hydra.
-			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			// Nothing reads Referer, and the login/consent/WebAuthn steps use
+			// fetch (whose CORS-mode Origin header is unaffected by this policy).
+			h.Set("Referrer-Policy", "no-referrer")
 			if strings.HasPrefix(strings.ToLower(externalURL()), "https://") {
 				h.Set("Strict-Transport-Security", hstsValue)
 			}
