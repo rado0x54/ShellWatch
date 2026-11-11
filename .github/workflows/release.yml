@@ -348,6 +348,22 @@ jobs:
             exit 0
           fi
 
+          # A hand-written `## ${TAG} (unreleased)` entry (breaking changes,
+          # upgrade steps) is folded in: its heading gets the release date and
+          # the generated notes are appended at the end of that section.
+          UNRELEASED="## ${TAG} (unreleased)"
+          if [ -f CHANGELOG.md ] && grep -qxF "$UNRELEASED" CHANGELOG.md; then
+            printf '%s\n' "$NOTES" > /tmp/notes.md
+            awk -v unreleased="$UNRELEASED" -v entry="$ENTRY" -v notes=/tmp/notes.md '
+              function flush() { while ((getline l < notes) > 0) print l; print ""; done = 1 }
+              $0 == unreleased { print entry; inside = 1; next }
+              inside && !done && /^## v/ { flush(); inside = 0 }
+              { print }
+              END { if (inside && !done) { print ""; flush() } }
+            ' CHANGELOG.md > CHANGELOG.md.new
+            mv CHANGELOG.md.new CHANGELOG.md
+          else
+
           # Insert above the first `## ` heading so a leading `# Changelog`
           # title (if added later) stays at the top of the file.
           ENTRY_FILE=/tmp/new-entry.md
@@ -370,6 +386,7 @@ jobs:
             mv CHANGELOG.md.new CHANGELOG.md
           fi
           rm -f "$ENTRY_FILE"
+          fi
 
           git add CHANGELOG.md
           if git diff --cached --quiet; then

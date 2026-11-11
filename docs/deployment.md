@@ -390,11 +390,12 @@ Still, treat the first Go boot like any schema-touching upgrade:
 
 1. **Back up `./data` before the first Go boot.** Adoption is in-place; the
    backup is your escape hatch, not part of the procedure.
-2. **Rollback window:** rolling back to the last Node image is safe only
-   while the Go schema still equals the frozen drizzle head — i.e. until the
-   first ShellWatch release that ships a new database migration. After such a
-   release has booted, the Node server no longer understands the schema;
-   restore the pre-cutover backup instead.
+2. **Rollback means restoring the backup.** Rolling back to the Node image in
+   place is only safe while the Go schema still equals the frozen drizzle
+   head, and v2.0.0 already ships migrations beyond it (host-key pins,
+   notifications, OAuth client registrations). Once 2.0.0 has booted, the
+   Node server no longer understands the schema: stop the server and restore
+   the pre-cutover backup instead.
 3. **Half-migrated databases fail fast.** If boot stops with
    `existing database is missing table …` or
    `existing database has N of 11 Node migrations applied`, the Node server

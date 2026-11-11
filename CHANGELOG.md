@@ -67,27 +67,98 @@ created after teardown begins), a wedged SSH teardown can no longer stall the
 idle janitor or shutdown, and every session reaches the append-only audit log
 even when closed mid-create.
 
-**Upgrade steps:**
-
-1. **Back up `./data` before the first Go boot.** Adoption is in-place; the
-   backup is your escape hatch, not part of the procedure.
-2. Pull/deploy the 2.0.0 image (or tarball) — no config changes are required.
-   New optional keys: `sessions.idleTimeoutMinutes` /
-   `sessions.cleanupIntervalSeconds`, and the `HOST` env var for the bind
-   address. One tightening: numeric hop-count `trustProxy` values are
-   rejected — use CIDRs/IPs or `true`.
-3. **Rollback window:** rolling back to the last Node image is safe only
-   until the first release that ships a new database migration; after that,
-   restore the pre-cutover backup instead.
-4. If boot fails fast with a half-migrated-database error, run the last Node
-   image once against the same data directory, let it finish its migrations,
-   then cut over.
-
 See
 [docs/deployment.md](./docs/deployment.md#upgrading-from-the-node-server)
 for the full upgrade story and
 [docs/go-backend-architecture.md](./docs/go-backend-architecture.md) for the
 design rationale.
+
+### ⚠️ Behavior change: SSH host keys are pinned (#241)
+
+Brokered SSH connections no longer skip host-key verification. Host keys are
+now pinned trust-on-first-use, **with a human in the loop**:
+
+- **First connection to an endpoint:** the observed key is shown in the
+  signing approval (`/sign/:id` and the sign-request toast carry a "first
+  connection to this host" banner with the fingerprint). Approving pins it; a
+  denied or expired approval leaves no pin. Every existing endpoint starts
+  unpinned after the upgrade, so expect that banner once per endpoint.
+- **Mismatch:** a pinned endpoint presenting a different key is refused before
+  authentication. The agent gets a distinct, non-retryable error; the human
+  gets an audit row and a persistent error notification.
+- **Management:** Settings → Endpoints shows the pin and allows a manual pin
+  (OpenSSH line or `SHA256:` fingerprint) or Forget, both step-up gated
+  (`PUT`/`DELETE /api/endpoints/{id}/host-key`). Changing an endpoint's host or
+  port clears its pin.
+- **Provisioning:** `seedAdminEndpoints` / `demoEndpoints` accept a `hostKey:`
+  that is applied on every boot.
+
+### New: OAuth Client ID Metadata Documents (#242)
+
+MCP clients can authorize with a URL `client_id` (CIMD) in addition to DCR.
+Discovery now advertises ShellWatch's own front door, `GET
+/api/hydra/authorize`, as the `authorization_endpoint`; it fetches and
+validates the client's metadata document (SSRF-guarded post-DNS, size- and
+time-capped), provisions the Hydra client, then hands off to Hydra. The consent
+page leads with the document's hostname, never the self-asserted client name,
+and never skips consent for a CIMD client. Configure under `hydra.cimd` (on by
+default; see `config.sample.yaml`). Both onboarding paths now write an
+admin-only registration log (Audit → OAuth clients).
+
+### New: account notification log (#252)
+
+Server events a user must not miss — host-key mismatches and every failed SSH
+connect, UI- or MCP-triggered — are persisted to an append-only notifications
+log first and pushed second (`notification:new` over `/ws`, replacing
+`host-key:mismatch`). They show as a third Audit tab, and long error toasts
+collapse to a headline with a Details view.
+
+### Fixes and hardening
+
+- SSH connection setup is bounded: a host that accepts TCP and then goes
+  silent no longer hangs session creation forever, and closing a
+  still-connecting session interrupts the handshake (#257).
+- Inactive accounts are **no longer deleted automatically**. The daily job
+  that hard-deleted non-admin accounts idle for 90+ days is gone; deletion is
+  an explicit admin action only (#261).
+- Inbound WebSocket messages are size-capped (`/ws` 1 MiB, `/agent-proxy`
+  256 KiB payload); an oversized frame closes with 1009 instead of being
+  buffered whole (#264).
+- Every response carries baseline security headers:
+  `X-Frame-Options: DENY`,
+  `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and HSTS
+  when `server.externalUrl` is HTTPS (#264).
+- CI gains a `govulncheck` gate; Go and pnpm dependencies cleared of known
+  advisories (#260).
+
+### Upgrade steps
+
+1. **Back up `./data` before the first 2.0.0 boot.** This backup is your only
+   rollback path (see step 5).
+2. Pull/deploy the 2.0.0 image (or tarball). The Node database is adopted
+   automatically and in place; no config changes are required.
+   New optional keys: `sessions.idleTimeoutMinutes` /
+   `sessions.cleanupIntervalSeconds`, `hydra.cimd.*`, `hostKey:` on seeded
+   endpoints, and the `HOST` env var for the bind address.
+3. **Config that now fails validation:** `mcp.sessionTimeoutMinutes` (removed
+   with MCP sessions) and numeric hop-count `trustProxy` values (use
+   CIDRs/IPs or `true`). Remove them before upgrading.
+4. **MCP clients** must cope with the stateless 2026-07-28 model above: no
+   `Mcp-Session-Id`, no `notifications/shellwatch/*`. Use
+   `shellwatch_read_output` with `waitMs`, or resource subscriptions.
+5. **Rollback:** 2.0.0 ships new database migrations (host-key pins,
+   notifications, OAuth client registrations), so the Node image does **not**
+   understand the upgraded schema. To roll back, stop the server and restore
+   the backup from step 1. Anything recorded after the upgrade is lost.
+6. If boot fails fast with a half-migrated-database error
+   (`existing database is missing table …` /
+   `existing database has N of 11 Node migrations applied`), the Node server
+   never finished its own migrations: run the last Node image once against the
+   same data directory, let it migrate, then upgrade.
+7. Expect one host-key approval per existing endpoint on its first connection
+   (see #241 above). To skip that, pre-pin keys with `hostKey:` or in
+   Settings → Endpoints.
 
 ## v1.1.0 (2026-06-14)
 
