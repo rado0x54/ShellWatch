@@ -163,3 +163,26 @@ func TestWSAttachUnownedErrors(t *testing.T) {
 		t.Fatalf("cross-account attach must error, got %v", m)
 	}
 }
+
+// An inbound /ws message over wshub.MaxInboundMessageBytes closes the link with
+// 1009 (security review #7) rather than being buffered whole.
+func TestWSRejectsOversizedInbound(t *testing.T) {
+	ts, _, _ := wsServer(t)
+	c := dialWS(t, ts)
+	readMsg(t, c) // connect-time sessions list
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	big := `{"type":"terminal:input","sessionId":"x","data":"` + strings.Repeat("a", wshub.MaxInboundMessageBytes) + `"}`
+	_ = c.Write(ctx, websocket.MessageText, []byte(big))
+	for {
+		_, _, err := c.Read(ctx)
+		if err == nil {
+			continue // drain anything queued before the close
+		}
+		if websocket.CloseStatus(err) != websocket.StatusMessageTooBig {
+			t.Fatalf("read after oversized frame: err=%v, want close 1009", err)
+		}
+		return
+	}
+}

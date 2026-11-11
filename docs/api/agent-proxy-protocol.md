@@ -57,9 +57,9 @@ authoritative identity. Absent headers are fine; the UI hides them.
 - Strictly sequential request/response: the client writes one request frame
   and waits for exactly one response frame before sending the next. The
   server never sends unsolicited frames.
-- Size: the client refuses frames with payloads over **256 KiB**; the server
-  imposes no explicit cap (ssh2 `AgentProtocol` internal limits apply).
-  Treat 256 KiB as the practical contract.
+- Size: payloads are capped at **256 KiB** in both directions. The client
+  refuses larger frames; the server closes the connection with **1009**
+  (message too big) on an inbound message over 4 + 256 KiB bytes.
 - Keepalive: the **client** pings every 30 s and treats 60 s of silence as a
   dead link. The server sends no pings (the `ws` library auto-answers pongs).
   A Go server must keep answering pings; it need not originate them.
@@ -123,6 +123,7 @@ owned by `internal/signing` + the `agent.ExtendedAgent` implementation.
 | 1011                | server | internal auth state missing (defensive; should not occur) |
 | 4000                | server | agent-protocol stream error (malformed frame)             |
 | 4002                | server | non-binary message received                               |
+| 1009                | server | inbound message over the 256 KiB payload cap              |
 | 1000/1001/1005/1006 | client | SSH client disconnected / shutdown / network loss         |
 
 ## Client lifecycle (informative)
