@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "invalid origin filter"
+  },
+  "status": 400
+}

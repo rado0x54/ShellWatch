@@ -1,0 +1,7 @@
+{
+  "tool": "shellwatch_close_session",
+  "isError": false,
+  "result": {
+    "status": "closed"
+  }
+}

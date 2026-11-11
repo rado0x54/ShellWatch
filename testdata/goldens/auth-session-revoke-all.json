@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/auth/sessions/revoke-all"
+  },
+  "status": 200,
+  "body": {
+    "status": "revoked_all"
+  }
+}

@@ -28,9 +28,14 @@ urls:
   self:
     # Public issuer — advertised in discovery, embedded in tokens, and reached
     # by the web UI, MCP clients, and the agent-client for /oauth2/token.
-    # Browser- and host-reachable.
-    issuer: http://localhost:4444
-    public: http://localhost:4444
+    # This is ShellWatch's origin, NOT :4444: local dev is single-origin
+    # (#243) — ShellWatch forwards Hydra's public surface itself
+    # (hydra.devProxyUpstream in config.yaml), exactly like the production
+    # reverse proxy, so strict OAuth discovery (RFC 8414 §3.3: metadata issuer
+    # == the origin it is fetched from) holds. Keep this equal to
+    # server.externalUrl / hydra.publicUrl in config.yaml.
+    issuer: http://localhost:3000
+    public: http://localhost:3000
   # ShellWatch login + consent providers (passkey-gated). Browser-reachable.
   login: http://localhost:3000/api/hydra/login
   consent: http://localhost:3000/api/hydra/consent

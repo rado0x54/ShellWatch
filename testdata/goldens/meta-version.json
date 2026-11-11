@@ -1,0 +1,13 @@
+{
+  "request": {
+    "path": "/api/version"
+  },
+  "status": 200,
+  "body": {
+    "sha": "dev",
+    "ref": "local",
+    "tag": null,
+    "builtAt": null,
+    "display": "local@dev"
+  }
+}

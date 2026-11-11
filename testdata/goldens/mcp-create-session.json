@@ -1,0 +1,9 @@
+{
+  "tool": "shellwatch_create_session",
+  "isError": false,
+  "result": {
+    "sessionId": "sess_<ID>",
+    "endpointId": "test-server",
+    "status": "open"
+  }
+}

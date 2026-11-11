@@ -7,6 +7,21 @@
  */
 import { beginLogin, getAccessToken, hasRefreshToken } from "./oauth.js";
 
+/**
+ * An API failure whose event the server also published to the account's
+ * notification log (#252): `notificationId` references that entry, and error
+ * toasts dedupe against the pushed notification by it.
+ */
+export class ApiError extends Error {
+  notificationId?: string;
+
+  constructor(message: string, notificationId?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.notificationId = notificationId;
+  }
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = await getAccessToken();
   const res = await doFetch(path, init, token);

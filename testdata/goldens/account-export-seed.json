@@ -1,0 +1,24 @@
+{
+  "request": {
+    "path": "/api/accounts/export-seed"
+  },
+  "status": 200,
+  "body": {
+    "passkeys": [
+      {
+        "credentialId": "Y29yZS1jcmVkLWE",
+        "publicKeyHex": "a5010203262001",
+        "counter": 0,
+        "transports": ["internal", "hybrid"],
+        "label": "Primary Passkey"
+      }
+    ],
+    "endpoints": [
+      {
+        "label": "Prod DB",
+        "address": "deploy@db.internal:2222",
+        "agentForward": true
+      }
+    ]
+  }
+}

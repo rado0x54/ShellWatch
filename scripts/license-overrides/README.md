@@ -30,9 +30,7 @@ notice text exists), synthesize the standard SPDX template using the
 ## Audit trail
 
 When you add or update an override, drop a one-line note in this file
-with the source URL so future maintainers can re-verify:
+with the source URL so future maintainers can re-verify.
 
-- `_cbor-extract.LICENSE.txt` — <https://github.com/kriszyp/cbor-extract/blob/master/LICENSE>. Shared by all `@cbor-extract/cbor-extract-<platform>` symlinks (darwin-arm64, darwin-x64, linux-arm, linux-arm64, linux-x64, win32-x64).
-- `abstract-logging.txt` — synthesized; upstream <https://github.com/jsumners/abstract-logging> ships no LICENSE file. Author from npm `package.json`.
-- `drizzle-orm.txt` — <https://github.com/drizzle-team/drizzle-orm/blob/main/LICENSE>
-- `http_ece.txt` — <https://github.com/web-push-libs/encrypted-content-encoding/blob/master/LICENSE>
+(Currently empty: every production dependency of the client bundle ships its
+LICENSE file. Go module licenses are bundled by `scripts/bundle-go-licenses.sh`.)

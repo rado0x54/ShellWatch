@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "verified": true,
+    "credentialId": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+    "id": "<UUID>",
+    "label": "Passkey (2)",
+    "authorizedKeysEntry": "webauthn-sk-ecdsa-sha2-nistp256@openssh.com AAAAK3dlYmF1dGhuLXNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBFvazpKa4+0JJsYUIvcioEBNTfhhkM8f0c/nxgYSYogDKShNSt5FE92QPxhxztAF6GQvGTzAhUYkWvUD/YpaJYcAAAAJbG9jYWxob3N0",
+    "sshdConfig": "PubkeyAcceptedAlgorithms=+webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+  }
+}

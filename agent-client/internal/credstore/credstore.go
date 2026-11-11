@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -208,15 +209,31 @@ func isUnavailable(err error) bool {
 	if errors.As(err, &unav) {
 		return true
 	}
-	// go-keyring reports "secret service is not available" on Linux without
-	// a session bus and similar shapes on Windows when the credential
-	// manager is locked. The library doesn't export sentinels for these
-	// shapes, so we match by string. NOTE: if go-keyring is bumped beyond
-	// v0.2.8, sanity-check these strings against the upstream source —
-	// silently regressing "unavailable" detection will turn the dual-store
-	// fallback into a hard failure on headless runners.
+	// Linux: go-keyring talks to the Secret Service over the D-Bus session
+	// bus (godbus). When the bus itself cannot be reached — no session bus on
+	// a headless box, DBUS_SESSION_BUS_ADDRESS pointing at a dead socket, a
+	// container without dbus — godbus returns the raw transport error from
+	// net.Dial (a *net.OpError such as "dial unix …: connect: no such file or
+	// directory" / "connection refused") and go-keyring passes it through
+	// unwrapped. That is an "unavailable" keyring, not a credential error.
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	// Other shapes without exported sentinels, matched by string. godbus
+	// prefixes every connection-establishment failure with "dbus: " ("dbus:
+	// couldn't determine address of session bus", "dbus: invalid bus
+	// address …"); go-keyring reports "secret service is not available" when
+	// the bus is up but no Secret Service provider is registered, and
+	// similar shapes on Windows when the credential manager is locked.
+	// NOTE: if go-keyring is bumped beyond v0.2.8 or godbus beyond v5.2.2,
+	// sanity-check these strings against the upstream source — silently
+	// regressing "unavailable" detection turns the dual-store fallback into
+	// a hard failure on headless runners (the e2e suite's headless
+	// `shellwatch-agent login` scenario guards this on Linux).
 	msg := err.Error()
-	return strings.Contains(msg, "secret service is not available") ||
+	return strings.HasPrefix(msg, "dbus: ") ||
+		strings.Contains(msg, "secret service is not available") ||
 		strings.Contains(msg, "no such interface")
 }
 

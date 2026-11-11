@@ -1,0 +1,16 @@
+{
+  "tool": "shellwatch_manage_endpoints",
+  "isError": false,
+  "result": {
+    "endpoints": [
+      {
+        "id": "test-server",
+        "label": "Test Server",
+        "host": "127.0.0.1",
+        "port": "<PORT>",
+        "username": "testuser",
+        "description": null
+      }
+    ]
+  }
+}

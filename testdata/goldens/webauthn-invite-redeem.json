@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "body": {
+    "status": "registered",
+    "label": "Passkey (2)",
+    "fingerprint": "<FINGERPRINT>"
+  }
+}

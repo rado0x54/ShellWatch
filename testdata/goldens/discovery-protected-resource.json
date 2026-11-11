@@ -1,0 +1,13 @@
+{
+  "request": {
+    "path": "/.well-known/oauth-protected-resource"
+  },
+  "status": 200,
+  "wwwAuthenticate": null,
+  "body": {
+    "resource": "<BASE_URL>/mcp",
+    "authorization_servers": ["<BASE_URL>"],
+    "bearer_methods_supported": ["header"],
+    "scopes_supported": ["mcp", "offline_access"]
+  }
+}

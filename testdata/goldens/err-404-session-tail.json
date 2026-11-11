@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/sessions/sess_deadbeef0000/tail"
+  },
+  "status": 404,
+  "body": {
+    "error": "Session not found"
+  }
+}

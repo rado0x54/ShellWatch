@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-import { apiFetch } from "../api.js";
+import { ApiError, apiFetch } from "../api.js";
 export interface TerminalSession {
   sessionId: string;
   endpointId: string;
@@ -16,7 +16,10 @@ export async function createSession(endpointId: string): Promise<TerminalSession
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || "Failed to create session");
+    throw new ApiError(
+      err.error || "Failed to create session",
+      typeof err.notificationId === "string" ? err.notificationId : undefined,
+    );
   }
   return res.json();
 }

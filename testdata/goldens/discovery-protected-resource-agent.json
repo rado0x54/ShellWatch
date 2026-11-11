@@ -1,0 +1,13 @@
+{
+  "request": {
+    "path": "/.well-known/oauth-protected-resource/agent-proxy"
+  },
+  "status": 200,
+  "wwwAuthenticate": null,
+  "body": {
+    "resource": "<BASE_URL>/agent-proxy",
+    "authorization_servers": ["<BASE_URL>"],
+    "bearer_methods_supported": ["header"],
+    "scopes_supported": ["agent", "offline_access"]
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "tool": "shellwatch_manage_endpoints",
+  "isError": true,
+  "message": "Endpoint not found: nope"
+}

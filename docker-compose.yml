@@ -6,7 +6,7 @@
 #
 # Common workflows:
 #   # Local dev: run ONLY Hydra here, ShellWatch on the host via `pnpm dev`.
-#   pnpm hydra:migrate                       # create/upgrade Hydra's schema (backed up first)
+#   pnpm hydra:migrate                       # create/upgrade Hydra's schema (back up ./data first!)
 #   docker compose up -d hydra               # naming the service starts just it
 #   # (optionally with secrets:  docker compose --env-file .env.hydra up -d hydra)
 #
@@ -17,18 +17,33 @@
 #   docker compose --profile hydra up -d
 #
 # Schema migrations are NEVER applied automatically — they can be destructive.
-# Run `pnpm hydra:migrate` explicitly (it backs up ./data/hydra.sqlite first)
-# before the first `up` and after any Hydra image bump.
+# Run `pnpm hydra:migrate` explicitly before the first `up` and after any Hydra
+# image bump. It does NOT back up automatically — copy ./data/hydra.sqlite first.
 
 services:
   shellwatch:
     image: ghcr.io/rado0x54/shellwatch:latest
+    # Local source build: `docker compose up -d --build shellwatch` builds the
+    # image from this checkout (and tags it as the name above — `docker compose
+    # pull shellwatch` restores the registry copy). A plain `up` keeps using
+    # whatever image is present.
+    #
+    # NOTE when running the app in a container next to the `hydra` service:
+    # hydra.adminUrl in the mounted config must be http://hydra:4445 (container
+    # DNS), not localhost. Keep a separate config for that and point
+    # SHELLWATCH_CONFIG_FILE at it, e.g.
+    #   SHELLWATCH_CONFIG_FILE=./config.docker.yaml docker compose --profile hydra up -d --build
+    build:
+      context: .
+      args:
+        GIT_SHA: local
+        GIT_REF: compose
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
       - ./keys:/app/keys
-      - ./config.yaml:/app/config.yaml:ro
+      - ${SHELLWATCH_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
     environment:
       - HOST=0.0.0.0
     # Image defaults to UID:GID 1000:1000. Override if your host user differs
@@ -56,6 +71,10 @@ services:
       # `_fk=true` enables foreign-key enforcement (Hydra relies on it).
       DSN: ${HYDRA_DSN:-sqlite:///data/hydra.sqlite?_fk=true}
       SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:-this-is-a-dev-only-system-secret-change-me}
+      # urls.self.* live in hydra.yml and are authoritative — nothing here
+      # overrides them. The dev hydra.yml uses ShellWatch's origin as the
+      # issuer (single-origin mode, hydra.devProxyUpstream — see
+      # config.sample.yaml); production deployments bring their own config.
       # `--dev` accepts the http:// issuer without TLS; only for local dev.
     command: serve all --dev --config /etc/config/hydra.yml
     volumes:

@@ -1,0 +1,16 @@
+{
+  "request": {
+    "path": "/api/hydra/register"
+  },
+  "status": 201,
+  "body": {
+    "client_id": "hydra-client-1",
+    "client_id_issued_at": "<TS>",
+    "token_endpoint_auth_method": "none",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "redirect_uris": ["http://127.0.0.1:9876/callback"],
+    "scope": "mcp offline_access",
+    "client_name": "Test MCP"
+  }
+}

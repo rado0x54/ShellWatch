@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/endpoints/test-server"
+  },
+  "status": 200,
+  "body": {
+    "status": "updated"
+  }
+}

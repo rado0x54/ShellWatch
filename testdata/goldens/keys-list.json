@@ -1,0 +1,22 @@
+{
+  "request": {
+    "path": "/api/keys"
+  },
+  "status": 200,
+  "body": {
+    "keys": [
+      {
+        "id": "key-1",
+        "label": "Deploy Key",
+        "type": "file",
+        "algorithm": "ssh-ed25519",
+        "fingerprint": "<FINGERPRINT>",
+        "revoked": false,
+        "available": true,
+        "authorizedKeysEntry": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZJWEVEREVURVJNSU5JU1RJQ0tFWU1BVEVSSUFM deploy@shellwatch",
+        "createdAt": "<TS>",
+        "lastUsedAt": null
+      }
+    ]
+  }
+}

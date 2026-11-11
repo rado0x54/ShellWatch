@@ -1,0 +1,44 @@
+{
+  "status": 200,
+  "body": {
+    "rows": [
+      {
+        "sessionId": "sess_<ID>",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "endpointId": "audit-endpoint-3",
+        "source": "ssh",
+        "status": "error",
+        "createdAt": "<TS>",
+        "closedAt": null,
+        "durationMs": null,
+        "sourceIp": null,
+        "mcpReason": null,
+        "mcpClientName": null,
+        "mcpClientVersion": null,
+        "clientHostname": null,
+        "clientOs": null,
+        "clientVersion": null,
+        "closeReason": "transport-error"
+      },
+      {
+        "sessionId": "sess_<ID>",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "endpointId": "audit-endpoint-2",
+        "source": "mcp",
+        "status": "closed",
+        "createdAt": "<TS>",
+        "closedAt": "<TS>",
+        "durationMs": 3000,
+        "sourceIp": null,
+        "mcpReason": "deploy hotfix",
+        "mcpClientName": "codex",
+        "mcpClientVersion": null,
+        "clientHostname": null,
+        "clientOs": null,
+        "clientVersion": null,
+        "closeReason": "client.mcp"
+      }
+    ],
+    "nextCursor": "<CURSOR>"
+  }
+}

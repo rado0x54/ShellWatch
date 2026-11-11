@@ -101,6 +101,9 @@
 
   function actionTarget(row: SigningRequestRow): string {
     if (row.type === "webauthn-sign") return row.passkeyLabel ?? row.credentialId ?? "passkey";
+    if (row.type === "host-key-mismatch" || row.type === "host-key-cleared") {
+      return row.endpointLabel ?? row.hostKeyFingerprint ?? "host key";
+    }
     return row.keyLabel ?? row.keyFingerprint ?? "key";
   }
 </script>
@@ -114,6 +117,7 @@
         <option value="endpoint-auth">Endpoint auth</option>
         <option value="agent-forwarding">Agent forwarding</option>
         <option value="agent-proxy">Agent proxy</option>
+        <option value="endpoint-admin">Endpoint admin</option>
       </select>
     </div>
     <div class="filter-group">
@@ -240,6 +244,28 @@
                 <dt>Fingerprint</dt>
                 <dd><code>{row.keyFingerprint}</code></dd>
               {/if}
+            {:else if row.type === "host-key-mismatch"}
+              {#if row.hostKeyPriorFingerprint}
+                <dt>Pinned host key</dt>
+                <dd><code>{row.hostKeyPriorFingerprint}</code></dd>
+              {/if}
+              {#if row.hostKeyFingerprint}
+                <dt>Presented host key</dt>
+                <dd><code>{row.hostKeyFingerprint}</code></dd>
+              {/if}
+            {:else if row.type === "host-key-cleared"}
+              {#if row.hostKeyFingerprint}
+                <dt>Cleared host key</dt>
+                <dd><code>{row.hostKeyFingerprint}</code></dd>
+              {/if}
+            {/if}
+            {#if row.hostKeyFingerprint && (row.type === "webauthn-sign" || row.type === "key-approve")}
+              <dt>Host key</dt>
+              <dd>
+                <code>{row.hostKeyFingerprint}</code>{row.hostKeyPinned
+                  ? " (pinned by this approval)"
+                  : ""}
+              </dd>
             {/if}
           </dl>
         {/snippet}

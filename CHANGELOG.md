@@ -1,4 +1,166 @@
-## Unreleased
+## v2.0.0 (unreleased)
+
+### ⚠️ Breaking: MCP implements spec revision 2026-07-28, statelessly (#243)
+
+The `/mcp` surface now serves MCP `2026-07-28` alongside the `2025-11-25` and
+`2025-06-18` handshake eras — **stateless** in every era, as the new revision
+requires:
+
+- **No protocol-level sessions.** No `Mcp-Session-Id` is minted or honoured;
+  `GET`/`DELETE /mcp` answer 405. Terminal sessions are owned by the agent's
+  **OAuth client** (`(account, client_id)`) and survive reconnects; they end
+  via `shellwatch_close_session`, remote hangup, the idle janitor
+  (`sessions.idleTimeoutMinutes`), account deletion, or revoking the client's
+  consent in Settings → Sessions. `mcp.sessionTimeoutMinutes` was removed and
+  now fails config validation.
+- **`notifications/shellwatch/output_available` / `session_status` are gone in
+  every era** (the stateless transport has no standalone SSE stream to carry
+  them). Replacements: sessions are resources (`shellwatch://sessions`,
+  `shellwatch://sessions/{id}`) emitting `notifications/resources/updated`
+  over `subscriptions/listen` (2026-07-28 clients), and
+  `shellwatch_read_output` gained `waitMs` (0–30000) to long-poll for output
+  in any era.
+- Agent attribution falls back to the OAuth `client_id` when a request carries
+  no `_meta` `clientInfo` (all pre-2026-07-28 clients); the REST/WS session
+  shape gained `ownerClientId`, and the 401 challenge advertises
+  `scope="mcp"`.
+
+### ⚠️ Breaking: the Node backend is replaced by a single Go binary (#210)
+
+ShellWatch's server is now **one static Go binary** that embeds the built web
+UI — the Node/Fastify backend, its drizzle migration runtime, and the patched
+`ssh2` fork are gone. Node.js remains a **build-time** dependency only (the
+SvelteKit client); at runtime there is nothing to install besides the binary
+(or the distroless container image) and Ory Hydra. Everything moved: REST,
+WebSocket, MCP (streamable HTTP; see the 2026-07-28 entry above for the
+notification model), the SSH broker (passkey
+and file-key signing through human approval, agent forwarding, the
+`/agent-proxy` bridge), WebAuthn ceremonies, Hydra login/consent +
+introspection, the audit log, and Web Push.
+
+**The wire contract is preserved.** [docs/api/](./docs/api/) remained the
+source of truth throughout the port; golden fixtures pin the normalized
+responses byte-for-byte, and the black-box e2e suite (real OpenSSH `sshd`,
+real Hydra) runs against the built binary. The few deliberate divergences are
+catalogued in
+[docs/api/README.md](./docs/api/README.md#known-inconsistencies-found-while-freezing-the-contract).
+One behavioral API change ships with the rewrite: denying a pending action is
+now **idempotent** — `POST /api/actions/:id/deny` answers `200` for every
+no-signature outcome (already denied, or expired just before the deny), with
+`status` reporting the state the store actually asserted.
+
+**Your database is adopted automatically and in place** — same image name,
+same volumes, no flags. On first boot the Go server recognizes the
+Node/drizzle schema, stamps its own migration table, and records the drizzle
+journal head so a rollback to the Node image applies nothing either.
+
+**Hardening:** the port was driven through eight adversarial review rounds,
+and the concurrency/lifecycle invariants now live in the owning components
+instead of call sites: approval resolution is a single atomic claim (no
+double-fired callbacks, no post-TTL signatures — the deadline is enforced at
+the claim, not just by the sweeper), per-session WebSocket frame ordering
+holds by construction (output never follows `terminal:closed` within an
+attachment, and a closing session delivers its final output tail instead of
+dropping it or blanking the terminal), shutdown is strictly ordered (the
+last-used flush is structurally the final database write; no session can be
+created after teardown begins), a wedged SSH teardown can no longer stall the
+idle janitor or shutdown, and every session reaches the append-only audit log
+even when closed mid-create.
+
+See
+[docs/deployment.md](./docs/deployment.md#upgrading-from-the-node-server)
+for the full upgrade story and
+[docs/go-backend-architecture.md](./docs/go-backend-architecture.md) for the
+design rationale.
+
+### ⚠️ Behavior change: SSH host keys are pinned (#241)
+
+Brokered SSH connections no longer skip host-key verification. Host keys are
+now pinned trust-on-first-use, **with a human in the loop**:
+
+- **First connection to an endpoint:** the observed key is shown in the
+  signing approval (`/sign/:id` and the sign-request toast carry a "first
+  connection to this host" banner with the fingerprint). Approving pins it; a
+  denied or expired approval leaves no pin. Every existing endpoint starts
+  unpinned after the upgrade, so expect that banner once per endpoint.
+- **Mismatch:** a pinned endpoint presenting a different key is refused before
+  authentication. The agent gets a distinct, non-retryable error; the human
+  gets an audit row and a persistent error notification.
+- **Management:** Settings → Endpoints shows the pin and allows a manual pin
+  (OpenSSH line or `SHA256:` fingerprint) or Forget, both step-up gated
+  (`PUT`/`DELETE /api/endpoints/{id}/host-key`). Changing an endpoint's host or
+  port clears its pin.
+- **Provisioning:** `seedAdminEndpoints` / `demoEndpoints` accept a `hostKey:`
+  that is applied on every boot.
+
+### New: OAuth Client ID Metadata Documents (#242)
+
+MCP clients can authorize with a URL `client_id` (CIMD) in addition to DCR.
+Discovery now advertises ShellWatch's own front door, `GET
+/api/hydra/authorize`, as the `authorization_endpoint`; it fetches and
+validates the client's metadata document (SSRF-guarded post-DNS, size- and
+time-capped), provisions the Hydra client, then hands off to Hydra. The consent
+page leads with the document's hostname, never the self-asserted client name,
+and never skips consent for a CIMD client. Configure under `hydra.cimd` (on by
+default; see `config.sample.yaml`). Both onboarding paths now write an
+admin-only registration log (Audit → OAuth clients).
+
+### New: account notification log (#252)
+
+Server events a user must not miss — host-key mismatches and every failed SSH
+connect, UI- or MCP-triggered — are persisted to an append-only notifications
+log first and pushed second (`notification:new` over `/ws`, replacing
+`host-key:mismatch`). They show as a third Audit tab, and long error toasts
+collapse to a headline with a Details view.
+
+### Fixes and hardening
+
+- SSH connection setup is bounded: a host that accepts TCP and then goes
+  silent no longer hangs session creation forever, and closing a
+  still-connecting session interrupts the handshake (#257).
+- Inactive accounts are **no longer deleted automatically**. The daily job
+  that hard-deleted non-admin accounts idle for 90+ days is gone; deletion is
+  an explicit admin action only (#261).
+- Inbound WebSocket messages are size-capped (`/ws` 1 MiB, `/agent-proxy`
+  256 KiB payload); an oversized frame closes with 1009 instead of being
+  buffered whole (#264).
+- Every response carries baseline security headers:
+  `X-Frame-Options: DENY`,
+  `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and HSTS
+  when `server.externalUrl` is HTTPS (#264).
+- CI gains a `govulncheck` gate; Go and pnpm dependencies cleared of known
+  advisories (#260).
+
+### Upgrade steps
+
+1. **Back up `./data` before the first 2.0.0 boot.** This backup is your only
+   rollback path (see step 5).
+2. Pull/deploy the 2.0.0 image (or tarball). The Node database is adopted
+   automatically and in place; no config changes are required.
+   New optional keys: `sessions.idleTimeoutMinutes` /
+   `sessions.cleanupIntervalSeconds`, `hydra.cimd.*`, `hostKey:` on seeded
+   endpoints, and the `HOST` env var for the bind address.
+3. **Config that now fails validation:** `mcp.sessionTimeoutMinutes` (removed
+   with MCP sessions) and numeric hop-count `trustProxy` values (use
+   CIDRs/IPs or `true`). Remove them before upgrading.
+4. **MCP clients** must cope with the stateless 2026-07-28 model above: no
+   `Mcp-Session-Id`, no `notifications/shellwatch/*`. Use
+   `shellwatch_read_output` with `waitMs`, or resource subscriptions.
+5. **Rollback:** 2.0.0 ships new database migrations (host-key pins,
+   notifications, OAuth client registrations), so the Node image does **not**
+   understand the upgraded schema. To roll back, stop the server and restore
+   the backup from step 1. Anything recorded after the upgrade is lost.
+6. If boot fails fast with a half-migrated-database error
+   (`existing database is missing table …` /
+   `existing database has N of 11 Node migrations applied`), the Node server
+   never finished its own migrations: run the last Node image once against the
+   same data directory, let it migrate, then upgrade.
+7. Expect one host-key approval per existing endpoint on its first connection
+   (see #241 above). To skip that, pre-pin keys with `hostKey:` or in
+   Settings → Endpoints.
+
+## v1.1.0 (2026-06-14)
 
 ### ⚠️ Breaking: Ory Hydra is now the OAuth2/OIDC authority (#217)
 
@@ -42,6 +204,14 @@ consent provider; authentication stays passkey-only. SSH signing /
 
 See [docs/deployment.md](./docs/deployment.md#ory-hydra-oauth-authority) for the
 full deployment + local-dev story.
+
+## What's Changed
+
+- feat: replace OAuth shim + API keys with Ory Hydra (#217) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/218
+- chore: bump GitHub Actions off deprecated Node.js 20 runtime by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/221
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/222
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v1.0.2...v1.1.0
 
 ## v1.0.2 (2026-05-18)
 

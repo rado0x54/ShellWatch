@@ -18,9 +18,9 @@ graph TB
         TM["TerminalManager<br/><i>Central session registry</i>"]
         SB["SigningBridge + PendingActions<br/><i>approval queue (WS + Web Push)</i>"]
         STF["SshTransportFactory<br/><i>File keys + passkeys</i>"]
-        SSH["SSH Transport<br/><i>ssh2 library</i>"]
+        SSH["SSH Transport<br/><i>x/crypto/ssh</i>"]
         KDW["KeyDirectoryWatcher<br/><i>Auto-discovery</i>"]
-        DB["SQLite<br/><i>Drizzle ORM</i>"]
+        DB["SQLite<br/><i>sqlc + goose</i>"]
 
         MCP --> AS
         AS --> TM
@@ -68,7 +68,7 @@ graph TB
 | **SSH Client**    | SSH agent protocol (via Go proxy) | Key-based             | System SSH clients (`ssh`, `scp`, `git`) using ShellWatch-managed keys via the agent proxy. Both passkey signs and file-key uses require browser approval on `/sign/:id`. Passkeys require OpenSSH 10.3+. Authenticates with a Hydra-issued OAuth bearer token (`agent` scope). |
 | **ShellWatch**    | &mdash;                           | &mdash;               | Session broker + Hydra's passkey-gated login/consent provider. Routes I/O, buffers terminal data, broadcasts events, enforces agent isolation, manages key material + WebAuthn signing, and verifies Hydra-issued bearer tokens.                                                |
 | **Ory Hydra**     | OAuth2 / OIDC                     | &mdash;               | External authority. Issues all access/refresh tokens; ShellWatch delegates OAuth entirely to it and introspects tokens via the admin API.                                                                                                                                       |
-| **Target Server** | SSH                               | &mdash;               | Remote host accessed via ssh2 with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                                                                                       |
+| **Target Server** | SSH                               | &mdash;               | Remote host accessed via x/crypto/ssh with key-based or WebAuthn passkey auth and PTY allocation.                                                                                                                                                                               |
 
 ## Data Flow — MCP Session
 

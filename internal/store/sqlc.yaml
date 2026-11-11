@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# sqlc configuration (#210 Phase 1). Schema comes from the goose migrations;
+# regenerate with `go generate ./internal/store` and commit gen/.
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "migrations"
+    queries: "queries"
+    gen:
+      go:
+        package: "gen"
+        out: "gen"

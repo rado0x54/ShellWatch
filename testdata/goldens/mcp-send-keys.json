@@ -1,0 +1,8 @@
+{
+  "tool": "shellwatch_send_keys",
+  "isError": false,
+  "result": {
+    "status": "sent",
+    "keys": ["text:echo hi", "enter"]
+  }
+}

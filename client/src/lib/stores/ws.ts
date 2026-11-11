@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
-import { addToast, clearAction, toastError, type SignRequestAction } from "./toasts.js";
+import type { AppNotification } from "./notifications.js";
+import {
+  addToast,
+  clearAction,
+  toastError,
+  toastNotification,
+  type SignRequestAction,
+  type SignRequestHostKey,
+} from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
 const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
@@ -28,6 +36,8 @@ type SignRequestMessage = {
   source: string;
   endpointLabel?: string;
   endpointAddress?: string;
+  // host-key pinning (#241): set on endpoint-auth actions
+  hostKey?: SignRequestHostKey;
   // webauthn-sign fields
   passkeyLabel?: string;
   credentialId?: string;
@@ -38,6 +48,14 @@ type SignRequestMessage = {
   keyFingerprint?: string;
 };
 
+/** A new entry in the account's notification log (#252) — e.g. a host-key
+ * mismatch (#241). Persisted server-side (GET /api/notifications) and pushed
+ * here for the live toast; toasts dedupe by notification id. */
+type NotificationMessage = {
+  type: "notification:new";
+  notification: AppNotification;
+};
+
 type ServerMessage =
   | { type: "terminal:output"; sessionId: string; data: string; offset: number; reset?: true }
   | { type: "terminal:status"; sessionId: string; status: string }
@@ -46,11 +64,17 @@ type ServerMessage =
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
+  | NotificationMessage
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
 export const sessions = writable<SessionListEntry[]>([]);
+
+/** Whether the socket is currently open (#252 review): pages that render a
+ * server-side log watch the false→true transition to refetch what a
+ * disconnect made them miss. */
+export const wsConnected = writable(false);
 
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
@@ -63,6 +87,7 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
     source: msg.source,
     endpointLabel: msg.endpointLabel,
     endpointAddress: msg.endpointAddress,
+    hostKey: msg.hostKey,
   };
 
   if (msg.actionType === "key-approve") {
@@ -115,6 +140,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   // access logs (vs a query param). The bearer gate reads it from the header.
   ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
+  ws.onopen = () => {
+    wsConnected.set(true);
+  };
+
   ws.onmessage = (event) => {
     try {
       const msg: ServerMessage = JSON.parse(event.data);
@@ -148,6 +177,12 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
         clearAction(msg.actionId);
       }
 
+      if (msg.type === "notification:new") {
+        // The toast holds the headline; the long text sits behind "Details"
+        // and the action link derives from the notification's type (#252).
+        toastNotification(msg.notification);
+      }
+
       if (msg.type === "error") {
         toastError(msg.message);
       }
@@ -161,6 +196,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   };
 
   ws.onclose = () => {
+    wsConnected.set(false);
     scheduleReconnect();
   };
 }

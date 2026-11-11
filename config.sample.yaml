@@ -19,7 +19,6 @@ server:
   # X-Forwarded-For. Always prefer the CIDR form for production.
   # trustProxy: ["10.0.0.0/8", "172.16.0.0/12"]
   # trustProxy: "127.0.0.1"
-  # trustProxy: 1                                     # number of hops to trust
   # trustProxy: true                                  # trust all hops (only if network is trusted)
 
 # Directory containing SSH private key files (.pem)
@@ -39,18 +38,30 @@ keyDirectory: ./keys
 # agentForward defaults to true; set to false for hosts that disallow forwarding.
 # description is optional free-form context (max 1000 chars) surfaced to MCP
 # agents via the shellwatch_manage_endpoints list/read tool.
+# hostKey (optional) pre-pins the host's SSH key so the first connection never
+# goes through trust-on-first-use. Preferred form is the full OpenSSH public
+# key line (get it with `ssh-keyscan -t ed25519 <host>`); a bare
+# "SHA256:..." fingerprint also works but can't drive host-key-algorithm
+# selection. Applied on every boot with compare-and-set: an existing,
+# different pin is kept (forget it in Settings -> Endpoints first). Without
+# hostKey, the first connection's approval dialog pins whatever key the host
+# presents (TOFU) — see issue #241.
 # seedAdminEndpoints:
 #   - label: Dev Box
 #     address: ubuntu@dev.example.com
 #     description: "Personal dev sandbox. /srv/app holds the staging copy."
+#     hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... root@dev"
 #
 #   - label: Staging
 #     address: deploy@staging.example.com:2222
 #     agentForward: false
 
 # Optional: virtual demo endpoints merged into every account's endpoint list.
-# Same shape as seedAdminEndpoints (including description). Never copied into
-# the database — config is the source of truth. Each account has a "Show demo
+# Same shape as seedAdminEndpoints (including description and hostKey; a demo
+# hostKey pin lives in process memory since demo endpoints are never
+# persisted, and known public demo hosts additionally carry a baked-in pin —
+# internal/demo). Never copied into the database — config is the source of
+# truth. Each account has a "Show demo
 # endpoints" toggle on the Endpoints page (default on); set demoEndpoints to
 # [] or omit to disable. Pairs with the rado0x54/shellwatch-demo-server
 # container — see issue #211.
@@ -107,6 +118,11 @@ security:
     - 127.0.0.1/32
     - "::1/128"
 
+# The MCP surface is stateless (spec 2026-07-28): there are no MCP sessions to
+# expire. Terminal sessions created via MCP belong to the agent's OAuth client
+# and end on close_session, remote hangup, or sessions.idleTimeoutMinutes.
+# (mcp.sessionTimeoutMinutes was removed and now fails validation.)
+
 # Web Push notifications — send push notifications for sign requests
 # so users don't need the browser tab open. Requires VAPID keys.
 # Generate keys: npx web-push generate-vapid-keys
@@ -114,6 +130,13 @@ security:
 #   subject: "mailto:admin@example.com"
 #   publicKey: "BEl62i..."                                # base64url-encoded VAPID public key
 #   privateKey: "UGo..."                                  # base64url-encoded VAPID private key
+
+# Terminal-session housekeeping. Idle sessions (no input or output) are closed
+# by a periodic janitor; the audit log records them with closeReason
+# "idle-timeout". Fractional values are accepted (handy for test deployments).
+# sessions:
+#   idleTimeoutMinutes: 30                              # default: 30
+#   cleanupIntervalSeconds: 60                          # how often the janitor runs (default: 60)
 
 # SSH agent proxy — allows system SSH clients to use ShellWatch-managed keys.
 # Requires the shellwatch-agent thin client on the user's workstation.
@@ -129,10 +152,25 @@ security:
 hydra:
   # Public issuer URL — must equal Hydra's urls.self.issuer. The browser SPA,
   # MCP clients, and the agent-client reach this; advertised in discovery.
-  publicUrl: http://localhost:4444
+  #
+  # ONE ORIGIN serves the app and the OAuth authority, here and in production:
+  # strict (2026-07-28-era) MCP clients enforce RFC 8414 §3.3 — the
+  # authorization-server metadata's issuer must equal the origin it was fetched
+  # from — so this is ShellWatch's own origin, not Hydra's listener. In
+  # production your reverse proxy routes /oauth2/* and the OIDC docs to Hydra
+  # (docs/deployment.md); locally devProxyUpstream below does the same job.
+  publicUrl: http://localhost:3000
   # Admin API URL — login/consent acceptance, client CRUD, token introspection.
   # NEVER expose this to the internet; bind it to a trusted network only.
   adminUrl: http://localhost:4445
+  # LOCAL DEV ONLY (#243): ShellWatch forwards Hydra's public surface
+  # (/oauth2/*, /userinfo, /.well-known/{jwks.json,openid-configuration}) to
+  # this address, so no local reverse proxy is needed to get the single origin
+  # above. Pairs with the bundled hydra.yml (urls.self.issuer = the app origin)
+  # and `docker compose up -d hydra`.
+  # REMOVE THIS in production — there a real proxy fronts both services, and
+  # publicUrl is the shared public origin.
+  devProxyUpstream: http://localhost:4444
   spa:
     # First-party PUBLIC client the web UI uses for its PKCE flow (no secret).
     # ShellWatch ensures it exists in Hydra on boot.
@@ -151,3 +189,34 @@ hydra:
   #     - "^http://\\[::1\\](:\\d+)?(/.*)?$"
   #     - "^https://claude\\.ai/api/mcp/auth_callback$"
   #     - "^https://claude\\.com/api/mcp/auth_callback$"
+  # OAuth Client ID Metadata Documents (CIMD,
+  # draft-ietf-oauth-client-id-metadata-document-02): the client_id IS an https
+  # URL that serves the client's own metadata. The MCP 2026-07-28 authorization
+  # spec prefers this over DCR (which it deprecates).
+  #
+  # ShellWatch resolves the URL itself and provisions a Hydra client whose
+  # client_id is that URL — the same mediation shape as DCR above, and for the
+  # same reason: client onboarding policy (the patterns and scopes below, never
+  # issuing a secret, the registration log under Audit -> OAuth clients) lives
+  # here, which is also why Hydra's own registration endpoint is switched off
+  # in hydra.yml. The redirectUriPatterns and allowedScopes from `dcr` are
+  # reused as the CIMD policy; there is no separate copy.
+  # cimd:
+  #   # Default true. Setting false is a kill switch, not a hand-off: Hydra
+  #   # cannot resolve a metadata document, so URL client_ids simply stop
+  #   # working. Pre-registered and DCR clients are unaffected either way.
+  #   enabled: true
+  #   allowedHosts: []                # optional EXACT-match allowlist of client_id hosts; empty = any public host
+  #   blockedHosts: []                # always wins over allowedHosts
+  #   cacheMinSeconds: 300            # fetched documents honour HTTP cache headers, clamped into this range
+  #   cacheMaxSeconds: 86400
+  #   # A private CA for an internal CIMD client's document host. APPENDED to the
+  #   # system trust store, never substituted for it, so publicly hosted clients
+  #   # keep working. Applies to document fetches only. An unreadable bundle, or
+  #   # one holding no certificate, fails at startup. This is also the only way to
+  #   # add a CA on macOS, where Go ignores SSL_CERT_FILE.
+  #   extraCaBundlePath: /path/to/internal-ca.pem
+  #   # DEV/TEST ONLY — draft §8.6 forbids this in production. Permits fetching a
+  #   # metadata document from a loopback address, re-opening the SSRF hole that
+  #   # the dial-time guard otherwise closes. Leave false in any real deployment.
+  #   allowLoopbackDocuments: false

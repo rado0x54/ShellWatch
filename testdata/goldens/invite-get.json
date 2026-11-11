@@ -1,0 +1,13 @@
+{
+  "request": {
+    "path": "/api/webauthn/invite"
+  },
+  "status": 200,
+  "body": {
+    "invite": {
+      "expiresAt": "<TS>",
+      "createdAt": "<TS>",
+      "token": "<REDACTED>"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "body": {
+    "rows": [
+      {
+        "sessionId": "sess_<ID>",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "endpointId": "audit-endpoint-1",
+        "source": "ui",
+        "status": "open",
+        "createdAt": "<TS>",
+        "closedAt": null,
+        "durationMs": null,
+        "sourceIp": "203.0.113.1",
+        "mcpReason": null,
+        "mcpClientName": null,
+        "mcpClientVersion": null,
+        "clientHostname": null,
+        "clientOs": null,
+        "clientVersion": null,
+        "closeReason": null
+      }
+    ],
+    "nextCursor": null
+  }
+}

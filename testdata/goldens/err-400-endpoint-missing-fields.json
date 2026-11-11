@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/endpoints"
+  },
+  "status": 400,
+  "body": {
+    "error": "label and host are required"
+  }
+}

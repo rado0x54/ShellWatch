@@ -1,0 +1,346 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+// Package sshx is the x/crypto/ssh transport (port of src/transport/, the
+// spec's §5.11). It implements terminal.Transport: dial with signers, request
+// a PTY, start an interactive shell, pump stdout+stderr as Events, resize via
+// window-change, close. The webauthn/passkey signer path (blocking on the
+// pending-action broker) lands in Phase 4; slice 3 does file-key auth.
+package sshx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/rado0x54/shellwatch/internal/terminal"
+)
+
+const (
+	ptyTerm = "xterm-256color"
+	ptyCols = 80
+	ptyRows = 24
+)
+
+// connectionTimeout is Node's WEBAUTHN_CONNECTION_TIMEOUT: a 90s window for
+// the dial and for each auth round, sized for a human passkey touch (comfortably
+// above approval.ActionTTL). File-key auth resolves instantly, but the value is
+// shared. A var, not a const, only so the handshake-deadline tests can shorten
+// it — nothing outside this package reads it.
+var connectionTimeout = 90 * time.Second
+
+// handshakeWatcherGate, when non-nil, runs inside the cancellation watcher
+// below before it selects. Only the handshake tests set it, to hold the watcher
+// back until cancellation and handshake completion are both ready; nothing
+// outside this package reads it.
+var handshakeWatcherGate func()
+
+// sshTransport implements terminal.Transport over one ssh.Session.
+type sshTransport struct {
+	client  *ssh.Client
+	session *ssh.Session
+	stdin   io.WriteCloser
+	events  chan terminal.Event
+
+	mu     sync.Mutex
+	closed bool
+}
+
+func (t *sshTransport) Events() <-chan terminal.Event { return t.events }
+
+func (t *sshTransport) Write(data []byte) error {
+	t.mu.Lock()
+	closed := t.closed
+	t.mu.Unlock()
+	if closed {
+		return fmt.Errorf("SSH stream is not open")
+	}
+	_, err := t.stdin.Write(data)
+	return err
+}
+
+func (t *sshTransport) Resize(cols, rows int) error {
+	return t.session.WindowChange(rows, cols)
+}
+
+func (t *sshTransport) Close() error {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return nil
+	}
+	t.closed = true
+	t.mu.Unlock()
+	_ = t.session.Close()
+	return t.client.Close()
+}
+
+// pipe forwards a reader to the event channel until EOF.
+func (t *sshTransport) pipe(r io.Reader, wg *sync.WaitGroup) {
+	defer wg.Done()
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			t.emit(terminal.Event{Data: append([]byte(nil), buf[:n]...)})
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (t *sshTransport) emit(ev terminal.Event) {
+	t.mu.Lock()
+	closed := t.closed
+	t.mu.Unlock()
+	if !closed {
+		t.events <- ev
+	}
+}
+
+// ConnectParams configure a dial.
+type ConnectParams struct {
+	Host         string
+	Port         int
+	Username     string
+	EndpointID   string
+	Signers      []ssh.Signer
+	AgentForward bool
+	// ForwardingAgent services the remote's auth-agent@openssh.com channel when
+	// AgentForward is set — every forwarded sign routes through the broker.
+	ForwardingAgent agent.Agent
+	// HostKeys is the pin store (#241). Required: a nil HostKeys is a
+	// programming error, never an accept-anything fallback.
+	HostKeys HostKeys
+	// HostKeyState is the per-connection host-key record, shared with the
+	// signers so the approval that authorizes the sign can pin the key.
+	// Connect allocates one when nil (callers without approval-driven pinning).
+	HostKeyState *HostKeyState
+}
+
+// Connect dials, opens a PTY shell, and returns a terminal.Transport. The
+// data pump runs until both streams EOF, then a single Closed event ends the
+// session's pump goroutine.
+func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
+	if p.HostKeys == nil {
+		return nil, errors.New("sshx: ConnectParams.HostKeys is required — host-key verification is mandatory (#241)")
+	}
+	state := p.HostKeyState
+	if state == nil {
+		state = &HostKeyState{}
+	}
+	// Bind this connection's pin decision to the address it actually dials:
+	// an approval that outlives an endpoint host/port update must not pin the
+	// observed key onto the new address.
+	state.setDialAddress(p.Host, int64(p.Port))
+	pin, err := p.HostKeys.Lookup(ctx, p.EndpointID)
+	if err != nil {
+		return nil, fmt.Errorf("host key lookup for endpoint %s failed: %w", p.EndpointID, err)
+	}
+	// One publickey method per signer, handed out on demand (auth.go): a
+	// denied key fails its own method and x/crypto moves to the next one.
+	keys := newKeyAuth(ctx, p.Signers)
+	cfg := &ssh.ClientConfig{
+		User:            p.Username,
+		AuthCallback:    keys.callback,
+		HostKeyCallback: hostKeyCallback(p.EndpointID, pin, state),
+		// Pin the negotiated host-key algorithm to the pinned key's, so a
+		// server with several host keys offers the one we can verify.
+		HostKeyAlgorithms: hostKeyAlgorithmsFor(pin),
+		Timeout:           connectionTimeout,
+	}
+
+	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
+	dialer := net.Dialer{Timeout: connectionTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, err)
+	}
+	// Bound the SSH handshake, and make cancellation able to interrupt it
+	// (#257). Neither is true by default:
+	//
+	//   - ClientConfig.Timeout does NOT cover the handshake. x/crypto
+	//     documents it as "the maximum amount of time for the TCP connection
+	//     to establish" and only ssh.Dial consults it, so a peer that accepts
+	//     TCP and then says nothing blocks NewClientConn forever.
+	//   - NewClientConn takes no context, so cancelling setupCtx cannot reach
+	//     it. Closing the socket is the only thing that can — without it a
+	//     Close of a still-connecting session left the entry parked in
+	//     `closing` with the socket and goroutine retained, because the
+	//     factory never returned for terminal.Manager's tail to finalize.
+	//
+	// The deadline is refreshed at the start of every auth round (keyAuth.
+	// extendDeadline), since a round may legitimately block for up to
+	// approval.ActionTTL while a human approves one key, and a host may offer
+	// several. So it bounds silence, not the total handshake.
+	_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
+	keys.extendDeadline = func() {
+		_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
+	}
+	// setupDone fences the watcher against the socket it guards: once setup has
+	// handed the connection over, cancellation must never close it.
+	// terminal.Manager cancels setupCtx the moment Create returns (manager.go:
+	// `defer cancelSetup()`), so on EVERY successful session ctx.Done() and
+	// handshakeDone end up ready together — and select picks between two ready
+	// cases at random. Closing handshakeDone is therefore not enough on its own:
+	// a watcher that had not yet reached its select would tear down a live
+	// session's socket about half the time it lost that scheduling race.
+	var (
+		setupMu   sync.Mutex
+		setupDone bool
+	)
+	handshakeDone := make(chan struct{})
+	defer func() {
+		setupMu.Lock()
+		setupDone = true
+		setupMu.Unlock()
+		close(handshakeDone)
+	}()
+	go func() {
+		if handshakeWatcherGate != nil {
+			handshakeWatcherGate()
+		}
+		select {
+		case <-ctx.Done():
+			setupMu.Lock()
+			defer setupMu.Unlock()
+			if setupDone {
+				return // setup won the race; the connection is not ours to close
+			}
+			_ = conn.Close() // the only way to unblock NewClientConn
+		case <-handshakeDone:
+		}
+	}()
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		conn.Close()
+		var mismatch *HostKeyMismatchError
+		if errors.As(err, &mismatch) {
+			// Distinct, pre-authentication failure: no auth wording, no
+			// pending action was ever created. The caller notifies the account
+			// out-of-band (no approval toast exists for this).
+			return nil, fmt.Errorf("SSH connection to %s refused: %w", addr, mismatch)
+		}
+		err = keys.authError(err)
+		if st, _, pinned := state.Snapshot(); st == HostKeyNew && !pinned {
+			// First contact with this host was not approved (denied, expired,
+			// or no usable key): tell the agent/user the host key is not yet
+			// trusted so they know approval happens in the ShellWatch UI.
+			err = fmt.Errorf("%w — the host key for this endpoint is not trusted yet; a human must approve the first connection on the ShellWatch sign page", err)
+		}
+		return nil, fmt.Errorf("SSH connection to %s failed: %w", addr, err)
+	}
+	// Setup is over: drop the deadline. It bounded the handshake only — an
+	// established session is long-lived and idles by design (a terminal with
+	// nobody typing), so leaving it set would tear every session down
+	// mid-life. keyAuth cannot extend it any more either; auth has returned.
+	_ = conn.SetDeadline(time.Time{})
+
+	// Fail closed (#241): a provisionally accepted host key must never yield
+	// an established session without a human approval having pinned it. This
+	// covers servers accepting "none" auth and any future auth path that
+	// bypasses the approval broker.
+	if st, observed, pinned := state.Snapshot(); st == HostKeyNew && !pinned {
+		sshConn.Close()
+		conn.Close()
+		return nil, fmt.Errorf("SSH connection to %s aborted: host key %s (%s) was accepted provisionally but no approval pinned it", addr, observed.Fingerprint, observed.Type)
+	}
+	client := ssh.NewClient(sshConn, chans, reqs)
+
+	session, err := client.NewSession()
+	if err != nil {
+		client.Close()
+		return nil, fmt.Errorf("open session on %s: %w", p.Host, err)
+	}
+
+	// Agent forwarding: register the local (broker-backed) agent for the
+	// remote's auth-agent@openssh.com channel opens, then request forwarding on
+	// this session channel — that's what makes sshd export $SSH_AUTH_SOCK.
+	if p.AgentForward && p.ForwardingAgent != nil {
+		if err := agent.ForwardToAgent(client, p.ForwardingAgent); err != nil {
+			slog.Warn("agent forwarding: ForwardToAgent failed", "host", p.Host, "err", err)
+		} else if err := agent.RequestAgentForwarding(session); err != nil {
+			slog.Warn("agent forwarding: request on session failed", "host", p.Host, "err", err)
+		}
+	}
+
+	modes := ssh.TerminalModes{ssh.ECHO: 1}
+	if err := session.RequestPty(ptyTerm, ptyRows, ptyCols, modes); err != nil {
+		session.Close()
+		client.Close()
+		return nil, fmt.Errorf("request pty on %s: %w", p.Host, err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return nil, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return nil, err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return nil, err
+	}
+	if err := session.Shell(); err != nil {
+		session.Close()
+		client.Close()
+		return nil, fmt.Errorf("start shell on %s: %w", p.Host, err)
+	}
+
+	t := &sshTransport{client: client, session: session, stdin: stdin, events: make(chan terminal.Event, 64)}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go t.pipe(stdout, &wg)
+	go t.pipe(stderr, &wg)
+	go func() {
+		wg.Wait()              // both streams EOF
+		werr := session.Wait() // reap the remote command
+		t.mu.Lock()
+		already := t.closed
+		t.closed = true
+		t.mu.Unlock()
+		if !already {
+			// Distinguish a broken transport from a normal end (ssh2 parity:
+			// client "error" vs "close", ssh-transport.ts:42-44). A nonzero
+			// remote exit or a close without exit-status are still normal
+			// closes (shell exit, server hangup); anything else — reset,
+			// protocol error — surfaces as an error event so the manager
+			// records status=error / transport-error.
+			if werr != nil && !isNormalSessionEnd(werr) {
+				t.events <- terminal.Event{Err: werr}
+			} else {
+				t.events <- terminal.Event{Closed: true}
+			}
+		}
+		close(t.events)
+		_ = client.Close()
+	}()
+
+	return t, nil
+}
+
+func isNormalSessionEnd(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	var exitErr *ssh.ExitError
+	var missingErr *ssh.ExitMissingError
+	return errors.As(err, &exitErr) || errors.As(err, &missingErr)
+}

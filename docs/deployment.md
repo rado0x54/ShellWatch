@@ -52,7 +52,7 @@ provider** — Hydra never sees a credential, it just redirects challenges back.
 pnpm hydra:migrate                # create Hydra's schema (./data/hydra.sqlite)
 docker compose up -d hydra        # naming the service starts ONLY Hydra
 # Then run ShellWatch on the host:
-pnpm dev          # or: pnpm build && pnpm start  (serves built client on :3000)
+pnpm dev          # or: pnpm build && pnpm start  (single binary serving the built client on :3000)
 ```
 
 `hydra` is a profiled service in `docker-compose.yml` (alongside the `shellwatch`
@@ -74,7 +74,7 @@ passkey **login + consent providers** are server-rendered by ShellWatch at
 
 > Note: under `pnpm dev` the Vite dev server (`:3001`) is for SPA hot-reload
 > only — the OAuth redirect flow + the login/consent providers are served by
-> Fastify on `:3000`.
+> the Go server on `:3000`.
 
 ### Config
 
@@ -82,8 +82,12 @@ Add a `hydra:` section to `config.yaml` (see `config.sample.yaml`):
 
 ```yaml
 hydra:
-  publicUrl: http://localhost:4444 # must equal Hydra urls.self.issuer
+  # The SHARED public origin of app + OAuth (= server.externalUrl), not Hydra's
+  # listener: it must equal Hydra's urls.self.issuer, which the bundled
+  # hydra.yml sets to this value (see "One origin for app + OAuth" below).
+  publicUrl: http://localhost:3000
   adminUrl: http://localhost:4445 # trusted-network only
+  devProxyUpstream: http://localhost:4444 # LOCAL DEV ONLY — drop behind a real proxy
   spa:
     clientId: shellwatch-web # first-party public PKCE client (no secret)
 ```
@@ -93,17 +97,83 @@ ShellWatch provisions the public SPA client in Hydra automatically on boot
 `oidc.dynamic_client_registration.enabled: false` (mediated DCR only) and its
 login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 
-> **Reverse-proxy note:** ShellWatch's mediated DCR endpoint lives under its own
-> namespace at `POST /api/hydra/register`, so ownership is unambiguous when
-> ShellWatch and Hydra share a hostname behind one proxy: everything under
+> **Reverse-proxy note:** ShellWatch's client-onboarding endpoints live under
+> its own namespace — `POST /api/hydra/register` (mediated DCR) and
+> `GET /api/hydra/authorize` (the CIMD front door) — so ownership is unambiguous
+> when ShellWatch and Hydra share a hostname behind one proxy: everything under
 > `/oauth2/*` (`/oauth2/auth`, `/oauth2/token`, `/oauth2/revoke`,
-> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including
-> `/api/hydra/register`) routes to ShellWatch. Hydra's own native DCR stays
-> disabled.
+> `/oauth2/sessions/logout`) routes to Hydra, and `/api/*` (including both
+> `/api/hydra/*` endpoints above) routes to ShellWatch. Hydra's own native DCR
+> stays disabled.
 >
-> **Allowed redirect URIs** for DCR clients are configurable under
-> `hydra.dcr.redirectUriPatterns` (default: loopback only). Add a hosted client's
-> callback (e.g. Claude.ai) explicitly — see `config.sample.yaml`.
+> **The advertised `authorization_endpoint` is ShellWatch's, not Hydra's**, while
+> CIMD is enabled (the default): a URL `client_id` has to be resolved into a
+> Hydra client before Hydra sees the request, since Hydra would otherwise reject
+> it as an unknown client. A non-URL `client_id` — the first-party SPA, every DCR
+> client — is passed straight through to `/oauth2/auth` with the query string
+> forwarded verbatim, so those flows are unchanged. `/oauth2/auth` must still
+> route to Hydra: the front door redirects to it.
+>
+> Setting `hydra.cimd.enabled: false` is an operator kill switch, not a hand-off
+> — `authorization_endpoint` reverts to Hydra's `/oauth2/auth` and URL
+> `client_id`s stop working entirely, because Hydra cannot resolve a metadata
+> document.
+>
+> **Outbound requests on the login path (CIMD):** resolving a document means
+> ShellWatch fetches the `client_id` URL itself — HTTPS only, no redirects
+> followed, 5 s deadline, 5 KB read cap, and a dial-time guard that refuses
+> loopback, link-local, RFC 1918, ULA, CGNAT, multicast and other special-use
+> destinations **after** DNS resolution, so a rebinding answer cannot reach an
+> internal address. Documents are cached per RFC 9111 headers, clamped into
+> `hydra.cimd.cacheMinSeconds`…`cacheMaxSeconds`; errors and invalid documents are
+> never cached. Restrict which clients may onboard with
+> `hydra.cimd.allowedHosts` / `blockedHosts` (exact hostnames; blocked wins). If
+> outbound HTTPS is not available to the server, leave CIMD off and use DCR.
+>
+> `hydra.cimd.allowLoopbackDocuments` exists for development and testing only —
+> the CIMD draft (§8.6) forbids it in production, and it re-opens the SSRF hole
+> the dial-time guard closes. The server logs a warning when it is on.
+>
+> **Allowed redirect URIs** are configurable under
+> `hydra.dcr.redirectUriPatterns` (default: loopback only) and are shared by DCR
+> **and** CIMD — a document's `redirect_uris` are filtered through the same
+> patterns, so a published metadata document can never widen your policy. Add a
+> hosted client's callback (e.g. Claude.ai) explicitly — see
+> `config.sample.yaml`. A registered loopback entry matches any port (RFC 8252
+> §7.3); `localhost` does not, because it can resolve anywhere.
+>
+> **Auditing who onboarded:** every registration, document refresh and rejection
+> is recorded in an append-only log, readable by admins at
+> `GET /api/audit/oauth-clients` (UI: Audit → OAuth Clients). It is the one audit
+> surface that is not account-scoped — onboarding happens before anyone signs in
+> — so it is gated on the admin role instead of an account filter. Current client
+> state stays in Hydra (`GET /admin/clients`), tagged with
+> `metadata.shellwatch.origin` = `cimd` or `dcr`; clients registered before this
+> landed have an empty metadata object and read as origin unknown.
+>
+> **One origin for app + OAuth (#243):** 2026-07-28-era MCP clients enforce
+> RFC 8414 §3.3 — the authorization-server metadata's `issuer` must equal the
+> origin it was fetched from — so ShellWatch and Hydra must share a public
+> origin, with the proxy routing `/oauth2/*`, `/userinfo`,
+> `/.well-known/jwks.json` and `/.well-known/openid-configuration` to Hydra and
+> everything else (including the RFC 9728/8414 discovery docs, which are
+> ShellWatch's own) to ShellWatch. Set `hydra.publicUrl` and Hydra's
+> `urls.self.issuer` to that shared origin.
+>
+> **Locally**, `hydra.devProxyUpstream: http://localhost:4444` makes ShellWatch
+> forward that same path set itself, so `pnpm dev` + `docker compose up -d hydra`
+> give you the single origin with no local proxy — the bundled `hydra.yml`
+> already issues on the app's origin. Remove the key in production, where the
+> real proxy does the routing. Changing the issuer invalidates existing tokens:
+> log out and back in once (and re-authorize MCP clients).
+>
+> **MCP streams through proxies (#243):** `/mcp` responses can be long-lived SSE
+> streams (`subscriptions/listen`, `read_output` long-polls). The proxy must not
+> buffer them (nginx: `proxy_buffering off;` — or
+> `add_header X-Accel-Buffering no;` — on the `/mcp` location) and must forward
+> all `Mcp-*` request headers unchanged — `2026-07-28` clients send required
+> `Mcp-Method` / `Mcp-Name` / `Mcp-Protocol-Version` headers that the server
+> validates.
 
 ### Manual verification
 
@@ -175,18 +245,127 @@ docker run -d \
 
 ### Environment variables
 
-| Variable            | Default                       | Description                |
-| ------------------- | ----------------------------- | -------------------------- |
-| `HOST`              | `0.0.0.0`                     | Bind address               |
-| `SHELLWATCH_DB`     | `sqlite:./data/shellwatch.db` | Database connection string |
-| `SHELLWATCH_CONFIG` | `config.yaml`                 | Config file path           |
+| Variable                | Default                       | Description                                 |
+| ----------------------- | ----------------------------- | ------------------------------------------- |
+| `HOST`                  | `0.0.0.0`                     | Bind address                                |
+| `SHELLWATCH_DB`         | `sqlite:./data/shellwatch.db` | Database connection string                  |
+| `SHELLWATCH_CONFIG`     | `config.yaml`                 | Config file path (also `-config` / 1st arg) |
+| `SHELLWATCH_LOG_LEVEL`  | `info`                        | `debug` / `info` / `warn` / `error`         |
+| `SHELLWATCH_LOG_FORMAT` | `text`                        | `text` or `json`                            |
+| `SHELLWATCH_LOG_FILE`   | —                             | Also append logs to this file               |
+| `SSL_CERT_FILE`         | —                             | Override the CA trust store — see below     |
+| `SSL_CERT_DIR`          | —                             | Override the CA trust directory — see below |
+
+### Image
+
+The image is a distroless (no shell) base carrying one statically linked Go
+binary with the web UI embedded; `HEALTHCHECK` runs `shellwatch -healthcheck`,
+which probes `/health` on the configured port. There is nothing to `exec`
+into — use `docker logs` and the audit log.
+
+### CA trust store (and how to override it)
+
+**Normally there is nothing to do here.** The distroless base ships Debian's
+`ca-certificates` at `/etc/ssl/certs/ca-certificates.crt`, which is the first
+path Go's `x509.SystemCertPool()` reads on Linux, so public TLS verification
+works out of the box. Two things depend on it:
+
+- **Web Push** — notifications are delivered to the browser vendor's push
+  service over HTTPS (this has always been the case).
+- **CIMD document fetches** — resolving a URL `client_id` means fetching it
+  (see the CIMD notes under [Ory Hydra](#ory-hydra-oauth-authority)).
+
+The bundle tracks Debian stable, so it lags upstream Mozilla by weeks to months
+and is refreshed whenever the image is rebuilt against a newer base. The two
+ways that can bite are not equally bad: a **missing** new root fails _closed_
+(the fetch is refused, nothing is written), whereas a root that upstream has
+**distrusted** but Debian has not yet dropped keeps being accepted. The second
+is the one worth reacting to — hence this section.
+
+#### A private CA for an internal CIMD client
+
+If a CIMD client's metadata document is served by an internal host behind your
+own CA, point `hydra.cimd.extraCaBundlePath` at that CA's PEM bundle:
+
+```yaml
+hydra:
+  cimd:
+    extraCaBundlePath: /app/data/internal-ca.pem
+```
+
+It is **appended** to the system roots, never substituted for them, so publicly
+hosted clients keep working — unlike the environment variables below, which
+replace the store wholesale. It applies to metadata-document fetches only, and a
+bundle that cannot be read or holds no certificate fails at startup rather than
+when the first client behind that CA tries to authorize. This is also the only
+way to add a CA on macOS, where Go ignores `SSL_CERT_FILE`.
+
+#### Break-glass override
+
+Point `SSL_CERT_FILE` at a bundle you control. Build it from the roots the image
+already has, so you keep public verification working:
+
+```bash
+# 1. Extract the roots the running image ships.
+cid=$(docker create ghcr.io/rado0x54/shellwatch:latest)
+docker cp "$cid":/etc/ssl/certs/ca-certificates.crt ./ca-roots.pem
+docker rm "$cid"
+
+# 2. Edit: append a CA you need, or delete the PEM block you no longer trust.
+cat ./ca-roots.pem ./my-extra-ca.pem > ./ca-bundle.pem
+
+# 3. Mount it read-only and point Go at it.
+docker run \
+  -v "$PWD/ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro" \
+  -e SSL_CERT_FILE=/etc/ssl/ca-bundle.pem \
+  ghcr.io/rado0x54/shellwatch:latest
+```
+
+```yaml
+services:
+  shellwatch:
+    volumes:
+      - ./ca-bundle.pem:/etc/ssl/ca-bundle.pem:ro
+    environment:
+      - HOST=0.0.0.0
+      - SSL_CERT_FILE=/etc/ssl/ca-bundle.pem
+```
+
+Mounting over the image's own path works equally well and needs no env var —
+but mount the **file**, never the directory:
+
+```yaml
+- ./ca-bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro
+```
+
+Things that will catch you out:
+
+- **It replaces the trust store, it never appends to it.** A bundle containing
+  only your private CA makes every public host untrusted; a bundle containing
+  only the public roots will not trust your private CA. The file has to be
+  complete — which is why step 1 starts from the image's own roots.
+- **It applies to every outbound TLS connection**, so an incomplete bundle
+  breaks Web Push as well as CIMD. There is no CIMD-only trust store.
+- **Mount the file, not `/etc/ssl/certs/`.** On a Debian host that directory is
+  mostly symlinks into `/usr/share/ca-certificates/`; bind-mounting it into the
+  container yields dangling links and a _smaller_ trust store than you started
+  with. Host paths also differ by distro (`/etc/pki/tls/certs/ca-bundle.crt` on
+  RHEL), and on Docker Desktop the "host" is the Linux VM with its own minimal
+  store — so mounting host certs is a Linux-server technique, not a laptop one.
+- **Keep it world-readable.** The container runs as UID `1000`; `0644` is right.
+- `SSL_CERT_DIR` is honoured too (a directory of hash-named certs), but a single
+  bundle file is almost always what you want.
+
+To confirm it took effect, attempt an authorization from a CIMD client: a trust
+failure is recorded as a `rejected` row under **Audit → OAuth Clients** with the
+reason, and nothing is written to Hydra. To revert, drop the env var and the
+mount and restart — nothing is persisted.
 
 ### Running as non-root
 
-The image ships with a `shellwatch` user pinned to UID/GID `1000:1000` and runs
-as that user by default. If your host user uses a different UID/GID, override
-with Docker's `--user` flag (or `user:` in compose) and make sure the bind-
-mounted directories are owned by that UID/GID:
+The image runs as UID/GID `1000:1000` by default. If your host user uses a
+different UID/GID, override with Docker's `--user` flag (or `user:` in
+compose) and make sure the bind-mounted directories are owned by that UID/GID:
 
 ```bash
 sudo chown -R 1001:1001 ./data ./keys
@@ -199,29 +378,55 @@ services:
     user: "1001:1001"
 ```
 
+## Upgrading from the Node server
+
+The Go server adopts a Node-created database **automatically and in place** —
+same image name, same volumes, no flags. On first boot it recognizes the
+drizzle-managed schema (which is byte-identical to the Go baseline), stamps
+its own migration table instead of re-running anything, and records the
+drizzle journal head so a rollback to the Node image applies nothing either.
+
+Still, treat the first Go boot like any schema-touching upgrade:
+
+1. **Back up `./data` before the first Go boot.** Adoption is in-place; the
+   backup is your escape hatch, not part of the procedure.
+2. **Rollback means restoring the backup.** Rolling back to the Node image in
+   place is only safe while the Go schema still equals the frozen drizzle
+   head, and v2.0.0 already ships migrations beyond it (host-key pins,
+   notifications, OAuth client registrations). Once 2.0.0 has booted, the
+   Node server no longer understands the schema: stop the server and restore
+   the pre-cutover backup instead.
+3. **Half-migrated databases fail fast.** If boot stops with
+   `existing database is missing table …` or
+   `existing database has N of 11 Node migrations applied`, the Node server
+   never finished its own migrations: run the last Node image once against
+   the same data directory, let it migrate, then cut over.
+
 ## Standalone tarball
 
-For deployments without Docker.
+For deployments without Docker. Each release ships one tarball per Linux
+architecture (`linux-amd64`, `linux-arm64`) containing the static `shellwatch`
+binary (web UI embedded), `buildInfo.generated.json`, `config.sample.yaml`,
+`LICENSE` and `THIRD_PARTY_LICENSES`. No runtime dependencies.
 
 ### Install
 
 ```bash
-# Download the release tarball
-wget https://github.com/rado0x54/ShellWatch/releases/latest/download/shellwatch-VERSION.tar.gz
-tar xzf shellwatch-*.tar.gz
-cd shellwatch-*
-
-# Install production dependencies
-npm i -g pnpm
-pnpm install --prod
+# Download the release tarball for your architecture
+wget https://github.com/rado0x54/ShellWatch/releases/latest/download/shellwatch-VERSION-linux-amd64.tar.gz
+tar xzf shellwatch-*-linux-amd64.tar.gz
+cd shellwatch-*-linux-amd64
 
 # Configure
 cp config.sample.yaml config.yaml
 # Edit config.yaml
 
-# Run
-node dist/index.js
+# Run (reads ./config.yaml, ./buildInfo.generated.json and writes ./data/shellwatch.db)
+./shellwatch
 ```
+
+Building from source instead: `pnpm install && pnpm build` produces the same
+binary at the repo root (`./shellwatch`).
 
 ### Systemd service
 
@@ -233,7 +438,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/shellwatch
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/opt/shellwatch/shellwatch
 Restart=on-failure
 User=shellwatch
 Environment=HOST=0.0.0.0

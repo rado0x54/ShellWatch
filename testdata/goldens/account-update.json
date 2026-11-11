@@ -1,0 +1,9 @@
+{
+  "request": {
+    "path": "/api/auth/me"
+  },
+  "status": 200,
+  "body": {
+    "status": "updated"
+  }
+}

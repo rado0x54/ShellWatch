@@ -12,7 +12,9 @@ export type StepUpAction =
   | "revoke_passkey"
   | "confirm_passkey"
   | "revoke_session"
-  | "revoke_all_sessions";
+  | "revoke_all_sessions"
+  | "reset_host_key"
+  | "pin_host_key";
 
 /**
  * Run the WebAuthn step-up assertion for an action and return the resulting

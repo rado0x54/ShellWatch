@@ -1,0 +1,10 @@
+{
+  "request": {
+    "path": "/api/endpoints"
+  },
+  "status": 200,
+  "body": {
+    "status": "created",
+    "id": "<UUID>"
+  }
+}

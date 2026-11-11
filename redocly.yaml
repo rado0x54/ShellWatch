@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+# Redocly config for the ShellWatch wire contract (docs/api/).
+# Used by `pnpm api:lint` and `pnpm api:preview`.
+apis:
+  shellwatch@v1:
+    root: docs/api/openapi.yaml
+extends:
+  - recommended
+rules:
+  # This is a hand-authored, human-facing contract — not a codegen source. The
+  # rules below are style opinions we intentionally opt out of:
+  operation-operationId: off # operationIds add noise; paths+methods are the identity here
+  operation-4xx-response: off # every route shares the bearer 401/403; not repeated per op
+  no-unused-components: off # bearerMcp/bearerAgent schemes are documented but only ui is applied globally
+  security-defined: off # scope-per-path is enforced by the gate, not per-operation security blocks

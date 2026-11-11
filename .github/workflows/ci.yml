@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    # go-backend is the long-lived base branch for the #210 rewrite; its
+    # pushes and the PRs targeting it need the same gates as develop.
+    branches: [develop, main, go-backend]
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, go-backend]
   workflow_call:
 
 concurrency:
@@ -61,6 +63,41 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
 
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Fail on any advisory of moderate severity or higher. Patched transitives
+      # are pinned via `overrides` in pnpm-workspace.yaml.
+      - run: pnpm audit --audit-level moderate
+
+  # Go counterpart of the pnpm audit: govulncheck over both Go modules (server
+  # + agent-client). Fails only on vulnerabilities reachable from our code,
+  # including the standard library of the toolchain pinned in each go.mod.
+  govulncheck:
+    name: Go Vulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [., agent-client]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   svelte-check:
     name: Svelte Check
     runs-on: ubuntu-latest
@@ -74,37 +111,111 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:svelte
 
-  unit-tests:
-    name: Unit Tests (Node ${{ matrix.node-version }})
+  client-tests:
+    name: Client Unit Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  integration-tests:
-    name: Integration Tests (Node ${{ matrix.node-version }})
+  # Black-box end-to-end suite (#244): the built server binary launched as a
+  # child process against a real OpenSSH sshd + a real Ory Hydra in compose,
+  # driven only over the wire (REST, WS, MCP, agent-proxy via the Go agent).
+  # One leg per sshd image; the modern leg also runs the webauthn-sk scenarios.
+  # See docs/testing.md.
+  e2e:
+    name: E2E (sshd ${{ matrix.sshd }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [22, 24]
+        sshd: [modern, stable]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            agent-client/go.sum
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test:integration
+      # Client into web/dist, then the server binary with it embedded.
+      - run: pnpm build
+      - name: Build agent-client
+        working-directory: agent-client
+        run: go build -o shellwatch-agent ./cmd/shellwatch-agent
+      - name: Start sshd + Hydra
+        run: pnpm e2e:up
+      - name: Run e2e suite
+        env:
+          E2E_SSHD: ${{ matrix.sshd }}
+          E2E_SKIP_BUILD: "1"
+          E2E_SERVER_BIN: ./shellwatch
+        run: pnpm test:e2e
+      - name: Collect compose logs
+        if: failure()
+        run: pnpm test:e2e:logs > e2e/out/compose-all.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-${{ matrix.sshd }}
+          path: e2e/out/**
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: pnpm e2e:down
+
+  # Spec-lint gate for the wire contract: #225 promises the OpenAPI spec is
+  # "validated in CI" — this job is that validation (same command as the
+  # local `pnpm api:lint`).
+  api-lint:
+    name: API Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+
+  # The server (root Go module): build, vet, test — includes the golden parity
+  # suites against testdata/goldens and the operationId coverage guard.
+  go:
+    name: Go (build/vet/test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # Codegen drift gate: committed internal/api (oapi-codegen from the frozen
+  # OpenAPI spec) and internal/store/gen (sqlc) must match their sources.
+  api-codegen:
+    name: Codegen Drift (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: bash scripts/check-api-codegen.sh
 
   # Agent build matrix — catches windows/unix build-tag breakage at PR time
   # rather than at release-cut. Build only; tests run once on linux below.
