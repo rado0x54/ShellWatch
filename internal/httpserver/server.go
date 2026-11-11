@@ -96,6 +96,8 @@ func New(p Params) http.Handler {
 	// Outermost: log every request (method/path/status/duration) so 4xx/5xx are
 	// visible in stdout / the log file, not just the response body.
 	r.Use(requestLogger(clock.Real{}))
+	// Security headers next, so they also land on 401s, 429s and preflights.
+	r.Use(securityHeaders(externalURL))
 	// server.trustProxy: resolve the effective client IP once; every consumer
 	// (audit sourceIp, /mcp allowlist, rate limits) reads it from the context.
 	r.Use(realip.New(p.Config.Server.TrustProxy).Middleware)

@@ -19,6 +19,9 @@ ahead of the Go rewrite (#210, #225). Source of truth in the Node backend:
   (`parseClientMessage` returns `null`) are **rejected with a reply**:
   `{ type: "error", message: "Invalid message format" }` (`ws-handler.ts`) — the
   connection stays open. Handler exceptions similarly reply with `error`.
+- Inbound size: one client→server message is capped at **1 MiB**. A larger
+  frame closes the connection with **1009** (message too big); outbound
+  server→client frames are not capped.
 - All messages carry `sessionId` **except** the server→client `sessions:changed`
   and `error`.
 

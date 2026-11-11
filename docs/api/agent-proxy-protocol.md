@@ -51,15 +51,18 @@ authoritative identity. Absent headers are fine; the UI hides them.
 
 - **Binary WebSocket messages only.** One binary message = **one complete
   SSH agent protocol frame**: 4-byte big-endian payload length + payload
-  (the length prefix is part of the message). No batching, no splitting.
+  (the length prefix is part of the message). No batching, no splitting:
+  the server enforces this, closing with **4000** when a message is shorter
+  than 4 bytes or its declared length doesn't equal the rest of the message.
 - A text message closes the connection with code **4002**
   (`Only binary messages are accepted`).
 - Strictly sequential request/response: the client writes one request frame
   and waits for exactly one response frame before sending the next. The
   server never sends unsolicited frames.
-- Size: the client refuses frames with payloads over **256 KiB**; the server
-  imposes no explicit cap (ssh2 `AgentProtocol` internal limits apply).
-  Treat 256 KiB as the practical contract.
+- Size: payloads are capped at **256 KiB** in both directions. The client
+  refuses larger frames. The server closes the connection with **1009**
+  (message too big) on an inbound message over 4 + 256 KiB bytes, and with
+  **4000** on a length prefix declaring more than 256 KiB.
 - Keepalive: the **client** pings every 30 s and treats 60 s of silence as a
   dead link. The server sends no pings (the `ws` library auto-answers pongs).
   A Go server must keep answering pings; it need not originate them.
@@ -121,8 +124,9 @@ owned by `internal/signing` + the `agent.ExtendedAgent` implementation.
 | Code                | Sender | Meaning                                                   |
 | ------------------- | ------ | --------------------------------------------------------- |
 | 1011                | server | internal auth state missing (defensive; should not occur) |
-| 4000                | server | agent-protocol stream error (malformed frame)             |
+| 4000                | server | malformed frame: not exactly one frame, or over the cap   |
 | 4002                | server | non-binary message received                               |
+| 1009                | server | inbound message over the 256 KiB payload cap              |
 | 1000/1001/1005/1006 | client | SSH client disconnected / shutdown / network loss         |
 
 ## Client lifecycle (informative)

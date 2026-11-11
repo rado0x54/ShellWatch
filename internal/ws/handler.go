@@ -14,6 +14,11 @@ import (
 // middleware) has already authenticated the request via the
 // Sec-WebSocket-Protocol token; here we negotiate the sentinel subprotocol
 // back (never the token) and run the hub's read loop.
+// MaxInboundMessageBytes caps one client→server /ws message. The largest
+// legitimate frame is a terminal:input paste; 1 MiB leaves ample room for
+// that while stopping a single frame from forcing an unbounded allocation.
+const MaxInboundMessageBytes = 1 << 20
+
 func (h *Hub) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.PrincipalFrom(r.Context())
@@ -31,9 +36,10 @@ func (h *Hub) Handler() http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		// Disable coder/websocket's default read limit — terminal output can
-		// exceed 32 KiB and we frame our own messages.
-		c.SetReadLimit(-1)
+		// The read limit bounds INBOUND frames only (input/resize/control);
+		// outbound terminal output is unaffected. An oversized frame closes
+		// the connection with 1009 instead of buffering it whole.
+		c.SetReadLimit(MaxInboundMessageBytes)
 		h.Serve(r.Context(), c, principal.AccountID)
 	}
 }

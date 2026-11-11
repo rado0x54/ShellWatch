@@ -109,3 +109,44 @@ func TestCORSReflectsOriginOnNormalRequests(t *testing.T) {
 		t.Errorf("allow-origin = %q", got)
 	}
 }
+
+// Security review #8: baseline headers on every response, including the
+// bearer gate's 401 and the unauthenticated meta endpoints.
+func TestSecurityHeaders(t *testing.T) {
+	ts := middlewareServer(t)
+	for _, path := range []string{"/health", "/api/sessions", "/"} {
+		res, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		want := map[string]string{
+			"X-Frame-Options":         "DENY",
+			"Content-Security-Policy": "frame-ancestors 'none'",
+			"X-Content-Type-Options":  "nosniff",
+			"Referrer-Policy":         "no-referrer",
+		}
+		for k, v := range want {
+			if got := res.Header.Get(k); got != v {
+				t.Errorf("%s %s = %q, want %q", path, k, got, v)
+			}
+		}
+	}
+}
+
+func TestHSTSOnlyForHTTPSExternalURL(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want string
+	}{
+		{"https://sw.example", hstsValue},
+		{"http://localhost:3000", ""},
+	} {
+		h := securityHeaders(func() string { return tc.url })(http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if got := rec.Header().Get("Strict-Transport-Security"); got != tc.want {
+			t.Errorf("externalUrl %s: HSTS = %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}

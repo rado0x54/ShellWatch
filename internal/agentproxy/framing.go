@@ -41,11 +41,31 @@ func (c *wsReadWriter) Read(p []byte) (int, error) {
 			c.ws.Close(4002, "Only binary messages are accepted")
 			return 0, io.EOF
 		}
+		// One message must be exactly one complete agent frame, validated
+		// here before ServeAgent sees the length prefix: ServeAgent allocates
+		// whatever the prefix declares (up to x/crypto's 16 MiB), and without
+		// this check a client could stream one oversized frame across many
+		// small messages past SetReadLimit.
+		if !validFrame(data) {
+			c.ws.Close(4000, "Malformed agent frame")
+			return 0, io.EOF
+		}
 		c.readBuf = data
 	}
 	n := copy(p, c.readBuf)
 	c.readBuf = c.readBuf[n:]
 	return n, nil
+}
+
+// validFrame reports whether msg is exactly one agent frame: a 4-byte
+// big-endian length equal to the rest of the message, and at most
+// MaxPayloadBytes.
+func validFrame(msg []byte) bool {
+	if len(msg) < 4 {
+		return false
+	}
+	n := binary.BigEndian.Uint32(msg[:4])
+	return n <= MaxPayloadBytes && int(n) == len(msg)-4
 }
 
 // Write buffers outbound bytes and flushes one WS message per complete agent
