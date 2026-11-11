@@ -17,16 +17,19 @@ name: Release
 # branch protection rulesets stay active.
 #
 # Release model:
-#   - Fast-forwarding main from develop = "release to preprod". The maintainer
-#     does this whenever they decide a develop state is ready to soak; it
-#     triggers path #1 above, which builds :stable and deploys preprod.
+#   - Merging a develop → main "Release" PR = "release to preprod". The
+#     maintainer opens one whenever they decide a develop state is ready to
+#     soak; merging it triggers path #1 above, which builds :stable and
+#     deploys preprod. Merge with a merge commit, never squash: main carries
+#     the content-free merge commits of earlier Release PRs, so it can't be
+#     fast-forwarded, and a squash would diverge from develop.
 #   - Production release dispatches from main, promoting whatever :stable
 #     currently is. develop can be arbitrarily ahead of main — it doesn't
 #     affect what ships.
 #
 # Dispatch must run from main (enforced below). There is no automated check
 # that main matches the preprod-soaked state; the maintainer's discipline
-# (FF main → wait for preprod → verify → dispatch) is the gate.
+# (merge the Release PR → wait for preprod → verify → dispatch) is the gate.
 
 on:
   push:
@@ -254,7 +257,7 @@ jobs:
           DST="${{ env.IMAGE }}:${VERSION}"
 
           if ! crane manifest "$SRC" >/dev/null 2>&1; then
-            echo "::error::$SRC not found. main must have been pushed (FF'd from develop) and the docker job completed before dispatching."
+            echo "::error::$SRC not found. the develop → main Release PR must have been merged and its docker job completed before dispatching."
             exit 1
           fi
 
@@ -289,7 +292,7 @@ jobs:
       - name: Tag commit & push tag
         run: |
           set -euo pipefail
-          # Tag main HEAD (the FF'd commit, same one that's now serving prod).
+          # Tag main HEAD (the Release PR's merge commit, now serving prod).
           # Only happens after prod deploy + smoke test pass — no orphan tags.
           git tag "${TAG}" HEAD
           git push origin "refs/tags/${TAG}"
@@ -326,7 +329,8 @@ jobs:
 
       # Open a PR with the new CHANGELOG entry against develop. Admin pushes
       # any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-fire
-      # workflows), squash-merges, then fast-forwards main.
+      # workflows), squash-merges it, then brings main up to date with a
+      # develop → main Release PR (merge commit).
       - name: Open CHANGELOG PR to develop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -406,4 +410,4 @@ jobs:
             --base develop \
             --head "$BRANCH" \
             --title "chore: update CHANGELOG.md for ${TAG}" \
-            --body "Auto-generated changelog for ${TAG}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge and fast-forward main."
+            --body "Auto-generated changelog for ${TAG}. Push any commit to trigger CI (GITHUB_TOKEN-authored PRs don't auto-trigger workflows), then squash-merge, and bring main up to date with a develop → main Release PR (merge commit, not squash)."
