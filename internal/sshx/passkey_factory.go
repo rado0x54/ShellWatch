@@ -187,6 +187,11 @@ type endWatchTransport struct {
 
 func (w *endWatchTransport) Events() <-chan terminal.Event { return w.events }
 
+// Unwrap exposes the wrapped transport so optional capabilities
+// (terminal.FileTransport, #263) stay reachable: the embedded interface only
+// promotes terminal.Transport's own methods.
+func (w *endWatchTransport) Unwrap() terminal.Transport { return w.Transport }
+
 func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.FactoryParams, connID string, fileKeys []labeledFileKey, hostState *HostKeyState) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
 

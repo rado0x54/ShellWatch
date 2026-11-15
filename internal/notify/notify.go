@@ -46,6 +46,14 @@ const TypeHostKeyMismatch = "host-key-mismatch"
 // sourceIp, error}.
 const TypeSessionConnectFailed = "session-connect-failed"
 
+// TypeFileTransferFailed is an out-of-band file transfer (#263) that ended
+// failed or expired — including transfers interrupted by a server restart —
+// so a user who is not attached to the session still finds out, in
+// particular about a leftover staging directory. Payload: {transferId,
+// sessionId, endpointId, direction, path, status, error, bytes,
+// commitOutcome, cleanup, stagingPath, mcpClientName}.
+const TypeFileTransferFailed = "file-transfer-failed"
+
 // Notification is the wire/domain shape of one notification row.
 type Notification struct {
 	ID        string         `json:"id"`

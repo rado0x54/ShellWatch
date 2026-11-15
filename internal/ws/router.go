@@ -69,6 +69,17 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 		}
 		frames = append(frames, marshalFrame(out))
 	}
+	// Unfinished file transfers of this session (#263), so a reconnecting
+	// client reconstructs the transfer strip; finished ones come from the
+	// audit endpoint.
+	h.mu.Lock()
+	fileSnapshot := h.fileSnapshot
+	h.mu.Unlock()
+	if fileSnapshot != nil {
+		for _, ev := range fileSnapshot(msg.SessionID) {
+			frames = append(frames, marshalFrame(ev))
+		}
+	}
 	c.attachWithCatchUp(msg.SessionID, control, buffered.Offset, frames)
 	// Output appended between the buffer read above and the attach becoming
 	// visible fired its onOutput before we were attached — pick it up now.

@@ -127,6 +127,114 @@ func (s Sessions) CleanupInterval() time.Duration {
 	return time.Duration(s.CleanupIntervalSeconds * float64(time.Second))
 }
 
+// Transfer bounds the MCP file tools (#263): inline reads/writes over the
+// session's SFTP channel and out-of-band link transfers through
+// /api/transfers/{token}. Zero values take the defaults below.
+type Transfer struct {
+	// MaxInlineBytes caps one inline read/write call (decoded bytes).
+	MaxInlineBytes int64 `yaml:"maxInlineBytes"`
+	// MaxTransferBytes caps one out-of-band transfer.
+	MaxTransferBytes int64 `yaml:"maxTransferBytes"`
+	// LinkTtlSeconds is the deadline to START (claim) a minted link.
+	LinkTtlSeconds int `yaml:"linkTtlSeconds"`
+	// IdleTimeoutSeconds fails an active transfer that moved no bytes for
+	// this long; MaxDurationSeconds is the hard cap per active transfer.
+	IdleTimeoutSeconds int `yaml:"idleTimeoutSeconds"`
+	MaxDurationSeconds int `yaml:"maxDurationSeconds"`
+	// Pending (minted, unclaimed) link bounds, checked at create.
+	MaxPendingPerSession int `yaml:"maxPendingPerSession"`
+	MaxPendingGlobal     int `yaml:"maxPendingGlobal"`
+	// Active (streaming) bounds, acquired at claim — not at create.
+	MaxActivePerAccount int `yaml:"maxActivePerAccount"`
+	MaxActiveGlobal     int `yaml:"maxActiveGlobal"`
+	// CleanupTimeoutSeconds bounds the best-effort staging cleanup.
+	CleanupTimeoutSeconds int `yaml:"cleanupTimeoutSeconds"`
+	// MaxInlineConcurrency is per session; InlineTimeoutSeconds bounds a whole
+	// inline call including channel setup.
+	MaxInlineConcurrency int `yaml:"maxInlineConcurrency"`
+	InlineTimeoutSeconds int `yaml:"inlineTimeoutSeconds"`
+	// StatusRetentionSeconds evicts finished records; MaxStatusRecords is the
+	// hard cap on the in-memory status map.
+	StatusRetentionSeconds int `yaml:"statusRetentionSeconds"`
+	MaxStatusRecords       int `yaml:"maxStatusRecords"`
+}
+
+// DefaultTransfer returns the documented transfer defaults (config.sample.yaml).
+func DefaultTransfer() Transfer {
+	return Transfer{
+		MaxInlineBytes:         256 << 10,
+		MaxTransferBytes:       1 << 30,
+		LinkTtlSeconds:         300,
+		IdleTimeoutSeconds:     60,
+		MaxDurationSeconds:     3600,
+		MaxPendingPerSession:   4,
+		MaxPendingGlobal:       64,
+		MaxActivePerAccount:    4,
+		MaxActiveGlobal:        16,
+		CleanupTimeoutSeconds:  5,
+		MaxInlineConcurrency:   2,
+		InlineTimeoutSeconds:   30,
+		StatusRetentionSeconds: 3600,
+		MaxStatusRecords:       1000,
+	}
+}
+
+// WithDefaults fills every zero field from DefaultTransfer.
+func (t Transfer) WithDefaults() Transfer {
+	d := DefaultTransfer()
+	fill64 := func(v *int64, def int64) {
+		if *v == 0 {
+			*v = def
+		}
+	}
+	fill := func(v *int, def int) {
+		if *v == 0 {
+			*v = def
+		}
+	}
+	fill64(&t.MaxInlineBytes, d.MaxInlineBytes)
+	fill64(&t.MaxTransferBytes, d.MaxTransferBytes)
+	fill(&t.LinkTtlSeconds, d.LinkTtlSeconds)
+	fill(&t.IdleTimeoutSeconds, d.IdleTimeoutSeconds)
+	fill(&t.MaxDurationSeconds, d.MaxDurationSeconds)
+	fill(&t.MaxPendingPerSession, d.MaxPendingPerSession)
+	fill(&t.MaxPendingGlobal, d.MaxPendingGlobal)
+	fill(&t.MaxActivePerAccount, d.MaxActivePerAccount)
+	fill(&t.MaxActiveGlobal, d.MaxActiveGlobal)
+	fill(&t.CleanupTimeoutSeconds, d.CleanupTimeoutSeconds)
+	fill(&t.MaxInlineConcurrency, d.MaxInlineConcurrency)
+	fill(&t.InlineTimeoutSeconds, d.InlineTimeoutSeconds)
+	fill(&t.StatusRetentionSeconds, d.StatusRetentionSeconds)
+	fill(&t.MaxStatusRecords, d.MaxStatusRecords)
+	return t
+}
+
+func (t Transfer) validate(add func(format string, args ...any)) {
+	if t.MaxInlineBytes < 1 || t.MaxInlineBytes > 16<<20 {
+		add("transfer.maxInlineBytes: must be between 1 and 16777216")
+	}
+	if t.MaxTransferBytes < 1 {
+		add("transfer.maxTransferBytes: must be >= 1")
+	}
+	for name, v := range map[string]int{
+		"linkTtlSeconds": t.LinkTtlSeconds, "idleTimeoutSeconds": t.IdleTimeoutSeconds,
+		"maxDurationSeconds": t.MaxDurationSeconds, "maxPendingPerSession": t.MaxPendingPerSession,
+		"maxPendingGlobal": t.MaxPendingGlobal, "maxActivePerAccount": t.MaxActivePerAccount,
+		"maxActiveGlobal": t.MaxActiveGlobal, "cleanupTimeoutSeconds": t.CleanupTimeoutSeconds,
+		"maxInlineConcurrency": t.MaxInlineConcurrency, "inlineTimeoutSeconds": t.InlineTimeoutSeconds,
+		"statusRetentionSeconds": t.StatusRetentionSeconds, "maxStatusRecords": t.MaxStatusRecords,
+	} {
+		if v < 1 {
+			add("transfer.%s: must be >= 1", name)
+		}
+	}
+	// The status map holds every unfinished transfer; if those alone could
+	// fill it, a create could find nothing evictable.
+	if t.MaxPendingGlobal+t.MaxActiveGlobal >= t.MaxStatusRecords {
+		add("transfer.maxStatusRecords: must exceed maxPendingGlobal + maxActiveGlobal (%d)", t.MaxPendingGlobal+t.MaxActiveGlobal)
+	}
+}
+
 type Notifications struct {
 	Mcp struct {
 		DebounceMs int `yaml:"debounceMs"`
@@ -218,6 +326,7 @@ type Config struct {
 	Mcp                Mcp                `yaml:"mcp"`
 	AgentSocket        AgentSocket        `yaml:"agentSocket"`
 	Sessions           Sessions           `yaml:"sessions"`
+	Transfer           Transfer           `yaml:"transfer"`
 	Hydra              Hydra              `yaml:"hydra"`
 	Vapid              *Vapid             `yaml:"vapid"`
 }
@@ -334,6 +443,7 @@ func (c *Config) applyDefaults() {
 	if c.Sessions.CleanupIntervalSeconds == 0 {
 		c.Sessions.CleanupIntervalSeconds = defaultCleanupIntervalSeconds
 	}
+	c.Transfer = c.Transfer.WithDefaults()
 	if c.Hydra.Spa.ClientID == "" {
 		c.Hydra.Spa.ClientID = "shellwatch-web"
 	}
@@ -435,6 +545,8 @@ func (c *Config) validate() []string {
 	if v := c.Sessions.CleanupIntervalSeconds; v <= 0 || v > 3600 {
 		add("sessions.cleanupIntervalSeconds: must be > 0 and <= 3600")
 	}
+
+	c.Transfer.validate(add)
 
 	if !isURL(c.Hydra.PublicURL) {
 		add("hydra.publicUrl must be a valid URL — the shared public origin of app and OAuth, i.e. Hydra's urls.self.issuer (e.g. 'http://localhost:3000')")

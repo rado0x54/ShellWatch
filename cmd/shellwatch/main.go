@@ -42,6 +42,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
 	"github.com/rado0x54/shellwatch/web"
@@ -336,6 +337,56 @@ func run() error {
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
+	// MCP file tools (#263): inline reads/writes and out-of-band link
+	// transfers over the SFTP subsystem of open sessions. Tokens and live
+	// transfers are process memory, so first close out whatever a previous
+	// process left unfinished — each interrupted transfer becomes a truthful
+	// failed row (staging path preserved) and one notification.
+	fileTransferLog := audit.NewFileTransfers(db, clk)
+	notifyTransferFailed := func(p transferFailure) {
+		title := fmt.Sprintf("File %s of %s %s", p.Direction, p.Path, p.Status)
+		detail := fmt.Sprintf("Transfer:  %s\nSession:   %s\nPath:      %s\nError:     %s", p.TransferID, p.SessionID, p.Path, p.Error)
+		if p.CommitOutcome == transfer.CommitUnknown {
+			detail += "\n\nThe commit outcome is unknown: inspect the destination (size, sha256) before retrying."
+		}
+		if p.Cleanup == transfer.CleanupFailed && p.StagingPath != "" {
+			detail += "\n\nLeftover staging directory: " + p.StagingPath + " — remove it manually."
+		}
+		notifSvc.Publish(context.Background(), notify.PublishParams{
+			AccountID: p.AccountID,
+			Type:      notify.TypeFileTransferFailed,
+			Severity:  notify.SeverityWarning,
+			Title:     title,
+			Detail:    detail,
+			Payload: map[string]any{
+				"transferId": p.TransferID, "sessionId": p.SessionID, "endpointId": p.EndpointID,
+				"direction": p.Direction, "path": p.Path, "status": p.Status, "error": p.Error,
+				"bytes": p.Bytes, "commitOutcome": p.CommitOutcome, "cleanup": p.Cleanup,
+				"stagingPath": p.StagingPath, "mcpClientName": p.ClientName,
+			},
+		})
+	}
+	if interrupted, err := fileTransferLog.ReconcileInterrupted(ctx); err != nil {
+		slog.Warn("file transfers: startup reconciliation failed", "err", err)
+	} else {
+		for _, row := range interrupted {
+			slog.Warn("file transfer interrupted by restart", "transfer", row.TransferID, "path", row.Path)
+			notifyTransferFailed(transferFailureFromRow(row))
+		}
+	}
+	transfers := transfer.New(transfer.Params{
+		Manager:     manager,
+		Limits:      cfg.Transfer,
+		Clock:       clk,
+		Audit:       fileTransferLog,
+		Publisher:   wsHub,
+		ExternalURL: func() string { return cfg.Server.ExternalURL },
+		OnFailed:    func(v transfer.View) { notifyTransferFailed(transferFailureFromView(v)) },
+	})
+	defer transfers.Close()
+	wsHub.SetFileSnapshot(transfers.Snapshot)
+	go transfers.RunJanitor(ctx, 10*time.Second)
+
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
@@ -343,6 +394,7 @@ func run() error {
 		Version:        buildInfo.Display,
 		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
 		MaxOwned:       store.NewAccounts(db).MaxSessions,
+		Transfers:      transfers,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
@@ -405,7 +457,10 @@ func run() error {
 			Notify:       notifSvc,
 			OAuthClients: oauthClientLog,
 			IsAdmin:      store.NewAccounts(db),
+
+			FileTransfers: fileTransferLog,
 		},
+		Transfers: transfers,
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
 			Now:       func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
@@ -559,6 +614,40 @@ func staticFilesystem(dir string) (fs.FS, error) {
 }
 
 func newUUID() string { return ids.NewUUID() }
+
+// transferFailure is what a file-transfer-failed notification is built from —
+// either a live transfer's final snapshot or a row closed out by the startup
+// reconciliation.
+type transferFailure struct {
+	TransferID, AccountID, SessionID, EndpointID string
+	Direction, Path, Status, Error               string
+	Bytes                                        int64
+	CommitOutcome, Cleanup, StagingPath          string
+	ClientName                                   string
+}
+
+func transferFailureFromView(v transfer.View) transferFailure {
+	return transferFailure{
+		TransferID: v.TransferID, AccountID: v.AccountID, SessionID: v.SessionID, EndpointID: v.EndpointID,
+		Direction: v.Direction, Path: v.Path, Status: string(v.Status), Error: v.Error, Bytes: v.Bytes,
+		CommitOutcome: v.CommitOutcome, Cleanup: v.Cleanup, StagingPath: v.StagingPath, ClientName: v.ClientName,
+	}
+}
+
+func transferFailureFromRow(r audit.FileTransferRow) transferFailure {
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	return transferFailure{
+		TransferID: r.TransferID, AccountID: r.AccountID, SessionID: r.SessionID, EndpointID: r.EndpointID,
+		Direction: r.Direction, Path: r.Path, Status: r.Status, Error: str(r.Error), Bytes: r.Bytes,
+		CommitOutcome: str(r.CommitOutcome), Cleanup: str(r.Cleanup), StagingPath: str(r.StagingPath),
+		ClientName: str(r.MCPClientName),
+	}
+}
 
 func mustGetwd() string {
 	wd, err := os.Getwd()

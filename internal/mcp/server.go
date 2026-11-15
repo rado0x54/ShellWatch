@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Package mcp is the MCP surface: a stateless dual-era streamable-HTTP server
 // (spec 2026-07-28 + the 2025-11-25/2025-06-18 handshake eras, #243) exposing
-// the 7 shellwatch tools and the shellwatch://sessions resources. There are no
+// the shellwatch tools (sessions, endpoints, keys, and the #263 file tools)
+// and the shellwatch://sessions resources. There are no
 // protocol-level sessions: every request builds a fresh Server bound to an
 // AgentSession scoped to the request's (account, OAuth client); terminal
 // sessions are the durable handles. Server-initiated notifications are
@@ -23,6 +24,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/transfer"
 )
 
 // protocolVersions are the eras this server serves (docs/api/mcp-tools.md).
@@ -42,6 +44,8 @@ type Deps struct {
 	// NotifyDebounce coalesces per-session resources/updated notifications for
 	// output bursts (notifications.mcp.debounceMs; 0 -> 100ms).
 	NotifyDebounce time.Duration
+	// Transfers backs the file tools (#263); nil leaves them unregistered.
+	Transfers *transfer.Service
 }
 
 // Handler returns the /mcp handler: the sdk's stateless streamable-HTTP
@@ -122,6 +126,9 @@ func (d *Deps) buildServer(r *http.Request, principal auth.Principal) *mcpsdk.Se
 	registerSessionTools(srv, as)
 	registerEndpointTools(srv, as)
 	registerKeyTools(srv, as, d.Keys)
+	if d.Transfers != nil {
+		registerFileTools(srv, as, d.Transfers)
+	}
 	registerSessionResources(srv, as, d.AgentDeps.Manager)
 	return srv
 }

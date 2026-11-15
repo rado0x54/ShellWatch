@@ -66,6 +66,8 @@ export function notificationLink(n: AppNotification): { href: string; label: str
   switch (n.type) {
     case "host-key-mismatch":
       return { href: "/settings/endpoints", label: "Review endpoint" };
+    case "file-transfer-failed":
+      return { href: "/audit/file-transfers", label: "View file transfers" };
     default:
       return undefined;
   }
