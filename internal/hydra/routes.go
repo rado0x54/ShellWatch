@@ -9,6 +9,7 @@ package hydra
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
@@ -220,6 +222,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 	r.Post("/api/hydra/login/options", func(w http.ResponseWriter, r *http.Request) {
 		opts, ok, err := p.WebAuthn.LoginOptions(r.Context())
 		if err != nil {
+			slog.Error("auth: login options failed", "err", err)
 			apierr.Write(w, 500, "internal error")
 			return
 		}
@@ -248,6 +251,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 
 		res := p.WebAuthn.VerifyLogin(r.Context(), body.ChallengeID, assertion.ID, body.Credential)
 		if res.Error != "" {
+			slog.Warn("auth: passkey login failed", "reason", res.Error, "sourceIp", realip.FromRequest(r))
 			apierr.Write(w, res.Status, res.Error)
 			return
 		}
@@ -263,6 +267,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 			apierr.Write(w, 400, "login_flow_expired")
 			return
 		}
+		slog.Info("auth: passkey login", "account", res.AccountID, "sourceIp", realip.FromRequest(r))
 		writeJSONStatus(w, 200, map[string]string{"redirectTo": redirect.RedirectTo})
 	})
 
@@ -348,6 +353,7 @@ func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, ok, err := p.WebAuthn.ConsentOptions(r.Context(), cr.Subject)
 	if err != nil {
+		slog.Error("auth: consent options failed", "account", cr.Subject, "client", cr.Client.ClientID, "err", err)
 		apierr.Write(w, 500, "internal error")
 		return
 	}
@@ -380,6 +386,8 @@ func (p ProviderParams) consentVerify(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body.Credential, &assertion)
 	res := p.WebAuthn.VerifyConsent(r.Context(), body.ChallengeID, assertion.ID, body.Credential, cr.Subject)
 	if res.Error != "" {
+		slog.Warn("auth: consent passkey check failed", "account", cr.Subject, "client", cr.Client.ClientID,
+			"reason", res.Error, "sourceIp", realip.FromRequest(r))
 		apierr.Write(w, res.Status, res.Error)
 		return
 	}
@@ -418,6 +426,8 @@ func (p ProviderParams) acceptConsentAndRedirect(w http.ResponseWriter, r *http.
 		apierr.Write(w, 400, "consent_flow_expired")
 		return
 	}
+	slog.Info("auth: consent granted", "account", cr.Subject, "client", cr.Client.ClientID,
+		"clientName", cr.Client.ClientName, "scope", strings.Join(cr.RequestedScope, " "))
 	writeJSONStatus(w, 200, map[string]string{"redirectTo": redirect.RedirectTo})
 }
 

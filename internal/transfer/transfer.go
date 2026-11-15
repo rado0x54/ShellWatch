@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -476,7 +477,9 @@ func (s *Service) terminate(x *xfer, state State, msg string, interruptHandler b
 	x.UpdatedAt, x.FinishedAt = now, now
 	delete(s.byToken, x.token)
 	cancel, interrupt, claimed := x.cancel, x.interrupt, x.claimed
+	v := x.View
 	s.mu.Unlock()
+	logTransfer(v)
 
 	if interruptHandler {
 		if cancel != nil {
@@ -523,7 +526,9 @@ func (s *Service) finish(x *xfer, state State, mutate func(v *View)) bool {
 	if mutate != nil {
 		mutate(&x.View)
 	}
+	v := x.View
 	s.mu.Unlock()
+	logTransfer(v)
 	s.emit(x, true)
 	return true
 }
@@ -731,8 +736,10 @@ func (s *Service) Create(ctx context.Context, c Caller, p CreateParams) (*Create
 	}
 	s.byID[x.TransferID] = x
 	s.byToken[x.token] = x
+	created := x.View
 	s.mu.Unlock()
 
+	logTransfer(created)
 	s.emit(x, true)
 
 	url := strings.TrimRight(s.p.ExternalURL(), "/") + "/api/transfers/" + x.token
@@ -744,6 +751,24 @@ func (s *Service) Create(ctx context.Context, c Caller, p CreateParams) (*Create
 		TransferID: x.TransferID, URL: url, Method: method, ExpiresAt: x.ExpiresAt,
 		MaxBytes: maxBytes, Command: command,
 	}, nil
+}
+
+// logTransfer records a transfer state change: link created (pending),
+// claimed (active), and every terminal state. Never the link token.
+func logTransfer(v View) {
+	attrs := []any{"transfer", v.TransferID, "tier", v.Tier, "direction", v.Direction, "status", v.Status,
+		"session", v.SessionID, "account", v.AccountID, "path", v.Path}
+	if v.Status.finished() {
+		attrs = append(attrs, "bytes", v.Bytes, "duration", v.FinishedAt.Sub(v.CreatedAt).Round(time.Millisecond))
+	}
+	if v.Error != "" {
+		attrs = append(attrs, "err", v.Error)
+	}
+	level := slog.LevelInfo
+	if v.Status == StateFailed {
+		level = slog.LevelWarn
+	}
+	slog.Log(context.Background(), level, "transfer: "+string(v.Status), attrs...)
 }
 
 // makeRoomLocked keeps the status map under maxStatusRecords by evicting the

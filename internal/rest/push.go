@@ -5,7 +5,9 @@ package rest
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -44,14 +46,25 @@ func (p *Push) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := p.Store.Upsert(r.Context(), accountID(r), body.Endpoint, body.Keys.P256dh, body.Keys.Auth, p.NewID())
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if res.Conflict {
+		slog.Warn("push: endpoint already registered to a different account", "account", accountID(r), "pushHost", endpointHost(body.Endpoint))
 		writeErr(w, 409, "endpoint already registered to a different account")
 		return
 	}
+	slog.Info("push: subscribed", "account", accountID(r), "subscription", res.ID, "pushHost", endpointHost(body.Endpoint))
 	writeJSON(w, 200, map[string]string{"id": res.ID})
+}
+
+// endpointHost is the push service host: the full endpoint URL is a
+// capability and stays out of logs.
+func endpointHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil {
+		return u.Host
+	}
+	return ""
 }
 
 func (p *Push) unsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -64,8 +77,9 @@ func (p *Push) unsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := p.Store.Delete(r.Context(), accountID(r), body.Endpoint); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
+	slog.Info("push: unsubscribed", "account", accountID(r), "pushHost", endpointHost(body.Endpoint))
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

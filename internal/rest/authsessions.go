@@ -47,7 +47,7 @@ func (a *AuthSessions) list(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	sessions, err := a.Admin.ListConsentSessions(r.Context(), acct)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	// Collapse to one row per client_id, keeping the most recently handled grant.
@@ -110,7 +110,7 @@ func (a *AuthSessions) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Admin.RevokeConsentSessions(r.Context(), acct, clientID); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if a.CloseClientSessions != nil {
@@ -122,11 +122,11 @@ func (a *AuthSessions) revoke(w http.ResponseWriter, r *http.Request) {
 func (a *AuthSessions) revokeAll(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	if err := a.Admin.RevokeConsentSessions(r.Context(), acct, ""); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if err := a.Admin.RevokeLoginSessions(r.Context(), acct); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if a.CloseClientSessions != nil {

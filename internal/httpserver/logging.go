@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Request-logging middleware: one structured slog line per HTTP request with
-// method, path, status, and duration. 4xx/5xx log at Warn so server-side
+// method, path, status, and duration. A passing /health probe logs at Debug.
+// 4xx/5xx log at Warn so server-side
 // problems (a failed SSH connect surfaces as a 400 here, an auth failure as
 // 401) are visible in stdout / the log file instead of only in the response
 // body. Outermost in the chain so it captures the final status.
@@ -42,13 +43,33 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 // after it is a bearer credential and must never reach a log line.
 const transferPathPrefix = "/api/transfers/"
 
+// Passkey-invite links carry the invite token in the path: the API lookup
+// (/api/passkey-invite/{token}) and the SPA page (/passkey-invite/{token}).
+// The register endpoints under the API prefix carry it in the body instead.
+const (
+	inviteAPIPrefix  = "/api/passkey-invite/"
+	invitePagePrefix = "/passkey-invite/"
+)
+
 // redactPath hides credentials carried in the URL path.
 func redactPath(path string) string {
-	if strings.HasPrefix(path, transferPathPrefix) {
+	switch {
+	case strings.HasPrefix(path, transferPathPrefix):
 		return transferPathPrefix + "***"
+	case strings.HasPrefix(path, inviteAPIPrefix):
+		if rest := path[len(inviteAPIPrefix):]; rest == "register" || strings.HasPrefix(rest, "register/") {
+			return path
+		}
+		return inviteAPIPrefix + "***"
+	case strings.HasPrefix(path, invitePagePrefix):
+		return invitePagePrefix + "***"
 	}
 	return path
 }
+
+// healthPath is polled by the container healthcheck every few seconds; a
+// successful probe logs at debug so it does not drown the log.
+const healthPath = "/health"
 
 func requestLogger(clk clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -60,7 +81,9 @@ func requestLogger(clk clock.Clock) func(http.Handler) http.Handler {
 				rec.status = http.StatusOK
 			}
 			level := slog.LevelInfo
-			if rec.status >= 500 {
+			if r.URL.Path == healthPath && rec.status < 400 {
+				level = slog.LevelDebug
+			} else if rec.status >= 500 {
 				level = slog.LevelError
 			} else if rec.status >= 400 {
 				level = slog.LevelWarn

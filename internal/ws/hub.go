@@ -215,8 +215,9 @@ func (h *Hub) sessionList(c *conn) map[string]any {
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }
 
-// Serve runs the read loop for an accepted connection until it closes.
-func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) {
+// Serve runs the read loop for an accepted connection until it closes and
+// returns the read error that ended it (for the disconnect log line).
+func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) error {
 	c := newConn(wsc, accountID)
 	h.add(c)
 	defer h.remove(c)
@@ -230,7 +231,7 @@ func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) 
 	for {
 		_, raw, err := wsc.Read(ctx)
 		if err != nil {
-			return
+			return err
 		}
 		msg := parseClientMessage(raw)
 		if msg == nil {

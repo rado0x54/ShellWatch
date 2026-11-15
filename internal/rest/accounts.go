@@ -39,7 +39,7 @@ func (a *Accounts) Mount(r chi.Router) {
 func (a *Accounts) me(w http.ResponseWriter, r *http.Request) {
 	acct, err := a.Store.Get(r.Context(), accountID(r))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if acct == nil {
@@ -68,7 +68,7 @@ func (a *Accounts) updateMe(w http.ResponseWriter, r *http.Request) {
 		body.Name = &trimmed
 	}
 	if err := a.Store.UpdateSelf(r.Context(), accountID(r), body.Name, body.ShowDemoEndpoints, a.Now()); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "updated"})
@@ -81,7 +81,7 @@ func (a *Accounts) list(w http.ResponseWriter, r *http.Request) {
 	}
 	all, err := a.Store.List(r.Context())
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(all))
@@ -110,7 +110,7 @@ func (a *Accounts) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.Delete(r.Context(), target); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if a.OnDeleted != nil {
@@ -127,12 +127,12 @@ func (a *Accounts) exportSeed(w http.ResponseWriter, r *http.Request) {
 	}
 	passkeys, err := a.Creds.ExportSeed(r.Context(), adminID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	eps, err := a.Endpoints.ListForAccount(r.Context(), adminID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	seedEps := make([]store.SeedEndpoint, 0, len(eps))

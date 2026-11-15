@@ -82,7 +82,7 @@ func toDTO(ep store.Endpoint, isDemo bool) api.Endpoint {
 func (e *Endpoints) list(w http.ResponseWriter, r *http.Request) {
 	eps, err := e.Svc.ListForAccount(r.Context(), accountID(r))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	out := make([]api.Endpoint, 0, len(eps))

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -119,6 +120,8 @@ func (a *Agent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.Signat
 func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Signature, error) {
 	id := a.match(key)
 	if id == nil {
+		slog.Info("signagent: sign request for an unknown key", "connection", a.connectionID,
+			"account", a.accountID, "key", ssh.FingerprintSHA256(key))
 		return nil, fmt.Errorf("agent: key not found")
 	}
 	// Resolve the signing capability BEFORE raising the approval: an
@@ -130,6 +133,8 @@ func (a *Agent) sign(key ssh.PublicKey, data []byte, algorithm string) (*ssh.Sig
 	if !id.IsPasskey && algorithm != "" && id.Signer.PublicKey().Type() == ssh.KeyAlgoRSA {
 		as, ok := id.Signer.(ssh.AlgorithmSigner)
 		if !ok {
+			slog.Warn("signagent: signer cannot sign with the negotiated algorithm", "connection", a.connectionID,
+				"key", id.Label, "algorithm", algorithm)
 			return nil, fmt.Errorf("agent: signer for %q cannot sign with %s", id.Label, algorithm)
 		}
 		algoSigner = as

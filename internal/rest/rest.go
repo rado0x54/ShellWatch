@@ -3,7 +3,10 @@ package rest
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
@@ -57,4 +60,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	apierr.Write(w, status, msg)
+}
+
+// writeInternal answers 500 "internal error" and logs the cause, which the
+// response body deliberately hides.
+func writeInternal(w http.ResponseWriter, r *http.Request, err error) {
+	attrs := []any{"method", r.Method, "route", routePattern(r), "err", err}
+	if p, ok := auth.PrincipalFrom(r.Context()); ok {
+		attrs = append(attrs, "account", p.AccountID)
+	}
+	slog.Error("rest: internal error", attrs...)
+	apierr.Write(w, http.StatusInternalServerError, "internal error")
+}
+
+// routePattern is the chi route ("/api/endpoints/{id}"), never the raw path.
+func routePattern(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+		return rc.RoutePattern()
+	}
+	return "unknown"
 }

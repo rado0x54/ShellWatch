@@ -7,6 +7,7 @@ package approval
 
 import (
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -219,6 +220,7 @@ func (s *Store) Create(p CreateParams) *Action {
 	s.actions[a.ID] = a
 	subs := append([]func(*Action){}, s.createdSubs...)
 	s.mu.Unlock()
+	slog.Info("approval: pending", actionAttrs(a)...)
 	for _, fn := range subs {
 		fn(a)
 	}
@@ -388,7 +390,33 @@ func (s *Store) emitResolved(a *Action, outcome Outcome, cancelReason string) {
 	subs := append([]func(ResolvedEvent){}, s.resolvedSubs...)
 	s.mu.Unlock()
 	ev := ResolvedEvent{Action: a, Outcome: outcome, ResolvedAt: s.clk.Now(), CancelReason: cancelReason}
+	attrs := []any{"action", a.ID, "type", a.Type, "outcome", outcome, "waited", ev.ResolvedAt.Sub(a.CreatedAt).Round(time.Millisecond)}
+	if cancelReason != "" {
+		attrs = append(attrs, "cancelReason", cancelReason)
+	}
+	slog.Info("approval: resolved", attrs...)
 	for _, fn := range subs {
 		fn(ev)
 	}
+}
+
+// actionAttrs identify a new action in logs: who it is for, what it would
+// authorize, and where it came from. Never the challenge or assertion.
+func actionAttrs(a *Action) []any {
+	attrs := []any{"action", a.ID, "type", a.Type, "account", a.AccountID, "source", a.Context.Source}
+	add := func(k, v string) {
+		if v != "" {
+			attrs = append(attrs, k, v)
+		}
+	}
+	add("endpoint", a.Context.EndpointLabel)
+	add("address", a.Context.EndpointAddress)
+	add("session", a.Context.SessionID)
+	add("sourceIp", a.Context.SourceIP)
+	add("clientHostname", a.Context.ClientHostname)
+	add("mcpClient", a.Context.MCPClientName)
+	add("passkey", a.PasskeyLabel)
+	add("key", a.KeyLabel)
+	add("keyFingerprint", a.KeyFingerprint)
+	return attrs
 }

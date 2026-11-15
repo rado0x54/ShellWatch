@@ -187,7 +187,9 @@ func (s *Service) claim(method, token string, cancel context.CancelFunc, interru
 	x.lastProgress = time.Time{}
 	x.claimed, x.cancel, x.interrupt = true, cancel, interrupt
 	delete(s.byToken, token) // single use
+	v := x.View
 	s.mu.Unlock()
+	logTransfer(v)
 	return x, nil
 }
 

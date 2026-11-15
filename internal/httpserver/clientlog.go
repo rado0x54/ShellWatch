@@ -10,6 +10,7 @@ package httpserver
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/rado0x54/shellwatch/internal/audit"
@@ -30,6 +31,13 @@ func clientEventSink(log ClientLogRecorder) hydra.ClientEventSink {
 		return nil
 	}
 	return func(r *http.Request, ev hydra.ClientEvent) {
+		level := slog.LevelInfo
+		if ev.Event == hydra.ClientEventRejected {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "oauth: client "+ev.Event, "client", ev.ClientID, "origin", ev.Origin,
+			"clientName", ev.ClientName, "metadataHost", ev.MetadataHost, "reason", ev.Reason,
+			"sourceIp", realip.FromRequest(r))
 		log.Record(r.Context(), audit.OAuthClientEvent{
 			ClientID:     ev.ClientID,
 			Origin:       ev.Origin,
