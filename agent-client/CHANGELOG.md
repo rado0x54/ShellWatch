@@ -1,3 +1,7 @@
+## v1.1.0 (2026-06-14)
+
+- feat: replace OAuth shim + API keys with Ory Hydra ([#217](https://github.com/rado0x54/ShellWatch/pull/217)) ([#218](https://github.com/rado0x54/ShellWatch/pull/218))
+
 ## v1.0.0 (2026-05-03)
 
 - chore: adopt MIT license ([#192](https://github.com/rado0x54/ShellWatch/pull/192))
