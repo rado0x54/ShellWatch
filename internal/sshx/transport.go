@@ -29,18 +29,32 @@ const (
 	ptyRows = 24
 )
 
-// connectionTimeout is Node's WEBAUTHN_CONNECTION_TIMEOUT: a 90s window for
-// the dial and for each auth round, sized for a human passkey touch (comfortably
-// above approval.ActionTTL). File-key auth resolves instantly, but the value is
-// shared. A var, not a const, only so the handshake-deadline tests can shorten
-// it — nothing outside this package reads it.
-var connectionTimeout = 90 * time.Second
+// defaultConnectionTimeout is Node's WEBAUTHN_CONNECTION_TIMEOUT: a 90s window
+// for the dial and for each auth round, sized for a human passkey touch
+// (comfortably above approval.ActionTTL). File-key auth resolves instantly, but
+// the value is shared.
+const defaultConnectionTimeout = 90 * time.Second
 
-// handshakeWatcherGate, when non-nil, runs inside the cancellation watcher
-// below before it selects. Only the handshake tests set it, to hold the watcher
-// back until cancellation and handshake completion are both ready; nothing
-// outside this package reads it.
-var handshakeWatcherGate func()
+// connectHooks are per-connection test knobs. They live on ConnectParams
+// (unexported, so only this package can set them) rather than in package
+// variables: a package-level hook is read by every earlier test's leftover
+// watcher goroutine, which races with the next test assigning it (#270).
+type connectHooks struct {
+	// timeout overrides defaultConnectionTimeout when non-zero, so the
+	// handshake-deadline tests can make it observable.
+	timeout time.Duration
+	// watcherGate, when non-nil, runs inside the cancellation watcher before it
+	// selects, to hold it back until cancellation and handshake completion are
+	// both ready.
+	watcherGate func()
+}
+
+func (h connectHooks) connectionTimeout() time.Duration {
+	if h.timeout > 0 {
+		return h.timeout
+	}
+	return defaultConnectionTimeout
+}
 
 // sshTransport implements terminal.Transport over one ssh.Session.
 type sshTransport struct {
@@ -124,6 +138,8 @@ type ConnectParams struct {
 	// signers so the approval that authorizes the sign can pin the key.
 	// Connect allocates one when nil (callers without approval-driven pinning).
 	HostKeyState *HostKeyState
+
+	hooks connectHooks
 }
 
 // Connect dials, opens a PTY shell, and returns a terminal.Transport. The
@@ -148,6 +164,7 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	// One publickey method per signer, handed out on demand (auth.go): a
 	// denied key fails its own method and x/crypto moves to the next one.
 	keys := newKeyAuth(ctx, p.Signers)
+	connectionTimeout := p.hooks.connectionTimeout()
 	cfg := &ssh.ClientConfig{
 		User:            p.Username,
 		AuthCallback:    keys.callback,
@@ -205,8 +222,8 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 		close(handshakeDone)
 	}()
 	go func() {
-		if handshakeWatcherGate != nil {
-			handshakeWatcherGate()
+		if gate := p.hooks.watcherGate; gate != nil {
+			gate()
 		}
 		select {
 		case <-ctx.Done():
