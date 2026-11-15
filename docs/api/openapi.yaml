@@ -1034,7 +1034,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
         "404":
-          description: Agent proxy disabled — route not mounted.
+          description: >-
+            Agent proxy disabled — route not mounted. Like every unknown
+            `/api/*` and `/.well-known/*` path, answered with the JSON
+            `{"error":"Not found"}` body, never the SPA's index.html.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /.well-known/shellwatch-agent-client.json:
     get:
@@ -1059,7 +1065,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AgentClientMetadataDocument" }
         "404":
-          description: Agent proxy disabled — route not mounted.
+          description: >-
+            Agent proxy disabled — route not mounted. Like every unknown
+            `/api/*` and `/.well-known/*` path, answered with the JSON
+            `{"error":"Not found"}` body, never the SPA's index.html.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/hydra/authorize:
     get:

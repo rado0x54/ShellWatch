@@ -394,7 +394,12 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 				}
 			}
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		// API and discovery paths are machine-read and never client routes: an
+		// unknown one is a real 404, not index.html with a 200. That matters
+		// for /.well-known/ documents that are only mounted when a feature is
+		// on (the agent-proxy resource metadata, the agent's CIMD document) —
+		// a CIMD fetcher or MCP client must not mistake the SPA for them.
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/.well-known/") {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"Not found"}`))
