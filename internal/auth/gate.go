@@ -108,21 +108,21 @@ func Gate(p GateParams) func(http.Handler) http.Handler {
 			if token == "" {
 				// Routine: MCP / agent clients probe unauthenticated to
 				// discover the authorization server.
-				logRejected(slog.LevelDebug, r, scope, "missing token")
+				logRejected(RejectedRequest{Level: slog.LevelDebug, Request: r, Scope: scope, Reason: "missing token"})
 				send401(w, p, scope, "Access token required", "missing")
 				return
 			}
 			principal := p.Resolve(r.Context(), token)
 			if principal == nil {
 				// Usually an expired token the client will refresh.
-				logRejected(slog.LevelInfo, r, scope, "inactive or unknown token")
+				logRejected(RejectedRequest{Level: slog.LevelInfo, Request: r, Scope: scope, Reason: "inactive or unknown token"})
 				send401(w, p, scope, "Invalid or expired access token", "invalid")
 				return
 			}
 			// Authorization is by SCOPE only; audience is deliberately not
 			// checked (see bearer-gate.ts for the rationale).
 			if !principal.HasScope(scope) {
-				logRejected(slog.LevelWarn, r, scope, "token lacks scope", "account", principal.AccountID, "client", principal.ClientID)
+				logRejected(RejectedRequest{Level: slog.LevelWarn, Request: r, Scope: scope, Reason: "token lacks scope", Principal: principal})
 				send401(w, p, scope, "Token lacks '"+scope+"' scope", "scope")
 				return
 			}
@@ -184,11 +184,26 @@ func requiredScope(path string, agentProxyEnabled bool) string {
 	return ""
 }
 
+// RejectedRequest describes one request the bearer gate refused.
+type RejectedRequest struct {
+	Level   slog.Level
+	Request *http.Request
+	Scope   string
+	Reason  string
+	// Principal is set when the token resolved but was still refused
+	// (missing scope); nil otherwise.
+	Principal *Principal
+}
+
 // logRejected records why the gate refused a request; the request log line
 // only shows the status.
-func logRejected(level slog.Level, r *http.Request, scope, reason string, extra ...any) {
-	attrs := append([]any{"path", r.URL.Path, "scope", scope, "reason", reason, "sourceIp", realip.FromRequest(r)}, extra...)
-	slog.Log(r.Context(), level, "auth: request rejected", attrs...)
+func logRejected(p RejectedRequest) {
+	r := p.Request
+	attrs := []any{"path", r.URL.Path, "scope", p.Scope, "reason", p.Reason, "sourceIp", realip.FromRequest(r)}
+	if p.Principal != nil {
+		attrs = append(attrs, "account", p.Principal.AccountID, "client", p.Principal.ClientID)
+	}
+	slog.Log(r.Context(), p.Level, "auth: request rejected", attrs...)
 }
 
 func send401(w http.ResponseWriter, p GateParams, scope, message, kind string) {
