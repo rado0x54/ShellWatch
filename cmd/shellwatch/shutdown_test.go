@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -27,19 +28,37 @@ func startServer(t *testing.T, h http.Handler) (*http.Server, context.CancelFunc
 	return srv, cancel, "http://" + ln.Addr().String()
 }
 
-// openRequest issues a GET and returns once the handler is running.
-func openRequest(t *testing.T, url string, started <-chan struct{}) {
+// openRequest issues a GET and returns once the handler is running. The
+// returned channel yields the client's outcome when the request ends: nil for
+// a complete response, the transport error if the connection was cut.
+func openRequest(t *testing.T, url string, started <-chan struct{}) <-chan error {
 	t.Helper()
+	done := make(chan error, 1)
 	go func() {
 		resp, err := http.Get(url)
 		if err == nil {
+			_, err = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
+		done <- err
 	}()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler never started")
+	}
+	return done
+}
+
+// clientOutcome waits briefly for the client's request to end.
+func clientOutcome(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("client request still open after the drain returned")
+		return nil
 	}
 }
 
@@ -52,7 +71,11 @@ func TestDrainHTTP(t *testing.T) {
 		grace          time.Duration
 		deadline       time.Duration
 		wantForced     bool
+		minElapsed     time.Duration // the drain must not give up early
 		maxElapsed     time.Duration
+		// wantClientErr: the client saw its connection cut (hard close)
+		// rather than a complete response.
+		wantClientErr bool
 	}{
 		{
 			// The #272 case: a stream that ends with its request context.
@@ -62,7 +85,9 @@ func TestDrainHTTP(t *testing.T) {
 			grace:          50 * time.Millisecond,
 			deadline:       10 * time.Second,
 			wantForced:     false,
+			minElapsed:     50 * time.Millisecond,
 			maxElapsed:     2 * time.Second,
+			wantClientErr:  false,
 		},
 		{
 			name:           "handler ignoring its context is hard-closed at the deadline",
@@ -70,7 +95,9 @@ func TestDrainHTTP(t *testing.T) {
 			grace:          20 * time.Millisecond,
 			deadline:       200 * time.Millisecond,
 			wantForced:     true,
+			minElapsed:     200 * time.Millisecond,
 			maxElapsed:     2 * time.Second,
+			wantClientErr:  true,
 		},
 	}
 	for _, tc := range tests {
@@ -87,7 +114,7 @@ func TestDrainHTTP(t *testing.T) {
 				<-release
 			})
 			srv, cancel, url := startServer(t, h)
-			openRequest(t, url, started)
+			done := openRequest(t, url, started)
 
 			begin := time.Now()
 			forced := drainHTTP(srv, cancel, tc.grace, tc.deadline)
@@ -96,8 +123,11 @@ func TestDrainHTTP(t *testing.T) {
 			if forced != tc.wantForced {
 				t.Errorf("forced = %v, want %v", forced, tc.wantForced)
 			}
-			if elapsed > tc.maxElapsed {
-				t.Errorf("drain took %v, want < %v", elapsed, tc.maxElapsed)
+			if elapsed < tc.minElapsed || elapsed > tc.maxElapsed {
+				t.Errorf("drain took %v, want between %v and %v", elapsed, tc.minElapsed, tc.maxElapsed)
+			}
+			if err := clientOutcome(t, done); (err != nil) != tc.wantClientErr {
+				t.Errorf("client error = %v, want error: %v", err, tc.wantClientErr)
 			}
 		})
 	}
@@ -114,12 +144,15 @@ func TestDrainHTTPLetsShortRequestsFinish(t *testing.T) {
 		finished <- r.Context().Err()
 	})
 	srv, cancel, url := startServer(t, h)
-	openRequest(t, url, started)
+	done := openRequest(t, url, started)
 
 	if drainHTTP(srv, cancel, time.Second, 10*time.Second) {
 		t.Fatal("drain was forced")
 	}
 	if err := <-finished; err != nil {
 		t.Errorf("request context cancelled before the grace ran out: %v", err)
+	}
+	if err := clientOutcome(t, done); err != nil {
+		t.Errorf("client did not get a complete response: %v", err)
 	}
 }
