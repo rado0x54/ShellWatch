@@ -59,11 +59,24 @@ describe("upsertTransfer", () => {
     expect(list[0].cleanup).toBe("failed");
   });
 
-  it("caps the list", () => {
-    expect(upsertTransfer([t("a"), t("b")], t("c"), 2).map((x) => x.transferId)).toEqual([
-      "c",
-      "a",
-    ]);
+  it("caps the finished history", () => {
+    const done = { status: "completed" };
+    expect(
+      upsertTransfer([t("a", done), t("b", done)], t("c", done), 2).map((x) => x.transferId),
+    ).toEqual(["c", "a"]);
+  });
+
+  it("keeps an unfinished transfer past the cap", () => {
+    // A stalled link transfer sends no more frames: once evicted it would
+    // never come back (#288).
+    let list = [t("stalled", { status: "active" })];
+    for (let i = 0; i < 50; i++) list = upsertTransfer(list, t(`r${i}`, { status: "completed" }));
+    expect(list).toHaveLength(51);
+    expect(list[50].transferId).toBe("stalled");
+    list = upsertTransfer(list, t("r50", { status: "completed" }));
+    expect(list).toHaveLength(51);
+    expect(list.map((x) => x.transferId)).toContain("stalled");
+    expect(list.map((x) => x.transferId)).not.toContain("r0");
   });
 });
 
@@ -99,6 +112,17 @@ describe("mergeHistory", () => {
       [t("a", { status: "failed" })],
     );
     expect(merged[0].cleanup).toBe("failed");
+  });
+
+  it("caps finished history but keeps unfinished entries", () => {
+    const finished = Array.from({ length: 50 }, (_, i) => t(`r${i}`, { status: "completed" }));
+    const merged = mergeHistory(finished, [
+      t("old-done", { status: "completed" }),
+      t("old-active", { status: "active" }),
+    ]);
+    expect(merged).toHaveLength(51);
+    expect(merged.map((x) => x.transferId)).not.toContain("old-done");
+    expect(merged[50].transferId).toBe("old-active");
   });
 });
 
