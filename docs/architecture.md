@@ -370,7 +370,7 @@ Everything runs in a single Go process:
 └─────────────────────────────────────────┘
 ```
 
-Shutdown on SIGINT/SIGTERM is ordered: stop accepting HTTP → close all terminals → final last-used flush → close the DB.
+Shutdown on SIGINT/SIGTERM is ordered: stop accepting HTTP → close all terminals → final last-used flush → close the DB. The HTTP drain gives in-flight requests a 1 s grace, then cancels their contexts so long-lived MCP streams and long-polls unwind; anything still running at the 10 s deadline is hard-closed and logged at Warn, and the process still exits 0. A second SIGINT/SIGTERM during the drain terminates the process immediately.
 
 ## Data Flow Examples
 
