@@ -27,9 +27,10 @@ type Hub struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 
-	unsubStatus  func()
-	unsubOutput  func()
-	unsubRemoved func()
+	unsubStatus     func()
+	unsubOutput     func()
+	unsubRemoved    func()
+	unsubRegistered func()
 
 	// fileSnapshot delivers a terminal:file frame per unfinished file
 	// transfer of a session (#263), so a (re)attaching client reconstructs
@@ -75,6 +76,7 @@ func NewHub(mgr *terminal.Manager) *Hub {
 	h.unsubStatus = mgr.SubscribeStatus(h.onStatusChange)
 	h.unsubOutput = mgr.SubscribeOutput(h.onOutput)
 	h.unsubRemoved = mgr.SubscribeRemoved(h.onRemoved)
+	h.unsubRegistered = mgr.SubscribeRegistered(h.onRegistered)
 	return h
 }
 
@@ -86,8 +88,28 @@ func (h *Hub) Close() {
 	if h.unsubOutput != nil {
 		h.unsubOutput()
 	}
+	if h.unsubRegistered != nil {
+		h.unsubRegistered()
+	}
 	if h.unsubRemoved != nil {
 		h.unsubRemoved()
+	}
+}
+
+// onRegistered sends the owning account's connections a sessions:changed that
+// lists a session still connecting (status opening), so a browser approving
+// its SSH signature can open the session's page right away (#273).
+func (h *Hub) onRegistered(_, accountID string) {
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		if c.accountID == accountID {
+			conns = append(conns, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		c.send(h.sessionList(c))
 	}
 }
 

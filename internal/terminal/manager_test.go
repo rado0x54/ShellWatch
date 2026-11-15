@@ -542,3 +542,42 @@ func TestRemovedHookFires(t *testing.T) {
 		t.Fatalf("account purge: removed hook got %v", removed)
 	}
 }
+
+// The registered hook fires once per Create, after the session is in the
+// registry (status opening) and before the factory runs (#273).
+func TestRegisteredHookFiresBeforeFactory(t *testing.T) {
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	var mgr *Manager
+	var events []string
+	mgr = NewManager(func(_ context.Context, p FactoryParams) (Transport, error) {
+		events = append(events, "factory:"+p.SessionID)
+		return mock, nil
+	}, clock.Real{}, 0)
+	unsub := mgr.SubscribeRegistered(func(sessionID, accountID string) {
+		s := mgr.GetSession(sessionID)
+		if s == nil || s.Status != StatusOpening {
+			t.Errorf("hook saw session %+v, want registered and opening", s)
+		}
+		events = append(events, "registered:"+sessionID+":"+accountID)
+	})
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"registered:" + sess.SessionID + ":acc", "factory:" + sess.SessionID}
+	if len(events) != 2 || events[0] != want[0] || events[1] != want[1] {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+
+	unsub()
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if _, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 { // factory only; the unsubscribed hook stays silent
+		t.Fatalf("after unsubscribe: events = %v", events)
+	}
+}

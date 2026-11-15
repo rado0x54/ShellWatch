@@ -7,6 +7,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -29,9 +30,14 @@ import (
 func wsServer(t *testing.T) (*httptest.Server, *terminal.Manager, *terminal.MockTransport) {
 	t.Helper()
 	mock := terminal.NewMockTransport()
-	mgr := terminal.NewManager(
-		func(context.Context, terminal.FactoryParams) (terminal.Transport, error) { return mock, nil },
-		clock.Real{}, 0)
+	ts, mgr := wsServerWithFactory(t,
+		func(context.Context, terminal.FactoryParams) (terminal.Transport, error) { return mock, nil })
+	return ts, mgr, mock
+}
+
+func wsServerWithFactory(t *testing.T, factory terminal.TransportFactory) (*httptest.Server, *terminal.Manager) {
+	t.Helper()
+	mgr := terminal.NewManager(factory, clock.Real{}, 0)
 	hub := wshub.NewHub(mgr)
 	t.Cleanup(hub.Close)
 
@@ -50,7 +56,7 @@ func wsServer(t *testing.T) (*httptest.Server, *terminal.Manager, *terminal.Mock
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts, mgr, mock
+	return ts, mgr
 }
 
 func dialWS(t *testing.T, ts *httptest.Server) *websocket.Conn {
@@ -184,5 +190,112 @@ func TestWSRejectsOversizedInbound(t *testing.T) {
 			t.Fatalf("read after oversized frame: err=%v, want close 1009", err)
 		}
 		return
+	}
+}
+
+// A session still connecting (its factory blocked on human approval of the
+// SSH signature) is listed to the browser as opening right away, and can be
+// attached to before it opens (#273): approving from a toast navigates to
+// /session/<id> while the connect is still in flight.
+func TestWSListsOpeningSessionBeforeSetupCompletes(t *testing.T) {
+	mock := terminal.NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	approve := make(chan struct{})
+	ts, mgr := wsServerWithFactory(t, func(ctx context.Context, _ terminal.FactoryParams) (terminal.Transport, error) {
+		select {
+		case <-approve:
+			return mock, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+
+	c := dialWS(t, ts)
+	if m := readMsg(t, c); len(m["sessions"].([]any)) != 0 {
+		t.Fatalf("initial sessions:changed should be empty, got %v", m)
+	}
+
+	ep := terminal.EndpointRef{ID: "test-server", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	created := make(chan *terminal.Session, 1)
+	go func() {
+		sess, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+		if err != nil {
+			t.Error(err)
+		}
+		created <- sess
+	}()
+
+	sessionStatus := func(m map[string]any) (id, status string) {
+		t.Helper()
+		list, _ := m["sessions"].([]any)
+		if m["type"] != "sessions:changed" || len(list) != 1 {
+			t.Fatalf("expected sessions:changed with one session, got %v", m)
+		}
+		entry := list[0].(map[string]any)
+		return entry["sessionId"].(string), entry["status"].(string)
+	}
+
+	id, status := sessionStatus(readMsg(t, c))
+	if status != string(terminal.StatusOpening) {
+		t.Fatalf("status while connecting = %q, want opening", status)
+	}
+
+	writeMsg(t, c, map[string]any{"type": "terminal:attach", "sessionId": id})
+	if m := readMsg(t, c); m["type"] != "terminal:status" || m["status"] != string(terminal.StatusOpening) {
+		t.Fatalf("attach reply = %v, want terminal:status opening", m)
+	}
+	if m := readMsg(t, c); m["type"] != "terminal:mode" {
+		t.Fatalf("attach reply = %v, want terminal:mode", m)
+	}
+
+	close(approve)
+	sess := <-created
+	if sess == nil || sess.SessionID != id {
+		t.Fatalf("created session %v, listed %q", sess, id)
+	}
+	if _, status := sessionStatus(readMsg(t, c)); status != string(terminal.StatusOpen) {
+		t.Fatalf("status after setup = %q, want open", status)
+	}
+
+	// The attach made while opening carries over: output reaches this client.
+	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": id, "data": "hi"})
+	if m := readMsg(t, c); m["type"] != "terminal:output" || !strings.Contains(m["data"].(string), "hi") {
+		t.Fatalf("expected output echo, got %v", m)
+	}
+}
+
+// A connect that fails during setup (e.g. the signature was denied) drops the
+// opening row from the browser's list again, so a session page opened from
+// the approval toast navigates away instead of showing a stale session (#273).
+func TestWSOpeningSessionDroppedWhenSetupFails(t *testing.T) {
+	deny := make(chan struct{})
+	ts, mgr := wsServerWithFactory(t, func(ctx context.Context, _ terminal.FactoryParams) (terminal.Transport, error) {
+		select {
+		case <-deny:
+			return nil, errors.New("signature denied")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+
+	c := dialWS(t, ts)
+	readMsg(t, c) // initial sessions:changed (empty)
+
+	ep := terminal.EndpointRef{ID: "test-server", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	failed := make(chan error, 1)
+	go func() {
+		_, err := mgr.Create(context.Background(), ep, "acc", terminal.Trigger{Kind: terminal.SourceUI})
+		failed <- err
+	}()
+
+	if m := readMsg(t, c); len(m["sessions"].([]any)) != 1 {
+		t.Fatalf("expected the opening session listed, got %v", m)
+	}
+	close(deny)
+	if err := <-failed; err == nil {
+		t.Fatal("Create should fail when setup fails")
+	}
+	if m := readMsg(t, c); m["type"] != "sessions:changed" || len(m["sessions"].([]any)) != 0 {
+		t.Fatalf("expected the failed session dropped from the list, got %v", m)
 	}
 }

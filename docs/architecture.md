@@ -210,7 +210,7 @@ SvelteKit SPA (adapter-static) built into `web/dist` and embedded into the serve
 - **REST API** (`/api/*`, `internal/rest`) — endpoint/session/key/WebAuthn CRUD, action resolve/deny, session tail, audit pages. The contract is [`docs/api/openapi.yaml`](./api/openapi.yaml); response models are generated into `internal/api`.
 - **WebSocket** (`/ws`, `internal/ws`) — real-time terminal I/O and session events; also carries `sign:request` / `sign:resolved` from the approval layer. Protocol: [`docs/api/websocket-protocol.md`](./api/websocket-protocol.md).
 
-The web UI sees ALL of the account's sessions regardless of source, labelled `ui` / `mcp`. The hub broadcasts `sessions:changed` on every status change, so MCP-created sessions appear instantly.
+The web UI sees ALL of the account's sessions regardless of source, labelled `ui` / `mcp`. The hub broadcasts `sessions:changed` on every status change and when a session is registered, so MCP-created sessions appear instantly — while still connecting (`opening`, e.g. waiting for signature approval) too.
 
 ### MCP Server (`internal/mcp`)
 

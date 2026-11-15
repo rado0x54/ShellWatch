@@ -73,7 +73,10 @@ type Manager struct {
 	statusSubs  map[int]func(StatusEvent)
 	outputSubs  map[int]func(sessionID string, offset int64)
 	removedSubs map[int]func(sessionID string)
-	nextSub     int
+	// registeredSubs fire when Create registers a session, before its
+	// transport is set up (#273).
+	registeredSubs map[int]func(sessionID, accountID string)
+	nextSub        int
 
 	// closeJoinTimeout bounds Close's pump join (liveness: a wedged transport
 	// teardown must not stall the idle janitor / shutdown / every other close
@@ -93,6 +96,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		statusSubs:       map[int]func(StatusEvent){},
 		outputSubs:       map[int]func(string, int64){},
 		removedSubs:      map[int]func(string){},
+		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
 	}
 }
@@ -180,6 +184,26 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
 }
 
+// SubscribeRegistered registers a hook fired when Create has registered a new
+// session (status opening), synchronously and before the transport factory
+// runs. Connecting can block for minutes on human approval of the SSH
+// signature; the WS hub uses this hook to list the session to the browser
+// while it waits, so a client that approves the signature can already open
+// the session's page (#273). Not a status transition: opening is the initial
+// state, so status subscribers (audit, MCP) see nothing new.
+func (m *Manager) SubscribeRegistered(fn func(sessionID, accountID string)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.registeredSubs[id] = fn
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.registeredSubs, id)
+	}
+}
+
 // SubscribeRemoved registers a hook fired after a session is removed from
 // the registry (explicit close, account purge). The WS hub uses it to sweep
 // connections whose attach raced the removal: the Closed broadcast happens
@@ -235,7 +259,16 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("server is shutting down")
 	}
 	m.terminals[sess.SessionID] = mg
+	registered := make([]func(string, string), 0, len(m.registeredSubs))
+	for _, fn := range m.registeredSubs {
+		registered = append(registered, fn)
+	}
 	m.mu.Unlock()
+	// Same goroutine as the setStatus(Open) below, so the opening broadcast
+	// can never overtake the open one.
+	for _, fn := range registered {
+		fn(sess.SessionID, sess.AccountID)
+	}
 
 	transport, err := m.factory(setupCtx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
 
