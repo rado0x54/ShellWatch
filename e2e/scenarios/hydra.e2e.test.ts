@@ -62,6 +62,7 @@ describe("Hydra (real) — discovery, login/consent branches, tokens", () => {
     ["discovery-protected-resource", "/.well-known/oauth-protected-resource"],
     ["discovery-protected-resource-mcp", "/.well-known/oauth-protected-resource/mcp"],
     ["discovery-protected-resource-agent", "/.well-known/oauth-protected-resource/agent-proxy"],
+    ["discovery-agent-client-metadata", "/.well-known/shellwatch-agent-client.json"],
   ])("serves %s matching the committed golden", async (name, path) => {
     const live = await discovery(path);
     const expected = golden(name);

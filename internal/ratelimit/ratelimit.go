@@ -98,7 +98,15 @@ type Rule struct {
 }
 
 func (r Rule) matches(req *http.Request) bool {
-	if req.Method != r.Method {
+	// HEAD runs the GET handler (the router maps it there, RFC 9110 §9.3.2),
+	// so it must draw from the same quota: otherwise HEAD would be an
+	// unlimited way to drive a GET route's side effects, e.g. CIMD document
+	// fetching behind /api/hydra/authorize.
+	method := req.Method
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	if method != r.Method {
 		return false
 	}
 	if r.Prefix {

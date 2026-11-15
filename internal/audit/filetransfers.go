@@ -177,11 +177,17 @@ func (f *FileTransfers) Get(ctx context.Context, accountID, transferID string) (
 // out truthfully. pending/active rows become failed ("server restarted", and
 // cleanup failed when a staging directory was recorded); committing rows
 // become failed with commitOutcome "unknown", since the commit may have been
-// issued. Staging paths are preserved. Returns the rows as they now read, so
-// the caller can notify each account once.
+// issued. A finished upload (completed, failed or cancelled) that still records a
+// staging path but no cleanup result was interrupted between persisting its
+// outcome and removing its staging directory (#287): it keeps its status,
+// commit outcome and error, and only gets cleanup failed. Staging paths are
+// preserved. Returns the rows as they now read, so the caller can notify each
+// account once.
 func (f *FileTransfers) ReconcileInterrupted(ctx context.Context) ([]FileTransferRow, error) {
 	rows, err := f.db.QueryContext(ctx,
-		`SELECT `+fileTransferColumns+` FROM file_transfers WHERE status IN (?, ?, ?) ORDER BY created_at, id`,
+		`SELECT `+fileTransferColumns+` FROM file_transfers
+		 WHERE status IN (?, ?, ?) OR (staging_path IS NOT NULL AND cleanup IS NULL)
+		 ORDER BY created_at, id`,
 		FileTransferPending, FileTransferActive, FileTransferCommitting)
 	if err != nil {
 		return nil, err
@@ -201,20 +207,29 @@ func (f *FileTransfers) ReconcileInterrupted(ctx context.Context) ([]FileTransfe
 	now := f.clk.Now().UTC().Format(isoMillis)
 	for i := range interrupted {
 		r := &interrupted[i]
-		msg := "server restarted"
-		if r.Status == FileTransferCommitting {
-			unknown := "unknown"
-			r.CommitOutcome = &unknown
-			msg = "server restarted during commit; the commit outcome is unknown — inspect the destination (size, sha256) before retrying"
-		}
 		if r.StagingPath != nil {
 			failed := "failed"
 			r.Cleanup = &failed
 		}
-		r.Status = FileTransferFailed
-		r.Error = &msg
 		r.UpdatedAt = now
-		r.FinishedAt = &now
+		switch r.Status {
+		case FileTransferPending, FileTransferActive, FileTransferCommitting:
+			msg := "server restarted"
+			if r.Status == FileTransferCommitting {
+				unknown := "unknown"
+				r.CommitOutcome = &unknown
+				msg = "server restarted during commit; the commit outcome is unknown — inspect the destination (size, sha256) before retrying"
+			}
+			r.Status = FileTransferFailed
+			r.Error = &msg
+			r.FinishedAt = &now
+		default:
+			// Already finished: the outcome is known, only the staging
+			// cleanup never ran.
+			if r.FinishedAt == nil {
+				r.FinishedAt = &now
+			}
+		}
 		f.Save(*r)
 	}
 	return interrupted, nil

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
 
@@ -99,6 +100,12 @@ func New(p Params) http.Handler {
 	// Outermost: log every request (method/path/status/duration) so 4xx/5xx are
 	// visible in stdout / the log file, not just the response body.
 	r.Use(requestLogger(clock.Real{}))
+	// HEAD on every GET route (RFC 9110 §9.3.2): chi otherwise answers 405,
+	// so `curl -I` or a link checker would see a GET-able document as missing.
+	// The handler runs as for GET; net/http drops the body. Routes registered
+	// for all methods (r.Handle: /mcp, transfer links) already see HEAD and
+	// keep their own handling of it.
+	r.Use(middleware.GetHead)
 	// Security headers next, so they also land on 401s, 429s and preflights.
 	r.Use(securityHeaders(externalURL))
 	// server.trustProxy: resolve the effective client IP once; every consumer
@@ -394,7 +401,12 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 				}
 			}
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		// API and discovery paths are machine-read and never client routes: an
+		// unknown one is a real 404, not index.html with a 200. That matters
+		// for /.well-known/ documents that are only mounted when a feature is
+		// on (the agent-proxy resource metadata, the agent's CIMD document) —
+		// a CIMD fetcher or MCP client must not mistake the SPA for them.
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/.well-known/") {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"Not found"}`))

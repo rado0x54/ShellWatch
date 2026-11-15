@@ -1,3 +1,20 @@
+## v2.1.0 (2026-11-15)
+
+## What's Changed
+
+- fix: bump hono, @hono/node-server, @sveltejs/kit and adapter-static to clear pnpm audit advisories by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/274
+- feat: MCP file transfer tools — inline SFTP read/write and single-use out-of-band transfer links (#263) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/269
+- test: scope sshx handshake test hooks per connection to fix -race flake (#270) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/275
+- fix(client): re-attach terminal views after a WebSocket reconnect (#271) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/277
+- fix(server): drain HTTP promptly on shutdown, exit 0 after a forced close, honour a second Ctrl-C (#272) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/278
+- fix(server): narrow unsupported CIMD grant_types instead of rejecting the client (#279) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/280
+- feat(client): navigate to the session after approving a sign request from the toast or the sign page (#273) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/282
+- fix(client): hide Release control for UI-created sessions (#150) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/284
+- feat(server): structured slog logging across subsystems, health checks at debug (#104) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/285
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/286
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v2.0.0...v2.1.0
+
 ## v2.0.0 (2026-11-11)
 
 ### ⚠️ Breaking: MCP implements spec revision 2026-07-28, statelessly (#243)

@@ -42,6 +42,13 @@ Exempt (no token): `/health`, `/api/version`, `/config.js`, `/manifest.json`,
 `/api/hydra/`, `/api/passkey-invite/`, `/passkey-invite/`, `/.well-known/`,
 `/_app/`.
 
+## HTTP methods
+
+Every `GET` operation in [`openapi.yaml`](./openapi.yaml) also answers `HEAD`
+with the same status and headers and no body (RFC 9110 §9.3.2). `HEAD`
+passes through the same gate as `GET`: a protected route still needs a token.
+The spec does not list the `HEAD` operations separately.
+
 ## Conformance over the wire (e2e)
 
 The black-box e2e suite in [`e2e/`](../../e2e) ([#244], [`docs/testing.md`](../testing.md))
