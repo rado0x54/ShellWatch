@@ -93,7 +93,7 @@
   <span class="dot {t.status}" aria-hidden="true"></span>
   <span class="who">{t.mcpClientName ?? "agent"}</span>
   <span class="verb">{transferVerb(t)}</span>
-  <span class="path" title={t.path}>{t.path}</span>
+  <span class="path" title={t.path}><bdi dir="ltr">{t.path}</bdi></span>
   {#if sizeLabel(t)}
     <span class="sep">·</span><span class="meta">{sizeLabel(t)}</span>
   {/if}
@@ -202,7 +202,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* Keep the file name visible when the path is long. */
+    /* Keep the file name visible when the path is long: an RTL box overflows
+       (and gets its ellipsis) on the left. The text itself sits in an
+       isolated LTR <bdi>, otherwise the leading "/" is neutral punctuation
+       in an RTL run and is drawn at the END ("home/x/file/"). */
     direction: rtl;
     text-align: left;
     min-width: 4rem;
