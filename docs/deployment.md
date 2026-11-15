@@ -128,15 +128,14 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > `hydra.cimd.cacheMinSeconds`…`cacheMaxSeconds`; errors and invalid documents are
 > never cached. Restrict which clients may onboard with
 > `hydra.cimd.allowedHosts` / `blockedHosts` (exact hostnames; blocked wins). If
-> outbound HTTPS is not available to the server, leave CIMD off and use DCR —
-> but see the agent note below.
+> outbound HTTPS is not available to the server, leave CIMD off and use DCR
+> (the agent then needs `login --dcr`, see below).
 >
 > **`shellwatch-agent` always uses CIMD (#256).** Its `client_id` is the fixed
 > URL `https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json`
 > (every ShellWatch binary serves the same document at
 > `/.well-known/shellwatch-agent-client.json`; the agent always uses the
-> app.shellwatch.ai copy). The agent has no DCR fallback, so on a self-hosted
-> deployment:
+> app.shellwatch.ai copy). By default, on a self-hosted deployment:
 >
 > - the first `shellwatch-agent login` makes **one outbound HTTPS request to
 >   `app.shellwatch.ai`**, repeated at most once per cache window (the document
@@ -144,7 +143,14 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 >   Token refreshes go to Hydra only and never trigger a fetch;
 > - CIMD must stay enabled, and if `hydra.cimd.allowedHosts` is set it must
 >   include `app.shellwatch.ai`;
-> - an air-gapped server cannot log the agent in.
+> - an air-gapped server cannot resolve it.
+>
+> To avoid the outbound request, or with CIMD turned off, users run
+> `shellwatch-agent login --dcr`: the agent registers a client through the
+> mediated DCR endpoint (`/api/hydra/register`) instead. This is never chosen
+> automatically; without the flag, `login` against a server that does not
+> advertise CIMD fails with an error naming `--dcr`. Each `--dcr` login
+> creates a new OAuth client in Hydra.
 >
 > The document's `redirect_uris` are the port-less loopback IP literals
 > `http://127.0.0.1/callback` and `http://[::1]/callback`, which the default

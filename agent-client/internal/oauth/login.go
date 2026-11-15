@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Package oauth implements how shellwatch-agent authenticates to a ShellWatch
 // instance (#217): a loopback authorization_code + PKCE flow (RFC 6749 + 7636 +
-// 8252), identical to how an MCP client onboards. There is no registration
-// step: the agent's client_id is a fixed OAuth Client ID Metadata Document URL
-// (CIMD, #256) that the ShellWatch server resolves itself. The agent opens the
+// 8252), identical to how an MCP client onboards. By default there is no
+// registration step: the agent's client_id is a fixed OAuth Client ID Metadata
+// Document URL (CIMD, #256) that the ShellWatch server resolves itself. For
+// servers that turned CIMD off, `login --dcr` registers a client through
+// ShellWatch's mediated DCR instead. That path is only ever taken on request,
+// never as an automatic fallback. The agent opens the
 // browser for the user to log in with a passkey + consent, and exchanges the
 // code for an `agent`-scoped access token + (rotating) refresh token. The token
 // carries the user's identity; the client is account-agnostic.
@@ -14,6 +17,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -54,6 +58,10 @@ type LoginOptions struct {
 	AllowInsecure bool
 	// ClientID overrides the package ClientID (tests only). Empty → ClientID.
 	ClientID string
+	// UseDCR registers a fresh client via the server's registration_endpoint
+	// instead of using the CIMD client_id. Opt-in only (`login --dcr`); each
+	// such login creates another client on the server.
+	UseDCR bool
 	// OpenBrowser opens a URL; substituted in tests. Defaults to the OS opener.
 	OpenBrowser func(url string) error
 	// Stdout receives progress messages. nil → io.Discard.
@@ -80,6 +88,9 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	if opts.Scope == "" {
 		opts.Scope = "agent"
 	}
+	if opts.UseDCR && opts.ClientID != "" {
+		return nil, errors.New("a client_id override cannot be combined with DCR")
+	}
 	clientID := opts.ClientID
 	if clientID == "" {
 		clientID = ClientID
@@ -101,9 +112,13 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discover endpoints: %w", err)
 	}
-	if !eps.ClientIDMetadataDocumentSupported {
-		return nil, fmt.Errorf("%s does not support OAuth Client ID Metadata Documents, which shellwatch-agent requires "+
-			"(is hydra.cimd.enabled set to false?)", server)
+	// No automatic fallback in either direction: the operator picks the path.
+	switch {
+	case opts.UseDCR && eps.Registration == "":
+		return nil, fmt.Errorf("%s does not advertise a registration_endpoint, so --dcr cannot be used", server)
+	case !opts.UseDCR && !eps.ClientIDMetadataDocumentSupported:
+		return nil, fmt.Errorf("%s does not support OAuth Client ID Metadata Documents (hydra.cimd.enabled is false?); "+
+			"run `shellwatch-agent login --dcr` to register a client via DCR instead", server)
 	}
 
 	// The redirect host is the loopback IP literal, never a hostname: only IP
@@ -119,6 +134,13 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	// `offline_access` → refresh token. The server adds it to the provisioned
 	// client's allowed scope, so the authorize request below can request it.
 	requestScope := strings.TrimSpace(opts.Scope) + " offline_access"
+
+	if opts.UseDCR {
+		clientID, err = registerClient(ctx, httpClient, eps.Registration, redirectURI, requestScope)
+		if err != nil {
+			return nil, fmt.Errorf("register client (DCR): %w", err)
+		}
+	}
 
 	verifier, challenge, err := newPkce()
 	if err != nil {
@@ -174,6 +196,45 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 		return nil, errors.New("token response had no refresh_token (offline_access scope not granted?)")
 	}
 	return &Result{ServerURL: server, Issuer: eps.Issuer, ClientID: clientID, RefreshToken: tok.RefreshToken}, nil
+}
+
+// registerClient performs mediated DCR for a public loopback client. Only used
+// by `login --dcr`.
+func registerClient(ctx context.Context, client *http.Client, registrationEndpoint, redirectURI, scope string) (string, error) {
+	payload := map[string]any{
+		"client_name":                "shellwatch-agent",
+		"redirect_uris":              []string{redirectURI},
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
+		"scope":                      scope,
+		"token_endpoint_auth_method": "none",
+	}
+	buf, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, strings.NewReader(string(buf)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("registration returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("parse registration response: %w", err)
+	}
+	if out.ClientID == "" {
+		return "", errors.New("registration response missing client_id")
+	}
+	return out.ClientID, nil
 }
 
 func buildAuthorizeURL(authEndpoint, clientID, redirect, scope, state, challenge string) string {

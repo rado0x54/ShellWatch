@@ -13,8 +13,8 @@ import (
 	"testing"
 )
 
-// fakeAS stands in for ShellWatch + Hydra: discovery, a registration endpoint
-// that must never be hit, the authorization endpoint (auto-approves,
+// fakeAS stands in for ShellWatch + Hydra: discovery, a counting registration
+// endpoint (only `login --dcr` may hit it), the authorization endpoint (auto-approves,
 // redirecting to the loopback), and the token endpoint (PKCE-validating
 // authcode → access + refresh).
 type fakeAS struct {
@@ -50,7 +50,8 @@ func newFakeAS(t *testing.T) *fakeAS {
 	})
 	mux.HandleFunc("/api/hydra/register", func(w http.ResponseWriter, _ *http.Request) {
 		f.registrations.Add(1)
-		http.Error(w, "registration must not be called", http.StatusTeapot)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "dcr-client-1"})
 	})
 	// Auto-approve: redirect straight back to the loopback redirect_uri.
 	mux.HandleFunc("/oauth2/auth", func(w http.ResponseWriter, r *http.Request) {
@@ -183,14 +184,52 @@ func TestLogin_RequiresMetadataDocumentSupport(t *testing.T) {
 		AllowInsecure: true,
 		OpenBrowser:   func(string) error { opened = true; return nil },
 	})
-	if err == nil || !strings.Contains(err.Error(), "Client ID Metadata Documents") {
-		t.Fatalf("err = %v, want a CIMD-unsupported error", err)
+	if err == nil || !strings.Contains(err.Error(), "Client ID Metadata Documents") || !strings.Contains(err.Error(), "--dcr") {
+		t.Fatalf("err = %v, want a CIMD-unsupported error that points at --dcr", err)
 	}
 	if opened {
 		t.Error("browser opened although the server cannot resolve the client_id")
 	}
 	if n := f.registrations.Load(); n != 0 {
 		t.Errorf("registration endpoint called %d times, want 0 (no DCR fallback)", n)
+	}
+}
+
+// --dcr is explicit: it registers even when the server supports CIMD, and it
+// is the only way to log in when the server does not.
+func TestLogin_DCROptIn(t *testing.T) {
+	for _, cimd := range []bool{true, false} {
+		f := newFakeAS(t)
+		f.cimd.Store(cimd)
+		result, err := Login(context.Background(), LoginOptions{
+			ServerURL:     f.srv.URL,
+			AllowInsecure: true,
+			UseDCR:        true,
+			OpenBrowser:   fakeBrowser(t),
+		})
+		if err != nil {
+			t.Fatalf("cimd=%v: Login: %v", cimd, err)
+		}
+		if n := f.registrations.Load(); n != 1 {
+			t.Errorf("cimd=%v: registrations = %d, want 1", cimd, n)
+		}
+		if result.ClientID != "dcr-client-1" || f.authorizedClientID.Load() != "dcr-client-1" {
+			t.Errorf("cimd=%v: client_id result %q, authorize %v; want dcr-client-1", cimd, result.ClientID, f.authorizedClientID.Load())
+		}
+		if result.Issuer != f.srv.URL {
+			t.Errorf("cimd=%v: Issuer = %q, want %q", cimd, result.Issuer, f.srv.URL)
+		}
+	}
+}
+
+func TestLogin_DCRRejectsClientIDOverride(t *testing.T) {
+	_, err := Login(context.Background(), LoginOptions{
+		ServerURL: "https://example.invalid",
+		UseDCR:    true,
+		ClientID:  "https://127.0.0.1:8443/.well-known/client.json",
+	})
+	if err == nil {
+		t.Fatal("want an error for --dcr combined with a client_id override")
 	}
 }
 

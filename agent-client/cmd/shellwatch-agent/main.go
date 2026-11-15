@@ -13,7 +13,9 @@
 //	# Browser login (passkey). The agent's client_id is a fixed Client ID
 //	# Metadata Document URL the server resolves; no registration step. Stores
 //	# the refresh token (bound to the server's issuer). Persisted per server URL.
-//	shellwatch-agent login [--server URL] [--insecure]
+//	# --dcr registers a client via mediated DCR instead, for servers with CIMD
+//	# turned off. Never chosen automatically.
+//	shellwatch-agent login [--server URL] [--insecure] [--dcr]
 //
 //	# Remove the locally-stored credentials. Does not revoke the grant
 //	# server-side — sign out / delete the device's sessions in ShellWatch.
@@ -107,6 +109,7 @@ func runLogin(args []string) error {
 	fs.SetOutput(os.Stderr)
 	server := fs.String("server", "", "ShellWatch server URL (defaults to $SHELLWATCH_SERVER or "+config.DefaultServer+")")
 	insecure := fs.Bool("insecure", false, "Allow http:// — local dev only; never use against production")
+	dcr := fs.Bool("dcr", false, "Register a client via DCR instead of the built-in CIMD client_id (for servers with CIMD turned off)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,6 +124,7 @@ func runLogin(args []string) error {
 		Scope:         "agent",
 		AllowInsecure: *insecure,
 		ClientID:      os.Getenv(oauth.ClientIDEnv),
+		UseDCR:        *dcr,
 		Stdout:        os.Stdout,
 	})
 	if err != nil {
@@ -216,6 +220,10 @@ DAEMON FLAGS
 LOGIN FLAGS
   --server URL          Which ShellWatch instance to authorize against.
   --insecure            Allow http://. Local dev only.
+  --dcr                 Register a client via dynamic client registration
+                        instead of using the built-in client_id (a Client ID
+                        Metadata Document). Only for servers that turned CIMD
+                        off; each such login creates a new OAuth client there.
 
 ENVIRONMENT
   SHELLWATCH_SERVER         Default --server value.

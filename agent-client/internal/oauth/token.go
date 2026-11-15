@@ -154,8 +154,10 @@ type Endpoints struct {
 	Issuer        string `json:"issuer"`
 	Authorization string `json:"authorization_endpoint"`
 	Token         string `json:"token_endpoint"`
+	// Registration is only used by `login --dcr`.
+	Registration string `json:"registration_endpoint"`
 	// ClientIDMetadataDocumentSupported is the CIMD draft's §6 flag; the agent
-	// cannot log in without it (it has no registration fallback).
+	// does not fall back to DCR without it unless `login --dcr` is given.
 	ClientIDMetadataDocumentSupported bool `json:"client_id_metadata_document_supported"`
 }
 
