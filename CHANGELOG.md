@@ -1,3 +1,18 @@
+## v2.1.1 (2026-11-15)
+
+## What's Changed
+
+- refactor(server): pass bearer-gate rejection log fields as a typed struct by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/289
+- fix(server): reconcile finished uploads whose staging cleanup was interrupted by a restart (#287) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/292
+- fix(client): keep unfinished transfers in the session strip beyond the 50-entry history cap (#288) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/293
+- feat(agent-client): authenticate with a fixed CIMD client_id served by app.shellwatch.ai; DCR only via login --dcr (#256) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/294
+- chore(ci): drop the automatic Homebrew tap bump from the agent release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/295
+- chore: update agent CHANGELOG.md for agent/v1.1.0 by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/296
+- feat(server): answer HEAD on every GET route by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/298
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/297
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v2.1.0...v2.1.1
+
 ## v2.1.0 (2026-11-15)
 
 ## What's Changed
