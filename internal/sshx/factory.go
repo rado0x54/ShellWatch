@@ -27,6 +27,11 @@ type SignerSource interface {
 // host key: endpoints must be pinned up front (config/manual) or every first
 // connection fails closed (#241).
 func NewFileKeyFactory(src SignerSource, hostKeys HostKeys) terminal.TransportFactory {
+	return newFileKeyFactory(src, hostKeys, connectHooks{})
+}
+
+// newFileKeyFactory is NewFileKeyFactory with per-connection test hooks.
+func newFileKeyFactory(src SignerSource, hostKeys HostKeys, hooks connectHooks) terminal.TransportFactory {
 	return func(ctx context.Context, p terminal.FactoryParams) (terminal.Transport, error) {
 		signers, err := src.Signers()
 		if err != nil {
@@ -43,6 +48,7 @@ func NewFileKeyFactory(src SignerSource, hostKeys HostKeys) terminal.TransportFa
 			HostKeys:     hostKeys,
 			Signers:      signers,
 			AgentForward: p.Endpoint.AgentForward,
+			hooks:        hooks,
 		})
 	}
 }
