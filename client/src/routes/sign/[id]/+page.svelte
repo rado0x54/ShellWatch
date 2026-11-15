@@ -13,6 +13,7 @@
     approveAction,
     performSignCeremony,
     resolveAction,
+    sessionIdFromRedirect,
     sourceLabels,
     triggerKindLabels,
   } from "$lib/utils/webauthn-sign.js";
@@ -139,21 +140,17 @@
       resultStatus = "completed";
       clearAction(actionId);
       toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
-      if (response.redirectTo && isSafeRedirect(response.redirectTo)) {
-        // Server-computed path (e.g. /session/:id). Use window.location
-        // since typed routes can't validate a runtime string.
-        window.location.href = response.redirectTo;
-      }
+      // Land on the session the approval was for — same as approving from
+      // the toast (#273). In-app navigation, no reload: the socket and any
+      // follow-up prompt (a passkey after a key approval) survive.
+      const sessionId = sessionIdFromRedirect(response.redirectTo);
+      if (sessionId) await goto(resolve("/session/[id]", { id: sessionId }));
     } catch (err) {
       error = (err as Error).message;
       toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
     } finally {
       processing = false;
     }
-  }
-
-  function isSafeRedirect(path: string): boolean {
-    return path.startsWith("/") && !path.startsWith("//");
   }
 
   async function handleDeny() {

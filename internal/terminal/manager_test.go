@@ -542,3 +542,110 @@ func TestRemovedHookFires(t *testing.T) {
 		t.Fatalf("account purge: removed hook got %v", removed)
 	}
 }
+
+// The registered hook fires once per Create, after the session is in the
+// registry (status opening) and before the factory runs (#273).
+func TestRegisteredHookFiresBeforeFactory(t *testing.T) {
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	var mgr *Manager
+	var events []string
+	mgr = NewManager(func(_ context.Context, p FactoryParams) (Transport, error) {
+		events = append(events, "factory:"+p.SessionID)
+		return mock, nil
+	}, clock.Real{}, 0)
+	unsub := mgr.SubscribeRegistered(func(sessionID, accountID string) {
+		s := mgr.GetSession(sessionID)
+		if s == nil || s.Status != StatusOpening {
+			t.Errorf("hook saw session %+v, want registered and opening", s)
+		}
+		events = append(events, "registered:"+sessionID+":"+accountID)
+	})
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"registered:" + sess.SessionID + ":acc", "factory:" + sess.SessionID}
+	if len(events) != 2 || events[0] != want[0] || events[1] != want[1] {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+
+	unsub()
+	mgr.Close(sess.SessionID, CloseClientUI)
+	if _, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 { // factory only; the unsubscribed hook stays silent
+		t.Fatalf("after unsubscribe: events = %v", events)
+	}
+}
+
+// A size requested while the session is still connecting (a browser attached
+// to an opening session) is applied once the transport is adopted, before the
+// session opens; a later Resize still wins (#273 review).
+func TestResizeWhileOpeningIsAppliedOnOpen(t *testing.T) {
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	approve := make(chan struct{})
+	mgr := NewManager(func(ctx context.Context, _ FactoryParams) (Transport, error) {
+		select {
+		case <-approve:
+			return mock, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, clock.Real{}, 0)
+
+	registered := make(chan string, 1)
+	unsub := mgr.SubscribeRegistered(func(id, _ string) { registered <- id })
+	defer unsub()
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	opened := make(chan *Session, 1)
+	go func() {
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- sess
+	}()
+	id := <-registered
+
+	// Two layout passes while connecting: only the latest size matters.
+	if err := mgr.Resize(id, 100, 30); err != nil {
+		t.Fatalf("resize while opening: %v", err)
+	}
+	if err := mgr.Resize(id, 120, 40); err != nil {
+		t.Fatalf("resize while opening: %v", err)
+	}
+	if got := mock.Sizes(); len(got) != 0 {
+		t.Fatalf("no transport yet, but sizes = %v", got)
+	}
+
+	close(approve)
+	sess := <-opened
+	if sess == nil || sess.Status != StatusOpen {
+		t.Fatalf("session = %+v, want open", sess)
+	}
+	if got := mock.Sizes(); len(got) != 1 || got[0] != [2]int{120, 40} {
+		t.Fatalf("sizes after open = %v, want [[120 40]]", got)
+	}
+
+	if err := mgr.Resize(id, 90, 20); err != nil {
+		t.Fatal(err)
+	}
+	if got := mock.Sizes(); len(got) != 2 || got[1] != [2]int{90, 20} {
+		t.Fatalf("sizes after later resize = %v", got)
+	}
+}
+
+// Only an opening session buffers a size; Resize on an unknown session still
+// errors.
+func TestResizeUnknownSessionErrors(t *testing.T) {
+	mgr, _ := mockManager(t)
+	if err := mgr.Resize("nope", 80, 24); err == nil {
+		t.Error("resize of an unknown session must fail")
+	}
+}

@@ -28,6 +28,15 @@ type managed struct {
 	// broadcast on. Guarded by Manager.mu.
 	transport Transport
 	output    *OutputBuffer
+	// resizeMu serializes Resize against Create's transport adoption, so a
+	// size requested while the session was still connecting is applied
+	// before any later one (#273 review). Lock order: resizeMu, then
+	// Manager.mu.
+	resizeMu sync.Mutex
+	// pendingCols/pendingRows hold the latest size requested while the
+	// transport was absent (a browser attached to an opening session);
+	// zero when none. Guarded by resizeMu.
+	pendingCols, pendingRows int
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
 	// Closed broadcast always sees every event the transport delivered.
 	pumpDone chan struct{}
@@ -73,7 +82,10 @@ type Manager struct {
 	statusSubs  map[int]func(StatusEvent)
 	outputSubs  map[int]func(sessionID string, offset int64)
 	removedSubs map[int]func(sessionID string)
-	nextSub     int
+	// registeredSubs fire when Create registers a session, before its
+	// transport is set up (#273).
+	registeredSubs map[int]func(sessionID, accountID string)
+	nextSub        int
 
 	// closeJoinTimeout bounds Close's pump join (liveness: a wedged transport
 	// teardown must not stall the idle janitor / shutdown / every other close
@@ -93,6 +105,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		statusSubs:       map[int]func(StatusEvent){},
 		outputSubs:       map[int]func(string, int64){},
 		removedSubs:      map[int]func(string){},
+		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
 	}
 }
@@ -180,6 +193,26 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
 }
 
+// SubscribeRegistered registers a hook fired when Create has registered a new
+// session (status opening), synchronously and before the transport factory
+// runs. Connecting can block for minutes on human approval of the SSH
+// signature; the WS hub uses this hook to list the session to the browser
+// while it waits, so a client that approves the signature can already open
+// the session's page (#273). Not a status transition: opening is the initial
+// state, so status subscribers (audit, MCP) see nothing new.
+func (m *Manager) SubscribeRegistered(fn func(sessionID, accountID string)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.registeredSubs[id] = fn
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.registeredSubs, id)
+	}
+}
+
 // SubscribeRemoved registers a hook fired after a session is removed from
 // the registry (explicit close, account purge). The WS hub uses it to sweep
 // connections whose attach raced the removal: the Closed broadcast happens
@@ -235,20 +268,39 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("server is shutting down")
 	}
 	m.terminals[sess.SessionID] = mg
+	registered := make([]func(string, string), 0, len(m.registeredSubs))
+	for _, fn := range m.registeredSubs {
+		registered = append(registered, fn)
+	}
 	m.mu.Unlock()
+	// Same goroutine as the setStatus(Open) below, so the opening broadcast
+	// can never overtake the open one.
+	for _, fn := range registered {
+		fn(sess.SessionID, sess.AccountID)
+	}
 
 	transport, err := m.factory(setupCtx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
 
 	// Adopt the transport and the abort check in one critical section: a
 	// Close that already moved the session to closing owns its fate — the
 	// transport must not be adopted after that, or nothing would close it.
+	mg.resizeMu.Lock()
 	m.mu.Lock()
 	mg.cancelSetup = nil
 	aborted := sess.Status != StatusOpening // a Close raced the setup
-	if err == nil && !aborted {
+	adopted := err == nil && !aborted
+	if adopted {
 		mg.transport = transport
 	}
 	m.mu.Unlock()
+	// A browser that attached while the session was opening already sent its
+	// size; the PTY was requested at the default, so apply it now — before
+	// the Open broadcast, and before any Resize waiting on resizeMu.
+	if adopted && mg.pendingCols > 0 && mg.pendingRows > 0 {
+		_ = transport.Resize(mg.pendingCols, mg.pendingRows)
+	}
+	mg.pendingCols, mg.pendingRows = 0, 0
+	mg.resizeMu.Unlock()
 
 	if err != nil {
 		// Broadcast closed BEFORE removal (same ordering invariant as Close):
@@ -441,12 +493,20 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
+	mg.resizeMu.Lock()
+	defer mg.resizeMu.Unlock()
 	m.mu.Lock()
 	transport := mg.transport
 	status := mg.session.Status
 	m.mu.Unlock()
 	if transport == nil {
-		// Still connecting — registered before the factory finished.
+		if status == StatusOpening && cols > 0 && rows > 0 {
+			// Still connecting — registered before the factory finished.
+			// Remember the size; Create applies it once the transport is
+			// adopted, so the PTY doesn't stay at the default (#273 review).
+			mg.pendingCols, mg.pendingRows = cols, rows
+			return nil
+		}
 		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
 	}
 	return transport.Resize(cols, rows)
