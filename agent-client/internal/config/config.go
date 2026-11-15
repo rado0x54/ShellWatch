@@ -122,8 +122,8 @@ func resolve(fv flagValues, ev envValues) *Config {
 		return cfg
 	}
 
-	// Otherwise consult the credstore. `shellwatch-agent login` stores the DCR
-	// client id + refresh token there; the daemon mints + refreshes access
+	// Otherwise consult the credstore. `shellwatch-agent login` stores the
+	// issuer, client id + refresh token there; the daemon mints + refreshes access
 	// tokens from them and persists each rotated refresh token. A legacy raw
 	// value is treated as a static bearer. Lookup-misses fall through (Validate
 	// surfaces a friendly message); open/read failures get a one-line warning.
@@ -141,9 +141,8 @@ func resolve(fv flagValues, ev envValues) *Config {
 	}
 	if creds, ok := oauth.DecodeCreds(val); ok {
 		server := cfg.Server
-		clientID := creds.ClientID
 		onRotate := func(refreshToken string) {
-			updated, encErr := oauth.StoredCreds{ClientID: clientID, RefreshToken: refreshToken}.Encode()
+			updated, encErr := oauth.StoredCreds{Issuer: creds.Issuer, ClientID: creds.ClientID, RefreshToken: refreshToken}.Encode()
 			if encErr != nil {
 				return
 			}
@@ -151,7 +150,12 @@ func resolve(fv flagValues, ev envValues) *Config {
 				fmt.Fprintf(os.Stderr, "warning: could not persist rotated refresh token: %v\n", setErr)
 			}
 		}
-		cfg.Token = oauth.NewRefreshTokenSource(server, clientID, creds.RefreshToken, cfg.Insecure, onRotate)
+		cfg.Token = oauth.NewRefreshTokenSource(oauth.RefreshTokenSourceParams{
+			ServerURL:     server,
+			Creds:         creds,
+			AllowInsecure: cfg.Insecure,
+			OnRotate:      onRotate,
+		})
 	} else {
 		cfg.Token = oauth.StaticToken(val)
 	}

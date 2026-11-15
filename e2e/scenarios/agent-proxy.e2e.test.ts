@@ -2,12 +2,18 @@
 /**
  * The system-ssh path (#22/#36) against a real sshd (#244): the Go
  * `shellwatch-agent` holds an `agent`-scoped Hydra token obtained through the
- * real DCR + PKCE flow, exposes SSH_AUTH_SOCK on the host, and the host's `ssh`
- * authenticates to sshd through ShellWatch's human approval — file key on any
- * OpenSSH client, passkey when the host client is >= 10.3.
+ * real authorization_code + PKCE flow, exposes SSH_AUTH_SOCK on the host, and
+ * the host's `ssh` authenticates to sshd through ShellWatch's human approval —
+ * file key on any OpenSSH client, passkey when the host client is >= 10.3.
+ *
+ * `shellwatch-agent login` itself uses its CIMD client_id (#256). The real one
+ * is the app.shellwatch.ai URL; here the embedded document is served from a
+ * local HTTPS host and the agent is pointed at it, so the suite stays offline.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { modernEnabled, SSHD, SSHD_USER } from "../harness/env.js";
+import { modernEnabled, REPO_ROOT, SSHD, SSHD_USER } from "../harness/env.js";
 import { bootScenario, type Scenario } from "../harness/scenario.js";
 import { connectWs, withApprovals, type WsClient } from "../harness/clients.js";
 import {
@@ -22,6 +28,16 @@ import {
 import { CookieJar, driveAuthorize, loginThirdPartyClient } from "../harness/oauth.js";
 import { recordScenario } from "../harness/out.js";
 import { logsSince } from "../harness/sshd.js";
+import { startDocumentHost, type CimdDocument, type DocumentHost } from "../harness/cimd.js";
+
+/** The document the server embeds, minus the client_id the local host rewrites. */
+function agentDocument(): CimdDocument {
+  const doc = JSON.parse(
+    readFileSync(join(REPO_ROOT, "internal/hydra/agent-client-metadata.json"), "utf8"),
+  ) as CimdDocument;
+  delete doc.client_id;
+  return doc;
+}
 
 const target = "modern" as const;
 const sshd = SSHD[target];
@@ -34,10 +50,16 @@ describe.skipIf(!modernEnabled())("agent proxy (system ssh) against sshd-modern"
   let ws: WsClient;
   let daemon: AgentDaemon;
   let agentClientId: string;
+  let docHost: DocumentHost;
   const rec = recordScenario("agent-proxy", () => sc?.server);
 
   beforeAll(async () => {
-    sc = await bootScenario({ scenario: "agent-proxy", targets: [target] });
+    docHost = await startDocumentHost(agentDocument(), "/.well-known/shellwatch-agent-client.json");
+    sc = await bootScenario({
+      scenario: "agent-proxy",
+      targets: [target],
+      cimd: { extraCaBundlePath: docHost.caPath, allowLoopbackDocuments: true },
+    });
     ws = await connectWs(sc.uiToken);
     rec.note(`host ssh: ${hostSshVersion().raw}`);
     const agent = await loginThirdPartyClient({
@@ -54,6 +76,7 @@ describe.skipIf(!modernEnabled())("agent proxy (system ssh) against sshd-modern"
     await daemon?.stop();
     ws?.close();
     await sc?.stop();
+    await docHost?.stop();
   });
 
   it("lists the server-held identities through the local agent socket", () => {
@@ -177,8 +200,15 @@ describe.skipIf(!modernEnabled())("agent proxy (system ssh) against sshd-modern"
   it.skipIf(!loginFlowEnabled)(
     "`shellwatch-agent login` completes the loopback flow headlessly and the daemon mints tokens from the stored refresh token",
     async () => {
-      const login = await startAgentLogin();
-      const redirectUri = new URL(login.authorizeUrl).searchParams.get("redirect_uri")!;
+      const login = await startAgentLogin({ clientId: docHost.clientId });
+      const authorize = new URL(login.authorizeUrl);
+      // No registration call: the agent goes straight to the CIMD front door
+      // with its URL client_id.
+      expect(authorize.pathname).toBe("/api/hydra/authorize");
+      expect(authorize.searchParams.get("client_id")).toBe(docHost.clientId);
+      const redirectUri = authorize.searchParams.get("redirect_uri")!;
+      // A loopback IP literal on an ephemeral port, matched against the
+      // document's port-less entry (never `localhost`, #281).
       expect(redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
       const { finalUrl, trace } = await driveAuthorize(login.authorizeUrl, {
         identity: sc.identity,
@@ -192,6 +222,14 @@ describe.skipIf(!modernEnabled())("agent proxy (system ssh) against sshd-modern"
       const result = await login.result;
       expect(result.code, result.stdout).toBe(0);
       expect(result.stdout).toContain("OK: authorized");
+      expect(docHost.hits()).toBeGreaterThan(0);
+      const onboarding = await sc.api.get<{ rows: { clientId: string; origin: string }[] }>(
+        "/api/audit/oauth-clients",
+      );
+      expect(onboarding.status).toBe(200);
+      const agentRows = onboarding.body.rows.filter((r) => r.clientId === docHost.clientId);
+      expect(agentRows.length).toBeGreaterThan(0);
+      expect(agentRows.every((r) => r.origin === "cimd")).toBe(true);
 
       // Daemon with no --token: credentials come from the (file) credstore and
       // the access token is minted via the refresh_token grant.

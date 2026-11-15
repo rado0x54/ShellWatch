@@ -710,6 +710,47 @@ components:
           description: The resource scope (mcp|agent) plus offline_access.
       required: [resource, authorization_servers, bearer_methods_supported, scopes_supported]
 
+    AgentClientMetadataDocument:
+      type: object
+      description: >-
+        OAuth Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document)
+        for `shellwatch-agent` (#256). Static: the same bytes on every instance,
+        embedded from `internal/hydra/agent-client-metadata.json`. `client_id` is
+        always the app.shellwatch.ai URL, which is the agent's fixed client_id.
+      properties:
+        client_id:
+          type: string
+          example: https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json
+        client_name: { type: string, example: ShellWatch Agent }
+        client_uri: { type: string }
+        software_id: { type: string, example: shellwatch-agent }
+        application_type: { type: string, example: native }
+        redirect_uris:
+          type: array
+          items: { type: string }
+          description: >-
+            Port-less loopback IP literals only (never `localhost`, #281); the
+            RFC 8252 §7.3 exception covers the agent's ephemeral port.
+          example: ["http://127.0.0.1/callback", "http://[::1]/callback"]
+        grant_types:
+          type: array
+          items: { type: string }
+        response_types:
+          type: array
+          items: { type: string }
+        token_endpoint_auth_method: { type: string, example: none }
+        scope: { type: string, example: agent }
+      required:
+        [
+          client_id,
+          client_name,
+          redirect_uris,
+          grant_types,
+          response_types,
+          token_endpoint_auth_method,
+          scope,
+        ]
+
     AuthorizationServerMetadata:
       type: object
       description: >-
@@ -992,6 +1033,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+        "404":
+          description: Agent proxy disabled — route not mounted.
+
+  /.well-known/shellwatch-agent-client.json:
+    get:
+      operationId: getAgentClientMetadataDocument
+      tags: [discovery]
+      security: []
+      summary: shellwatch-agent Client ID Metadata Document (only when agent proxy enabled)
+      description: >-
+        The agent's CIMD document (#256). Every instance serves it, but the
+        agent's `client_id` is always
+        `https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json`, so
+        only app.shellwatch.ai's copy is ever resolved; a self-hosted
+        authorization server fetches it from there. Served with
+        `Cache-Control: public, max-age=86400`.
+      responses:
+        "200":
+          description: Client metadata document
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=86400" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentClientMetadataDocument" }
         "404":
           description: Agent proxy disabled — route not mounted.
 

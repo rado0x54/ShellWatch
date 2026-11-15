@@ -208,8 +208,12 @@ export interface AgentLoginRun {
  * unavailable so the 0600 file fallback is used (never the developer's real
  * keychain). The caller drives the captured URL through Hydra and finishes by
  * fetching the agent's loopback callback.
+ *
+ * `clientId` overrides the agent's fixed CIMD client_id (#256) via
+ * SHELLWATCH_AGENT_CLIENT_ID, so the suite can serve the document from a local
+ * HTTPS host instead of depending on app.shellwatch.ai.
  */
-export async function startAgentLogin(): Promise<AgentLoginRun> {
+export async function startAgentLogin(opts: { clientId?: string } = {}): Promise<AgentLoginRun> {
   const bin = ensureAgentBinary();
   const home = mkdtempSync(join(tmpdir(), "swe2e-home-"));
   const stubBin = join(home, "bin");
@@ -229,6 +233,7 @@ export async function startAgentLogin(): Promise<AgentLoginRun> {
     // and the agent falls back to the file store under XDG_CONFIG_HOME.
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent/e2e-no-bus",
   };
+  if (opts.clientId) env.SHELLWATCH_AGENT_CLIENT_ID = opts.clientId;
   const chunks: string[] = [];
   const result = new Promise<CommandResult>((resolveResult) => {
     const child = spawn(bin, ["login", "--server", SERVER_URL, "--insecure"], {

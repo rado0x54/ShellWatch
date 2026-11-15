@@ -10,8 +10,9 @@
 //
 // Usage:
 //
-//	# Browser login (passkey). Registers a loopback client via DCR, then stores
-//	# the refresh token. Persisted per server URL.
+//	# Browser login (passkey). The agent's client_id is a fixed Client ID
+//	# Metadata Document URL the server resolves; no registration step. Stores
+//	# the refresh token (bound to the server's issuer). Persisted per server URL.
 //	shellwatch-agent login [--server URL] [--insecure]
 //
 //	# Remove the locally-stored credentials. Does not revoke the grant
@@ -119,13 +120,14 @@ func runLogin(args []string) error {
 		ServerURL:     serverURL,
 		Scope:         "agent",
 		AllowInsecure: *insecure,
+		ClientID:      os.Getenv(oauth.ClientIDEnv),
 		Stdout:        os.Stdout,
 	})
 	if err != nil {
 		return err
 	}
 
-	blob, err := oauth.StoredCreds{ClientID: result.ClientID, RefreshToken: result.RefreshToken}.Encode()
+	blob, err := oauth.StoredCreds{Issuer: result.Issuer, ClientID: result.ClientID, RefreshToken: result.RefreshToken}.Encode()
 	if err != nil {
 		return fmt.Errorf("encode credentials: %w", err)
 	}
@@ -165,8 +167,8 @@ func runLogout(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "OK: removed local credentials for %s.\n", serverURL)
-	fmt.Fprintf(os.Stdout, "  Note: the OAuth client still exists server-side. To revoke it entirely,\n")
-	fmt.Fprintf(os.Stdout, "  delete it in Settings → OAuth Clients at %s.\n", serverURL)
+	fmt.Fprintf(os.Stdout, "  Note: the refresh token is still valid server-side. To revoke it, revoke the\n")
+	fmt.Fprintf(os.Stdout, "  ShellWatch Agent session under Settings → Sessions at %s.\n", serverURL)
 	return nil
 }
 

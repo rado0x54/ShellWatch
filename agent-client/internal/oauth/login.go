@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Package oauth implements how shellwatch-agent authenticates to a ShellWatch
 // instance (#217): a loopback authorization_code + PKCE flow (RFC 6749 + 7636 +
-// 8252), identical to how an MCP client onboards. The agent registers a public
-// client via ShellWatch's mediated DCR, opens the browser for the user to log
-// in with a passkey + consent, and exchanges the code for an `agent`-scoped
-// access token + (rotating) refresh token. The token carries the user's
-// identity; the client is account-agnostic.
+// 8252), identical to how an MCP client onboards. There is no registration
+// step: the agent's client_id is a fixed OAuth Client ID Metadata Document URL
+// (CIMD, #256) that the ShellWatch server resolves itself. The agent opens the
+// browser for the user to log in with a passkey + consent, and exchanges the
+// code for an `agent`-scoped access token + (rotating) refresh token. The token
+// carries the user's identity; the client is account-agnostic.
 package oauth
 
 import (
@@ -13,7 +14,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +25,20 @@ import (
 	"strings"
 	"time"
 )
+
+// ClientID is the agent's OAuth client_id: the URL of its Client ID Metadata
+// Document, served by app.shellwatch.ai (the copy embedded in the ShellWatch
+// server, internal/hydra/agent-client-metadata.json). Every ShellWatch server
+// resolves this same URL, so a self-hosted server fetches it from
+// app.shellwatch.ai on the first agent login and once per cache TTL. The
+// document registers the port-less loopback IP redirect URIs, which cover the
+// ephemeral port bound below (RFC 8252 §7.3). Changing the URL orphans every
+// stored credential.
+const ClientID = "https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json"
+
+// ClientIDEnv overrides ClientID. It exists for the e2e suite, which serves a
+// copy of the document from a local HTTPS host; it is not a supported knob.
+const ClientIDEnv = "SHELLWATCH_AGENT_CLIENT_ID"
 
 // LoginTimeout caps how long the loopback listener waits for browser approval.
 const LoginTimeout = 5 * time.Minute
@@ -38,6 +52,8 @@ type LoginOptions struct {
 	Scope string
 	// AllowInsecure permits http:// for local dev.
 	AllowInsecure bool
+	// ClientID overrides the package ClientID (tests only). Empty → ClientID.
+	ClientID string
 	// OpenBrowser opens a URL; substituted in tests. Defaults to the OS opener.
 	OpenBrowser func(url string) error
 	// Stdout receives progress messages. nil → io.Discard.
@@ -45,9 +61,13 @@ type LoginOptions struct {
 }
 
 // Result is what a successful login returns. The caller persists ClientID +
-// RefreshToken (the daemon mints access tokens from them).
+// RefreshToken (the daemon mints access tokens from them) together with the
+// Issuer they were obtained from, so a server that starts answering for a
+// different authorization server forces a fresh login (MCP authorization
+// spec, "Authorization Server Binding").
 type Result struct {
 	ServerURL    string
+	Issuer       string
 	ClientID     string
 	RefreshToken string
 }
@@ -59,6 +79,10 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	}
 	if opts.Scope == "" {
 		opts.Scope = "agent"
+	}
+	clientID := opts.ClientID
+	if clientID == "" {
+		clientID = ClientID
 	}
 	if opts.OpenBrowser == nil {
 		opts.OpenBrowser = OpenBrowser
@@ -77,7 +101,13 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discover endpoints: %w", err)
 	}
+	if !eps.ClientIDMetadataDocumentSupported {
+		return nil, fmt.Errorf("%s does not support OAuth Client ID Metadata Documents, which shellwatch-agent requires "+
+			"(is hydra.cimd.enabled set to false?)", server)
+	}
 
+	// The redirect host is the loopback IP literal, never a hostname: only IP
+	// literals get the any-port exception the document relies on (#281).
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("bind loopback listener: %w", err)
@@ -86,14 +116,9 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	addr := listener.Addr().(*net.TCPAddr)
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", addr.Port)
 
-	// `offline_access` → refresh token. The mediated DCR endpoint also adds it to
-	// the client's allowed scope, so the authorize request below can request it.
+	// `offline_access` → refresh token. The server adds it to the provisioned
+	// client's allowed scope, so the authorize request below can request it.
 	requestScope := strings.TrimSpace(opts.Scope) + " offline_access"
-
-	clientID, err := registerClient(ctx, httpClient, eps.Registration, redirectURI, requestScope)
-	if err != nil {
-		return nil, fmt.Errorf("register client (DCR): %w", err)
-	}
 
 	verifier, challenge, err := newPkce()
 	if err != nil {
@@ -148,45 +173,7 @@ func Login(ctx context.Context, opts LoginOptions) (*Result, error) {
 	if tok.RefreshToken == "" {
 		return nil, errors.New("token response had no refresh_token (offline_access scope not granted?)")
 	}
-	return &Result{ServerURL: server, ClientID: clientID, RefreshToken: tok.RefreshToken}, nil
-}
-
-// registerClient performs mediated DCR for a public loopback client.
-func registerClient(ctx context.Context, client *http.Client, registrationEndpoint, redirectURI, scope string) (string, error) {
-	payload := map[string]any{
-		"client_name":                "shellwatch-agent",
-		"redirect_uris":              []string{redirectURI},
-		"grant_types":                []string{"authorization_code", "refresh_token"},
-		"response_types":             []string{"code"},
-		"scope":                      scope,
-		"token_endpoint_auth_method": "none",
-	}
-	buf, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, strings.NewReader(string(buf)))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("registration returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		ClientID string `json:"client_id"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("parse registration response: %w", err)
-	}
-	if out.ClientID == "" {
-		return "", errors.New("registration response missing client_id")
-	}
-	return out.ClientID, nil
+	return &Result{ServerURL: server, Issuer: eps.Issuer, ClientID: clientID, RefreshToken: tok.RefreshToken}, nil
 }
 
 func buildAuthorizeURL(authEndpoint, clientID, redirect, scope, state, challenge string) string {

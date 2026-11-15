@@ -52,7 +52,7 @@ graph TB
         Hydra["Ory Hydra<br/><i>:4444 public · :4445 admin</i>"]
     end
     User -. "passkey login + consent<br/>(authcode + PKCE)" .-> Hydra
-    Agent -. "mediated DCR + authcode/PKCE" .-> Hydra
+    Agent -. "mediated DCR / CIMD + authcode/PKCE" .-> Hydra
     SSHCli -. "mediated DCR + authcode/PKCE" .-> Hydra
     WebUI -. "introspect bearer (:4445)" .-> Hydra
     MCP -. "introspect bearer (:4445)" .-> Hydra
