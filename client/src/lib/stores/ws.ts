@@ -82,6 +82,20 @@ export const wsConnected = writable(false);
 let ws: WebSocket | null = null;
 const handlers = new Set<MessageHandler>();
 const lastOffsetBySession = new Map<string, number>();
+/** Sessions some view is attached to (#271). Attachment is per-connection
+ * state on the server, so a reconnected socket starts with none; `onopen`
+ * re-sends `terminal:attach` for each, with the last offset seen, so output
+ * resumes from where it stopped. */
+const attachedSessions = new Set<string>();
+
+function sendAttach(sessionId: string): void {
+  const afterOffset = lastOffsetBySession.get(sessionId);
+  wsSend({
+    type: "terminal:attach",
+    sessionId,
+    ...(afterOffset !== undefined ? { afterOffset } : {}),
+  });
+}
 
 function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
   const base = {
@@ -144,6 +158,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   ws = new WebSocket(url, [WS_BEARER_SUBPROTOCOL, token]);
 
   ws.onopen = () => {
+    for (const sessionId of attachedSessions) sendAttach(sessionId);
     wsConnected.set(true);
   };
 
@@ -162,6 +177,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
 
       if (msg.type === "terminal:closed") {
         lastOffsetBySession.delete(msg.sessionId);
+        attachedSessions.delete(msg.sessionId);
       }
 
       if (msg.type === "sign:request") {
@@ -215,19 +231,19 @@ export function wsSend(msg: Record<string, unknown>): void {
   }
 }
 
+/** Attach to a session. The attachment is remembered and replayed after a
+ * reconnect (#271) until `wsDetach` or `terminal:closed`; an attach while the
+ * socket is down is sent once it opens. */
 export function wsAttach(sessionId: string, options: { fresh?: boolean } = {}): void {
   if (options.fresh) lastOffsetBySession.delete(sessionId);
-  const afterOffset = lastOffsetBySession.get(sessionId);
-  wsSend({
-    type: "terminal:attach",
-    sessionId,
-    ...(afterOffset !== undefined ? { afterOffset } : {}),
-  });
+  attachedSessions.add(sessionId);
+  sendAttach(sessionId);
 }
 
 export function wsDetach(sessionId: string): void {
   wsSend({ type: "terminal:detach", sessionId });
   lastOffsetBySession.delete(sessionId);
+  attachedSessions.delete(sessionId);
 }
 
 export function wsSendInput(sessionId: string, data: string): void {

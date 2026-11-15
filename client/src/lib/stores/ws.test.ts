@@ -18,6 +18,7 @@ import {
   type SessionListEntry,
   sessions,
   wsAttach,
+  wsDetach,
   wsReleaseControl,
   wsSend,
   wsSendInput,
@@ -32,6 +33,7 @@ class MockWebSocket {
 
   url: string;
   readyState = MockWebSocket.OPEN;
+  onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   sent: string[] = [];
@@ -164,6 +166,7 @@ describe("ws store", () => {
     wsAttach("sess-1");
 
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:attach", sessionId: "sess-1" });
+    wsDetach("sess-1");
   });
 
   it("wsSendInput sends terminal:input message", async () => {
@@ -265,6 +268,81 @@ describe("ws store", () => {
 
     expect(oauth.getAccessToken).toHaveBeenCalledWith({ force: true });
 
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  // --- re-attach after reconnect (#271) ---
+
+  async function reconnect(): Promise<MockWebSocket> {
+    const before = MockWebSocket.instances.length;
+    MockWebSocket.instances[before - 1].onclose?.();
+    await vi.advanceTimersByTimeAsync(2000);
+    const next = MockWebSocket.instances[before];
+    next.onopen?.();
+    return next;
+  }
+
+  const attachFrames = (ws: MockWebSocket) =>
+    ws.sent.map((d) => JSON.parse(d)).filter((m) => m.type === "terminal:attach");
+
+  it("re-attaches attached sessions with their last offset after a reconnect", async () => {
+    vi.useFakeTimers();
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+    ws.onopen?.();
+
+    wsAttach("r1", { fresh: true });
+    wsAttach("r2", { fresh: true });
+    ws.simulateMessage({ type: "terminal:output", sessionId: "r1", data: "a", offset: 42 });
+
+    const next = await reconnect();
+    expect(attachFrames(next)).toEqual([
+      { type: "terminal:attach", sessionId: "r1", afterOffset: 42 },
+      { type: "terminal:attach", sessionId: "r2" },
+    ]);
+
+    wsDetach("r1");
+    wsDetach("r2");
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("does not re-attach detached or closed sessions", async () => {
+    vi.useFakeTimers();
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+    ws.onopen?.();
+
+    wsAttach("d1", { fresh: true });
+    wsAttach("c1", { fresh: true });
+    wsDetach("d1");
+    ws.simulateMessage({ type: "terminal:closed", sessionId: "c1" });
+
+    const next = await reconnect();
+    expect(attachFrames(next)).toEqual([]);
+
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("sends an attach made while the socket was down once it reopens", async () => {
+    vi.useFakeTimers();
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+    ws.onopen?.();
+    ws.onclose?.();
+    ws.readyState = 3; // CLOSED
+
+    wsAttach("o1", { fresh: true });
+    expect(ws.sent).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    const next = MockWebSocket.instances[1];
+    next.onopen?.();
+    expect(attachFrames(next)).toEqual([{ type: "terminal:attach", sessionId: "o1" }]);
+
+    wsDetach("o1");
     vi.clearAllTimers();
     vi.useRealTimers();
   });
