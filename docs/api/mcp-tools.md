@@ -4,7 +4,8 @@
 
 Language-agnostic contract for the MCP (Model Context Protocol) surface.
 Implementation: [`internal/mcp/`](../../internal/mcp/) (`server.go`,
-`tools_sessions.go`, `tools_endpoints.go`, `resources.go`).
+`tools_sessions.go`, `tools_endpoints.go`, `tools_files.go`, `resources.go`);
+the file tools are backed by [`internal/transfer/`](../../internal/transfer/).
 
 ## Transport & auth
 
@@ -180,6 +181,238 @@ Input: `{ action: "list" | "read"; id?: string }`.
 
 - `list` → `{ keys: [{ id, label, type, fingerprint }] }`
 - `read` → `{ id, label, type, fingerprint, publicKey }`
+
+## File tools (#263)
+
+Four tools move files to and from the remote host of an **open** session. They
+run over the **SFTP subsystem on the session's existing SSH connection** — no
+new signature and no approval prompt; ownership is the session's
+`(account, OAuth client_id)` and a foreign or unknown id gets the uniform
+`session not found: <id>`. They do not widen what an agent can already do
+through the terminal; they make it visible: every operation writes a
+`file_transfers` audit row (`GET /api/audit/file-transfers`) and a
+`terminal:file` WebSocket frame, all carrying the same `transferId`.
+
+### Privilege and path semantics (all four tools)
+
+Sharing the SSH connection does **not** share the shell. The SFTP subsystem
+runs as the **SSH login user** with its own working directory: after
+`cd /srv/app` or `sudo -i` in the terminal, the file tools still see the login
+user's view.
+
+- **Paths must be absolute.** A relative path is an `isError`:
+  `path must be absolute; the file tools do not follow the shell's working
+directory`.
+- Writing a root-owned file needs the login user to have write permission;
+  otherwise the call fails with the SFTP permission error and the agent must
+  fall back to the terminal (`sudo tee`).
+- **Symlinks:** reads follow them. Writes of either tier `lstat` the
+  destination first and refuse a symlink (`destination is a symlink; write to
+its target explicitly`). This check is **best effort under concurrent
+  filesystem changes**: SFTP v3 has no `O_NOFOLLOW`, so a symlink inserted
+  between the check and an in-place inline write is followed, and one inserted
+  before an `overwrite: true` link commit is replaced by the regular file. Only
+  the `overwrite: false` link commit is immune (`link(2)` fails on any existing
+  entry).
+- **Special files:** directories, devices, FIFOs and sockets are refused as
+  read sources and write destinations; `shellwatch_list_dir` reports them by
+  `type`.
+- **`mode`** (where accepted) is the permission bits, at most `0777` —
+  setuid/setgid/sticky are refused. Pass an **octal string** (`"0644"`,
+  `"600"`) or a JSON number holding the numeric value (`420` is `0o644`). A
+  number is never read as octal digits, so `644` (= `0o1204`) is rejected
+  rather than silently applied. Results report both `mode` (number) and
+  `modeOctal` (string).
+- A session whose transport has no file capability answers
+  `this session's transport does not support file transfer`; a host without an
+  SFTP subsystem answers the SSH error. There is no `exec cat` fallback.
+
+### Inline tier — small text/config files
+
+Bounded by `transfer.maxInlineBytes` (default 256 KiB, decoded) per call. One
+SFTP channel per session, opened on first use and reused; at most
+`transfer.maxInlineConcurrency` (default 2) calls run at once per session,
+further ones wait. The whole call, channel setup included, is bounded by
+`transfer.inlineTimeoutSeconds` (default 30): past it the result is the
+`isError` `file operation timed out`. A timed-out write that had already opened
+its destination says so (`…; the destination was already opened and may hold
+partial content`) — whatever was written stays.
+
+#### `shellwatch_list_dir`
+
+Input: `{ sessionId: string; path: string; maxEntries?: number /* default 200, cap 1000 */ }`.
+Success →
+
+```ts
+{ transferId: string;
+  entries: [{ name; type: "file" | "directory" | "symlink" | "fifo" | "socket" | "device" | "other";
+              size: number; mode: number; modeOctal: string; mtime: string /* ISO */;
+              target?: string /* symlink only */ }];
+  truncated: boolean }
+```
+
+Entries are sorted by name; `truncated` is `true` when more than `maxEntries`
+exist. `maxEntries` caps the result, not the read: the whole directory is read
+before sorting, so a very large directory is bounded only by
+`transfer.inlineTimeoutSeconds`.
+
+#### `shellwatch_read_file`
+
+Input: `{ sessionId: string; path: string; encoding?: "utf8" | "base64" }`.
+Success → `{ transferId, path, size, mode, modeOctal, mtime, sha256, content, encoding }`.
+
+The read is bounded, not the stat: content streams through a limit of
+`maxInlineBytes + 1`, so a file above the limit — including one that grows past
+it after the preliminary `stat` — fails with an `isError` naming the size and
+pointing at `shellwatch_transfer_file`. **Partial content is never returned.**
+`utf8` (default) refuses content that is not valid UTF-8 and asks for `base64`;
+`base64` lets small binaries round-trip. `size`, `mode` and `mtime` come from
+the open handle; `sha256` describes the returned bytes.
+
+#### `shellwatch_write_file`
+
+Input:
+
+```ts
+{ sessionId: string; path: string; content: string;
+  encoding?: "utf8" | "base64";
+  overwrite?: boolean /* default false */;
+  mode?: number | string }
+```
+
+Success → `{ transferId, path, bytes, sha256 }`.
+
+- `content` is decoded and size-checked **before the destination is opened**:
+  malformed base64 or an oversized payload never touches an existing file.
+- `overwrite: false` creates exclusively (`O_CREAT|O_EXCL`) and fails if the
+  path exists. The mode (`mode`, else `0644`) is set on the still-empty file
+  before any content byte is written.
+- `overwrite: true` truncates **in place**, so inode, owner, mode and hard
+  links survive; a supplied `mode` is applied after the write and deliberately
+  overrides preservation. A path that does not exist yet is created as above.
+- Residual window: a process that opened the just-created, still-empty file
+  between create and chmod keeps its descriptor. For secrets use the link
+  upload, which stages privately.
+
+### Link tier — `shellwatch_transfer_file`
+
+For large or binary files. The bytes never pass through the model: `create`
+mints a short-lived, single-use URL plus an exact `curl` command, the host's
+shell or sandbox runs it, and `status` reports the outcome (`curl`'s output
+never reaches the server).
+
+```ts
+{ action: "create"; sessionId: string; direction: "upload" | "download"; path: string;
+  maxBytes?: number /* default and cap: transfer.maxTransferBytes */;
+  sha256?: string /* upload: expected hex digest */;
+  overwrite?: boolean /* upload, default false */;
+  mode?: number | string /* upload */ }
+  → { transferId, url, method: "PUT" | "GET", expiresAt, maxBytes,
+      command: "curl -fsS -T './backup.tgz' 'https://<server>/api/transfers/<token>'" }
+
+{ action: "status" | "cancel"; transferId: string }
+  → { transferId, status: "pending" | "active" | "completed" | "failed" | "cancelled" | "expired",
+      direction, path, bytes, totalBytes?, sha256?, error?, truncated?: boolean,
+      commitOutcome?: "ok" | "failed" | "unknown",
+      cleanup?: "ok" | "failed", stagingPath? }
+```
+
+An unknown or foreign `transferId` answers `transfer not found: <id>`. `status`
+answers from memory while the record is retained
+(`transfer.statusRetentionSeconds`, `transfer.maxStatusRecords`) and from the
+audit row afterwards.
+
+**The link.** `PUT`/`GET /api/transfers/{token}` (see
+[`openapi.yaml`](./openapi.yaml)). The token — 32 random bytes — is the only
+credential on the route, because the sandbox running `curl` has no OAuth
+token. It is bound to account, client, session, direction, path, byte cap and
+expected digest; it is **single use** and must be claimed within
+`transfer.linkTtlSeconds` (default 300). The route sits behind
+`security.allowedNetworks` like `/mcp`: a sandbox that egresses from a
+different IP than the MCP client (claude.ai code execution, for one) needs its
+own CIDR — and its own egress allowlist must include the ShellWatch domain, or
+`curl` gets a 403 from the sandbox's proxy before reaching ShellWatch. The
+server never fetches from a URL the agent names.
+
+**Remote-server contract for uploads.** Link uploads require an
+OpenSSH-compatible `sftp-server` advertising **`posix-rename@openssh.com`** and
+**`hardlink@openssh.com`**. Without them `create` is an `isError`
+(`remote SFTP server lacks posix-rename/hardlink extensions; use
+shellwatch_write_file or the PTY`). There is **no fallback to weaker
+semantics**. The inline tools and downloads need only SFTP v3 core.
+
+**Upload commit.**
+
+1. A private staging directory `.<base>.<random>.tmp/` is created next to the
+   destination and set to `0700` while still empty; only then is `data` created
+   inside it (`O_CREAT|O_EXCL`) and set to `0600` before the first byte. A name
+   collision is a hard failure — an existing entry is never reused.
+2. The body streams under the byte cap with a running sha256. Overrun, digest
+   mismatch, idle timeout, cancellation or session end stop it and run cleanup.
+3. The final mode is set on the staged file: `mode` if given; else the existing
+   file's permission bits when `overwrite: true` replaces a regular file; else
+   `0644`.
+4. Commit: `overwrite: false` → **hardlink** (atomic no-clobber: fails if
+   _anything_ exists at the destination; a filesystem that refuses hard links
+   fails the transfer without touching the destination). `overwrite: true` →
+   **posix-rename** (atomic replace). The destination is never removed before
+   the replacement is in place.
+5. `completed` is reported **only after the commit was acknowledged**. A
+   commit the server rejected is `failed` with `commitOutcome: "failed"`
+   (destination untouched / original still in place). A connection lost after
+   the commit was sent and before its reply arrived is `failed` with
+   **`commitOutcome: "unknown"`** — inspect the destination (size, sha256)
+   before retrying. The same applies when the server keeps the connection open
+   but does not answer the commit within `transfer.commitTimeoutSeconds`
+   (default 30): the transfer's channel is closed and the outcome is `unknown`.
+   This is the only timeout that applies once the commit has been issued.
+6. Cleanup of the staging directory is best effort and bounded
+   (`transfer.cleanupTimeoutSeconds`). When it fails or cannot run (remote
+   hangup, session torn down), the result carries `cleanup: "failed"` and the
+   `stagingPath` of the leftover.
+7. Both commits create a **new inode**: ownership, ACLs and hard links of a
+   replaced file are not preserved (unlike `shellwatch_write_file`, which
+   truncates in place).
+
+**Download.** The file is opened first; size comes from the open handle and is
+sent as `Content-Length`. A premature EOF observed before that many bytes were
+read ends the response short (curl reports a partial transfer) and the status
+is `failed` with `error: "file shrank during transfer"`. After the last byte
+the server probes for one more on the same handle: data there sets
+`truncated: true`, meaning growth was **observed** at that moment — concurrent
+mutation cannot be detected in general. `sha256` always describes the bytes
+actually sent. `completed` means the server finished writing the response; it
+cannot attest that `curl` saved the file. Copying a live database file gives no
+consistency guarantee.
+
+**Lifecycle.**
+
+- A claim checks the token, that the session is still `open`, and the active
+  capacity (`transfer.maxActivePerAccount`, `transfer.maxActiveGlobal`) in one
+  step, before any SFTP resource exists. A capacity shortage answers **503**
+  with `Retry-After` and leaves the link `pending`, so `curl --retry` can still
+  succeed within the TTL. `create` is bounded separately by
+  `transfer.maxPendingPerSession` / `transfer.maxPendingGlobal` (an `isError`
+  naming the limit).
+- When the session leaves `open` — closed, idle-timed out, consent revoked,
+  account deleted, remote hangup — its unused links become `cancelled` and its
+  active transfers are aborted (`cancelled`; `failed` on a remote hangup).
+- **Cancel vs commit:** a cancel that arrives before the commit call wins
+  (`cancelled`, nothing at the destination). Once the commit has been issued a
+  cancel is ignored and the outcome is whatever the commit reports. `cancel`
+  returns promptly; cleanup settles in the background and shows up in a later
+  `status`. Cancelling never touches the terminal.
+- An active transfer fails after `transfer.idleTimeoutSeconds` without a byte
+  moved, and after `transfer.maxDurationSeconds` in total.
+- **Session idle timeout:** successful inline operations and real link-transfer
+  progress count as session activity. Minting links, polling `status`, listing
+  an empty directory and failed claims do not.
+- Links and live transfers do not survive a server restart. Transfers that were
+  unfinished read `failed` afterwards (`error: "server restarted"`;
+  `commitOutcome: "unknown"` if the restart hit mid-commit), with the staging
+  path preserved.
+- A link transfer that ends `failed` or `expired` raises a
+  `file-transfer-failed` notification for the account.
 
 ## Resources & server → client updates
 

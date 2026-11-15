@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Package mcp is the MCP surface: a stateless dual-era streamable-HTTP server
 // (spec 2026-07-28 + the 2025-11-25/2025-06-18 handshake eras, #243) exposing
-// the 7 shellwatch tools and the shellwatch://sessions resources. There are no
+// the shellwatch tools (sessions, endpoints, keys, and the #263 file tools)
+// and the shellwatch://sessions resources. There are no
 // protocol-level sessions: every request builds a fresh Server bound to an
 // AgentSession scoped to the request's (account, OAuth client); terminal
 // sessions are the durable handles. Server-initiated notifications are
@@ -13,6 +14,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/transfer"
 )
 
 // protocolVersions are the eras this server serves (docs/api/mcp-tools.md).
@@ -42,6 +45,8 @@ type Deps struct {
 	// NotifyDebounce coalesces per-session resources/updated notifications for
 	// output bursts (notifications.mcp.debounceMs; 0 -> 100ms).
 	NotifyDebounce time.Duration
+	// Transfers backs the file tools (#263); nil leaves them unregistered.
+	Transfers *transfer.Service
 }
 
 // Handler returns the /mcp handler: the sdk's stateless streamable-HTTP
@@ -119,15 +124,75 @@ func (d *Deps) buildServer(r *http.Request, principal auth.Principal) *mcpsdk.Se
 		// the unsubscribe method — see watcher.subscribe.
 		UnsubscribeHandler: func(context.Context, *mcpsdk.UnsubscribeRequest) error { return nil },
 	})
+	srv.AddReceivingMiddleware(logToolCalls(principal))
 	registerSessionTools(srv, as)
 	registerEndpointTools(srv, as)
 	registerKeyTools(srv, as, d.Keys)
+	if d.Transfers != nil {
+		registerFileTools(srv, as, d.Transfers)
+	}
 	registerSessionResources(srv, as, d.AgentDeps.Manager)
 	return srv
 }
 
 // setCacheable stamps the SEP-2549 cache-control fields: everything is
 // account-scoped ("private"); only the static tool set is worth caching.
+// toolSendKeys carries terminal input; its error text is not logged.
+const toolSendKeys = "shellwatch_send_keys"
+
+// logToolCalls logs one line per tools/call: tool, caller, duration, and the
+// error text of a failed call. Arguments are deliberately not logged (they
+// carry shell input and file contents).
+func logToolCalls(principal auth.Principal) mcpsdk.Middleware {
+	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			call, ok := req.(*mcpsdk.CallToolRequest)
+			if method != "tools/call" || !ok {
+				return next(ctx, method, req)
+			}
+			start := time.Now()
+			res, err := next(ctx, method, req)
+			attrs := []any{"tool", call.Params.Name, "account", principal.AccountID, "client", principal.ClientID}
+			if ci := call.ClientInfo(); ci != nil && ci.Name != "" {
+				attrs = append(attrs, "mcpClient", ci.Name)
+			}
+			attrs = append(attrs, "dur", time.Since(start).Round(time.Millisecond))
+			switch {
+			case err != nil:
+				slog.Warn("mcp: tool call failed", append(attrs, "err", err)...)
+			case isToolError(res) && call.Params.Name == toolSendKeys:
+				// Its errors echo the offending input ("unknown key: …").
+				slog.Info("mcp: tool call returned an error", attrs...)
+			case isToolError(res):
+				slog.Info("mcp: tool call returned an error", append(attrs, "err", toolErrorText(res))...)
+			default:
+				slog.Info("mcp: tool call", attrs...)
+			}
+			return res, err
+		}
+	}
+}
+
+func isToolError(res mcpsdk.Result) bool {
+	r, ok := res.(*mcpsdk.CallToolResult)
+	return ok && r.IsError
+}
+
+// toolErrorText is the first text block of an error result, capped so a
+// verbose tool error cannot flood the log.
+func toolErrorText(res mcpsdk.Result) string {
+	r, _ := res.(*mcpsdk.CallToolResult)
+	for _, c := range r.Content {
+		if t, ok := c.(*mcpsdk.TextContent); ok {
+			if len(t.Text) > 300 {
+				return t.Text[:300] + "…"
+			}
+			return t.Text
+		}
+	}
+	return ""
+}
+
 func setCacheable(_ context.Context, req mcpsdk.Request, c *mcpsdk.Cacheable) {
 	c.CacheScope = "private"
 	if _, ok := req.(*mcpsdk.ListToolsRequest); ok {

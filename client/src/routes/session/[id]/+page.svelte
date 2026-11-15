@@ -4,6 +4,7 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import Terminal from "$lib/components/Terminal.svelte";
+  import TransferStrip from "$lib/components/TransferStrip.svelte";
   import { type SessionMode, sessions } from "$lib/stores/ws.js";
   import type { PageProps } from "./$types";
 
@@ -35,13 +36,18 @@
 <div class="terminal-page">
   {#if session}
     {#key session.sessionId}
-      <Terminal
-        sessionId={session.sessionId}
-        mode={modes[session.sessionId] ?? session.mode}
-        onModeChange={(mode) => {
-          modes[session.sessionId] = mode;
-        }}
-      />
+      <!-- Mounted before the terminal: its attach reply carries the snapshot
+           of unfinished file transfers, and the strip must be listening. -->
+      <TransferStrip sessionId={session.sessionId} />
+      <div class="terminal-pane">
+        <Terminal
+          sessionId={session.sessionId}
+          mode={modes[session.sessionId] ?? session.mode}
+          onModeChange={(mode) => {
+            modes[session.sessionId] = mode;
+          }}
+        />
+      </div>
     {/key}
   {:else}
     <div class="placeholder">
@@ -58,6 +64,12 @@
     min-height: 0;
     position: relative;
     overflow: hidden;
+  }
+
+  /* The terminal fills what the transfer strip leaves. */
+  .terminal-pane {
+    flex: 1;
+    min-height: 0;
   }
 
   .placeholder {

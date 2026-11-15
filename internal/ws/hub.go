@@ -27,9 +27,46 @@ type Hub struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 
-	unsubStatus  func()
-	unsubOutput  func()
-	unsubRemoved func()
+	unsubStatus     func()
+	unsubOutput     func()
+	unsubRemoved    func()
+	unsubRegistered func()
+
+	// fileSnapshot delivers a terminal:file frame per unfinished file
+	// transfer of a session (#263), so a (re)attaching client reconstructs
+	// the transfer strip. It is called AFTER the connection is attached and
+	// must hold back live terminal:file frames while deliver runs, so no
+	// frame is lost between the snapshot and the attach. nil -> none.
+	fileSnapshot func(sessionID string, deliver func(frames []any))
+}
+
+// SetFileSnapshot wires the file-transfer snapshot source (set once at the
+// composition root, before the hub serves connections).
+func (h *Hub) SetFileSnapshot(fn func(sessionID string, deliver func(frames []any))) {
+	h.mu.Lock()
+	h.fileSnapshot = fn
+	h.mu.Unlock()
+}
+
+// SendToSession delivers a server message to every connection currently
+// attached to a session (terminal:file fan-out, #263). Attach is
+// account-checked, so this is account-scoped by construction.
+func (h *Hub) SendToSession(sessionID string, msg any) {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		if c.isAttached(sessionID) {
+			c.enqueue(raw)
+		}
+	}
 }
 
 // NewHub wires the hub to the terminal manager's guaranteed status hook and
@@ -39,6 +76,7 @@ func NewHub(mgr *terminal.Manager) *Hub {
 	h.unsubStatus = mgr.SubscribeStatus(h.onStatusChange)
 	h.unsubOutput = mgr.SubscribeOutput(h.onOutput)
 	h.unsubRemoved = mgr.SubscribeRemoved(h.onRemoved)
+	h.unsubRegistered = mgr.SubscribeRegistered(h.onRegistered)
 	return h
 }
 
@@ -50,8 +88,28 @@ func (h *Hub) Close() {
 	if h.unsubOutput != nil {
 		h.unsubOutput()
 	}
+	if h.unsubRegistered != nil {
+		h.unsubRegistered()
+	}
 	if h.unsubRemoved != nil {
 		h.unsubRemoved()
+	}
+}
+
+// onRegistered sends the owning account's connections a sessions:changed that
+// lists a session still connecting (status opening), so a browser approving
+// its SSH signature can open the session's page right away (#273).
+func (h *Hub) onRegistered(_, accountID string) {
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		if c.accountID == accountID {
+			conns = append(conns, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		c.send(h.sessionList(c))
 	}
 }
 
@@ -157,8 +215,9 @@ func (h *Hub) sessionList(c *conn) map[string]any {
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }
 
-// Serve runs the read loop for an accepted connection until it closes.
-func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) {
+// Serve runs the read loop for an accepted connection until it closes and
+// returns the read error that ended it (for the disconnect log line).
+func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) error {
 	c := newConn(wsc, accountID)
 	h.add(c)
 	defer h.remove(c)
@@ -172,7 +231,7 @@ func (h *Hub) Serve(ctx context.Context, wsc *websocket.Conn, accountID string) 
 	for {
 		_, raw, err := wsc.Read(ctx)
 		if err != nil {
-			return
+			return err
 		}
 		msg := parseClientMessage(raw)
 		if msg == nil {

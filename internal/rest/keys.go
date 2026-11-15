@@ -29,7 +29,7 @@ func (k *Keys) list(w http.ResponseWriter, r *http.Request) {
 	if k.Accounts.IsAdmin(r.Context(), accountID(r)) {
 		keys, err := k.Store.ListFull(r.Context())
 		if err != nil {
-			writeErr(w, 500, "internal error")
+			writeInternal(w, r, err)
 			return
 		}
 		for _, key := range keys {

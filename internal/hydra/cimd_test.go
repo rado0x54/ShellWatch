@@ -175,12 +175,21 @@ func TestValidateDocument(t *testing.T) {
 		{"redirect_uri against policy", func(d *ClientMetadata) {
 			d.RedirectURIs = []string{"https://evil.example.net/callback"}
 		}, "not allowed by policy"},
-		{"grant_type unsupported", func(d *ClientMetadata) {
+		{"grant_types without authorization_code", func(d *ClientMetadata) {
 			d.GrantTypes = []string{"client_credentials"}
-		}, "grant_type"},
+		}, "authorization_code"},
+		{"grant_types refresh_token only", func(d *ClientMetadata) {
+			d.GrantTypes = []string{"refresh_token"}
+		}, "authorization_code"},
 		{"grant_type implicit", func(d *ClientMetadata) {
 			d.GrantTypes = []string{"implicit"}
 		}, "grant_type"},
+		{"grant_type implicit alongside authorization_code", func(d *ClientMetadata) {
+			d.GrantTypes = []string{"authorization_code", "implicit"}
+		}, "grant_type"},
+		{"grant_types with extra unsupported grant", func(d *ClientMetadata) {
+			d.GrantTypes = []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"}
+		}, ""},
 		{"response_type unsupported", func(d *ClientMetadata) {
 			d.ResponseTypes = []string{"token"}
 		}, "response_type"},
@@ -224,6 +233,34 @@ func TestValidateDocumentDefaults(t *testing.T) {
 	}
 	if !sameStrings(got.ResponseTypes, []string{"code"}) {
 		t.Errorf("response_types = %v", got.ResponseTypes)
+	}
+}
+
+func TestValidateDocumentNarrowsGrantTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared []string
+		want     []string
+	}{
+		{"omitted defaults", nil, []string{"authorization_code", "refresh_token"}},
+		{"code only", []string{"authorization_code"}, []string{"authorization_code"}},
+		{"code and refresh", []string{"refresh_token", "authorization_code"}, []string{"authorization_code", "refresh_token"}},
+		{"jwt-bearer dropped", []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"}, []string{"authorization_code", "refresh_token"}},
+		{"client_credentials dropped", []string{"authorization_code", "client_credentials"}, []string{"authorization_code"}},
+		{"duplicates collapse", []string{"authorization_code", "authorization_code"}, []string{"authorization_code"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := validDoc()
+			doc.GrantTypes = tc.declared
+			got, err := ValidateDocument(doc, testClientID, testPolicy())
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if !sameStrings(got.GrantTypes, tc.want) {
+				t.Errorf("grant_types = %v, want %v", got.GrantTypes, tc.want)
+			}
+		})
 	}
 }
 

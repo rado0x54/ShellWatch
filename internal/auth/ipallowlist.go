@@ -6,6 +6,7 @@
 package auth
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 
@@ -48,7 +49,9 @@ func (c *IPChecker) Allowed(ip string) bool {
 // behind a reverse proxy checks the real client, not the proxy's 127.0.0.1.
 func (c *IPChecker) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !c.Allowed(realip.FromRequest(r)) {
+		if ip := realip.FromRequest(r); !c.Allowed(ip) {
+			// No path: the allowlisted transfer route carries a token in it.
+			slog.Warn("auth: source IP not in allowlist", "method", r.Method, "sourceIp", ip)
 			apierr.Write(w, http.StatusForbidden, "Forbidden")
 			return
 		}

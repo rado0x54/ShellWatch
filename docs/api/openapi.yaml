@@ -65,7 +65,9 @@ tags:
   - name: actions
     description: Human-in-the-loop signing approvals
   - name: audit
-    description: Session-lifecycle + signing-request audit log + notification log
+    description: Session-lifecycle + signing-request audit log + notification log + file-transfer log
+  - name: transfers
+    description: Out-of-band file transfer links minted by the MCP file tools (#263)
   - name: keys
     description: File-based SSH key listing (admin)
   - name: push
@@ -426,6 +428,150 @@ components:
         createdAt: { type: string }
       required: [id, clientId, origin, event, createdAt]
 
+    FileTransferPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/FileTransferRow" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    FileTransferRow:
+      type: object
+      description: >-
+        One file operation an MCP agent performed through a session (#263).
+        Inline operations (tier `inline`) are written once, already finished.
+        A link transfer's row (tier `link`) is saved ahead of each state
+        transition, so it is also the durable record after a crash. The same
+        fields are pushed live as the terminal:file WebSocket message (see
+        docs/api/websocket-protocol.md). The transfer token is never stored.
+      properties:
+        transferId: { type: string }
+        accountId: { type: string }
+        sessionId: { type: string }
+        endpointId: { type: string }
+        tier:
+          type: string
+          enum: [inline, link]
+          description: "`inline`: one tool call. `link`: out-of-band HTTP transfer."
+        direction:
+          type: string
+          enum: [upload, download, list]
+          description: >-
+            `upload` writes to the remote host, `download` reads from it;
+            `list` is a directory listing (inline only).
+        path:
+          type: string
+          description: Absolute remote path.
+        status:
+          type: string
+          enum: [pending, active, committing, completed, failed, cancelled, expired]
+          description: >-
+            `committing` (link uploads: the commit call has been issued) is
+            visible here only; the MCP tool and the WebSocket frame report it
+            as `active`.
+        bytes:
+          type: integer
+          format: int64
+          description: Bytes moved.
+        totalBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Expected size, when known.
+        sha256:
+          type: string
+          nullable: true
+          description: Hex digest of the bytes written / sent.
+        error: { type: string, nullable: true }
+        truncated:
+          type: boolean
+          nullable: true
+          description: >-
+            Link downloads: `true` when the file was observed to grow after the
+            copy (a post-copy extra-byte probe). Observed growth only —
+            concurrent mutation cannot be detected in general.
+        commitOutcome:
+          type: string
+          nullable: true
+          enum: [ok, failed, unknown, null]
+          description: >-
+            Link uploads. `unknown`: the connection was lost (or the server
+            restarted) after the commit was sent and before its reply arrived —
+            inspect the destination before retrying.
+        cleanup:
+          type: string
+          nullable: true
+          enum: [ok, failed, null]
+          description: Link uploads — outcome of the best-effort staging cleanup.
+        stagingPath:
+          type: string
+          nullable: true
+          description: >-
+            The staging directory while it exists; with cleanup `failed`, the
+            leftover a human should remove.
+        clientId:
+          type: string
+          nullable: true
+          description: The authenticated OAuth `client_id` that issued the operation.
+        mcpClientName:
+          type: string
+          nullable: true
+          description: Client-reported MCP client name.
+        mcpClientVersion: { type: string, nullable: true }
+        sourceIp: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true }
+      required:
+        - transferId
+        - accountId
+        - sessionId
+        - endpointId
+        - tier
+        - direction
+        - path
+        - status
+        - bytes
+        - totalBytes
+        - sha256
+        - error
+        - truncated
+        - commitOutcome
+        - cleanup
+        - stagingPath
+        - clientId
+        - mcpClientName
+        - mcpClientVersion
+        - sourceIp
+        - createdAt
+        - updatedAt
+        - finishedAt
+
+    TransferResult:
+      type: object
+      description: >-
+        Outcome body of a transfer link request (upload always; download only
+        when it failed before the response body started). Same shape as the
+        shellwatch_transfer_file `status` result.
+      properties:
+        transferId: { type: string }
+        status:
+          type: string
+          enum: [pending, active, completed, failed, cancelled, expired]
+        direction: { type: string, enum: [upload, download] }
+        path: { type: string }
+        bytes: { type: integer, format: int64 }
+        totalBytes: { type: integer, format: int64 }
+        sha256: { type: string }
+        error: { type: string }
+        truncated: { type: boolean }
+        commitOutcome: { type: string, enum: [ok, failed, unknown] }
+        cleanup: { type: string, enum: [ok, failed] }
+        stagingPath: { type: string }
+      required: [transferId, status, direction, path, bytes]
+
     NotificationPage:
       type: object
       properties:
@@ -457,7 +603,12 @@ components:
             host-key-mismatch audit row); session-connect-failed — any other
             failed SSH connect, whatever the trigger (payload: endpointId,
             endpointLabel, endpointAddress, trigger, mcpClientName,
-            mcpClientVersion, mcpReason, sourceIp, error). Clients must ignore
+            mcpClientVersion, mcpReason, sourceIp, error);
+            file-transfer-failed — an out-of-band file transfer ended failed
+            or expired, including one interrupted by a server restart
+            (payload: transferId, sessionId, endpointId, direction, path,
+            status, error, bytes, commitOutcome, cleanup, stagingPath,
+            mcpClientName). Clients must ignore
             unknown kinds gracefully (render title/detail, no typed action).
         severity: { type: string, enum: [info, warning, error] }
         title:
@@ -1762,6 +1913,216 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
           description: Caller does not hold the admin role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/audit/file-transfers:
+    get:
+      operationId: listAuditFileTransfers
+      tags: [audit]
+      summary: File-transfer log
+      description: >-
+        The fifth audit surface (#263): every file operation an MCP agent
+        performed through one of the account's sessions — inline
+        list/read/write and out-of-band link transfers — keyset-paginated,
+        newest first, account-scoped. Live delivery to attached browsers
+        happens over the WebSocket (terminal:file).
+      parameters:
+        - name: sessionId
+          in: query
+          description: Only operations of this session.
+          schema: { type: string }
+        - name: direction
+          in: query
+          description: "`upload`, `download` or `list`; any other value is a 400."
+          schema: { type: string, enum: [upload, download, list] }
+        - name: tier
+          in: query
+          description: "`inline` or `link`; any other value is a 400."
+          schema: { type: string, enum: [inline, link] }
+        - name: status
+          in: query
+          description: A FileTransferRow status; any other value is a 400.
+          schema:
+            type: string
+            enum: [pending, active, committing, completed, failed, cancelled, expired]
+        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side: non-finite or ≤0 → 50; values
+            above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Page of file-transfer rows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileTransferPage" }
+        "400":
+          description: Invalid direction, tier or status filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ------------------------------------------------------------- transfers
+  /api/transfers/{token}:
+    put:
+      operationId: uploadTransfer
+      tags: [transfers]
+      summary: Upload a file through a transfer link
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: >-
+            The opaque single-use transfer token from the
+            `shellwatch_transfer_file` `create` result. It is the **only**
+            credential on this route and is redacted from the access log
+            (`/api/transfers/***`).
+          schema: { type: string }
+      description: >-
+        Streams the raw request body to the remote path the link is bound to,
+        over the SFTP subsystem of the bound session (#263). No bearer token:
+        the token in the path is the credential, because the sandbox running
+        `curl` has none. The route sits behind `security.allowedNetworks` (403
+        `Forbidden`, same as `/mcp`).
+
+
+        The link is **single use** and must be claimed within
+        `transfer.linkTtlSeconds`. An unknown, used, expired or
+        session-invalidated token — and a link minted for a download — all
+        answer the same 404. When active capacity is exhausted the answer is
+        503 with `Retry-After` and the link stays usable.
+
+
+        The body is staged in a private directory next to the destination and
+        committed atomically (hardlink for no-clobber, posix-rename for
+        replace); see docs/api/mcp-tools.md for the commit, cleanup and
+        cancellation semantics. Every response carries `Cache-Control: no-store`.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Committed. `status` is `completed`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "403":
+          description: Peer address outside `security.allowedNetworks`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown, used, expired or invalidated link (uniform)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >-
+            Refused or aborted: destination exists / is a symlink or special
+            file, the commit was rejected (`commitOutcome: failed`), or the
+            transfer was cancelled, timed out, or lost its session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "413":
+          description: Body exceeds the link's byte cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "422":
+          description: sha256 of the body does not match the expected digest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "502":
+          description: >-
+            Remote SFTP failure, including a connection lost during the commit
+            (`commitOutcome: unknown`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "503":
+          description: >-
+            Too many active transfers (`transfer.maxActivePerAccount` /
+            `transfer.maxActiveGlobal`). Carries `Retry-After`; the link stays
+            pending and can be retried within its TTL.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds to wait before retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      operationId: downloadTransfer
+      tags: [transfers]
+      summary: Download a file through a transfer link
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The opaque single-use transfer token (see the upload).
+          schema: { type: string }
+      description: >-
+        Streams the remote file the link is bound to. Gating, single-use, TTL,
+        the uniform 404 and the 503 capacity answer are as for the upload.
+
+
+        The file is opened first and `Content-Length` is its size at that
+        moment. If the file shrinks while it is read, the response **ends short
+        of `Content-Length`** (the client sees a truncated transfer) and the
+        transfer is `failed`. Once the body has started, a failure can only be
+        signalled that way — ask `shellwatch_transfer_file` `status` for the
+        outcome. A completed response means the server finished sending; it
+        cannot attest that the client saved the file.
+      responses:
+        "200":
+          description: The file's bytes
+          headers:
+            Content-Length:
+              schema: { type: integer }
+              description: Size of the file when it was opened.
+            X-Transfer-Id:
+              schema: { type: string }
+              description: The transfer's id.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "403":
+          description: Peer address outside `security.allowedNetworks`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown, used, expired or invalidated link (uniform)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The remote path cannot be opened or is not a regular file
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "413":
+          description: The file is larger than the link's byte cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "502":
+          description: Remote SFTP failure before the body started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResult" }
+        "503":
+          description: Too many active transfers; carries `Retry-After`
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

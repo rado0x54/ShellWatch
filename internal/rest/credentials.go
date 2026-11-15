@@ -40,7 +40,7 @@ func (c *Credentials) Mount(r chi.Router) {
 func (c *Credentials) list(w http.ResponseWriter, r *http.Request) {
 	creds, err := c.Store.ListForAccountFull(r.Context(), accountID(r))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(creds))
@@ -82,7 +82,7 @@ func (c *Credentials) label(w http.ResponseWriter, r *http.Request) {
 	// Ownership check.
 	creds, err := c.Store.ListForAccountFull(r.Context(), acct)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if !ownsCredential(creds, id) {
@@ -91,7 +91,7 @@ func (c *Credentials) label(w http.ResponseWriter, r *http.Request) {
 	}
 	conflict, err := c.Store.LabelConflict(r.Context(), acct, trimmed, id)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if conflict {
@@ -99,7 +99,7 @@ func (c *Credentials) label(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := c.Store.SetLabel(r.Context(), id, acct, trimmed); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "updated"})
@@ -115,7 +115,7 @@ func (c *Credentials) revoke(w http.ResponseWriter, r *http.Request) {
 
 	creds, err := c.Store.ListForAccountFull(r.Context(), acct)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	var target *store.CredentialRow
@@ -137,7 +137,7 @@ func (c *Credentials) revoke(w http.ResponseWriter, r *http.Request) {
 	if target.State == "active" {
 		n, err := c.Store.ActiveCount(r.Context(), acct)
 		if err != nil {
-			writeErr(w, 500, "internal error")
+			writeInternal(w, r, err)
 			return
 		}
 		if n <= 1 {
@@ -146,7 +146,7 @@ func (c *Credentials) revoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := c.Store.Revoke(r.Context(), id); err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	// Optionally sign out everywhere (Hydra keys by subject, so account-wide).

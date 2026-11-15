@@ -42,6 +42,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
 	"github.com/rado0x54/shellwatch/web"
@@ -336,6 +337,56 @@ func run() error {
 	auditWriter.AttachManager(manager, manager.GetSession)
 	auditWriter.AttachStore(actionStore)
 
+	// MCP file tools (#263): inline reads/writes and out-of-band link
+	// transfers over the SFTP subsystem of open sessions. Tokens and live
+	// transfers are process memory, so first close out whatever a previous
+	// process left unfinished — each interrupted transfer becomes a truthful
+	// failed row (staging path preserved) and one notification.
+	fileTransferLog := audit.NewFileTransfers(db, clk)
+	notifyTransferFailed := func(p transferFailure) {
+		title := fmt.Sprintf("File %s of %s %s", p.Direction, p.Path, p.Status)
+		detail := fmt.Sprintf("Transfer:  %s\nSession:   %s\nPath:      %s\nError:     %s", p.TransferID, p.SessionID, p.Path, p.Error)
+		if p.CommitOutcome == transfer.CommitUnknown {
+			detail += "\n\nThe commit outcome is unknown: inspect the destination (size, sha256) before retrying."
+		}
+		if p.Cleanup == transfer.CleanupFailed && p.StagingPath != "" {
+			detail += "\n\nLeftover staging directory: " + p.StagingPath + " — remove it manually."
+		}
+		notifSvc.Publish(context.Background(), notify.PublishParams{
+			AccountID: p.AccountID,
+			Type:      notify.TypeFileTransferFailed,
+			Severity:  notify.SeverityWarning,
+			Title:     title,
+			Detail:    detail,
+			Payload: map[string]any{
+				"transferId": p.TransferID, "sessionId": p.SessionID, "endpointId": p.EndpointID,
+				"direction": p.Direction, "path": p.Path, "status": p.Status, "error": p.Error,
+				"bytes": p.Bytes, "commitOutcome": p.CommitOutcome, "cleanup": p.Cleanup,
+				"stagingPath": p.StagingPath, "mcpClientName": p.ClientName,
+			},
+		})
+	}
+	if interrupted, err := fileTransferLog.ReconcileInterrupted(ctx); err != nil {
+		slog.Warn("file transfers: startup reconciliation failed", "err", err)
+	} else {
+		for _, row := range interrupted {
+			slog.Warn("file transfer interrupted by restart", "transfer", row.TransferID, "path", row.Path)
+			notifyTransferFailed(transferFailureFromRow(row))
+		}
+	}
+	transfers := transfer.New(transfer.Params{
+		Manager:     manager,
+		Limits:      cfg.Transfer,
+		Clock:       clk,
+		Audit:       fileTransferLog,
+		Publisher:   wsHub,
+		ExternalURL: func() string { return cfg.Server.ExternalURL },
+		OnFailed:    func(v transfer.View) { notifyTransferFailed(transferFailureFromView(v)) },
+	})
+	defer transfers.Close()
+	wsHub.SetFileSnapshot(transfers.SnapshotTo)
+	go transfers.RunJanitor(ctx, 10*time.Second)
+
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
@@ -343,6 +394,7 @@ func run() error {
 		Version:        buildInfo.Display,
 		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
 		MaxOwned:       store.NewAccounts(db).MaxSessions,
+		Transfers:      transfers,
 	}
 
 	// Account-deleted teardown (app.ts accountLifecycle "deleted", #217): close
@@ -405,7 +457,10 @@ func run() error {
 			Notify:       notifSvc,
 			OAuthClients: oauthClientLog,
 			IsAdmin:      store.NewAccounts(db),
+
+			FileTransfers: fileTransferLog,
 		},
+		Transfers: transfers,
 		Accounts: &rest.Accounts{
 			Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc,
 			Now:       func() string { return clk.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
@@ -443,7 +498,16 @@ func run() error {
 	})
 
 	addr := net.JoinHostPort(bindHost(), strconv.Itoa(cfg.Server.Port))
-	srv := &http.Server{Addr: addr, Handler: handler}
+	// Request contexts hang off reqCtx, not the signal ctx, so a shutdown can
+	// let in-flight requests finish for a grace period before cancelling
+	// them (#272).
+	reqCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	srv := &http.Server{
+		Addr:        addr,
+		Handler:     handler,
+		BaseContext: func(net.Listener) context.Context { return reqCtx },
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -456,6 +520,7 @@ func run() error {
 	select {
 	case err := <-errCh:
 		stop()            // cancel the root ctx so the janitors and the flusher exit
+		cancelRequests()  // unwind any handler (incl. hijacked WebSockets) still running
 		_ = srv.Close()   // sever accepted conns: no in-flight handler may create a session after Destroy
 		manager.Destroy() // close open PTYs cleanly + write their session-close audit rows
 		<-flusherDone
@@ -463,24 +528,27 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
-	// Ordered shutdown (§5.1): stop accepting HTTP and drain; if the drain
-	// deadline fires with a handler still running (a long MCP stream),
-	// hard-close the remaining connections so the straggler stops producing
-	// work. Then close all terminals, join the flusher, and CloseAndFlush:
-	// it flushes and marks the flusher closed atomically, so no Touch from
-	// any surviving goroutine can land after the final flush — "the flush is
-	// the last-used table's last write before db.Close" holds structurally
-	// on every branch, not just the clean drain.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	err = srv.Shutdown(shutdownCtx)
-	if err != nil {
-		_ = srv.Close()
+	// Restore default signal handling right away so a second Ctrl-C kills the
+	// process instead of being swallowed by the already-cancelled ctx (#272).
+	stop()
+	slog.Info("shutting down (press Ctrl-C again to force)")
+
+	// Ordered shutdown (§5.1): stop accepting HTTP and drain — after a short
+	// grace the request contexts are cancelled so long MCP streams unwind; a
+	// handler that still outlives the deadline is hard-closed so it stops
+	// producing work. Then close all terminals, join the flusher, and
+	// CloseAndFlush: it flushes and marks the flusher closed atomically, so no
+	// Touch from any surviving goroutine can land after the final flush — "the
+	// flush is the last-used table's last write before db.Close" holds
+	// structurally on every branch, not just the clean drain.
+	if drainHTTP(srv, cancelRequests, shutdownGrace, shutdownDeadline) {
+		// The shutdown still completed; a straggler is not a failure (#272).
+		slog.Warn("drain deadline reached; remaining connections were closed", "deadline", shutdownDeadline)
 	}
 	manager.Destroy()
 	<-flusherDone
 	flusher.CloseAndFlush(context.Background())
-	return err
+	return nil
 }
 
 // setupLogging installs the default slog handler. Controlled by env:
@@ -559,6 +627,40 @@ func staticFilesystem(dir string) (fs.FS, error) {
 }
 
 func newUUID() string { return ids.NewUUID() }
+
+// transferFailure is what a file-transfer-failed notification is built from —
+// either a live transfer's final snapshot or a row closed out by the startup
+// reconciliation.
+type transferFailure struct {
+	TransferID, AccountID, SessionID, EndpointID string
+	Direction, Path, Status, Error               string
+	Bytes                                        int64
+	CommitOutcome, Cleanup, StagingPath          string
+	ClientName                                   string
+}
+
+func transferFailureFromView(v transfer.View) transferFailure {
+	return transferFailure{
+		TransferID: v.TransferID, AccountID: v.AccountID, SessionID: v.SessionID, EndpointID: v.EndpointID,
+		Direction: v.Direction, Path: v.Path, Status: string(v.Status), Error: v.Error, Bytes: v.Bytes,
+		CommitOutcome: v.CommitOutcome, Cleanup: v.Cleanup, StagingPath: v.StagingPath, ClientName: v.ClientName,
+	}
+}
+
+func transferFailureFromRow(r audit.FileTransferRow) transferFailure {
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	return transferFailure{
+		TransferID: r.TransferID, AccountID: r.AccountID, SessionID: r.SessionID, EndpointID: r.EndpointID,
+		Direction: r.Direction, Path: r.Path, Status: r.Status, Error: str(r.Error), Bytes: r.Bytes,
+		CommitOutcome: str(r.CommitOutcome), Cleanup: str(r.Cleanup), StagingPath: str(r.StagingPath),
+		ClientName: str(r.MCPClientName),
+	}
+}
 
 func mustGetwd() string {
 	wd, err := os.Getwd()

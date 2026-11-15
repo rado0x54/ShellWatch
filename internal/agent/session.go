@@ -79,6 +79,22 @@ func (s *Session) SetClientInfo(name, version string) {
 	s.clientVer = util.SanitizeClientReported(version)
 }
 
+// AccountID is the account this request acts for.
+func (s *Session) AccountID() string { return s.accountID }
+
+// ClientID is the authenticated OAuth client_id ownership is scoped to.
+func (s *Session) ClientID() string { return s.clientID }
+
+// SourceIP is the request's effective client IP.
+func (s *Session) SourceIP() string { return s.sourceIP }
+
+// ClientInfo returns the (sanitized) client-reported name and version.
+func (s *Session) ClientInfo() (name, version string) { return s.clientName, s.clientVer }
+
+// AssertOwned returns the uniform "session not found" error unless sessionID
+// is one of this client's sessions.
+func (s *Session) AssertOwned(sessionID string) error { return s.assertOwned(sessionID) }
+
 // EndpointInfo is the subset the MCP list tool returns (contract item C: MCP
 // list omits userVerification/agentForward/isDemo).
 type EndpointInfo struct {

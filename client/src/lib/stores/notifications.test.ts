@@ -43,6 +43,10 @@ describe("notificationLink", () => {
       href: "/settings/endpoints",
       label: "Review endpoint",
     });
+    expect(notificationLink({ ...n("x"), type: "file-transfer-failed" })).toEqual({
+      href: "/audit/file-transfers",
+      label: "View file transfers",
+    });
     expect(notificationLink({ ...n("x"), type: "future-kind" })).toBeUndefined();
   });
 });

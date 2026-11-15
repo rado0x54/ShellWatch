@@ -256,14 +256,11 @@ func ValidateDocument(doc ClientMetadata, clientIDURL string, policy ClientPolic
 		}
 	}
 
-	if len(doc.GrantTypes) == 0 {
-		doc.GrantTypes = []string{"authorization_code", "refresh_token"}
+	grants, err := narrowGrantTypes(doc.GrantTypes)
+	if err != nil {
+		return doc, err
 	}
-	for _, gt := range doc.GrantTypes {
-		if gt != "authorization_code" && gt != "refresh_token" {
-			return doc, fmt.Errorf("grant_type %q is not supported", gt)
-		}
-	}
+	doc.GrantTypes = grants
 	if len(doc.ResponseTypes) == 0 {
 		doc.ResponseTypes = []string{"code"}
 	}
@@ -273,6 +270,40 @@ func ValidateDocument(doc ClientMetadata, clientIDURL string, policy ClientPolic
 		}
 	}
 	return doc, nil
+}
+
+// narrowGrantTypes reduces a document's grant_types to the ones ShellWatch
+// provisions: authorization_code and, if listed, refresh_token. A document's
+// grant_types only declares what the client MAY use, and RFC 7591 §3.2.1 lets
+// the server replace requested metadata with what it supports — so an extra
+// grant (e.g. RFC 7523 jwt-bearer) is dropped rather than refusing the client.
+// The narrowed list is what reaches Hydra, so a dropped grant is never usable.
+//
+// Two cases still reject: implicit (never acceptable, OAuth 2.1 removes it)
+// and a list without authorization_code (no flow ShellWatch can serve).
+func narrowGrantTypes(declared []string) ([]string, error) {
+	if len(declared) == 0 {
+		return []string{"authorization_code", "refresh_token"}, nil
+	}
+	var hasCode, hasRefresh bool
+	for _, gt := range declared {
+		switch gt {
+		case "authorization_code":
+			hasCode = true
+		case "refresh_token":
+			hasRefresh = true
+		case "implicit":
+			return nil, fmt.Errorf("grant_type %q is not supported", gt)
+		}
+	}
+	if !hasCode {
+		return nil, fmt.Errorf("grant_types must include authorization_code")
+	}
+	grants := []string{"authorization_code"}
+	if hasRefresh {
+		grants = append(grants, "refresh_token")
+	}
+	return grants, nil
 }
 
 // GrantedScope filters a requested scope through the shared DCR allowlist and

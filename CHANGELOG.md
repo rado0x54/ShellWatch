@@ -1,4 +1,4 @@
-## v2.0.0 (unreleased)
+## v2.0.0 (2026-11-11)
 
 ### ⚠️ Breaking: MCP implements spec revision 2026-07-28, statelessly (#243)
 
@@ -105,6 +105,28 @@ and never skips consent for a CIMD client. Configure under `hydra.cimd` (on by
 default; see `config.sample.yaml`). Both onboarding paths now write an
 admin-only registration log (Audit → OAuth clients).
 
+### New: MCP file transfer tools (#263)
+
+Agents can now move files without scraping the terminal. Four new MCP tools run
+over the SFTP subsystem of an **open session's existing SSH connection** — no
+new signature, no approval prompt — as the SSH login user, absolute paths only:
+
+- `shellwatch_list_dir`, `shellwatch_read_file`, `shellwatch_write_file` for
+  small text/config files inline (256 KiB by default; `base64` for binaries).
+- `shellwatch_transfer_file` for large or binary files: it mints a short-lived,
+  single-use URL plus an exact `curl` command, so the bytes never pass through
+  the model. Uploads are staged privately next to the destination and committed
+  atomically (requires an OpenSSH-compatible `sftp-server`); downloads stream
+  with a running sha256.
+
+Everything is visible: a new **Audit → File Transfers** tab
+(`GET /api/audit/file-transfers`), a live transfer strip above the terminal
+(`terminal:file` over `/ws`), and a `file-transfer-failed` notification when a
+link transfer fails or expires. The link route `/api/transfers/{token}` is
+gated by `security.allowedNetworks` like `/mcp` — a sandbox that egresses from
+a different IP than the MCP client needs its own CIDR. Limits live under the
+new `transfer` config block (all optional; see `config.sample.yaml`).
+
 ### New: account notification log (#252)
 
 Server events a user must not miss — host-key mismatches and every failed SSH
@@ -159,6 +181,35 @@ collapse to a headline with a Details view.
 7. Expect one host-key approval per existing endpoint on its first connection
    (see #241 above). To skip that, pre-pin keys with `hostKey:` or in
    Settings → Endpoints.
+
+## What's Changed
+
+- chore(deps): bump pnpm to 11 + patch security advisories by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/224
+- docs(api): freeze REST/WS/MCP wire contract as OpenAPI + companion docs by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/226
+- test(golden): cross-language parity-oracle characterization tests (#225 item 2) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/227
+- test(webauthn): fake authenticator + ceremony-level integration tests (#162) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/228
+- test(golden): WebAuthn ceremony response-envelope parity fixtures by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/229
+- test(integration): close #225 item 3 — full route coverage (WS control, actions, push, accounts) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/230
+- fix(api): reject POST /api/endpoints without label or host by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/231
+- Go rewrite prep: architecture spec, operationIds, agent-proxy contract, codegen CI gate, spike env (#232) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/233
+- test(golden): complete golden parity coverage for all 54 REST operationIds + coverage guard by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/234
+- chore(deps): clear pnpm audit — bump fastify, @fastify/static, MCP SDK + toolchain by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/247
+- test(e2e): black-box suite against real OpenSSH sshd + real Ory Hydra (#244) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/245
+- Go backend cutover: replace the Node server with the Go implementation (#210) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/249
+- fix: move concurrency and lifecycle invariants into their owning components by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/250
+- security: pin SSH host keys via combined approval dialog + management UI (#241) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/251
+- feat: account notification log + long-error toast system (#252) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/253
+- feat(go): MCP 2026-07-28 — stateless, sessionless dual-era server with per-OAuth-client ownership and resources over subscriptions/listen (#243) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/254
+- feat: OAuth Client ID Metadata Documents (CIMD) via a ShellWatch-mediated authorization front door (#242) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/258
+- fix: bound the SSH handshake and let cancellation interrupt it (#257) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/259
+- fix: clear pnpm audit, bump agent-client to Go 1.27.3, add govulncheck CI gate by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/260
+- fix: remove automatic deletion of inactive accounts (#261) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/262
+- security: cap inbound WebSocket message size and add baseline security response headers by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/264
+- docs: complete the v2.0.0 changelog and fold release notes into the unreleased entry by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/265
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/266
+- Release: reconnect main to develop history by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/267
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v1.1.0...v2.0.0
 
 ## v1.1.0 (2026-06-14)
 

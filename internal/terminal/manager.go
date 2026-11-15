@@ -9,11 +9,14 @@ package terminal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pkg/sftp"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
 )
@@ -25,6 +28,15 @@ type managed struct {
 	// broadcast on. Guarded by Manager.mu.
 	transport Transport
 	output    *OutputBuffer
+	// resizeMu serializes Resize against Create's transport adoption, so a
+	// size requested while the session was still connecting is applied
+	// before any later one (#273 review). Lock order: resizeMu, then
+	// Manager.mu.
+	resizeMu sync.Mutex
+	// pendingCols/pendingRows hold the latest size requested while the
+	// transport was absent (a browser attached to an opening session);
+	// zero when none. Guarded by resizeMu.
+	pendingCols, pendingRows int
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
 	// Closed broadcast always sees every event the transport delivered.
 	pumpDone chan struct{}
@@ -70,7 +82,10 @@ type Manager struct {
 	statusSubs  map[int]func(StatusEvent)
 	outputSubs  map[int]func(sessionID string, offset int64)
 	removedSubs map[int]func(sessionID string)
-	nextSub     int
+	// registeredSubs fire when Create registers a session, before its
+	// transport is set up (#273).
+	registeredSubs map[int]func(sessionID, accountID string)
+	nextSub        int
 
 	// closeJoinTimeout bounds Close's pump join (liveness: a wedged transport
 	// teardown must not stall the idle janitor / shutdown / every other close
@@ -90,6 +105,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		statusSubs:       map[int]func(StatusEvent){},
 		outputSubs:       map[int]func(string, int64){},
 		removedSubs:      map[int]func(string){},
+		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
 	}
 }
@@ -177,6 +193,26 @@ func (m *Manager) SubscribeOutput(fn func(sessionID string, offset int64)) func(
 	return func() { m.mu.Lock(); delete(m.outputSubs, id); m.mu.Unlock() }
 }
 
+// SubscribeRegistered registers a hook fired when Create has registered a new
+// session (status opening), synchronously and before the transport factory
+// runs. Connecting can block for minutes on human approval of the SSH
+// signature; the WS hub uses this hook to list the session to the browser
+// while it waits, so a client that approves the signature can already open
+// the session's page (#273). Not a status transition: opening is the initial
+// state, so status subscribers (audit, MCP) see nothing new.
+func (m *Manager) SubscribeRegistered(fn func(sessionID, accountID string)) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextSub
+	m.nextSub++
+	m.registeredSubs[id] = fn
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.registeredSubs, id)
+	}
+}
+
 // SubscribeRemoved registers a hook fired after a session is removed from
 // the registry (explicit close, account purge). The WS hub uses it to sweep
 // connections whose attach raced the removal: the Closed broadcast happens
@@ -232,20 +268,40 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("server is shutting down")
 	}
 	m.terminals[sess.SessionID] = mg
+	registered := make([]func(string, string), 0, len(m.registeredSubs))
+	for _, fn := range m.registeredSubs {
+		registered = append(registered, fn)
+	}
 	m.mu.Unlock()
+	// Same goroutine as the setStatus(Open) below, so the opening broadcast
+	// can never overtake the open one.
+	for _, fn := range registered {
+		fn(sess.SessionID, sess.AccountID)
+	}
+	slog.Info("terminal: session connecting", sessionAttrs(sess, ep)...)
 
 	transport, err := m.factory(setupCtx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
 
 	// Adopt the transport and the abort check in one critical section: a
 	// Close that already moved the session to closing owns its fate — the
 	// transport must not be adopted after that, or nothing would close it.
+	mg.resizeMu.Lock()
 	m.mu.Lock()
 	mg.cancelSetup = nil
 	aborted := sess.Status != StatusOpening // a Close raced the setup
-	if err == nil && !aborted {
+	adopted := err == nil && !aborted
+	if adopted {
 		mg.transport = transport
 	}
 	m.mu.Unlock()
+	// A browser that attached while the session was opening already sent its
+	// size; the PTY was requested at the default, so apply it now — before
+	// the Open broadcast, and before any Resize waiting on resizeMu.
+	if adopted && mg.pendingCols > 0 && mg.pendingRows > 0 {
+		_ = transport.Resize(mg.pendingCols, mg.pendingRows)
+	}
+	mg.pendingCols, mg.pendingRows = 0, 0
+	mg.resizeMu.Unlock()
 
 	if err != nil {
 		// Broadcast closed BEFORE removal (same ordering invariant as Close):
@@ -257,6 +313,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// sends. The audit writer is unaffected: recordClose is an idempotent
 		// UPDATE, and no lifecycle row exists unless a Close raced the setup
 		// (in which case closing inserted it and this balances it).
+		slog.Warn("terminal: session connect failed", append(sessionAttrs(sess, ep), "err", err)...)
 		m.setStatus(mg, StatusClosed, CloseTransportError)
 		m.removeEntry(sess.SessionID)
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
@@ -275,6 +332,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	// the pump, and a terminal state must never be flipped back to open —
 	// setStatus guards that too, this ordering just makes it impossible here.
 	m.setStatus(mg, StatusOpen, "")
+	slog.Info("terminal: session open", "session", sess.SessionID, "setup", m.clk.Now().Sub(now).Round(time.Millisecond))
 	// Snapshot under the lock: the open broadcast above can prompt a client
 	// to close the session from another goroutine before Create returns.
 	m.mu.Lock()
@@ -352,6 +410,50 @@ func (m *Manager) SendInput(sessionID, input string) error {
 	return nil
 }
 
+// ErrNoFileTransport is returned by OpenSFTP when the session's transport has
+// no file capability (mock transports, future non-SSH transports).
+var ErrNoFileTransport = errors.New("this session's transport does not support file transfer")
+
+// OpenSFTP opens a new SFTP channel on an OPEN session's SSH connection
+// (#263). The capability is looked up through the transport's Unwrap chain,
+// so decorating wrappers do not hide it.
+func (m *Manager) OpenSFTP(ctx context.Context, sessionID string) (*sftp.Client, error) {
+	m.mu.Lock()
+	mg, ok := m.terminals[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("terminal %s not found", sessionID)
+	}
+	status := mg.session.Status
+	transport := mg.transport
+	m.mu.Unlock()
+	if status != StatusOpen || transport == nil {
+		return nil, fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
+	}
+	for t := transport; t != nil; {
+		if ft, ok := t.(FileTransport); ok {
+			return ft.OpenSFTP(ctx)
+		}
+		u, ok := t.(Unwrapper)
+		if !ok {
+			break
+		}
+		t = u.Unwrap()
+	}
+	return nil, ErrNoFileTransport
+}
+
+// TouchActivity records non-terminal activity on an open session (#263): the
+// idle sweep only sees PTY input/output, so file operations call this to keep
+// a session alive while it is being used through the file tools alone.
+func (m *Manager) TouchActivity(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mg, ok := m.terminals[sessionID]; ok && mg.session.Status == StatusOpen {
+		mg.session.LastActivityAt = m.clk.Now()
+	}
+}
+
 // SendKeys resolves named keys and writes them.
 func (m *Manager) SendKeys(sessionID string, keys []string) error {
 	resolved, err := ResolveKeys(keys)
@@ -394,12 +496,20 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
+	mg.resizeMu.Lock()
+	defer mg.resizeMu.Unlock()
 	m.mu.Lock()
 	transport := mg.transport
 	status := mg.session.Status
 	m.mu.Unlock()
 	if transport == nil {
-		// Still connecting — registered before the factory finished.
+		if status == StatusOpening && cols > 0 && rows > 0 {
+			// Still connecting — registered before the factory finished.
+			// Remember the size; Create applies it once the transport is
+			// adopted, so the PTY doesn't stay at the default (#273 review).
+			mg.pendingCols, mg.pendingRows = cols, rows
+			return nil
+		}
 		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
 	}
 	return transport.Resize(cols, rows)
@@ -706,7 +816,21 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
 	m.mu.Unlock()
 
+	if status == StatusClosed || status == StatusError {
+		slog.Info("terminal: session ended", "session", ev.SessionID, "status", status,
+			"previous", prev, "reason", ev.Reason, "lifetime", m.clk.Now().Sub(ev.CreatedAt).Round(time.Second))
+	}
 	for _, fn := range subs {
 		fn(ev)
 	}
+}
+
+// sessionAttrs are the identifying log attributes of a session being created.
+func sessionAttrs(sess *Session, ep EndpointRef) []any {
+	attrs := []any{"session", sess.SessionID, "account", sess.AccountID, "endpoint", ep.Label,
+		"address", fmt.Sprintf("%s@%s:%d", ep.Username, ep.Host, ep.Port), "source", sess.Source}
+	if sess.Source == SourceMCP {
+		attrs = append(attrs, "mcpClient", sess.MCPClientName)
+	}
+	return attrs
 }

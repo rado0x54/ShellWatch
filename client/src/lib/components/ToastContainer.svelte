@@ -10,7 +10,9 @@
     approveAction,
     performSignCeremony,
     resolveAction,
+    sessionIdFromRedirect,
     sourceLabels,
+    type ResolveResponse,
   } from "$lib/utils/webauthn-sign.js";
 
   let activeActionId = $state<string | null>(null);
@@ -48,21 +50,28 @@
 
   async function handleAction(action: SignRequestAction, toastId: string) {
     activeActionId = action.actionId;
+    let response: ResolveResponse;
     try {
       if (action.actionType === "webauthn-sign") {
         const result = await performSignCeremony(action);
-        await resolveAction(action.actionId, result);
+        response = await resolveAction(action.actionId, result);
       } else {
-        await approveAction(action.actionId);
+        response = await approveAction(action.actionId);
       }
       removeToast(toastId);
     } catch (err) {
       const verb = action.actionType === "key-approve" ? "Approval" : "Signing";
       console.error(`${verb} failed:`, err);
       toastError(`${verb} failed: ${errorMessage(err)}`);
+      return;
     } finally {
       activeActionId = null;
     }
+    // Like the /sign page: land on the session the approval was for, so the
+    // user can watch what happens with it (#273). In-app navigation keeps the
+    // socket and any follow-up toast (a passkey after a key approval).
+    const sessionId = sessionIdFromRedirect(response.redirectTo);
+    if (sessionId) await goto(resolve("/session/[id]", { id: sessionId }));
   }
 
   async function handleDetails(actionId: string, toastId: string) {

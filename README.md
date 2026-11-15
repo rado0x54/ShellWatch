@@ -121,17 +121,23 @@ server:
 
 ShellWatch exposes an MCP server over streamable HTTP at `/mcp`.
 
-| Tool                          | Description                                   |
-| ----------------------------- | --------------------------------------------- |
-| `shellwatch_create_session`   | Create a new terminal session                 |
-| `shellwatch_list_sessions`    | List this agent's active sessions             |
-| `shellwatch_send_keys`        | Send keystrokes/text to a session             |
-| `shellwatch_read_output`      | Read session output (with offset)             |
-| `shellwatch_close_session`    | Close a session                               |
-| `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints |
-| `shellwatch_manage_keys`      | List available SSH keys                       |
+| Tool                          | Description                                      |
+| ----------------------------- | ------------------------------------------------ |
+| `shellwatch_create_session`   | Create a new terminal session                    |
+| `shellwatch_list_sessions`    | List this agent's active sessions                |
+| `shellwatch_send_keys`        | Send keystrokes/text to a session                |
+| `shellwatch_read_output`      | Read session output (with offset)                |
+| `shellwatch_close_session`    | Close a session                                  |
+| `shellwatch_manage_endpoints` | List, create, update, or delete SSH endpoints    |
+| `shellwatch_manage_keys`      | List available SSH keys                          |
+| `shellwatch_list_dir`         | List a remote directory (SFTP)                   |
+| `shellwatch_read_file`        | Read a small remote file inline                  |
+| `shellwatch_write_file`       | Write a small remote file inline                 |
+| `shellwatch_transfer_file`    | Stream a large file via a single-use `curl` link |
 
 Each MCP client gets an isolated `AgentSession` — agents only see their own sessions.
+
+The file tools run over SFTP on a session's already-approved SSH connection (as the SSH login user, absolute paths only). They need no extra approval, and every operation is audited (Audit → File Transfers) and shown live above the session's terminal. For large files `shellwatch_transfer_file` hands the agent a short-lived, single-use URL so the bytes never pass through the model; the machine running `curl` must be inside `security.allowedNetworks`. Semantics and limits: [`docs/api/mcp-tools.md`](./docs/api/mcp-tools.md#file-tools-263) and the `transfer` block in `config.sample.yaml`.
 
 ### Connecting an MCP client
 

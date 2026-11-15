@@ -8,7 +8,6 @@ package rest
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -77,11 +76,8 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 		Kind: terminal.SourceUI, SourceIP: realip.FromRequest(r),
 	})
 	if err != nil {
-		// The SSH connect (incl. passkey signing handshake) failed — log the
-		// reason server-side; the 400 body alone is easy to miss in the browser.
-		slog.Warn("session create failed",
-			"endpointId", ref.ID, "endpointLabel", ref.Label, "address",
-			ref.Username+"@"+ref.Host, "err", err)
+		// The SSH connect (incl. passkey signing handshake) failed; the
+		// Manager logs the reason (terminal: session connect failed).
 		// A failure that was already published to the notification log (e.g. a
 		// host-key mismatch) carries the notification id (#252): the client
 		// dedupes its error toast against the pushed notification by identity.

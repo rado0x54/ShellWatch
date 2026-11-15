@@ -1,0 +1,33 @@
+{
+  "status": 200,
+  "body": {
+    "rows": [
+      {
+        "transferId": "xfer_0000000000000001",
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "sessionId": "sess_<ID>",
+        "endpointId": "audit-endpoint-2",
+        "tier": "inline",
+        "direction": "upload",
+        "path": "/etc/nginx/nginx.conf",
+        "status": "completed",
+        "bytes": 2150,
+        "totalBytes": null,
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "error": null,
+        "truncated": null,
+        "commitOutcome": null,
+        "cleanup": null,
+        "stagingPath": null,
+        "clientId": "client-1",
+        "mcpClientName": "codex",
+        "mcpClientVersion": "1.2.3",
+        "sourceIp": "203.0.113.7",
+        "createdAt": "<TS>",
+        "updatedAt": "<TS>",
+        "finishedAt": "<TS>"
+      }
+    ],
+    "nextCursor": null
+  }
+}

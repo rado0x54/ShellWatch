@@ -72,6 +72,22 @@ export interface ResolveResponse {
   redirectTo?: string;
 }
 
+/** A server-computed redirect is only followed when it is a same-origin path. */
+export function isSafeRedirect(path: string): boolean {
+  return path.startsWith("/") && !path.startsWith("//");
+}
+
+/**
+ * The session a post-approval `redirectTo` points at (`/session/<id>`, set for
+ * sign requests raised while opening a session or from inside one), or null —
+ * e.g. agent-proxy requests carry no destination (#273).
+ */
+export function sessionIdFromRedirect(redirectTo: string | undefined): string | null {
+  if (!redirectTo || !isSafeRedirect(redirectTo)) return null;
+  const match = /^\/session\/([^/?#]+)$/.exec(redirectTo);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 /** Resolve a PendingAction via the REST API after a successful ceremony. */
 export async function resolveAction(
   actionId: string,

@@ -35,6 +35,12 @@ Operationally, it brokers terminal sessions between configured SSH targets, huma
 - TypeScript (client, e2e): ES modules, destructured imports, strict mode, no `any` unless unavoidable, `.js` extensions in relative imports (Node16 resolution)
 - Single-line commit messages with category prefix: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`, `test:`
 - Do not add "Generated with Claude Code" or similar AI attribution to commits or PRs
+- **Log what you add (Go, `log/slog`).** Any new or changed server behavior that an operator would need to debug gets `slog` output in the same change: state transitions (created / resolved / closed, with the reason), security decisions (refusals, denials, policy rejections, with the reason), outbound calls to other services and their result, and every error that is swallowed or turned into a generic response. Use the default logger (`slog.Info(...)`, never `fmt`/`log`) — `cmd/shellwatch` configures it from `SHELLWATCH_LOG_*`, output goes to stdout for Docker.
+  - **Message:** `"<subsystem>: <event>"`, lowercase, e.g. `"terminal: session ended"`, `"approval: resolved"`, `"auth: request rejected"`.
+  - **Attributes:** key/value pairs, short camelCase keys reused across packages: `account`, `session`, `endpoint`, `action`, `client`, `mcpClient`, `connection`, `transfer`, `sourceIp`, `reason`, `status`, `err`, durations as `time.Duration` rounded (`dur`, `lifetime`, `waited`).
+  - **Levels:** `Debug` for high-frequency routine noise (health probes, expected 404 polling, unauthenticated discovery probes); `Info` for normal lifecycle events and expected refusals; `Warn` for failures a human may need to act on (connect failures, policy rejections, push-service refusals); `Error` for server-side faults (5xx, broken invariants). A 500 response must log its cause (see `writeInternal` in `internal/rest`).
+  - **Never log secrets:** no bearer/refresh tokens, transfer-link or invite tokens, WebAuthn challenges/assertions, private keys, push endpoint URLs (log the host), terminal input/output, MCP tool arguments, or file contents. URL paths that can carry a token go through `redactPath` (`internal/httpserver/logging.go`); in handlers prefer the chi route pattern over `r.URL.Path`.
+  - Log once, at the layer that owns the event (e.g. the `terminal.Manager` logs connect failures for both REST and MCP), not at every caller.
 - **Functions with 5+ parameters must use a typed parameter struct/object** instead of positional args. Export the params type for callers.
 - **Every new source file must carry an `SPDX-License-Identifier` header on its first line** (after the shebang, if any). Use `LicenseRef-FSL-1.1-Apache-2.0` for files at the repo root and `MIT` for anything under `agent-client/`. CI enforces this via `pnpm spdx:check`; run `pnpm spdx:write` to add headers to files you've just created. Comment styles by extension: `// …` for `.go`/`.ts`/`.mjs`/`.js`, `<!-- … -->` for `.svelte`/`.html`, `/* … */` for `.css`, `# …` for `.sh`/`Makefile`.
 - **Generated code is committed and drift-checked.** After editing `docs/api/openapi.yaml` run `go generate ./internal/api`; after editing `internal/store/queries/*.sql` or a migration run `go generate ./internal/store`. CI (`scripts/check-api-codegen.sh`) fails on drift.
@@ -54,6 +60,7 @@ internal/
   agentproxy/, signagent/ # /agent-proxy bridge; SSH agent protocol server
   terminal/               # Manager, Session, OutputBuffer, Transport interface
   sshx/, signing/         # x/crypto/ssh transport + signers; WebAuthn→SSH signature format
+  transfer/               # MCP file tools: inline SFTP read/write + single-use transfer links (#263)
   approval/, push/        # Pending actions, broker, WS + Web Push channels
   webauthn/               # Passkey ceremonies, challenge/step-up/invite stores
   hydra/, auth/           # Hydra providers + admin client + introspection; bearer gate, IP allowlist
@@ -205,7 +212,7 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 ## Design Principles
 
 - **Local-first persistence:** SQLite is the only datastore ShellWatch owns — no external/remote database. (OAuth2/OIDC is delegated to Ory Hydra, a required external service; Hydra keeps its own SQLite store, by default in the same `./data` folder.)
-- **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows. The product is scoped to one process per deployment.
+- **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot, file-transfer tokens). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows. The product is scoped to one process per deployment.
 - **Account-scoped:** All operations are scoped to the calling account. Admin is a role, not a cross-account view; never imply cross-account session/output visibility. The single deliberate exception is the OAuth client onboarding log (`oauth_client_registrations`, `GET /api/audit/oauth-clients`): DCR and CIMD both run before any account is identified, so those rows cannot be scoped to one — they are admin-gated instead. Do not "fix" that table by adding an `account_id`.
 - **Shared core:** UI and MCP must use the same Manager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately

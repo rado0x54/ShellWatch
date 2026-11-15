@@ -20,14 +20,6 @@ import (
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
-// shortenHandshakeTimeout makes the deadline observable in a test.
-func shortenHandshakeTimeout(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := connectionTimeout
-	connectionTimeout = d
-	t.Cleanup(func() { connectionTimeout = prev })
-}
-
 // startSilentListener accepts TCP and then never writes — no SSH version
 // banner, no key exchange — holding the connection open.
 func startSilentListener(t *testing.T) int {
@@ -52,13 +44,13 @@ func startSilentListener(t *testing.T) int {
 }
 
 func TestStalledHandshakeFailsWithinTheDeadline(t *testing.T) {
-	shortenHandshakeTimeout(t, 300*time.Millisecond)
 	port := startSilentListener(t)
 
 	start := time.Now()
 	_, err := Connect(context.Background(), ConnectParams{
 		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1",
 		HostKeys: newMemHostKeys(), Signers: []ssh.Signer{newTestSigner(t)},
+		hooks: connectHooks{timeout: 300 * time.Millisecond},
 	})
 	elapsed := time.Since(start)
 
@@ -77,8 +69,6 @@ func TestStalledHandshakeFailsWithinTheDeadline(t *testing.T) {
 // setupCtx and expects the factory to return so the session can be finalized
 // and removed instead of staying parked in `closing`.
 func TestCancellingSetupUnblocksAStalledHandshake(t *testing.T) {
-	// Long enough that the deadline cannot be what frees us.
-	shortenHandshakeTimeout(t, 30*time.Second)
 	port := startSilentListener(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,6 +78,8 @@ func TestCancellingSetupUnblocksAStalledHandshake(t *testing.T) {
 	_, err := Connect(ctx, ConnectParams{
 		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1",
 		HostKeys: newMemHostKeys(), Signers: []ssh.Signer{newTestSigner(t)},
+		// Long enough that the deadline cannot be what frees us.
+		hooks: connectHooks{timeout: 30 * time.Second},
 	})
 	elapsed := time.Since(start)
 
@@ -106,13 +98,12 @@ func TestCancellingSetupUnblocksAStalledHandshake(t *testing.T) {
 // wrong, so it is pinned.
 func TestEstablishedSessionOutlivesTheHandshakeDeadline(t *testing.T) {
 	const deadline = 250 * time.Millisecond
-	shortenHandshakeTimeout(t, deadline)
 	host, port, hostPub := startEchoServer(t)
 	kd := writeTestKeyDir(t)
 
 	hostKeys := newMemHostKeys()
 	hostKeys.prePin("e1", hostPub)
-	mgr := terminal.NewManager(NewFileKeyFactory(kd, hostKeys), clock.Real{}, 0)
+	mgr := terminal.NewManager(newFileKeyFactory(kd, hostKeys, connectHooks{timeout: deadline}), clock.Real{}, 0)
 	t.Cleanup(mgr.Destroy)
 
 	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: host, Port: port, Username: "u"}
@@ -139,7 +130,6 @@ func TestEstablishedSessionOutlivesTheHandshakeDeadline(t *testing.T) {
 // offer several keys — so the window is per auth round, not per handshake.
 func TestApprovalSlowerThanTheDeadlineStillAuthenticates(t *testing.T) {
 	const window = 400 * time.Millisecond
-	shortenHandshakeTimeout(t, window)
 	port, log, hostPub := startLoggingServer(t)
 	_ = hostPub
 
@@ -162,6 +152,7 @@ func TestApprovalSlowerThanTheDeadlineStillAuthenticates(t *testing.T) {
 	tr, err := Connect(context.Background(), ConnectParams{
 		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1",
 		HostKeys: hostKeys, Signers: []ssh.Signer{slow(), slow(), accepted},
+		hooks: connectHooks{timeout: window},
 	})
 	if err != nil {
 		t.Fatalf("auth that outlasted one deadline window failed after %v: %v", time.Since(start), err)
@@ -186,19 +177,18 @@ func TestCancellationAfterSetupLeavesTheSessionAlive(t *testing.T) {
 
 	// Hold the watcher back until the test says so, which is the only way to
 	// force the both-ready interleaving instead of waiting for the scheduler
-	// to produce it. parked also orders the watcher's read of the hook before
-	// the cleanup that clears it.
+	// to produce it. The gate rides on this test's own connections only, so
+	// watchers left over from earlier tests never see it (#270).
 	parked := make(chan struct{})
 	gates := make(chan chan struct{}, 1)
-	handshakeWatcherGate = func() {
+	gate := func() {
 		parked <- struct{}{}
 		<-(<-gates)
 	}
-	t.Cleanup(func() { handshakeWatcherGate = nil })
 
 	hostKeys := newMemHostKeys()
 	hostKeys.prePin("e1", hostPub)
-	mgr := terminal.NewManager(NewFileKeyFactory(kd, hostKeys), clock.Real{}, 0)
+	mgr := terminal.NewManager(newFileKeyFactory(kd, hostKeys, connectHooks{watcherGate: gate}), clock.Real{}, 0)
 	t.Cleanup(mgr.Destroy)
 	ep := terminal.EndpointRef{ID: "e1", AccountID: "acc", Host: host, Port: port, Username: "u"}
 

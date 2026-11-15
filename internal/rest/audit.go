@@ -32,6 +32,9 @@ type Audit struct {
 	// and CIMD both run before any account exists. Admin-only, hence IsAdmin.
 	OAuthClients *audit.OAuthClients
 	IsAdmin      AdminCheck
+	// FileTransfers serves the file-transfer log (#263) — the fifth audit
+	// surface, account-scoped like the first three.
+	FileTransfers *audit.FileTransfers
 }
 
 var (
@@ -49,6 +52,44 @@ func (a *Audit) Mount(r chi.Router) {
 	if a.OAuthClients != nil && a.IsAdmin != nil {
 		r.Get("/api/audit/oauth-clients", a.listOAuthClients)
 	}
+	if a.FileTransfers != nil {
+		r.Get("/api/audit/file-transfers", a.listFileTransfers)
+	}
+}
+
+var (
+	fileDirectionValues = map[string]bool{"upload": true, "download": true, "list": true}
+	fileTierValues      = map[string]bool{"inline": true, "link": true}
+	fileStatusValues    = map[string]bool{
+		"pending": true, "active": true, "committing": true, "completed": true,
+		"failed": true, "cancelled": true, "expired": true,
+	}
+)
+
+func (a *Audit) listFileTransfers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if v := q.Get("direction"); v != "" && !fileDirectionValues[v] {
+		writeErr(w, 400, "invalid direction filter")
+		return
+	}
+	if v := q.Get("tier"); v != "" && !fileTierValues[v] {
+		writeErr(w, 400, "invalid tier filter")
+		return
+	}
+	if v := q.Get("status"); v != "" && !fileStatusValues[v] {
+		writeErr(w, 400, "invalid status filter")
+		return
+	}
+	page, err := a.FileTransfers.List(r.Context(), accountID(r), audit.FileTransferFilters{
+		SessionID: q.Get("sessionId"), Direction: q.Get("direction"),
+		Status: q.Get("status"), Tier: q.Get("tier"),
+		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
+	})
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 var (
@@ -80,7 +121,7 @@ func (a *Audit) listOAuthClients(w http.ResponseWriter, r *http.Request) {
 		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
 	})
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -90,7 +131,7 @@ func (a *Audit) listNotifications(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, err := a.Notify.List(r.Context(), accountID(r), q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -102,7 +143,7 @@ func (a *Audit) listSessions(w http.ResponseWriter, r *http.Request) {
 		EndpointID: q.Get("endpointId"), From: q.Get("from"), To: q.Get("to"),
 	}, q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -122,7 +163,7 @@ func (a *Audit) listSignings(w http.ResponseWriter, r *http.Request) {
 		Source: q.Get("source"), Outcome: q.Get("outcome"), From: q.Get("from"), To: q.Get("to"),
 	}, q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -131,7 +172,7 @@ func (a *Audit) listSignings(w http.ResponseWriter, r *http.Request) {
 func (a *Audit) getSigning(w http.ResponseWriter, r *http.Request) {
 	row, err := a.Signings.GetByID(r.Context(), accountID(r), chi.URLParam(r, "id"))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if row == nil {
