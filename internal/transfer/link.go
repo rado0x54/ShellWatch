@@ -411,19 +411,25 @@ func (s *Service) upload(ctx context.Context, r *http.Request, x *xfer) *httpErr
 		if s.beforeCommit != nil {
 			s.beforeCommit(x.TransferID, client)
 		}
-		var cerr error
-		if x.overwrite {
-			// Atomic replace. Never remove-then-rename: on failure the
-			// original is still in place.
-			cerr = client.PosixRename(data, x.Path)
-		} else {
+		cerr, timedOut := s.commit(client, func() error {
+			if x.overwrite {
+				// Atomic replace. Never remove-then-rename: on failure the
+				// original is still in place.
+				return client.PosixRename(data, x.Path)
+			}
 			// link(2) fails on ANY existing entry, so no-clobber is atomic
 			// with no pre-check.
-			cerr = client.Link(data, x.Path)
-		}
+			return client.Link(data, x.Path)
+		})
 
 		// 5. completed only after an acknowledged commit.
 		switch {
+		case timedOut:
+			s.finish(x, StateFailed, func(v *View) {
+				v.CommitOutcome = CommitUnknown
+				v.Error = fmt.Sprintf("no reply to the commit within transfer.commitTimeoutSeconds (%d); the outcome is unknown — inspect the destination (size, sha256) before retrying", s.lim.CommitTimeoutSeconds)
+			})
+			return failf(http.StatusBadGateway, "commit outcome unknown")
 		case cerr == nil:
 			removeData = !x.overwrite // a rename moved the staged file away
 			s.finish(x, StateCompleted, func(v *View) { v.CommitOutcome = CommitOK })
@@ -455,6 +461,27 @@ func (s *Service) upload(ctx context.Context, r *http.Request, x *xfer) *httpErr
 	// 6. Cleanup: best effort and bounded.
 	s.cleanupStaging(x, client, staging, data, removeData)
 	return herr
+}
+
+// commit issues the commit call under transfer.commitTimeoutSeconds. A
+// committing transfer is deliberately immune to abort — cancel, the idle
+// watchdog and the duration cap all stand down once the commit is issued — so
+// this is the only bound on a server that keeps the connection open and never
+// answers. On expiry the transfer's own channel is closed (which also
+// releases the parked request) and the caller records the outcome as unknown:
+// the request was sent, its reply never came.
+func (s *Service) commit(client *sftp.Client, call func() error) (err error, timedOut bool) {
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	timeout, stop := s.clk.After(time.Duration(s.lim.CommitTimeoutSeconds) * time.Second)
+	defer stop()
+	select {
+	case err := <-done:
+		return err, false
+	case <-timeout:
+		_ = client.Close()
+		return nil, true
+	}
 }
 
 // cleanupStaging removes the staged file (when it still exists) and the

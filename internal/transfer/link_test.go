@@ -362,6 +362,69 @@ func TestCancelCommitRace(t *testing.T) {
 	})
 }
 
+// A server that keeps the connection open but never answers the commit must
+// not pin the request and its active slot: the commit wait is bounded, and
+// the outcome is unknown (the request was sent).
+func TestStalledCommitTimesOut(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	h := newHarness(t, harnessOpts{clk: clk, limits: config.Transfer{MaxActivePerAccount: 1, MaxActiveGlobal: 1}})
+	dest := filepath.Join(h.dir, "f")
+	c := h.create(CreateParams{Direction: DirectionUpload, Path: dest})
+	issued := make(chan struct{})
+	h.svc.beforeCommit = func(string, *sftp.Client) {
+		h.stallOps.Store(true)
+		close(issued)
+	}
+	type result struct {
+		code int
+		body map[string]any
+	}
+	done := make(chan result, 1)
+	go func() {
+		code, body := h.put(c.URL, strings.NewReader("payload"))
+		done <- result{code, body}
+	}()
+	<-issued
+	time.Sleep(100 * time.Millisecond) // the commit call is parked on the silent server
+
+	// Nothing else may end a committing transfer: not the idle watchdog…
+	clk.Advance(20 * time.Second)
+	if _, err := h.svc.Cancel(context.Background(), testCaller, c.TransferID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("request ended before the commit timeout: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if v := h.status(c.TransferID); v.Status != StateCommitting {
+		t.Fatalf("status while the commit is parked: %s", v.Status)
+	}
+
+	// …only the commit bound.
+	clk.Advance(11 * time.Second)
+	select {
+	case r := <-done:
+		if r.code != 502 || r.body["status"] != "failed" || r.body["commitOutcome"] != "unknown" ||
+			!strings.Contains(r.body["error"].(string), "commitTimeoutSeconds") {
+			t.Fatalf("response: %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled commit still holds the request after commitTimeoutSeconds")
+	}
+	fin := h.waitStatus(c.TransferID, func(v View) bool { return v.Cleanup != "" })
+	if fin.Status != StateFailed || fin.CommitOutcome != CommitUnknown || fin.Cleanup != CleanupFailed || fin.StagingPath == "" {
+		t.Errorf("final: %+v", fin)
+	}
+	// The active slot is free again (limit is 1).
+	h.stallOps.Store(false)
+	h.svc.beforeCommit = nil
+	next := h.create(CreateParams{Direction: DirectionUpload, Path: dest + ".2"})
+	if code, body := h.put(next.URL, strings.NewReader("next")); code != 200 {
+		t.Errorf("upload after the stalled one: %d %+v", code, body)
+	}
+}
+
 // Closing the session mid-upload aborts the request promptly and the status
 // reads cancelled; other sessions are unaffected.
 func TestSessionCloseCancelsActiveUpload(t *testing.T) {

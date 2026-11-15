@@ -147,6 +147,11 @@ type Transfer struct {
 	// Active (streaming) bounds, acquired at claim — not at create.
 	MaxActivePerAccount int `yaml:"maxActivePerAccount"`
 	MaxActiveGlobal     int `yaml:"maxActiveGlobal"`
+	// CommitTimeoutSeconds bounds the wait for the commit reply (hardlink or
+	// posix-rename). Past it the transfer's channel is closed and the outcome
+	// is recorded as unknown — a commit is not cancellable, so no other
+	// timeout applies to it.
+	CommitTimeoutSeconds int `yaml:"commitTimeoutSeconds"`
 	// CleanupTimeoutSeconds bounds the best-effort staging cleanup.
 	CleanupTimeoutSeconds int `yaml:"cleanupTimeoutSeconds"`
 	// MaxInlineConcurrency is per session; InlineTimeoutSeconds bounds a whole
@@ -171,6 +176,7 @@ func DefaultTransfer() Transfer {
 		MaxPendingGlobal:       64,
 		MaxActivePerAccount:    4,
 		MaxActiveGlobal:        16,
+		CommitTimeoutSeconds:   30,
 		CleanupTimeoutSeconds:  5,
 		MaxInlineConcurrency:   2,
 		InlineTimeoutSeconds:   30,
@@ -201,6 +207,7 @@ func (t Transfer) WithDefaults() Transfer {
 	fill(&t.MaxPendingGlobal, d.MaxPendingGlobal)
 	fill(&t.MaxActivePerAccount, d.MaxActivePerAccount)
 	fill(&t.MaxActiveGlobal, d.MaxActiveGlobal)
+	fill(&t.CommitTimeoutSeconds, d.CommitTimeoutSeconds)
 	fill(&t.CleanupTimeoutSeconds, d.CleanupTimeoutSeconds)
 	fill(&t.MaxInlineConcurrency, d.MaxInlineConcurrency)
 	fill(&t.InlineTimeoutSeconds, d.InlineTimeoutSeconds)
@@ -220,8 +227,9 @@ func (t Transfer) validate(add func(format string, args ...any)) {
 		"linkTtlSeconds": t.LinkTtlSeconds, "idleTimeoutSeconds": t.IdleTimeoutSeconds,
 		"maxDurationSeconds": t.MaxDurationSeconds, "maxPendingPerSession": t.MaxPendingPerSession,
 		"maxPendingGlobal": t.MaxPendingGlobal, "maxActivePerAccount": t.MaxActivePerAccount,
-		"maxActiveGlobal": t.MaxActiveGlobal, "cleanupTimeoutSeconds": t.CleanupTimeoutSeconds,
-		"maxInlineConcurrency": t.MaxInlineConcurrency, "inlineTimeoutSeconds": t.InlineTimeoutSeconds,
+		"maxActiveGlobal": t.MaxActiveGlobal, "commitTimeoutSeconds": t.CommitTimeoutSeconds,
+		"cleanupTimeoutSeconds": t.CleanupTimeoutSeconds,
+		"maxInlineConcurrency":  t.MaxInlineConcurrency, "inlineTimeoutSeconds": t.InlineTimeoutSeconds,
 		"statusRetentionSeconds": t.StatusRetentionSeconds, "maxStatusRecords": t.MaxStatusRecords,
 	} {
 		if v < 1 {

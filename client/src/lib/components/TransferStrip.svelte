@@ -22,7 +22,8 @@
     viewFromRow,
     type TransferView,
   } from "$lib/stores/file-transfers.js";
-  import { onWsMessage } from "$lib/stores/ws.js";
+  import { get } from "svelte/store";
+  import { onWsMessage, wsConnected } from "$lib/stores/ws.js";
 
   interface Props {
     sessionId: string;
@@ -43,14 +44,30 @@
         transfers = upsertTransfer(transfers, viewFromEvent(msg));
       }
     });
-    // History is best effort: the strip is useful from live frames alone.
-    fetchFileTransfersPage({ sessionId }, undefined, 20)
-      .then((page) => {
-        transfers = mergeHistory(transfers, page.rows.map(viewFromRow));
-      })
-      .catch(() => {});
-    return off;
+    void loadHistory();
+    // A reconnect refetches: a transfer that finished while the socket was
+    // down lost its final frame, and the attach snapshot only lists
+    // unfinished ones — the audit log is what settles the stale entry.
+    let wasConnected = get(wsConnected);
+    const offConnected = wsConnected.subscribe((up) => {
+      if (up && !wasConnected) void loadHistory();
+      wasConnected = up;
+    });
+    return () => {
+      off();
+      offConnected();
+    };
   });
+
+  // History is best effort: the strip is useful from live frames alone.
+  async function loadHistory() {
+    try {
+      const page = await fetchFileTransfersPage({ sessionId }, undefined, 20);
+      transfers = mergeHistory(transfers, page.rows.map(viewFromRow));
+    } catch {
+      // keep what the socket delivered
+    }
+  }
 
   function statusLabel(t: TransferView): string {
     if (t.status === "pending") return "link issued";

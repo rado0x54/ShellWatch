@@ -84,6 +84,7 @@ type harness struct {
 
 	failed   chan View     // OnFailed notifications
 	stallFTP atomic.Bool   // sftp subsystem accepts the channel and never answers
+	stallOps atomic.Bool   // established sftp channels stop answering requests
 	conns    chan net.Conn // server-side connections (for hangup)
 }
 
@@ -118,7 +119,7 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 					<-s.Context().Done()
 					return
 				}
-				server, err := sftp.NewServer(s)
+				server, err := sftp.NewServer(stallableChannel{Session: s, stall: &h.stallOps})
 				if err != nil {
 					return
 				}
@@ -257,6 +258,22 @@ func (h *harness) auditRow(id string) *audit.FileTransferRow {
 		h.t.Fatalf("audit row %s: %v %v", id, row, err)
 	}
 	return row
+}
+
+// stallableChannel withholds incoming SFTP requests while stall is set: the
+// connection stays open, the server simply never sees (or answers) them.
+type stallableChannel struct {
+	gliderssh.Session
+	stall *atomic.Bool
+}
+
+func (c stallableChannel) Read(p []byte) (int, error) {
+	n, err := c.Session.Read(p)
+	if c.stall.Load() {
+		<-c.Session.Context().Done()
+		return 0, io.EOF
+	}
+	return n, err
 }
 
 func randomBytes(n int) []byte {

@@ -156,6 +156,7 @@ security:
 #   maxPendingGlobal: 64                                # ... and on the whole server
 #   maxActivePerAccount: 4                              # concurrently streaming transfers; excess gets 503 + Retry-After
 #   maxActiveGlobal: 16
+#   commitTimeoutSeconds: 30                            # no reply to an upload's commit within this -> failed, commitOutcome "unknown"
 #   cleanupTimeoutSeconds: 5                            # bound on best-effort staging-directory cleanup
 #   maxInlineConcurrency: 2                             # concurrent inline calls per session (others wait)
 #   inlineTimeoutSeconds: 30                            # whole inline call, incl. SFTP channel setup

@@ -360,7 +360,10 @@ semantics**. The inline tools and downloads need only SFTP v3 core.
    (destination untouched / original still in place). A connection lost after
    the commit was sent and before its reply arrived is `failed` with
    **`commitOutcome: "unknown"`** — inspect the destination (size, sha256)
-   before retrying.
+   before retrying. The same applies when the server keeps the connection open
+   but does not answer the commit within `transfer.commitTimeoutSeconds`
+   (default 30): the transfer's channel is closed and the outcome is `unknown`.
+   This is the only timeout that applies once the commit has been issued.
 6. Cleanup of the staging directory is best effort and bounded
    (`transfer.cleanupTimeoutSeconds`). When it fails or cannot run (remote
    hangup, session torn down), the result carries `cleanup: "failed"` and the

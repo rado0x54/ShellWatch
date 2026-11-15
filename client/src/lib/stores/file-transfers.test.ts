@@ -75,6 +75,30 @@ describe("mergeHistory", () => {
     expect(merged.map((x) => x.transferId)).toEqual(["live", "old"]);
     expect(merged[0].bytes).toBe(9);
   });
+
+  it("lets a finished log row replace a live entry stuck in flight", () => {
+    // The transfer completed while the socket was down: the final frame never
+    // arrived, so only the audit log knows.
+    const merged = mergeHistory(
+      [t("lost", { status: "active", bytes: 40 }), t("fresh", { status: "active", bytes: 7 })],
+      [
+        t("lost", { status: "completed", bytes: 100, sha256: "abc" }),
+        t("fresh", { status: "pending", bytes: 0 }),
+      ],
+    );
+    expect(merged.map((x) => x.transferId)).toEqual(["lost", "fresh"]);
+    expect(merged[0]).toMatchObject({ status: "completed", bytes: 100, sha256: "abc" });
+    // An in-flight row in the log never overrides the live entry.
+    expect(merged[1]).toMatchObject({ status: "active", bytes: 7 });
+  });
+
+  it("never lets the log regress a finished live entry", () => {
+    const merged = mergeHistory(
+      [t("a", { status: "failed", cleanup: "failed" })],
+      [t("a", { status: "failed" })],
+    );
+    expect(merged[0].cleanup).toBe("failed");
+  });
 });
 
 describe("views", () => {

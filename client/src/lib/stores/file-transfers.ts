@@ -171,16 +171,26 @@ export function upsertTransfer(list: TransferView[], next: TransferView, max = 5
 }
 
 /**
- * Merge a fetched history page under the live list: live entries win (they are
- * at least as fresh), history fills in what the socket never delivered.
+ * Merge a fetched history page under the live list. History fills in what the
+ * socket never delivered, and it corrects one thing: a live entry that is
+ * still in flight while the audit log already has it finished. That happens
+ * when the transfer ended during a WebSocket outage — its final frame was
+ * lost, and the reconnect snapshot only lists unfinished transfers, so nothing
+ * else would ever update the entry. In every other case the live entry wins
+ * (it is at least as fresh as the log).
  */
 export function mergeHistory(
   live: TransferView[],
   history: TransferView[],
   max = 50,
 ): TransferView[] {
+  const logged = new Map(history.map((t) => [t.transferId, t]));
+  const merged = live.map((t) => {
+    const row = logged.get(t.transferId);
+    return row && isUnfinished(t.status) && !isUnfinished(row.status) ? row : t;
+  });
   const known = new Set(live.map((t) => t.transferId));
-  return [...live, ...history.filter((t) => !known.has(t.transferId))].slice(0, max);
+  return [...merged, ...history.filter((t) => !known.has(t.transferId))].slice(0, max);
 }
 
 export function formatBytes(n: number): string {
