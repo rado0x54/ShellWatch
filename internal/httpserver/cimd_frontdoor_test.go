@@ -277,6 +277,48 @@ func TestFrontDoorResolvesCimdAndProvisionsHydraClient(t *testing.T) {
 	}
 }
 
+// A document that declares grants ShellWatch does not support (here RFC 7523
+// jwt-bearer) is narrowed, not refused (#279): the authorization proceeds and
+// only the supported grants reach the Hydra client.
+func TestFrontDoorNarrowsUnsupportedGrantTypes(t *testing.T) {
+	admin := hydratest.New()
+	doc := map[string]any{
+		"client_name":                "Example MCP Client",
+		"redirect_uris":              []string{"http://127.0.0.1/callback"},
+		"grant_types":                []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+		"response_types":             []string{"code"},
+		"token_endpoint_auth_method": "none",
+	}
+	docSrv, clientID := cimdDocHost(t, doc, nil)
+	doc["client_id"] = clientID
+	ts := frontDoorServer(t, admin, docSrv, nil)
+
+	query := url.Values{
+		"client_id":             {clientID},
+		"response_type":         {"code"},
+		"redirect_uri":          {"http://127.0.0.1:54321/callback"},
+		"scope":                 {"mcp offline_access"},
+		"state":                 {"xyz"},
+		"code_challenge":        {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
+		"code_challenge_method": {"S256"},
+	}.Encode()
+	res := authorizeNoFollow(t, ts, query)
+	if res.StatusCode != http.StatusSeeOther {
+		body := make([]byte, 400)
+		n, _ := res.Body.Read(body)
+		t.Fatalf("status = %d, want 303; body: %s", res.StatusCode, body[:n])
+	}
+
+	client, ok := admin.Clients()[clientID]
+	if !ok {
+		t.Fatalf("no Hydra client provisioned for %q", clientID)
+	}
+	want := []string{"authorization_code", "refresh_token"}
+	if strings.Join(client.GrantTypes, " ") != strings.Join(want, " ") {
+		t.Errorf("grant_types = %v, want %v", client.GrantTypes, want)
+	}
+}
+
 // Failures before the redirect_uri is validated must render, never redirect:
 // the requested redirect_uri is attacker-chosen at that point.
 func TestFrontDoorRendersErrorsItCannotSafelyRedirect(t *testing.T) {
