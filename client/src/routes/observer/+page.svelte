@@ -5,7 +5,13 @@
   import { onDestroy, onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { endpoints } from "$lib/stores/endpoints.js";
-  import { onWsMessage, type SessionListEntry, sessions, wsAttach } from "$lib/stores/ws.js";
+  import {
+    onWsMessage,
+    type SessionListEntry,
+    sessions,
+    wsAttach,
+    wsDetach,
+  } from "$lib/stores/ws.js";
 
   interface ObservedTerminal {
     sessionId: string;
@@ -54,6 +60,7 @@
     for (const id of currentIds) {
       if (!newIds.has(id)) {
         const obs = observed.get(id)!;
+        wsDetach(id);
         obs.terminal.dispose();
         observed.delete(id);
       }
@@ -89,7 +96,8 @@
 
         observed.set(sess.sessionId, { sessionId: sess.sessionId, label, terminal, fitAddon });
 
-        wsAttach(sess.sessionId);
+        // Fresh xterm has no backlog — replay the full buffer.
+        wsAttach(sess.sessionId, { fresh: true });
       }
     }
 
@@ -119,7 +127,9 @@
     unsubscribe = onWsMessage((msg) => {
       if (msg.type === "terminal:output") {
         const obs = observed.get(msg.sessionId);
-        if (obs) obs.terminal.write(msg.data);
+        if (!obs) return;
+        if (msg.reset) obs.terminal.reset();
+        obs.terminal.write(msg.data);
       }
       if (msg.type === "sessions:changed") {
         syncSessions(msg.sessions);
@@ -134,6 +144,7 @@
     unsubscribe?.();
     resizeObserver?.disconnect();
     for (const obs of observed.values()) {
+      wsDetach(obs.sessionId);
       obs.terminal.dispose();
     }
     observed.clear();
