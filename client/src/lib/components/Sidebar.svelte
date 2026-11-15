@@ -233,7 +233,10 @@
                     <path d="M10 3h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2" />
                   </svg>
                 </button>
-              {:else}
+              {:else if sess.source !== "ui"}
+                <!-- Control is a per-tab input gate, not a session lock, and
+                     UI-created sessions re-take it on every attach (#150):
+                     releasing one hands nothing to anyone. -->
                 <button
                   type="button"
                   class="btn btn-ghost btn-icon"
