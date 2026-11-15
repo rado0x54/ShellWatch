@@ -73,7 +73,7 @@ func transferServer(t *testing.T, allowedNetworks []string) *transferRig {
 		ExternalURL: func() string { return externalURL },
 	})
 	t.Cleanup(svc.Close)
-	hub.SetFileSnapshot(svc.Snapshot)
+	hub.SetFileSnapshot(svc.SnapshotTo)
 
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
@@ -280,11 +280,10 @@ func TestWSFileFramesAndAttachSnapshot(t *testing.T) {
 		"direction": "upload", "path": "/srv/backup.tgz", "bytes": 1024, "totalBytes": 4096,
 		"status": "active", "tier": "link", "mcpClientName": "agent",
 	}
-	rig.hub.SetFileSnapshot(func(id string) []any {
+	rig.hub.SetFileSnapshot(func(id string, deliver func([]any)) {
 		if id == sess.SessionID {
-			return []any{snapshot}
+			deliver([]any{snapshot})
 		}
-		return nil
 	})
 
 	c := dialWS(t, rig.ts)

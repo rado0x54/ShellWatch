@@ -71,7 +71,7 @@ func TestInlineWriteReadRoundTrip(t *testing.T) {
 		t.Errorf("events: %+v", evs)
 	}
 
-	r, err := h.svc.ReadFile(ctx, testCaller, h.sessID, file, "")
+	r, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: file, Encoding: ""})
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestInlineBase64AndMalformed(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := h.svc.ReadFile(ctx, testCaller, h.sessID, file, "base64")
+	r, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: file, Encoding: "base64"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestInlineBase64AndMalformed(t *testing.T) {
 		t.Error("base64 round trip mismatch")
 	}
 	// Binary content is not silently mangled into a string.
-	if _, err := h.svc.ReadFile(ctx, testCaller, h.sessID, file, "utf8"); err == nil || !strings.Contains(err.Error(), "base64") {
+	if _, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: file, Encoding: "utf8"}); err == nil || !strings.Contains(err.Error(), "base64") {
 		t.Errorf("utf8 read of binary: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestInlineLimitsAndPathRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := h.svc.ReadFile(ctx, testCaller, h.sessID, big, "base64")
+	_, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: big, Encoding: "base64"})
 	if err == nil || !strings.Contains(err.Error(), "shellwatch_transfer_file") {
 		t.Errorf("oversized read: %v", err)
 	}
@@ -179,12 +179,12 @@ func TestInlineLimitsAndPathRules(t *testing.T) {
 	}
 
 	// Relative paths are refused: the file tools do not follow the shell's cwd.
-	if _, err := h.svc.ReadFile(ctx, testCaller, h.sessID, "relative/file", ""); err == nil || !strings.Contains(err.Error(), "absolute") {
+	if _, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: "relative/file", Encoding: ""}); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Errorf("relative path: %v", err)
 	}
 	// Foreign account -> the uniform error.
 	other := Caller{AccountID: "someone-else", ClientID: "client-1"}
-	if _, err := h.svc.ReadFile(ctx, other, h.sessID, big, ""); err == nil || err.Error() != "session not found: "+h.sessID {
+	if _, err := h.svc.ReadFile(ctx, other, ReadParams{SessionID: h.sessID, Path: big, Encoding: ""}); err == nil || err.Error() != "session not found: "+h.sessID {
 		t.Errorf("foreign session: %v", err)
 	}
 
@@ -195,7 +195,7 @@ func TestInlineLimitsAndPathRules(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := h.svc.ReadFile(ctx, testCaller, h.sessID, link, ""); err != nil || r.Content != "via link" {
+	if r, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: link, Encoding: ""}); err != nil || r.Content != "via link" {
 		t.Errorf("read through symlink: %+v %v", r, err)
 	}
 	if _, err := h.svc.WriteFile(ctx, testCaller, WriteParams{SessionID: h.sessID, Path: link, Content: "x", Overwrite: true}); err == nil ||
@@ -203,7 +203,7 @@ func TestInlineLimitsAndPathRules(t *testing.T) {
 		t.Errorf("write to symlink: %v", err)
 	}
 	// Directories are refused as read sources and write destinations.
-	if _, err := h.svc.ReadFile(ctx, testCaller, h.sessID, h.dir, ""); err == nil || !strings.Contains(err.Error(), "directory") {
+	if _, err := h.svc.ReadFile(ctx, testCaller, ReadParams{SessionID: h.sessID, Path: h.dir, Encoding: ""}); err == nil || !strings.Contains(err.Error(), "directory") {
 		t.Errorf("read of a directory: %v", err)
 	}
 	if _, err := h.svc.WriteFile(ctx, testCaller, WriteParams{SessionID: h.sessID, Path: h.dir, Content: "x", Overwrite: true}); err == nil {
@@ -217,7 +217,7 @@ func TestListDir(t *testing.T) {
 	os.Mkdir(filepath.Join(h.dir, "a-dir"), 0o755)
 	os.Symlink("b.txt", filepath.Join(h.dir, "c-link"))
 
-	res, err := h.svc.ListDir(context.Background(), testCaller, h.sessID, h.dir, 0)
+	res, err := h.svc.ListDir(context.Background(), testCaller, ListParams{SessionID: h.sessID, Path: h.dir, MaxEntries: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestListDir(t *testing.T) {
 		t.Errorf("audit direction: %s", row.Direction)
 	}
 
-	capped, err := h.svc.ListDir(context.Background(), testCaller, h.sessID, h.dir, 2)
+	capped, err := h.svc.ListDir(context.Background(), testCaller, ListParams{SessionID: h.sessID, Path: h.dir, MaxEntries: 2})
 	if err != nil || len(capped.Entries) != 2 || !capped.Truncated {
 		t.Errorf("capped listing: %+v %v", capped, err)
 	}
@@ -313,7 +313,7 @@ func TestInlineTimeoutOnStalledServer(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := h.svc.ListDir(context.Background(), testCaller, h.sessID, h.dir, 0)
+		_, err := h.svc.ListDir(context.Background(), testCaller, ListParams{SessionID: h.sessID, Path: h.dir, MaxEntries: 0})
 		errCh <- err
 	}()
 	// Let the call park on the silent subsystem, then fire the bound.
@@ -343,7 +343,7 @@ func TestInlineTimeoutOnStalledServer(t *testing.T) {
 	}
 	h.stallFTP.Store(false)
 	os.WriteFile(filepath.Join(h.dir, "f"), []byte("x"), 0o644)
-	if res, err := h.svc.ListDir(context.Background(), testCaller, h.sessID, h.dir, 0); err != nil || len(res.Entries) != 1 {
+	if res, err := h.svc.ListDir(context.Background(), testCaller, ListParams{SessionID: h.sessID, Path: h.dir, MaxEntries: 0}); err != nil || len(res.Entries) != 1 {
 		t.Fatalf("call after recovery: %+v %v", res, err)
 	}
 	// The PTY session itself was never affected.
@@ -379,7 +379,7 @@ func TestFileActivityAndIdleSweep(t *testing.T) {
 		clk.Advance(10 * time.Minute)
 		c := h.create(CreateParams{Direction: DirectionDownload, Path: file})
 		h.status(c.TransferID)
-		if _, err := h.svc.ListDir(ctx, testCaller, h.sessID, empty, 0); err != nil {
+		if _, err := h.svc.ListDir(ctx, testCaller, ListParams{SessionID: h.sessID, Path: empty, MaxEntries: 0}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := h.svc.Cancel(ctx, testCaller, c.TransferID); err != nil {

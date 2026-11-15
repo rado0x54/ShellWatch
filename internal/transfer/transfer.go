@@ -373,9 +373,22 @@ func (s *Service) Sweep() {
 	}
 }
 
-// Snapshot returns a terminal:file frame for every unfinished link transfer
-// of a session — sent with the terminal:attach reply so a reconnecting
-// browser reconstructs the transfer strip.
+// SnapshotTo hands deliver a terminal:file frame for every unfinished link
+// transfer of a session, so a browser that just attached reconstructs the
+// transfer strip. deliver runs while emissions are held back (emitMu): the
+// caller must already be subscribed to the session's frames, and then no
+// frame can fall between the snapshot and the subscription — a transfer that
+// changes state concurrently is either reflected in the snapshot, or its
+// frame is delivered after it. Taking the snapshot before subscribing would
+// lose a final frame and leave the transfer shown as unfinished.
+func (s *Service) SnapshotTo(sessionID string, deliver func(frames []any)) {
+	s.emitMu.Lock()
+	defer s.emitMu.Unlock()
+	deliver(s.Snapshot(sessionID))
+}
+
+// Snapshot returns the frames SnapshotTo delivers, without the ordering
+// guarantee.
 func (s *Service) Snapshot(sessionID string) []any {
 	s.mu.Lock()
 	var views []View

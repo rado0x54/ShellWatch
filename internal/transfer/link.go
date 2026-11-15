@@ -459,7 +459,7 @@ func (s *Service) upload(ctx context.Context, r *http.Request, x *xfer) *httpErr
 	}
 
 	// 6. Cleanup: best effort and bounded.
-	s.cleanupStaging(x, client, staging, data, removeData)
+	s.cleanupStaging(x, client, staged{dir: staging, data: data, removeData: removeData})
 	return herr
 }
 
@@ -484,21 +484,29 @@ func (s *Service) commit(client *sftp.Client, call func() error) (err error, tim
 	}
 }
 
+// staged names an upload's staging area for cleanup.
+type staged struct {
+	dir  string // the private staging directory
+	data string // the staged file inside it
+	// removeData is false once a posix-rename moved the staged file away.
+	removeData bool
+}
+
 // cleanupStaging removes the staged file (when it still exists) and the
 // staging directory, bounded by transfer.cleanupTimeoutSeconds. A failure —
 // including a connection that is already gone — is recorded as
 // cleanup "failed" with the staging path, so the human can remove the
 // leftover; success clears the staging path.
-func (s *Service) cleanupStaging(x *xfer, client *sftp.Client, staging, data string, removeData bool) {
+func (s *Service) cleanupStaging(x *xfer, client *sftp.Client, st staged) {
 	done := make(chan error, 1)
 	go func() {
-		if removeData {
-			if err := client.Remove(data); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if st.removeData {
+			if err := client.Remove(st.data); err != nil && !errors.Is(err, os.ErrNotExist) {
 				done <- err
 				return
 			}
 		}
-		done <- client.RemoveDirectory(staging)
+		done <- client.RemoveDirectory(st.dir)
 	}()
 	timeout, stop := s.clk.After(time.Duration(s.lim.CleanupTimeoutSeconds) * time.Second)
 	defer stop()

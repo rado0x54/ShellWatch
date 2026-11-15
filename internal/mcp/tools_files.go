@@ -93,7 +93,9 @@ func registerFileTools(srv *mcpsdk.Server, as *agent.Session, svc *transfer.Serv
 		if err := as.AssertOwned(args.SessionID); err != nil {
 			return errResult(err.Error()), nil
 		}
-		res, err := svc.ListDir(ctx, caller(req), args.SessionID, args.Path, args.MaxEntries)
+		res, err := svc.ListDir(ctx, caller(req), transfer.ListParams{
+			SessionID: args.SessionID, Path: args.Path, MaxEntries: args.MaxEntries,
+		})
 		if err != nil {
 			return errResult(err.Error()), nil
 		}
@@ -121,7 +123,9 @@ func registerFileTools(srv *mcpsdk.Server, as *agent.Session, svc *transfer.Serv
 		if err := as.AssertOwned(args.SessionID); err != nil {
 			return errResult(err.Error()), nil
 		}
-		res, err := svc.ReadFile(ctx, caller(req), args.SessionID, args.Path, args.Encoding)
+		res, err := svc.ReadFile(ctx, caller(req), transfer.ReadParams{
+			SessionID: args.SessionID, Path: args.Path, Encoding: args.Encoding,
+		})
 		if err != nil {
 			return errResult(err.Error()), nil
 		}

@@ -252,7 +252,9 @@ Success →
 ```
 
 Entries are sorted by name; `truncated` is `true` when more than `maxEntries`
-exist.
+exist. `maxEntries` caps the result, not the read: the whole directory is read
+before sorting, so a very large directory is bounded only by
+`transfer.inlineTimeoutSeconds`.
 
 #### `shellwatch_read_file`
 

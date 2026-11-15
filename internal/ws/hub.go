@@ -31,15 +31,17 @@ type Hub struct {
 	unsubOutput  func()
 	unsubRemoved func()
 
-	// fileSnapshot yields a terminal:file frame per unfinished file transfer
-	// of a session (#263); the attach reply includes them so a reconnecting
-	// client reconstructs the transfer strip. nil -> none.
-	fileSnapshot func(sessionID string) []any
+	// fileSnapshot delivers a terminal:file frame per unfinished file
+	// transfer of a session (#263), so a (re)attaching client reconstructs
+	// the transfer strip. It is called AFTER the connection is attached and
+	// must hold back live terminal:file frames while deliver runs, so no
+	// frame is lost between the snapshot and the attach. nil -> none.
+	fileSnapshot func(sessionID string, deliver func(frames []any))
 }
 
 // SetFileSnapshot wires the file-transfer snapshot source (set once at the
 // composition root, before the hub serves connections).
-func (h *Hub) SetFileSnapshot(fn func(sessionID string) []any) {
+func (h *Hub) SetFileSnapshot(fn func(sessionID string, deliver func(frames []any))) {
 	h.mu.Lock()
 	h.fileSnapshot = fn
 	h.mu.Unlock()

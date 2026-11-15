@@ -120,13 +120,17 @@ func (s *Service) inline(ctx context.Context, sessionID string, fn func(*sftp.Cl
 			done <- err
 			return
 		}
+		// Publish the client BEFORE checking for cancellation. giveUp cancels
+		// first and looks for the client second, so one of the two always
+		// holds: this check sees the cancellation and the operation never
+		// starts, or giveUp sees the client and closes its channel. Checking
+		// first left a window in which a call that had already reported
+		// failure could still go on to write.
+		used.Store(client)
 		if opCtx.Err() != nil {
-			// The caller already gave up (timeout while queued behind a
-			// channel setup): never start the operation after reporting failure.
 			done <- errInlineTimeout
 			return
 		}
-		used.Store(client)
 		err = fn(client)
 		if isConnLost(err) {
 			fs.discard(client) // dead channel: reopen on the next call
@@ -156,6 +160,7 @@ func (s *Service) inline(ctx context.Context, sessionID string, fn func(*sftp.Cl
 // SFTP call, the audit row + terminal:file frame, and — on success with
 // actual content — the session activity touch.
 type inlineOp struct {
+	sessionID string
 	direction string
 	path      string
 	bytes     int64
@@ -164,7 +169,8 @@ type inlineOp struct {
 	touch bool
 }
 
-func (s *Service) runInline(ctx context.Context, c Caller, sessionID string, op *inlineOp, fn func(*sftp.Client) error) (string, error) {
+func (s *Service) runInline(ctx context.Context, c Caller, op *inlineOp, fn func(*sftp.Client) error) (string, error) {
+	sessionID := op.sessionID
 	sess, err := s.openSession(c, sessionID)
 	if err != nil {
 		return "", err
@@ -221,8 +227,20 @@ const (
 	listMaxEntries     = 1000
 )
 
-// ListDir lists a remote directory (sorted by name, capped at maxEntries).
-func (s *Service) ListDir(ctx context.Context, c Caller, sessionID, dir string, maxEntries int) (*ListResult, error) {
+// ListParams describe a shellwatch_list_dir call.
+type ListParams struct {
+	SessionID string
+	Path      string
+	// MaxEntries caps the result (0 → 200, at most 1000).
+	MaxEntries int
+}
+
+// ListDir lists a remote directory (sorted by name, capped at MaxEntries).
+// The cap bounds the RESULT, not the read: the SFTP client library only
+// offers a read-the-whole-directory call, so a huge directory is bounded by
+// transfer.inlineTimeoutSeconds alone.
+func (s *Service) ListDir(ctx context.Context, c Caller, p ListParams) (*ListResult, error) {
+	dir, maxEntries := p.Path, p.MaxEntries
 	switch {
 	case maxEntries <= 0:
 		maxEntries = listDefaultEntries
@@ -230,8 +248,8 @@ func (s *Service) ListDir(ctx context.Context, c Caller, sessionID, dir string, 
 		maxEntries = listMaxEntries
 	}
 	res := &ListResult{Entries: []DirEntry{}}
-	op := &inlineOp{direction: DirectionList, path: dir}
-	id, err := s.runInline(ctx, c, sessionID, op, func(client *sftp.Client) error {
+	op := &inlineOp{sessionID: p.SessionID, direction: DirectionList, path: dir}
+	id, err := s.runInline(ctx, c, op, func(client *sftp.Client) error {
 		infos, err := client.ReadDirContext(ctx, dir)
 		if err != nil {
 			return remoteErr("list", dir, err)
@@ -277,11 +295,20 @@ type ReadResult struct {
 	Encoding   string `json:"encoding"`
 }
 
+// ReadParams describe a shellwatch_read_file call.
+type ReadParams struct {
+	SessionID string
+	Path      string
+	// Encoding of the returned content: "utf8" (default) or "base64".
+	Encoding string
+}
+
 // ReadFile reads a small remote file. The read is bounded, not the stat: it
 // streams through a LimitReader of maxInlineBytes+1, so a file that grows
 // past the cap after the advisory stat still fails without partial content.
-func (s *Service) ReadFile(ctx context.Context, c Caller, sessionID, file, encoding string) (*ReadResult, error) {
-	encoding, err := normalizeEncoding(encoding)
+func (s *Service) ReadFile(ctx context.Context, c Caller, p ReadParams) (*ReadResult, error) {
+	file := p.Path
+	encoding, err := normalizeEncoding(p.Encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -290,8 +317,8 @@ func (s *Service) ReadFile(ctx context.Context, c Caller, sessionID, file, encod
 		return fmt.Errorf("%s is %s, above the inline limit of %d bytes; use shellwatch_transfer_file (direction \"download\") instead", file, size, limit)
 	}
 	res := &ReadResult{Path: file, Encoding: encoding}
-	op := &inlineOp{direction: DirectionDownload, path: file, touch: true}
-	id, err := s.runInline(ctx, c, sessionID, op, func(client *sftp.Client) error {
+	op := &inlineOp{sessionID: p.SessionID, direction: DirectionDownload, path: file, touch: true}
+	id, err := s.runInline(ctx, c, op, func(client *sftp.Client) error {
 		// Advisory: a clear error for directories/special files and for files
 		// that are obviously too large, before opening anything.
 		fi, err := client.Stat(file)
@@ -387,8 +414,8 @@ func (s *Service) WriteFile(ctx context.Context, c Caller, p WriteParams) (*Writ
 	res := &WriteResult{Path: p.Path, Bytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
 
 	var opened atomic.Bool
-	op := &inlineOp{direction: DirectionUpload, path: p.Path, touch: true}
-	id, err := s.runInline(ctx, c, p.SessionID, op, func(client *sftp.Client) error {
+	op := &inlineOp{sessionID: p.SessionID, direction: DirectionUpload, path: p.Path, touch: true}
+	id, err := s.runInline(ctx, c, op, func(client *sftp.Client) error {
 		existing, err := checkWriteDestination(client, p.Path)
 		if err != nil {
 			return err

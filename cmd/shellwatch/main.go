@@ -384,7 +384,7 @@ func run() error {
 		OnFailed:    func(v transfer.View) { notifyTransferFailed(transferFailureFromView(v)) },
 	})
 	defer transfers.Close()
-	wsHub.SetFileSnapshot(transfers.Snapshot)
+	wsHub.SetFileSnapshot(transfers.SnapshotTo)
 	go transfers.RunJanitor(ctx, 10*time.Second)
 
 	buildInfo := buildinfo.Load(mustGetwd())

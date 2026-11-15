@@ -83,7 +83,8 @@ func (a *Audit) listFileTransfers(w http.ResponseWriter, r *http.Request) {
 	page, err := a.FileTransfers.List(r.Context(), accountID(r), audit.FileTransferFilters{
 		SessionID: q.Get("sessionId"), Direction: q.Get("direction"),
 		Status: q.Get("status"), Tier: q.Get("tier"),
-	}, q.Get("cursor"), parseLimit(q.Get("limit")))
+		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
+	})
 	if err != nil {
 		writeErr(w, 500, "internal error")
 		return

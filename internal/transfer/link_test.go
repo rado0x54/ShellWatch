@@ -658,6 +658,50 @@ func TestLimits(t *testing.T) {
 	}
 }
 
+// The attach snapshot must not lose a transfer's final frame: while the
+// snapshot is being delivered, live frames are held back, so a transfer that
+// finishes concurrently is followed by its final frame instead of being left
+// looking unfinished.
+func TestSnapshotHoldsBackLiveFrames(t *testing.T) {
+	h := newHarness(t, harnessOpts{})
+	c := h.create(CreateParams{Direction: DirectionUpload, Path: filepath.Join(h.dir, "f")})
+	finalFrames := func() int {
+		n := 0
+		for _, e := range h.rec.forTransfer(c.TransferID) {
+			if e["status"] == "cancelled" {
+				n++
+			}
+		}
+		return n
+	}
+
+	cancelled := make(chan struct{})
+	h.svc.SnapshotTo(h.sessID, func(frames []any) {
+		if len(frames) != 1 || frames[0].(map[string]any)["status"] != "pending" {
+			t.Errorf("snapshot: %+v", frames)
+		}
+		// The transfer finishes while the snapshot is still being queued.
+		go func() {
+			h.svc.Cancel(context.Background(), testCaller, c.TransferID)
+			close(cancelled)
+		}()
+		time.Sleep(100 * time.Millisecond)
+		if n := finalFrames(); n != 0 {
+			t.Errorf("final frame overtook the snapshot (%d delivered during it)", n)
+		}
+	})
+	<-cancelled
+	if n := finalFrames(); n != 1 {
+		t.Errorf("final frame after the snapshot: %d, want 1", n)
+	}
+	// And a snapshot taken afterwards no longer lists it.
+	h.svc.SnapshotTo(h.sessID, func(frames []any) {
+		if len(frames) != 0 {
+			t.Errorf("finished transfer still in the snapshot: %+v", frames)
+		}
+	})
+}
+
 // The status map never exceeds maxStatusRecords under a burst.
 func TestStatusMapBound(t *testing.T) {
 	h := newHarness(t, harnessOpts{limits: config.Transfer{MaxStatusRecords: 8, MaxPendingPerSession: 2, MaxPendingGlobal: 4, MaxActiveGlobal: 2, MaxActivePerAccount: 2}})

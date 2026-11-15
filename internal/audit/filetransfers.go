@@ -109,12 +109,16 @@ type FileTransferFilters struct {
 	Direction string
 	Status    string
 	Tier      string
+	// Cursor is the opaque keyset cursor of the previous page; Limit the page
+	// size (clamped like the other audit readers).
+	Cursor string
+	Limit  int
 }
 
 // List returns an account-scoped, keyset-paginated page ordered by
 // (created_at, id) DESC.
-func (f *FileTransfers) List(ctx context.Context, accountID string, flt FileTransferFilters, cursorStr string, limit int) (Page[FileTransferRow], error) {
-	limit = clampLimit(limit)
+func (f *FileTransfers) List(ctx context.Context, accountID string, flt FileTransferFilters) (Page[FileTransferRow], error) {
+	limit := clampLimit(flt.Limit)
 	conds := []string{"account_id = ?"}
 	args := []any{accountID}
 	for col, v := range map[string]string{
@@ -125,7 +129,7 @@ func (f *FileTransfers) List(ctx context.Context, accountID string, flt FileTran
 			args = append(args, v)
 		}
 	}
-	if c := decodeCursor(cursorStr); c != nil {
+	if c := decodeCursor(flt.Cursor); c != nil {
 		conds = append(conds, "(created_at < ? OR (created_at = ? AND id < ?))")
 		args = append(args, c.CreatedAt, c.CreatedAt, c.ID)
 	}
