@@ -78,6 +78,10 @@ func MountDiscovery(r chi.Router, p DiscoveryParams) {
 	r.Get("/.well-known/oauth-protected-resource/mcp", resource("mcp", "/mcp"))
 	if p.AgentProxyEnabled {
 		r.Get("/.well-known/oauth-protected-resource/agent-proxy", resource("agent", "/agent-proxy"))
+		// The agent's CIMD document (#256). Static and the same on every
+		// instance; see agentclient.go for why only app.shellwatch.ai's copy is
+		// ever resolved.
+		r.Get(AgentClientMetadataPath, serveAgentClientMetadata)
 	}
 
 	r.Get("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {

@@ -73,6 +73,12 @@ shellwatch-agent login --server https://shellwatch.example.com
 shellwatch-agent --server https://shellwatch.example.com
 ```
 
+If that server has CIMD turned off (`hydra.cimd.enabled: false`), `login` fails and tells you to add `--dcr`, which registers a client via dynamic client registration instead:
+
+```bash
+shellwatch-agent login --server https://shellwatch.example.com --dcr
+```
+
 You can hold credentials for multiple instances simultaneously — `login` keys them by server URL, and the daemon looks up by whichever URL it's configured for.
 
 To remove stored credentials:
@@ -107,6 +113,7 @@ Precedence: CLI flags > environment variables > credstore > defaults.
 | `--socket`    | `SHELLWATCH_AGENT_SOCK` | Unix socket path (default: auto)                             |
 | `--insecure`  | —                       | Allow `ws://` (daemon) or `http://` (login) — local dev only |
 | `--print-env` | —                       | Print `export SSH_AUTH_SOCK=...` and exit                    |
+| `--dcr`       | —                       | `login` only: register via DCR instead of the CIMD client_id |
 
 The default listener path is platform-specific:
 
@@ -353,11 +360,13 @@ A browser session must be open in ShellWatch for passkey signing to work. If no 
 
 `shellwatch-agent login` runs a loopback `authorization_code` + PKCE flow (RFC 6749 + 7636 + 8252) against the ShellWatch instance's Ory Hydra — the same flow an MCP client uses:
 
-1. Discover endpoints from `${server}/.well-known/oauth-authorization-server`.
-2. Register a public loopback client via mediated DCR (`/api/hydra/register`).
-3. Open the browser to Hydra's authorize endpoint → ShellWatch's passkey login + consent providers.
-4. Catch the redirect on a loopback listener, exchange the code (PKCE) for an `agent`-scoped access token + refresh token (`offline_access` scope).
-5. Persist the **refresh token** (+ client id) via the credstore.
+1. Discover endpoints from `${server}/.well-known/oauth-authorization-server`. The server must advertise `client_id_metadata_document_supported` (CIMD); otherwise `login` fails.
+2. Use the fixed `client_id` `https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json`, an OAuth Client ID Metadata Document that the server resolves itself. There is no registration step. With `login --dcr`, the agent instead registers a public loopback client via mediated DCR (`/api/hydra/register`). Use this only for servers that have CIMD turned off; it is never chosen automatically, and each such login creates a new OAuth client on the server.
+3. Open the browser to the advertised authorize endpoint (ShellWatch's CIMD front door) → ShellWatch's passkey login + consent providers.
+4. Catch the redirect on a loopback listener at `http://127.0.0.1:<ephemeral>/callback`, exchange the code (PKCE) for an `agent`-scoped access token + refresh token (`offline_access` scope). The document registers the port-less `http://127.0.0.1/callback`, which covers any port (RFC 8252 §7.3).
+5. Persist the **refresh token**, client id and the server's **issuer** via the credstore. If the server later advertises a different issuer, the daemon refuses to use the stored refresh token and asks you to log in again.
+
+On a self-hosted server, resolving the `client_id` means that server makes an outbound HTTPS request to `app.shellwatch.ai` on the first login and at most once a day after that (see the deployment docs).
 
 At runtime the daemon mints short-lived access tokens from the stored refresh token before each WebSocket dial, persisting each rotated refresh token. There is no `client_credentials` grant and no long-lived API key — the token carries the user's identity.
 

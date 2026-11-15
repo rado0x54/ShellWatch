@@ -57,6 +57,7 @@ var statelessGoldens = []string{
 	"discovery-protected-resource-mcp",
 	"discovery-protected-resource-agent",
 	"discovery-authorization-server",
+	"discovery-agent-client-metadata",
 }
 
 func TestGoServerMatchesStatelessGoldens(t *testing.T) {

@@ -42,6 +42,7 @@ var goldenCoverage = map[string]coverage{
 	"getProtectedResourceMetadata":           goldened("discovery-protected-resource"),
 	"getProtectedResourceMetadataMcp":        goldened("discovery-protected-resource-mcp"),
 	"getProtectedResourceMetadataAgentProxy": goldened("discovery-protected-resource-agent"),
+	"getAgentClientMetadataDocument":         goldened("discovery-agent-client-metadata"),
 
 	// --- Endpoints ---
 	"listEndpoints":         goldened("endpoints-list"),

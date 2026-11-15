@@ -6,9 +6,16 @@
 package httpserver
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
+
+	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/buildinfo"
+	"github.com/rado0x54/shellwatch/internal/config"
 )
 
 func TestSPACacheHeaders(t *testing.T) {
@@ -52,10 +59,48 @@ func TestSPACacheHeaders(t *testing.T) {
 		}
 	}
 
-	// The API 404 body is part of the wire contract, not the SPA's caching.
-	rec := httptest.NewRecorder()
-	handler(rec, httptest.NewRequest("GET", "/api/nope", nil))
-	if rec.Code != 404 || rec.Body.String() != `{"error":"Not found"}` {
-		t.Errorf("api fallback: %d %q", rec.Code, rec.Body.String())
+	// The API / discovery 404 body is part of the wire contract, not the
+	// SPA's caching: neither prefix ever falls back to index.html.
+	for _, path := range []string{"/api/nope", "/.well-known/nope"} {
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 404 || rec.Body.String() != `{"error":"Not found"}` {
+			t.Errorf("%s fallback: %d %q", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// With the agent proxy off, its feature-gated discovery documents are absent:
+// a real JSON 404 through the full stack, not the SPA's index.html.
+func TestAgentDiscoveryRoutes404WhenProxyDisabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.ExternalURL = externalURL
+	cfg.Hydra.PublicURL = "http://localhost:4444"
+	cfg.AgentSocket.ProxyEnabled = false
+	deny := auth.Resolver(func(context.Context, string) *auth.Principal { return nil })
+	ts := httptest.NewServer(New(Params{
+		Config:    cfg,
+		Resolve:   deny,
+		StaticFS:  fstest.MapFS{"index.html": {Data: []byte("<html>app</html>")}},
+		BuildInfo: buildinfo.Info{},
+	}))
+	t.Cleanup(ts.Close)
+
+	for _, path := range []string{
+		"/.well-known/oauth-protected-resource/agent-proxy",
+		"/.well-known/shellwatch-agent-client.json",
+	} {
+		res, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound || string(body) != `{"error":"Not found"}` {
+			t.Errorf("%s: %d %q, want 404 {\"error\":\"Not found\"}", path, res.StatusCode, body)
+		}
+		if ct := res.Header.Get("Content-Type"); ct != "application/json; charset=utf-8" {
+			t.Errorf("%s: Content-Type %q", path, ct)
+		}
 	}
 }

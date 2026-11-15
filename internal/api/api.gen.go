@@ -989,6 +989,35 @@ func (e GetHealth200JSONResponseBodyStatus) Valid() bool {
 	}
 }
 
+// AgentClientMetadataDocument OAuth Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document) for `shellwatch-agent` (#256). Static: the same bytes on every instance, embedded from `internal/hydra/agent-client-metadata.json`. `client_id` is always the app.shellwatch.ai URL, which is the agent's fixed client_id.
+type AgentClientMetadataDocument struct {
+	// ApplicationType Example: native
+	ApplicationType *string `json:"application_type,omitempty"`
+
+	// ClientId Example: https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json
+	ClientId string `json:"client_id"`
+
+	// ClientName Example: ShellWatch Agent
+	ClientName string   `json:"client_name"`
+	ClientUri  *string  `json:"client_uri,omitempty"`
+	GrantTypes []string `json:"grant_types"`
+
+	// RedirectUris Port-less loopback IP literals only (never `localhost`, #281); the RFC 8252 §7.3 exception covers the agent's ephemeral port.
+	//
+	// Example: ["http://127.0.0.1/callback","http://[::1]/callback"]
+	RedirectUris  []string `json:"redirect_uris"`
+	ResponseTypes []string `json:"response_types"`
+
+	// Scope Example: agent
+	Scope string `json:"scope"`
+
+	// SoftwareId Example: shellwatch-agent
+	SoftwareId *string `json:"software_id,omitempty"`
+
+	// TokenEndpointAuthMethod Example: none
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+}
+
 // AuthSessionView defines model for AuthSessionView.
 type AuthSessionView struct {
 	AuthorizedAt *string `json:"authorizedAt"`

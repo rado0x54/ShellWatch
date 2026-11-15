@@ -20,9 +20,14 @@ import (
 	"time"
 )
 
-// StoredCreds is what the credstore holds per server: the public client id the
-// agent registered via DCR, plus the latest refresh token.
+// StoredCreds is what the credstore holds per server: the client id the token
+// was issued to, the authorization server (issuer) that issued it, and the
+// latest refresh token.
+//
+// Issuer is empty for credentials stored before #256 (DCR-era logins). Those
+// keep working unbound until the next `login` records one.
 type StoredCreds struct {
+	Issuer       string `json:"issuer,omitempty"`
 	ClientID     string `json:"client_id"`
 	RefreshToken string `json:"refresh_token"`
 }
@@ -59,10 +64,15 @@ func (s StaticToken) Token() (string, error) {
 
 const tokenRefreshSkew = 60 * time.Second
 
+// ErrIssuerChanged means the server now advertises a different authorization
+// server than the one the stored credentials were issued by.
+var ErrIssuerChanged = errors.New("authorization server changed since login")
+
 // RefreshTokenSource mints + caches access tokens from a stored refresh token
 // (refresh_token grant), persisting each rotated refresh token via onRotate.
 type RefreshTokenSource struct {
 	serverURL     string
+	issuer        string
 	clientID      string
 	refreshToken  string
 	allowInsecure bool
@@ -74,13 +84,25 @@ type RefreshTokenSource struct {
 	expiry time.Time
 }
 
-func NewRefreshTokenSource(serverURL, clientID, refreshToken string, allowInsecure bool, onRotate func(string)) *RefreshTokenSource {
+// RefreshTokenSourceParams configures NewRefreshTokenSource.
+type RefreshTokenSourceParams struct {
+	ServerURL string
+	// Creds are the stored credentials. A non-empty Creds.Issuer must equal
+	// the issuer the server advertises, or Token fails with ErrIssuerChanged.
+	Creds         StoredCreds
+	AllowInsecure bool
+	// OnRotate persists each rotated refresh token.
+	OnRotate func(refreshToken string)
+}
+
+func NewRefreshTokenSource(p RefreshTokenSourceParams) *RefreshTokenSource {
 	return &RefreshTokenSource{
-		serverURL:     serverURL,
-		clientID:      clientID,
-		refreshToken:  refreshToken,
-		allowInsecure: allowInsecure,
-		onRotate:      onRotate,
+		serverURL:     p.ServerURL,
+		issuer:        p.Creds.Issuer,
+		clientID:      p.Creds.ClientID,
+		refreshToken:  p.Creds.RefreshToken,
+		allowInsecure: p.AllowInsecure,
+		onRotate:      p.OnRotate,
 		httpClient:    &http.Client{Timeout: 15 * time.Second},
 	}
 }
@@ -97,6 +119,12 @@ func (s *RefreshTokenSource) Token() (string, error) {
 	eps, err := Discover(ctx, s.httpClient, s.serverURL)
 	if err != nil {
 		return "", fmt.Errorf("discover endpoints: %w", err)
+	}
+	// Never present a refresh token to an authorization server other than the
+	// one that issued it.
+	if s.issuer != "" && eps.Issuer != s.issuer {
+		return "", fmt.Errorf("%w (was %s, now %s): run `shellwatch-agent login --server %s` again",
+			ErrIssuerChanged, s.issuer, eps.Issuer, s.serverURL)
 	}
 	tok, err := postToken(ctx, s.httpClient, eps.Token, url.Values{
 		"grant_type":    {"refresh_token"},
@@ -123,9 +151,14 @@ func (s *RefreshTokenSource) Token() (string, error) {
 
 // Endpoints is the subset of ShellWatch's OAuth discovery doc the agent uses.
 type Endpoints struct {
+	Issuer        string `json:"issuer"`
 	Authorization string `json:"authorization_endpoint"`
 	Token         string `json:"token_endpoint"`
-	Registration  string `json:"registration_endpoint"`
+	// Registration is only used by `login --dcr`.
+	Registration string `json:"registration_endpoint"`
+	// ClientIDMetadataDocumentSupported is the CIMD draft's §6 flag; the agent
+	// does not fall back to DCR without it unless `login --dcr` is given.
+	ClientIDMetadataDocumentSupported bool `json:"client_id_metadata_document_supported"`
 }
 
 // Discover reads ShellWatch's authorization-server metadata.
@@ -148,8 +181,8 @@ func Discover(ctx context.Context, client *http.Client, serverURL string) (Endpo
 	if err := json.Unmarshal(body, &eps); err != nil {
 		return eps, fmt.Errorf("parse discovery doc: %w", err)
 	}
-	if eps.Authorization == "" || eps.Token == "" || eps.Registration == "" {
-		return eps, errors.New("discovery doc missing authorization/token/registration endpoint")
+	if eps.Issuer == "" || eps.Authorization == "" || eps.Token == "" {
+		return eps, errors.New("discovery doc missing issuer/authorization/token endpoint")
 	}
 	return eps, nil
 }

@@ -1,0 +1,12 @@
+{
+  "client_id": "https://app.shellwatch.ai/.well-known/shellwatch-agent-client.json",
+  "client_name": "ShellWatch Agent",
+  "client_uri": "https://shellwatch.ai/docs/reference/agent-client/",
+  "software_id": "shellwatch-agent",
+  "application_type": "native",
+  "redirect_uris": ["http://127.0.0.1/callback", "http://[::1]/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "scope": "agent"
+}
