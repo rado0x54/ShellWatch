@@ -64,7 +64,11 @@
       // Pages are followed until every entry still shown as in flight has
       // been found in the log, however far back it sits.
       const unsettled = transfers.filter((t) => isUnfinished(t.status)).map((t) => t.transferId);
-      transfers = mergeHistory(transfers, await loadSessionHistory(sessionId, unsettled));
+      const history = await loadSessionHistory(sessionId, unsettled);
+      // Merge into the list as it is NOW: frames that arrived during the
+      // fetch are already in `transfers` and must not be overwritten by a
+      // snapshot taken before the await.
+      transfers = mergeHistory(transfers, history);
     } catch {
       // keep what the socket delivered
     }
