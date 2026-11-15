@@ -605,8 +605,9 @@ components:
             endpointLabel, endpointAddress, trigger, mcpClientName,
             mcpClientVersion, mcpReason, sourceIp, error);
             file-transfer-failed — an out-of-band file transfer ended failed
-            or expired, including one interrupted by a server restart
-            (payload: transferId, sessionId, endpointId, direction, path,
+            or expired, including one interrupted by a server restart, or a
+            finished upload (status may be completed) whose staging cleanup
+            a restart cut short (payload: transferId, sessionId, endpointId, direction, path,
             status, error, bytes, commitOutcome, cleanup, stagingPath,
             mcpClientName). Clients must ignore
             unknown kinds gracefully (render title/detail, no typed action).

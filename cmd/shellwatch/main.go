@@ -345,7 +345,15 @@ func run() error {
 	fileTransferLog := audit.NewFileTransfers(db, clk)
 	notifyTransferFailed := func(p transferFailure) {
 		title := fmt.Sprintf("File %s of %s %s", p.Direction, p.Path, p.Status)
-		detail := fmt.Sprintf("Transfer:  %s\nSession:   %s\nPath:      %s\nError:     %s", p.TransferID, p.SessionID, p.Path, p.Error)
+		if p.Status == string(transfer.StateCompleted) && p.Cleanup == transfer.CleanupFailed {
+			// Only the startup reconciliation reports a completed transfer:
+			// its staging cleanup was cut short by the restart (#287).
+			title += ", staging cleanup failed"
+		}
+		detail := fmt.Sprintf("Transfer:  %s\nSession:   %s\nPath:      %s", p.TransferID, p.SessionID, p.Path)
+		if p.Error != "" {
+			detail += "\nError:     " + p.Error
+		}
 		if p.CommitOutcome == transfer.CommitUnknown {
 			detail += "\n\nThe commit outcome is unknown: inspect the destination (size, sha256) before retrying."
 		}
@@ -370,7 +378,12 @@ func run() error {
 		slog.Warn("file transfers: startup reconciliation failed", "err", err)
 	} else {
 		for _, row := range interrupted {
-			slog.Warn("file transfer interrupted by restart", "transfer", row.TransferID, "path", row.Path)
+			cleanup := ""
+			if row.Cleanup != nil {
+				cleanup = *row.Cleanup
+			}
+			slog.Warn("file transfers: interrupted by restart", "transfer", row.TransferID, "account", row.AccountID,
+				"status", row.Status, "cleanup", cleanup, "path", row.Path)
 			notifyTransferFailed(transferFailureFromRow(row))
 		}
 	}

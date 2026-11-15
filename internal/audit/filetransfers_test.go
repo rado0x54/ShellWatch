@@ -40,13 +40,37 @@ func TestFileTransfersReconcileInterrupted(t *testing.T) {
 	seed("xfer_active", "active", str("/srv/.f.aa.tmp"))
 	seed("xfer_committing", "committing", str("/srv/.f.bb.tmp"))
 	seed("xfer_done", "completed", nil)
+	// Finished, but the restart hit before cleanupStaging recorded a result
+	// (#287): outcome kept, cleanup failed, reported.
+	seed("xfer_done_staged", "completed", str("/srv/.f.cc.tmp"))
+	failedStaged := base
+	failedStaged.TransferID, failedStaged.Status, failedStaged.StagingPath = "xfer_failed_staged", "failed", str("/srv/.f.dd.tmp")
+	failedStaged.CommitOutcome, failedStaged.Error = str("failed"), str("commit failed: boom")
+	failedStaged.FinishedAt = str("2026-03-01T11:30:00.000Z")
+	log.Save(failedStaged)
+	// Finished with its cleanup recorded: untouched.
+	cleaned := base
+	cleaned.TransferID, cleaned.Status, cleaned.StagingPath, cleaned.Cleanup = "xfer_cleaned", "failed", str("/srv/.f.ee.tmp"), str("failed")
+	log.Save(cleaned)
 
 	rows, err := log.ReconcileInterrupted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3 {
-		t.Fatalf("reconciled %d rows, want 3", len(rows))
+	got := map[string]FileTransferRow{}
+	for _, r := range rows {
+		got[r.TransferID] = r
+	}
+	if len(rows) != 5 {
+		t.Fatalf("reconciled %d rows, want 5: %v", len(rows), got)
+	}
+	for _, id := range []string{"xfer_pending", "xfer_active", "xfer_committing", "xfer_done_staged", "xfer_failed_staged"} {
+		if _, ok := got[id]; !ok {
+			t.Errorf("%s not reported", id)
+		}
+	}
+	if r := got["xfer_done_staged"]; r.Status != "completed" || r.Cleanup == nil || *r.Cleanup != "failed" {
+		t.Errorf("reported completed+staged row: %+v", r)
 	}
 
 	get := func(id string) *FileTransferRow {
@@ -71,8 +95,19 @@ func TestFileTransfersReconcileInterrupted(t *testing.T) {
 	if pending.Status != "failed" || *pending.Error != "server restarted" || pending.Cleanup != nil {
 		t.Errorf("pending row: %+v", pending)
 	}
-	if done := get("xfer_done"); done.Status != "completed" {
+	if done := get("xfer_done"); done.Status != "completed" || done.Cleanup != nil {
 		t.Errorf("finished row was touched: %+v", done)
+	}
+	doneStaged := get("xfer_done_staged")
+	if doneStaged.Status != "completed" || doneStaged.Error != nil || *doneStaged.Cleanup != "failed" ||
+		*doneStaged.StagingPath != "/srv/.f.cc.tmp" || *doneStaged.FinishedAt != "2026-03-01T12:00:00.000Z" {
+		t.Errorf("completed+staged row: %+v", doneStaged)
+	}
+	failedStagedRow := get("xfer_failed_staged")
+	if failedStagedRow.Status != "failed" || *failedStagedRow.CommitOutcome != "failed" ||
+		*failedStagedRow.Error != "commit failed: boom" || *failedStagedRow.Cleanup != "failed" ||
+		*failedStagedRow.StagingPath != "/srv/.f.dd.tmp" || *failedStagedRow.FinishedAt != "2026-03-01T11:30:00.000Z" {
+		t.Errorf("failed+staged row: %+v", failedStagedRow)
 	}
 
 	// Idempotent: a second boot finds nothing to notify about.
