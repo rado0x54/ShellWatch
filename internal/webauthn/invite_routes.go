@@ -74,7 +74,7 @@ func (d *Deps) confirmCredential(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	cred, err := d.Credentials.FindForAccount(r.Context(), id, principal.AccountID)
 	if err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if cred == nil {
@@ -90,7 +90,7 @@ func (d *Deps) confirmCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Credentials.SetState(r.Context(), id, store.CredentialStateActive); err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	slog.Info("webauthn: invited passkey confirmed", "account", principal.AccountID, "credential", id)
@@ -126,7 +126,7 @@ func (d *Deps) inviteRegisterOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	exclude, err := d.Credentials.ActiveCredentialIDs(r.Context(), slot.AccountID)
 	if err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	name, _ := d.Credentials.AccountName(r.Context(), slot.AccountID)

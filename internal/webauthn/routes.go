@@ -55,7 +55,7 @@ func (d *Deps) Mount(r chi.Router) {
 func (d *Deps) passkeyStatus(w http.ResponseWriter, r *http.Request) {
 	has, err := d.Credentials.HasPasskeys(r.Context())
 	if err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"hasPasskeys": has})
@@ -122,7 +122,7 @@ func (d *Deps) inAccountRegisterOptions(w http.ResponseWriter, r *http.Request) 
 	}
 	exclude, err := d.Credentials.ActiveCredentialIDs(r.Context(), principal.AccountID)
 	if err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	opts := d.buildRegOptions(clampName(name, "user"), exclude)
@@ -247,7 +247,7 @@ func (d *Deps) stepUpOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	creds, err := d.Credentials.ActiveCredentialIDs(r.Context(), principal.AccountID)
 	if err != nil {
-		writeErr(w, r, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if len(creds) == 0 {
@@ -385,6 +385,17 @@ func writeErr(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	}
 	slog.Log(r.Context(), level, "webauthn: request refused", attrs...)
 	apierr.Write(w, status, msg)
+}
+
+// writeInternal answers 500 "internal error" and logs the cause, which the
+// response body deliberately hides (writeErr only knows the message).
+func writeInternal(w http.ResponseWriter, r *http.Request, err error) {
+	attrs := []any{"route", routePattern(r), "err", err}
+	if p, ok := auth.PrincipalFrom(r.Context()); ok {
+		attrs = append(attrs, "account", p.AccountID)
+	}
+	slog.Error("webauthn: internal error", attrs...)
+	apierr.Write(w, http.StatusInternalServerError, "internal error")
 }
 
 func routePattern(r *http.Request) string {

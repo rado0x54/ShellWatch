@@ -222,6 +222,7 @@ func MountProviders(r chi.Router, p ProviderParams) {
 	r.Post("/api/hydra/login/options", func(w http.ResponseWriter, r *http.Request) {
 		opts, ok, err := p.WebAuthn.LoginOptions(r.Context())
 		if err != nil {
+			slog.Error("auth: login options failed", "err", err)
 			apierr.Write(w, 500, "internal error")
 			return
 		}
@@ -352,6 +353,7 @@ func (p ProviderParams) consentOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, ok, err := p.WebAuthn.ConsentOptions(r.Context(), cr.Subject)
 	if err != nil {
+		slog.Error("auth: consent options failed", "account", cr.Subject, "client", cr.Client.ClientID, "err", err)
 		apierr.Write(w, 500, "internal error")
 		return
 	}
