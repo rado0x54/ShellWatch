@@ -498,7 +498,16 @@ func run() error {
 	})
 
 	addr := net.JoinHostPort(bindHost(), strconv.Itoa(cfg.Server.Port))
-	srv := &http.Server{Addr: addr, Handler: handler}
+	// Request contexts hang off reqCtx, not the signal ctx, so a shutdown can
+	// let in-flight requests finish for a grace period before cancelling
+	// them (#272).
+	reqCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	srv := &http.Server{
+		Addr:        addr,
+		Handler:     handler,
+		BaseContext: func(net.Listener) context.Context { return reqCtx },
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -511,6 +520,7 @@ func run() error {
 	select {
 	case err := <-errCh:
 		stop()            // cancel the root ctx so the janitors and the flusher exit
+		cancelRequests()  // unwind any handler (incl. hijacked WebSockets) still running
 		_ = srv.Close()   // sever accepted conns: no in-flight handler may create a session after Destroy
 		manager.Destroy() // close open PTYs cleanly + write their session-close audit rows
 		<-flusherDone
@@ -518,24 +528,27 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
-	// Ordered shutdown (§5.1): stop accepting HTTP and drain; if the drain
-	// deadline fires with a handler still running (a long MCP stream),
-	// hard-close the remaining connections so the straggler stops producing
-	// work. Then close all terminals, join the flusher, and CloseAndFlush:
-	// it flushes and marks the flusher closed atomically, so no Touch from
-	// any surviving goroutine can land after the final flush — "the flush is
-	// the last-used table's last write before db.Close" holds structurally
-	// on every branch, not just the clean drain.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	err = srv.Shutdown(shutdownCtx)
-	if err != nil {
-		_ = srv.Close()
+	// Restore default signal handling right away so a second Ctrl-C kills the
+	// process instead of being swallowed by the already-cancelled ctx (#272).
+	stop()
+	slog.Info("shutting down (press Ctrl-C again to force)")
+
+	// Ordered shutdown (§5.1): stop accepting HTTP and drain — after a short
+	// grace the request contexts are cancelled so long MCP streams unwind; a
+	// handler that still outlives the deadline is hard-closed so it stops
+	// producing work. Then close all terminals, join the flusher, and
+	// CloseAndFlush: it flushes and marks the flusher closed atomically, so no
+	// Touch from any surviving goroutine can land after the final flush — "the
+	// flush is the last-used table's last write before db.Close" holds
+	// structurally on every branch, not just the clean drain.
+	if drainHTTP(srv, cancelRequests, shutdownGrace, shutdownDeadline) {
+		// The shutdown still completed; a straggler is not a failure (#272).
+		slog.Warn("drain deadline reached; remaining connections were closed", "deadline", shutdownDeadline)
 	}
 	manager.Destroy()
 	<-flusherDone
 	flusher.CloseAndFlush(context.Background())
-	return err
+	return nil
 }
 
 // setupLogging installs the default slog handler. Controlled by env:
