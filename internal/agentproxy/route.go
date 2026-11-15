@@ -3,7 +3,9 @@ package agentproxy
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 	"golang.org/x/crypto/ssh"
@@ -74,21 +76,31 @@ func (d *Deps) Handler() http.HandlerFunc {
 
 		identities, err := d.buildIdentities(ctx, principal.AccountID)
 		if err != nil {
+			slog.Error("agent-proxy: identity lookup failed", "account", principal.AccountID, "err", err)
 			wsc.Close(websocket.StatusInternalError, "identity lookup failed")
 			return
 		}
 
+		actionCtx := approval.Context{
+			Source:         "agent-proxy",
+			SourceIP:       realip.FromRequest(r),
+			ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
+			ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
+			ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
+		}
 		ba := signagent.New(ctx, signagent.Params{
 			Identities: identities, Broker: d.Broker,
 			AccountID: principal.AccountID, ConnectionID: connID,
-			ActionCtx: approval.Context{
-				Source:         "agent-proxy",
-				SourceIP:       realip.FromRequest(r),
-				ClientHostname: util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Hostname")),
-				ClientOS:       util.SanitizeClientReported(r.Header.Get("X-ShellWatch-OS")),
-				ClientVersion:  util.SanitizeClientReported(r.Header.Get("X-ShellWatch-Version")),
-			},
+			ActionCtx: actionCtx,
 		})
+		start := time.Now()
+		slog.Info("agent-proxy: connected", "connection", connID, "account", principal.AccountID,
+			"client", principal.ClientID, "sourceIp", actionCtx.SourceIP, "clientHostname", actionCtx.ClientHostname,
+			"clientVersion", actionCtx.ClientVersion, "identities", len(identities))
+		defer func() {
+			slog.Info("agent-proxy: disconnected", "connection", connID, "account", principal.AccountID,
+				"duration", time.Since(start).Round(time.Second))
+		}()
 
 		// Cancel stranded approvals when the connection ends (+ clear toasts).
 		defer d.Broker.CancelForConnection(connID, "agent-proxy connection closed")

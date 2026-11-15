@@ -7,6 +7,7 @@ package webauthn
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +55,7 @@ func toPublicSlot(s InviteSlot) InviteStoreSlot {
 func (d *Deps) mintInvite(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFrom(r.Context())
 	slot := d.Invites.Create(principal.AccountID, randomB64URL(32))
+	slog.Info("webauthn: passkey invite created", "account", principal.AccountID, "expiresAt", slot.ExpiresAt)
 	writeJSON(w, 200, map[string]any{"invite": publicInviteShape(toPublicSlot(slot))})
 }
 
@@ -61,7 +63,7 @@ func (d *Deps) readInvite(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFrom(r.Context())
 	slot, ok := d.Invites.FindForAccount(principal.AccountID)
 	if !ok {
-		writeErr(w, 404, "No active invite")
+		writeErr(w, r, 404, "No active invite")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"invite": publicInviteShape(toPublicSlot(slot))})
@@ -72,32 +74,33 @@ func (d *Deps) confirmCredential(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	cred, err := d.Credentials.FindForAccount(r.Context(), id, principal.AccountID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
 	if cred == nil {
-		writeErr(w, 404, "Credential not found")
+		writeErr(w, r, 404, "Credential not found")
 		return
 	}
 	if cred.Revoked {
-		writeErr(w, 400, "Credential is revoked")
+		writeErr(w, r, 400, "Credential is revoked")
 		return
 	}
 	if cred.State == store.CredentialStateActive {
-		writeErr(w, 400, "Credential is already active")
+		writeErr(w, r, 400, "Credential is already active")
 		return
 	}
 	if err := d.Credentials.SetState(r.Context(), id, store.CredentialStateActive); err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
+	slog.Info("webauthn: invited passkey confirmed", "account", principal.AccountID, "credential", id)
 	writeJSON(w, 200, map[string]string{"status": "active"})
 }
 
 func (d *Deps) inviteByToken(w http.ResponseWriter, r *http.Request) {
 	slot, ok := d.Invites.FindByToken(chi.URLParam(r, "token"))
 	if !ok {
-		writeErr(w, 404, "Invite not found or expired")
+		writeErr(w, r, 404, "Invite not found or expired")
 		return
 	}
 	name, _ := d.Credentials.AccountName(r.Context(), slot.AccountID)
@@ -113,17 +116,17 @@ func (d *Deps) inviteRegisterOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Token == "" {
-		writeErr(w, 400, "Token is required")
+		writeErr(w, r, 400, "Token is required")
 		return
 	}
 	slot, ok := d.Invites.FindByToken(body.Token)
 	if !ok {
-		writeErr(w, 404, "Invite not found or expired")
+		writeErr(w, r, 404, "Invite not found or expired")
 		return
 	}
 	exclude, err := d.Credentials.ActiveCredentialIDs(r.Context(), slot.AccountID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
 	name, _ := d.Credentials.AccountName(r.Context(), slot.AccountID)
@@ -144,36 +147,37 @@ func (d *Deps) inviteRegister(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&withToken)
 
 	if withToken.Token == "" {
-		writeErr(w, 400, "Token is required")
+		writeErr(w, r, 400, "Token is required")
 		return
 	}
 	slot, ok := d.Invites.FindByToken(withToken.Token)
 	if !ok {
-		writeErr(w, 404, "Invite not found or expired")
+		writeErr(w, r, 404, "Invite not found or expired")
 		return
 	}
 	challenge := d.Challenges.Consume(withToken.ChallengeID, PurposeRegisterInvite)
 	if challenge == "" {
-		writeErr(w, 400, "Challenge expired or not found")
+		writeErr(w, r, 400, "Challenge expired or not found")
 		return
 	}
 	dec, err := VerifyRegistration(withToken.Credential, challenge, d.RpID, d.TrustedOrigins)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 	// Atomic supersede check: a concurrent mint can land during the async
 	// verify above; refuse to consume a freshly superseded slot.
 	if !d.Invites.ConsumeIfTokenMatches(slot.AccountID, withToken.Token) {
-		writeErr(w, 409, "Invite was already used")
+		writeErr(w, r, 409, "Invite was already used")
 		return
 	}
 	ins, err := d.Credentials.Insert(r.Context(), slot.AccountID, toStoreCred(dec),
 		store.CredentialStatePendingConfirmation, newUUID())
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
+	slog.Info("webauthn: passkey registered via invite (awaiting confirmation)", "account", slot.AccountID, "passkey", ins.Label)
 	writeJSON(w, 200, map[string]any{
 		"status":      "registered",
 		"label":       ins.Label,

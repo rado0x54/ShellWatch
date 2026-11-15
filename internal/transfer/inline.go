@@ -196,6 +196,7 @@ func (s *Service) runInline(ctx context.Context, c Caller, op *inlineOp, fn func
 	} else {
 		v.Bytes, v.SHA256 = op.bytes, op.sha256
 	}
+	logTransfer(v)
 	s.emitView(v)
 	if err == nil && op.touch {
 		s.mgr.TouchActivity(sessionID)

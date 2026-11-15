@@ -9,6 +9,7 @@ package webauthn
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -54,7 +55,7 @@ func (d *Deps) Mount(r chi.Router) {
 func (d *Deps) passkeyStatus(w http.ResponseWriter, r *http.Request) {
 	has, err := d.Credentials.HasPasskeys(r.Context())
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"hasPasskeys": has})
@@ -95,7 +96,7 @@ func (d *Deps) buildRegOptions(userName string, exclude []string) regOptions {
 func (d *Deps) selfRegisterOptions(w http.ResponseWriter, r *http.Request) {
 	if !d.SelfRegEnabled {
 		if has, _ := d.Credentials.HasPasskeys(r.Context()); has {
-			writeErr(w, 403, "Self-registration is disabled")
+			writeErr(w, r, 403, "Self-registration is disabled")
 			return
 		}
 	}
@@ -121,7 +122,7 @@ func (d *Deps) inAccountRegisterOptions(w http.ResponseWriter, r *http.Request) 
 	}
 	exclude, err := d.Credentials.ActiveCredentialIDs(r.Context(), principal.AccountID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
 	opts := d.buildRegOptions(clampName(name, "user"), exclude)
@@ -140,27 +141,27 @@ type verifyBody struct {
 func (d *Deps) selfRegister(w http.ResponseWriter, r *http.Request) {
 	if !d.SelfRegEnabled {
 		if has, _ := d.Credentials.HasPasskeys(r.Context()); has {
-			writeErr(w, 403, "Self-registration is disabled")
+			writeErr(w, r, 403, "Self-registration is disabled")
 			return
 		}
 	}
 	var body verifyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, 400, "invalid body")
+		writeErr(w, r, 400, "invalid body")
 		return
 	}
 	if body.ChallengeID == "" || len(body.Credential) == 0 {
-		writeErr(w, 400, "name, challengeId, and credential are required")
+		writeErr(w, r, 400, "name, challengeId, and credential are required")
 		return
 	}
 	challenge := d.Challenges.Consume(body.ChallengeID, PurposeSelfRegister)
 	if challenge == "" {
-		writeErr(w, 400, "Challenge expired or not found")
+		writeErr(w, r, 400, "Challenge expired or not found")
 		return
 	}
 	dec, err := VerifyRegistration(body.Credential, challenge, d.RpID, d.TrustedOrigins)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 	res, err := d.Credentials.SelfRegister(r.Context(), store.SelfRegisterParams{
@@ -168,13 +169,14 @@ func (d *Deps) selfRegister(w http.ResponseWriter, r *http.Request) {
 		NewAccountID: newUUID(), NewCredID: newUUID(),
 	})
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 	if res == nil {
-		writeErr(w, 403, "Self-registration is disabled")
+		writeErr(w, r, 403, "Self-registration is disabled")
 		return
 	}
+	slog.Info("webauthn: account registered", "account", res.AccountID, "passkey", res.Label)
 	writeJSON(w, 200, map[string]any{
 		"verified":     true,
 		"accountId":    res.AccountID,
@@ -188,25 +190,26 @@ func (d *Deps) inAccountRegister(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFrom(r.Context())
 	var body verifyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, 400, "invalid body")
+		writeErr(w, r, 400, "invalid body")
 		return
 	}
 	challenge := d.Challenges.Consume(body.ChallengeID, PurposeRegisterInAccount)
 	if challenge == "" {
-		writeErr(w, 400, "Challenge expired or not found")
+		writeErr(w, r, 400, "Challenge expired or not found")
 		return
 	}
 	dec, err := VerifyRegistration(body.Credential, challenge, d.RpID, d.TrustedOrigins)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 	ins, err := d.Credentials.Insert(r.Context(), principal.AccountID, toStoreCred(dec),
 		store.CredentialStateActive, newUUID())
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
+	slog.Info("webauthn: passkey added", "account", principal.AccountID, "passkey", ins.Label)
 	var sshdConfig any
 	if dec.AuthorizedKeysEntry != "" {
 		sshdConfig = SshdConfigLine()
@@ -239,16 +242,16 @@ func (d *Deps) stepUpOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if !IsStepUpAction(body.Action) {
-		writeErr(w, 400, "Invalid or missing action")
+		writeErr(w, r, 400, "Invalid or missing action")
 		return
 	}
 	creds, err := d.Credentials.ActiveCredentialIDs(r.Context(), principal.AccountID)
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeErr(w, r, 500, "internal error")
 		return
 	}
 	if len(creds) == 0 {
-		writeErr(w, 400, "no_active_credentials")
+		writeErr(w, r, 400, "no_active_credentials")
 		return
 	}
 	allow := make([]map[string]any, 0, len(creds))
@@ -275,16 +278,16 @@ func (d *Deps) stepUpVerify(w http.ResponseWriter, r *http.Request) {
 		Action      string          `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, 400, "invalid body")
+		writeErr(w, r, 400, "invalid body")
 		return
 	}
 	if !IsStepUpAction(body.Action) {
-		writeErr(w, 400, "Invalid or missing action")
+		writeErr(w, r, 400, "Invalid or missing action")
 		return
 	}
 	challenge := d.Challenges.Consume(body.ChallengeID, ActionToPurpose[body.Action])
 	if challenge == "" {
-		writeErr(w, 400, "Challenge expired or not found")
+		writeErr(w, r, 400, "Challenge expired or not found")
 		return
 	}
 
@@ -296,7 +299,7 @@ func (d *Deps) stepUpVerify(w http.ResponseWriter, r *http.Request) {
 	stored, err := d.Credentials.FindByCredentialID(r.Context(), assertion.ID)
 	if err != nil || stored == nil || stored.AccountID != principal.AccountID ||
 		stored.Revoked || stored.State != store.CredentialStateActive {
-		writeErr(w, 400, "Unknown credential")
+		writeErr(w, r, 400, "Unknown credential")
 		return
 	}
 
@@ -305,16 +308,17 @@ func (d *Deps) stepUpVerify(w http.ResponseWriter, r *http.Request) {
 		StoredCOSE: stored.PublicKeyCOSE, StoredCounter: stored.Counter,
 	})
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 	if err := d.Credentials.UpdateCounter(r.Context(), stored.RowID, res.NewCounter); err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, r, 400, err.Error())
 		return
 	}
 
 	token := randomB64URL(32)
 	exp := d.StepUp.Mint(token, principal.AccountID, body.Action)
+	slog.Info("webauthn: step-up verified", "account", principal.AccountID, "action", body.Action)
 	writeJSON(w, 200, map[string]any{
 		"stepUpToken": token,
 		"expiresAt":   exp.UTC().Format(isoMillis),
@@ -363,8 +367,31 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeErr(w http.ResponseWriter, status int, msg string) {
+// writeErr answers a refused ceremony and logs why: the request log line
+// only carries the status. The route pattern, not the path, so an invite
+// token in the URL never reaches the log. 404s are routine (invite polling)
+// and log at debug.
+func writeErr(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	level := slog.LevelInfo
+	switch {
+	case status >= 500:
+		level = slog.LevelError
+	case status == http.StatusNotFound:
+		level = slog.LevelDebug
+	}
+	attrs := []any{"route", routePattern(r), "status", status, "reason", msg}
+	if p, ok := auth.PrincipalFrom(r.Context()); ok {
+		attrs = append(attrs, "account", p.AccountID)
+	}
+	slog.Log(r.Context(), level, "webauthn: request refused", attrs...)
 	apierr.Write(w, status, msg)
+}
+
+func routePattern(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+		return rc.RoutePattern()
+	}
+	return "unknown"
 }
 
 var (

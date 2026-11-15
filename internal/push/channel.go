@@ -145,22 +145,24 @@ func (c *Channel) sendToAccount(ctx context.Context, accountID string, raw []byt
 			TTL:             60,
 		})
 		if err != nil {
-			slog.Warn("web-push send failed", "ref", logRef, "err", err)
+			slog.Warn("push: send failed", "ref", logRef, "pushHost", endpointHost(sub.Endpoint), "err", err)
 			continue
 		}
 		// 410 Gone / 404: the subscription expired — clean it up.
 		if status == 404 || status == 410 {
 			_ = c.Subs.Delete(ctx, accountID, sub.Endpoint)
-			slog.Info("removed expired push subscription", "endpoint", truncate(sub.Endpoint, 60))
+			slog.Info("push: removed expired subscription", "account", accountID, "pushHost", endpointHost(sub.Endpoint), "status", status)
 			continue
 		}
 		if status >= 200 && status < 300 {
 			sent++
+			continue
 		}
+		// Anything else (403 VAPID mismatch, 413, 429 …) drops the
+		// notification for this device; the subscription stays.
+		slog.Warn("push: push service refused the notification", "ref", logRef, "pushHost", endpointHost(sub.Endpoint), "status", status)
 	}
-	if sent > 0 {
-		slog.Info("sent push notifications", "ref", logRef, "count", sent)
-	}
+	slog.Info("push: notifications sent", "ref", logRef, "account", accountID, "sent", sent, "subscriptions", len(subs))
 }
 
 // toPath strips the origin — the service worker opens relative to its own.
@@ -171,9 +173,11 @@ func toPath(deepLink string) string {
 	return deepLink
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+// endpointHost is the push service host (fcm.googleapis.com,
+// web.push.apple.com …): the full endpoint URL is a capability.
+func endpointHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil {
+		return u.Host
 	}
-	return s[:n] + "..."
+	return ""
 }

@@ -278,6 +278,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	for _, fn := range registered {
 		fn(sess.SessionID, sess.AccountID)
 	}
+	slog.Info("terminal: session connecting", sessionAttrs(sess, ep)...)
 
 	transport, err := m.factory(setupCtx, FactoryParams{Endpoint: ep, SessionID: sess.SessionID, Trigger: trigger})
 
@@ -312,6 +313,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// sends. The audit writer is unaffected: recordClose is an idempotent
 		// UPDATE, and no lifecycle row exists unless a Close raced the setup
 		// (in which case closing inserted it and this balances it).
+		slog.Warn("terminal: session connect failed", append(sessionAttrs(sess, ep), "err", err)...)
 		m.setStatus(mg, StatusClosed, CloseTransportError)
 		m.removeEntry(sess.SessionID)
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
@@ -330,6 +332,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	// the pump, and a terminal state must never be flipped back to open —
 	// setStatus guards that too, this ordering just makes it impossible here.
 	m.setStatus(mg, StatusOpen, "")
+	slog.Info("terminal: session open", "session", sess.SessionID, "setup", m.clk.Now().Sub(now).Round(time.Millisecond))
 	// Snapshot under the lock: the open broadcast above can prompt a client
 	// to close the session from another goroutine before Create returns.
 	m.mu.Lock()
@@ -813,7 +816,21 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
 	m.mu.Unlock()
 
+	if status == StatusClosed || status == StatusError {
+		slog.Info("terminal: session ended", "session", ev.SessionID, "status", status,
+			"previous", prev, "reason", ev.Reason, "lifetime", m.clk.Now().Sub(ev.CreatedAt).Round(time.Second))
+	}
 	for _, fn := range subs {
 		fn(ev)
 	}
+}
+
+// sessionAttrs are the identifying log attributes of a session being created.
+func sessionAttrs(sess *Session, ep EndpointRef) []any {
+	attrs := []any{"session", sess.SessionID, "account", sess.AccountID, "endpoint", ep.Label,
+		"address", fmt.Sprintf("%s@%s:%d", ep.Username, ep.Host, ep.Port), "source", sess.Source}
+	if sess.Source == SourceMCP {
+		attrs = append(attrs, "mcpClient", sess.MCPClientName)
+	}
+	return attrs
 }

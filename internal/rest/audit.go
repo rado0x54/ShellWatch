@@ -86,7 +86,7 @@ func (a *Audit) listFileTransfers(w http.ResponseWriter, r *http.Request) {
 		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
 	})
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -121,7 +121,7 @@ func (a *Audit) listOAuthClients(w http.ResponseWriter, r *http.Request) {
 		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
 	})
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -131,7 +131,7 @@ func (a *Audit) listNotifications(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, err := a.Notify.List(r.Context(), accountID(r), q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -143,7 +143,7 @@ func (a *Audit) listSessions(w http.ResponseWriter, r *http.Request) {
 		EndpointID: q.Get("endpointId"), From: q.Get("from"), To: q.Get("to"),
 	}, q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -163,7 +163,7 @@ func (a *Audit) listSignings(w http.ResponseWriter, r *http.Request) {
 		Source: q.Get("source"), Outcome: q.Get("outcome"), From: q.Get("from"), To: q.Get("to"),
 	}, q.Get("cursor"), parseLimit(q.Get("limit")))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -172,7 +172,7 @@ func (a *Audit) listSignings(w http.ResponseWriter, r *http.Request) {
 func (a *Audit) getSigning(w http.ResponseWriter, r *http.Request) {
 	row, err := a.Signings.GetByID(r.Context(), accountID(r), chi.URLParam(r, "id"))
 	if err != nil {
-		writeErr(w, 500, "internal error")
+		writeInternal(w, r, err)
 		return
 	}
 	if row == nil {
