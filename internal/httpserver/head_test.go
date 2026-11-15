@@ -60,3 +60,36 @@ func TestHeadMirrorsGet(t *testing.T) {
 		t.Errorf("HEAD gated route: %d, want 401", res.StatusCode)
 	}
 }
+
+// HEAD runs the GET handler, so it must share the GET route's rate limit, in
+// both directions. The CIMD front door is the sharpest case: a HEAD there
+// still resolves (fetches) a client metadata document.
+func TestHeadSharesGetRateLimit(t *testing.T) {
+	const path = "/api/hydra/authorize"
+	for _, tc := range []struct{ spend, then string }{
+		{http.MethodGet, http.MethodHead},
+		{http.MethodHead, http.MethodGet},
+	} {
+		ts := testServer(t) // fresh limiter state
+		send := func(method string) int {
+			t.Helper()
+			req, _ := http.NewRequest(method, ts.URL+path, nil)
+			res, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res.Body.Close()
+			return res.StatusCode
+		}
+		var limited bool
+		for i := 0; i < 100 && !limited; i++ {
+			limited = send(tc.spend) == http.StatusTooManyRequests
+		}
+		if !limited {
+			t.Fatalf("%s %s never hit the rate limit", tc.spend, path)
+		}
+		if got := send(tc.then); got != http.StatusTooManyRequests {
+			t.Errorf("after exhausting the quota with %s, %s got %d, want 429", tc.spend, tc.then, got)
+		}
+	}
+}
