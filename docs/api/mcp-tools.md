@@ -410,9 +410,13 @@ consistency guarantee.
 - Links and live transfers do not survive a server restart. Transfers that were
   unfinished read `failed` afterwards (`error: "server restarted"`;
   `commitOutcome: "unknown"` if the restart hit mid-commit), with the staging
-  path preserved.
+  path preserved. An upload that had already finished but whose staging
+  cleanup had not run keeps its `status` and `commitOutcome` and reads
+  `cleanup: "failed"` with the staging path.
 - A link transfer that ends `failed` or `expired` raises a
-  `file-transfer-failed` notification for the account.
+  `file-transfer-failed` notification for the account, as does every row the
+  startup reconciliation closes out (including a `completed` or `cancelled`
+  upload whose staging cleanup was interrupted).
 
 ## Resources & server → client updates
 
