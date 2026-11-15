@@ -28,6 +28,15 @@ type managed struct {
 	// broadcast on. Guarded by Manager.mu.
 	transport Transport
 	output    *OutputBuffer
+	// resizeMu serializes Resize against Create's transport adoption, so a
+	// size requested while the session was still connecting is applied
+	// before any later one (#273 review). Lock order: resizeMu, then
+	// Manager.mu.
+	resizeMu sync.Mutex
+	// pendingCols/pendingRows hold the latest size requested while the
+	// transport was absent (a browser attached to an opening session);
+	// zero when none. Guarded by resizeMu.
+	pendingCols, pendingRows int
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
 	// Closed broadcast always sees every event the transport delivered.
 	pumpDone chan struct{}
@@ -275,13 +284,23 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	// Adopt the transport and the abort check in one critical section: a
 	// Close that already moved the session to closing owns its fate — the
 	// transport must not be adopted after that, or nothing would close it.
+	mg.resizeMu.Lock()
 	m.mu.Lock()
 	mg.cancelSetup = nil
 	aborted := sess.Status != StatusOpening // a Close raced the setup
-	if err == nil && !aborted {
+	adopted := err == nil && !aborted
+	if adopted {
 		mg.transport = transport
 	}
 	m.mu.Unlock()
+	// A browser that attached while the session was opening already sent its
+	// size; the PTY was requested at the default, so apply it now — before
+	// the Open broadcast, and before any Resize waiting on resizeMu.
+	if adopted && mg.pendingCols > 0 && mg.pendingRows > 0 {
+		_ = transport.Resize(mg.pendingCols, mg.pendingRows)
+	}
+	mg.pendingCols, mg.pendingRows = 0, 0
+	mg.resizeMu.Unlock()
 
 	if err != nil {
 		// Broadcast closed BEFORE removal (same ordering invariant as Close):
@@ -474,12 +493,20 @@ func (m *Manager) Resize(sessionID string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
+	mg.resizeMu.Lock()
+	defer mg.resizeMu.Unlock()
 	m.mu.Lock()
 	transport := mg.transport
 	status := mg.session.Status
 	m.mu.Unlock()
 	if transport == nil {
-		// Still connecting — registered before the factory finished.
+		if status == StatusOpening && cols > 0 && rows > 0 {
+			// Still connecting — registered before the factory finished.
+			// Remember the size; Create applies it once the transport is
+			// adopted, so the PTY doesn't stay at the default (#273 review).
+			mg.pendingCols, mg.pendingRows = cols, rows
+			return nil
+		}
 		return fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
 	}
 	return transport.Resize(cols, rows)

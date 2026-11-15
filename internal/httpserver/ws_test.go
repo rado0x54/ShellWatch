@@ -247,6 +247,14 @@ func TestWSListsOpeningSessionBeforeSetupCompletes(t *testing.T) {
 	if m := readMsg(t, c); m["type"] != "terminal:mode" {
 		t.Fatalf("attach reply = %v, want terminal:mode", m)
 	}
+	// The terminal sends its size right after attaching, while there is no
+	// PTY yet (#273 review). Re-attaching afterwards is a sync point: the
+	// connection handles frames in order, so its reply proves the resize
+	// was processed before the setup completes.
+	writeMsg(t, c, map[string]any{"type": "terminal:resize", "sessionId": id, "cols": 132, "rows": 43})
+	writeMsg(t, c, map[string]any{"type": "terminal:attach", "sessionId": id})
+	readMsg(t, c) // terminal:status
+	readMsg(t, c) // terminal:mode
 
 	close(approve)
 	sess := <-created
@@ -255,6 +263,9 @@ func TestWSListsOpeningSessionBeforeSetupCompletes(t *testing.T) {
 	}
 	if _, status := sessionStatus(readMsg(t, c)); status != string(terminal.StatusOpen) {
 		t.Fatalf("status after setup = %q, want open", status)
+	}
+	if got := mock.Sizes(); len(got) != 1 || got[0] != [2]int{132, 43} {
+		t.Fatalf("PTY sizes after open = %v, want the size sent while opening", got)
 	}
 
 	// The attach made while opening carries over: output reaches this client.

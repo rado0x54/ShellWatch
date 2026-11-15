@@ -11,6 +11,8 @@ type MockTransport struct {
 	closed bool
 	Writes [][]byte
 	Echo   bool
+	// sizes records every Resize as {cols, rows}; read it with Sizes.
+	sizes [][2]int
 }
 
 // NewMockTransport returns a ready mock. Echo defaults on.
@@ -29,7 +31,19 @@ func (t *MockTransport) Write(data []byte) error {
 	return nil
 }
 
-func (t *MockTransport) Resize(cols, rows int) error { return nil }
+func (t *MockTransport) Resize(cols, rows int) error {
+	t.mu.Lock()
+	t.sizes = append(t.sizes, [2]int{cols, rows})
+	t.mu.Unlock()
+	return nil
+}
+
+// Sizes returns a copy of the recorded Resize calls, oldest first.
+func (t *MockTransport) Sizes() [][2]int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([][2]int(nil), t.sizes...)
+}
 
 func (t *MockTransport) Close() error {
 	t.mu.Lock()

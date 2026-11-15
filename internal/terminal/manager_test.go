@@ -581,3 +581,71 @@ func TestRegisteredHookFiresBeforeFactory(t *testing.T) {
 		t.Fatalf("after unsubscribe: events = %v", events)
 	}
 }
+
+// A size requested while the session is still connecting (a browser attached
+// to an opening session) is applied once the transport is adopted, before the
+// session opens; a later Resize still wins (#273 review).
+func TestResizeWhileOpeningIsAppliedOnOpen(t *testing.T) {
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	approve := make(chan struct{})
+	mgr := NewManager(func(ctx context.Context, _ FactoryParams) (Transport, error) {
+		select {
+		case <-approve:
+			return mock, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, clock.Real{}, 0)
+
+	registered := make(chan string, 1)
+	unsub := mgr.SubscribeRegistered(func(id, _ string) { registered <- id })
+	defer unsub()
+
+	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	opened := make(chan *Session, 1)
+	go func() {
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- sess
+	}()
+	id := <-registered
+
+	// Two layout passes while connecting: only the latest size matters.
+	if err := mgr.Resize(id, 100, 30); err != nil {
+		t.Fatalf("resize while opening: %v", err)
+	}
+	if err := mgr.Resize(id, 120, 40); err != nil {
+		t.Fatalf("resize while opening: %v", err)
+	}
+	if got := mock.Sizes(); len(got) != 0 {
+		t.Fatalf("no transport yet, but sizes = %v", got)
+	}
+
+	close(approve)
+	sess := <-opened
+	if sess == nil || sess.Status != StatusOpen {
+		t.Fatalf("session = %+v, want open", sess)
+	}
+	if got := mock.Sizes(); len(got) != 1 || got[0] != [2]int{120, 40} {
+		t.Fatalf("sizes after open = %v, want [[120 40]]", got)
+	}
+
+	if err := mgr.Resize(id, 90, 20); err != nil {
+		t.Fatal(err)
+	}
+	if got := mock.Sizes(); len(got) != 2 || got[1] != [2]int{90, 20} {
+		t.Fatalf("sizes after later resize = %v", got)
+	}
+}
+
+// Only an opening session buffers a size; Resize on an unknown session still
+// errors.
+func TestResizeUnknownSessionErrors(t *testing.T) {
+	mgr, _ := mockManager(t)
+	if err := mgr.Resize("nope", 80, 24); err == nil {
+		t.Error("resize of an unknown session must fail")
+	}
+}
