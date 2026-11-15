@@ -5,7 +5,11 @@
 // session's pump goroutine ranges over (docs/go-backend-architecture.md §5.2).
 package terminal
 
-import "context"
+import (
+	"context"
+
+	"github.com/pkg/sftp"
+)
 
 // Event is one transport signal: output bytes, or a terminal close/error.
 type Event struct {
@@ -26,6 +30,24 @@ type Transport interface {
 	Close() error
 	// Events yields transport events until the transport ends, then closes.
 	Events() <-chan Event
+}
+
+// FileTransport is the optional file capability of a Transport (#263): an
+// SFTP subsystem channel multiplexed over the session's already-approved SSH
+// connection — no new signature, no new approval. The SSH transport
+// implements it; the mock opts out.
+type FileTransport interface {
+	// OpenSFTP opens a NEW sftp channel on the session's connection. The
+	// caller owns the client; closing it closes only that channel, never the
+	// PTY. ctx bounds the channel setup and the SFTP version handshake.
+	OpenSFTP(ctx context.Context) (*sftp.Client, error)
+}
+
+// Unwrapper is implemented by transports that decorate another transport
+// (sshx's end-watch wrapper). Optional capabilities such as FileTransport are
+// discovered through the chain, so a wrapper never hides them by accident.
+type Unwrapper interface {
+	Unwrap() Transport
 }
 
 // FactoryParams are passed to a TransportFactory.

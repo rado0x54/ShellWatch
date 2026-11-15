@@ -30,6 +30,42 @@ type Hub struct {
 	unsubStatus  func()
 	unsubOutput  func()
 	unsubRemoved func()
+
+	// fileSnapshot delivers a terminal:file frame per unfinished file
+	// transfer of a session (#263), so a (re)attaching client reconstructs
+	// the transfer strip. It is called AFTER the connection is attached and
+	// must hold back live terminal:file frames while deliver runs, so no
+	// frame is lost between the snapshot and the attach. nil -> none.
+	fileSnapshot func(sessionID string, deliver func(frames []any))
+}
+
+// SetFileSnapshot wires the file-transfer snapshot source (set once at the
+// composition root, before the hub serves connections).
+func (h *Hub) SetFileSnapshot(fn func(sessionID string, deliver func(frames []any))) {
+	h.mu.Lock()
+	h.fileSnapshot = fn
+	h.mu.Unlock()
+}
+
+// SendToSession delivers a server message to every connection currently
+// attached to a session (terminal:file fan-out, #263). Attach is
+// account-checked, so this is account-scoped by construction.
+func (h *Hub) SendToSession(sessionID string, msg any) {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		if c.isAttached(sessionID) {
+			c.enqueue(raw)
+		}
+	}
 }
 
 // NewHub wires the hub to the terminal manager's guaranteed status hook and

@@ -54,6 +54,7 @@ internal/
   agentproxy/, signagent/ # /agent-proxy bridge; SSH agent protocol server
   terminal/               # Manager, Session, OutputBuffer, Transport interface
   sshx/, signing/         # x/crypto/ssh transport + signers; WebAuthn→SSH signature format
+  transfer/               # MCP file tools: inline SFTP read/write + single-use transfer links (#263)
   approval/, push/        # Pending actions, broker, WS + Web Push channels
   webauthn/               # Passkey ceremonies, challenge/step-up/invite stores
   hydra/, auth/           # Hydra providers + admin client + introspection; bearer gate, IP allowlist
@@ -205,7 +206,7 @@ Config path is resolved from: CLI arg > `SHELLWATCH_CONFIG` env var > `./config.
 ## Design Principles
 
 - **Local-first persistence:** SQLite is the only datastore ShellWatch owns — no external/remote database. (OAuth2/OIDC is delegated to Ory Hydra, a required external service; Hydra keeps its own SQLite store, by default in the same `./data` folder.)
-- **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows. The product is scoped to one process per deployment.
+- **Single-instance only:** Several stores live in process memory (challenge store, pending-action store, passkey-invite slot, file-transfer tokens). Running ShellWatch behind a load balancer or in cluster mode would silently break those flows. The product is scoped to one process per deployment.
 - **Account-scoped:** All operations are scoped to the calling account. Admin is a role, not a cross-account view; never imply cross-account session/output visibility. The single deliberate exception is the OAuth client onboarding log (`oauth_client_registrations`, `GET /api/audit/oauth-clients`): DCR and CIMD both run before any account is identified, so those rows cannot be scoped to one — they are admin-gated instead. Do not "fix" that table by adding an `account_id`.
 - **Shared core:** UI and MCP must use the same Manager — no parallel implementations
 - **Real-time sync:** Session changes broadcast to all WebSocket clients immediately

@@ -29,6 +29,123 @@ func (e EndpointUserVerification) Valid() bool {
 	}
 }
 
+// Defines values for FileTransferRowCleanup.
+const (
+	FileTransferRowCleanupFailed      FileTransferRowCleanup = "failed"
+	FileTransferRowCleanupLessThannil FileTransferRowCleanup = "<nil>"
+	FileTransferRowCleanupOk          FileTransferRowCleanup = "ok"
+)
+
+// Valid indicates whether the value is a known member of the FileTransferRowCleanup enum.
+func (e FileTransferRowCleanup) Valid() bool {
+	switch e {
+	case FileTransferRowCleanupFailed:
+		return true
+	case FileTransferRowCleanupLessThannil:
+		return true
+	case FileTransferRowCleanupOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FileTransferRowCommitOutcome.
+const (
+	FileTransferRowCommitOutcomeFailed      FileTransferRowCommitOutcome = "failed"
+	FileTransferRowCommitOutcomeLessThannil FileTransferRowCommitOutcome = "<nil>"
+	FileTransferRowCommitOutcomeOk          FileTransferRowCommitOutcome = "ok"
+	FileTransferRowCommitOutcomeUnknown     FileTransferRowCommitOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the FileTransferRowCommitOutcome enum.
+func (e FileTransferRowCommitOutcome) Valid() bool {
+	switch e {
+	case FileTransferRowCommitOutcomeFailed:
+		return true
+	case FileTransferRowCommitOutcomeLessThannil:
+		return true
+	case FileTransferRowCommitOutcomeOk:
+		return true
+	case FileTransferRowCommitOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FileTransferRowDirection.
+const (
+	FileTransferRowDirectionDownload FileTransferRowDirection = "download"
+	FileTransferRowDirectionList     FileTransferRowDirection = "list"
+	FileTransferRowDirectionUpload   FileTransferRowDirection = "upload"
+)
+
+// Valid indicates whether the value is a known member of the FileTransferRowDirection enum.
+func (e FileTransferRowDirection) Valid() bool {
+	switch e {
+	case FileTransferRowDirectionDownload:
+		return true
+	case FileTransferRowDirectionList:
+		return true
+	case FileTransferRowDirectionUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FileTransferRowStatus.
+const (
+	FileTransferRowStatusActive     FileTransferRowStatus = "active"
+	FileTransferRowStatusCancelled  FileTransferRowStatus = "cancelled"
+	FileTransferRowStatusCommitting FileTransferRowStatus = "committing"
+	FileTransferRowStatusCompleted  FileTransferRowStatus = "completed"
+	FileTransferRowStatusExpired    FileTransferRowStatus = "expired"
+	FileTransferRowStatusFailed     FileTransferRowStatus = "failed"
+	FileTransferRowStatusPending    FileTransferRowStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the FileTransferRowStatus enum.
+func (e FileTransferRowStatus) Valid() bool {
+	switch e {
+	case FileTransferRowStatusActive:
+		return true
+	case FileTransferRowStatusCancelled:
+		return true
+	case FileTransferRowStatusCommitting:
+		return true
+	case FileTransferRowStatusCompleted:
+		return true
+	case FileTransferRowStatusExpired:
+		return true
+	case FileTransferRowStatusFailed:
+		return true
+	case FileTransferRowStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FileTransferRowTier.
+const (
+	FileTransferRowTierInline FileTransferRowTier = "inline"
+	FileTransferRowTierLink   FileTransferRowTier = "link"
+)
+
+// Valid indicates whether the value is a known member of the FileTransferRowTier enum.
+func (e FileTransferRowTier) Valid() bool {
+	switch e {
+	case FileTransferRowTierInline:
+		return true
+	case FileTransferRowTierLink:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NotificationSeverity.
 const (
 	NotificationSeverityError   NotificationSeverity = "error"
@@ -341,6 +458,93 @@ func (e TerminalStatus) Valid() bool {
 	}
 }
 
+// Defines values for TransferResultCleanup.
+const (
+	TransferResultCleanupFailed TransferResultCleanup = "failed"
+	TransferResultCleanupOk     TransferResultCleanup = "ok"
+)
+
+// Valid indicates whether the value is a known member of the TransferResultCleanup enum.
+func (e TransferResultCleanup) Valid() bool {
+	switch e {
+	case TransferResultCleanupFailed:
+		return true
+	case TransferResultCleanupOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TransferResultCommitOutcome.
+const (
+	TransferResultCommitOutcomeFailed  TransferResultCommitOutcome = "failed"
+	TransferResultCommitOutcomeOk      TransferResultCommitOutcome = "ok"
+	TransferResultCommitOutcomeUnknown TransferResultCommitOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the TransferResultCommitOutcome enum.
+func (e TransferResultCommitOutcome) Valid() bool {
+	switch e {
+	case TransferResultCommitOutcomeFailed:
+		return true
+	case TransferResultCommitOutcomeOk:
+		return true
+	case TransferResultCommitOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TransferResultDirection.
+const (
+	TransferResultDirectionDownload TransferResultDirection = "download"
+	TransferResultDirectionUpload   TransferResultDirection = "upload"
+)
+
+// Valid indicates whether the value is a known member of the TransferResultDirection enum.
+func (e TransferResultDirection) Valid() bool {
+	switch e {
+	case TransferResultDirectionDownload:
+		return true
+	case TransferResultDirectionUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TransferResultStatus.
+const (
+	TransferResultStatusActive    TransferResultStatus = "active"
+	TransferResultStatusCancelled TransferResultStatus = "cancelled"
+	TransferResultStatusCompleted TransferResultStatus = "completed"
+	TransferResultStatusExpired   TransferResultStatus = "expired"
+	TransferResultStatusFailed    TransferResultStatus = "failed"
+	TransferResultStatusPending   TransferResultStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the TransferResultStatus enum.
+func (e TransferResultStatus) Valid() bool {
+	switch e {
+	case TransferResultStatusActive:
+		return true
+	case TransferResultStatusCancelled:
+		return true
+	case TransferResultStatusCompleted:
+		return true
+	case TransferResultStatusExpired:
+		return true
+	case TransferResultStatusFailed:
+		return true
+	case TransferResultStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DenyAction200JSONResponseBodyStatus.
 const (
 	DenyAction200JSONResponseBodyStatusDenied  DenyAction200JSONResponseBodyStatus = "denied"
@@ -353,6 +557,78 @@ func (e DenyAction200JSONResponseBodyStatus) Valid() bool {
 	case DenyAction200JSONResponseBodyStatusDenied:
 		return true
 	case DenyAction200JSONResponseBodyStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAuditFileTransfersParamsDirection.
+const (
+	ListAuditFileTransfersParamsDirectionDownload ListAuditFileTransfersParamsDirection = "download"
+	ListAuditFileTransfersParamsDirectionList     ListAuditFileTransfersParamsDirection = "list"
+	ListAuditFileTransfersParamsDirectionUpload   ListAuditFileTransfersParamsDirection = "upload"
+)
+
+// Valid indicates whether the value is a known member of the ListAuditFileTransfersParamsDirection enum.
+func (e ListAuditFileTransfersParamsDirection) Valid() bool {
+	switch e {
+	case ListAuditFileTransfersParamsDirectionDownload:
+		return true
+	case ListAuditFileTransfersParamsDirectionList:
+		return true
+	case ListAuditFileTransfersParamsDirectionUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAuditFileTransfersParamsTier.
+const (
+	ListAuditFileTransfersParamsTierInline ListAuditFileTransfersParamsTier = "inline"
+	ListAuditFileTransfersParamsTierLink   ListAuditFileTransfersParamsTier = "link"
+)
+
+// Valid indicates whether the value is a known member of the ListAuditFileTransfersParamsTier enum.
+func (e ListAuditFileTransfersParamsTier) Valid() bool {
+	switch e {
+	case ListAuditFileTransfersParamsTierInline:
+		return true
+	case ListAuditFileTransfersParamsTierLink:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAuditFileTransfersParamsStatus.
+const (
+	ListAuditFileTransfersParamsStatusActive     ListAuditFileTransfersParamsStatus = "active"
+	ListAuditFileTransfersParamsStatusCancelled  ListAuditFileTransfersParamsStatus = "cancelled"
+	ListAuditFileTransfersParamsStatusCommitting ListAuditFileTransfersParamsStatus = "committing"
+	ListAuditFileTransfersParamsStatusCompleted  ListAuditFileTransfersParamsStatus = "completed"
+	ListAuditFileTransfersParamsStatusExpired    ListAuditFileTransfersParamsStatus = "expired"
+	ListAuditFileTransfersParamsStatusFailed     ListAuditFileTransfersParamsStatus = "failed"
+	ListAuditFileTransfersParamsStatusPending    ListAuditFileTransfersParamsStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ListAuditFileTransfersParamsStatus enum.
+func (e ListAuditFileTransfersParamsStatus) Valid() bool {
+	switch e {
+	case ListAuditFileTransfersParamsStatusActive:
+		return true
+	case ListAuditFileTransfersParamsStatusCancelled:
+		return true
+	case ListAuditFileTransfersParamsStatusCommitting:
+		return true
+	case ListAuditFileTransfersParamsStatusCompleted:
+		return true
+	case ListAuditFileTransfersParamsStatusExpired:
+		return true
+	case ListAuditFileTransfersParamsStatusFailed:
+		return true
+	case ListAuditFileTransfersParamsStatusPending:
 		return true
 	default:
 		return false
@@ -589,13 +865,13 @@ func (e CloseSession200JSONResponseBodyStatus) Valid() bool {
 
 // Defines values for ConfirmPasskey200JSONResponseBodyStatus.
 const (
-	Active ConfirmPasskey200JSONResponseBodyStatus = "active"
+	ConfirmPasskey200JSONResponseBodyStatusActive ConfirmPasskey200JSONResponseBodyStatus = "active"
 )
 
 // Valid indicates whether the value is a known member of the ConfirmPasskey200JSONResponseBodyStatus enum.
 func (e ConfirmPasskey200JSONResponseBodyStatus) Valid() bool {
 	switch e {
-	case Active:
+	case ConfirmPasskey200JSONResponseBodyStatusActive:
 		return true
 	default:
 		return false
@@ -700,13 +976,13 @@ func (e FinishStepUpJSONBodyAction) Valid() bool {
 
 // Defines values for GetHealth200JSONResponseBodyStatus.
 const (
-	Ok GetHealth200JSONResponseBodyStatus = "ok"
+	GetHealth200JSONResponseBodyStatusOk GetHealth200JSONResponseBodyStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the GetHealth200JSONResponseBodyStatus enum.
 func (e GetHealth200JSONResponseBodyStatus) Valid() bool {
 	switch e {
-	case Ok:
+	case GetHealth200JSONResponseBodyStatusOk:
 		return true
 	default:
 		return false
@@ -798,6 +1074,80 @@ type Error struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// FileTransferPage defines model for FileTransferPage.
+type FileTransferPage struct {
+	NextCursor *string           `json:"nextCursor"`
+	Rows       []FileTransferRow `json:"rows"`
+}
+
+// FileTransferRow One file operation an MCP agent performed through a session (#263). Inline operations (tier `inline`) are written once, already finished. A link transfer's row (tier `link`) is saved ahead of each state transition, so it is also the durable record after a crash. The same fields are pushed live as the terminal:file WebSocket message (see docs/api/websocket-protocol.md). The transfer token is never stored.
+type FileTransferRow struct {
+	AccountId string `json:"accountId"`
+
+	// Bytes Bytes moved.
+	Bytes int64 `json:"bytes"`
+
+	// Cleanup Link uploads — outcome of the best-effort staging cleanup.
+	Cleanup *FileTransferRowCleanup `json:"cleanup"`
+
+	// ClientId The authenticated OAuth `client_id` that issued the operation.
+	ClientId *string `json:"clientId"`
+
+	// CommitOutcome Link uploads. `unknown`: the connection was lost (or the server restarted) after the commit was sent and before its reply arrived — inspect the destination before retrying.
+	CommitOutcome *FileTransferRowCommitOutcome `json:"commitOutcome"`
+	CreatedAt     string                        `json:"createdAt"`
+
+	// Direction `upload` writes to the remote host, `download` reads from it; `list` is a directory listing (inline only).
+	Direction  FileTransferRowDirection `json:"direction"`
+	EndpointId string                   `json:"endpointId"`
+	Error      *string                  `json:"error"`
+	FinishedAt *string                  `json:"finishedAt"`
+
+	// McpClientName Client-reported MCP client name.
+	McpClientName    *string `json:"mcpClientName"`
+	McpClientVersion *string `json:"mcpClientVersion"`
+
+	// Path Absolute remote path.
+	Path      string `json:"path"`
+	SessionId string `json:"sessionId"`
+
+	// Sha256 Hex digest of the bytes written / sent.
+	Sha256   *string `json:"sha256"`
+	SourceIp *string `json:"sourceIp"`
+
+	// StagingPath The staging directory while it exists; with cleanup `failed`, the leftover a human should remove.
+	StagingPath *string `json:"stagingPath"`
+
+	// Status `committing` (link uploads: the commit call has been issued) is visible here only; the MCP tool and the WebSocket frame report it as `active`.
+	Status FileTransferRowStatus `json:"status"`
+
+	// Tier `inline`: one tool call. `link`: out-of-band HTTP transfer.
+	Tier FileTransferRowTier `json:"tier"`
+
+	// TotalBytes Expected size, when known.
+	TotalBytes *int64 `json:"totalBytes"`
+	TransferId string `json:"transferId"`
+
+	// Truncated Link downloads: `true` when the file was observed to grow after the copy (a post-copy extra-byte probe). Observed growth only — concurrent mutation cannot be detected in general.
+	Truncated *bool  `json:"truncated"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// FileTransferRowCleanup Link uploads — outcome of the best-effort staging cleanup.
+type FileTransferRowCleanup string
+
+// FileTransferRowCommitOutcome Link uploads. `unknown`: the connection was lost (or the server restarted) after the commit was sent and before its reply arrived — inspect the destination before retrying.
+type FileTransferRowCommitOutcome string
+
+// FileTransferRowDirection `upload` writes to the remote host, `download` reads from it; `list` is a directory listing (inline only).
+type FileTransferRowDirection string
+
+// FileTransferRowStatus `committing` (link uploads: the commit call has been issued) is visible here only; the MCP tool and the WebSocket frame report it as `active`.
+type FileTransferRowStatus string
+
+// FileTransferRowTier `inline`: one tool call. `link`: out-of-band HTTP transfer.
+type FileTransferRowTier string
+
 // Notification One entry of the account notification log (#252): a server-originated event the user must not miss. Also pushed live as the notification:new WebSocket message (see docs/api/websocket-protocol.md). Client behavior (toast severity, action links) derives from type + payload, never from title/detail text.
 type Notification struct {
 	AccountId string `json:"accountId"`
@@ -814,7 +1164,7 @@ type Notification struct {
 	// Title Short headline sized for a toast.
 	Title string `json:"title"`
 
-	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
 	Type string `json:"type"`
 }
 
@@ -1073,6 +1423,34 @@ type TerminalSource string
 // TerminalStatus defines model for TerminalStatus.
 type TerminalStatus string
 
+// TransferResult Outcome body of a transfer link request (upload always; download only when it failed before the response body started). Same shape as the shellwatch_transfer_file `status` result.
+type TransferResult struct {
+	Bytes         int64                        `json:"bytes"`
+	Cleanup       *TransferResultCleanup       `json:"cleanup,omitempty"`
+	CommitOutcome *TransferResultCommitOutcome `json:"commitOutcome,omitempty"`
+	Direction     TransferResultDirection      `json:"direction"`
+	Error         *string                      `json:"error,omitempty"`
+	Path          string                       `json:"path"`
+	Sha256        *string                      `json:"sha256,omitempty"`
+	StagingPath   *string                      `json:"stagingPath,omitempty"`
+	Status        TransferResultStatus         `json:"status"`
+	TotalBytes    *int64                       `json:"totalBytes,omitempty"`
+	TransferId    string                       `json:"transferId"`
+	Truncated     *bool                        `json:"truncated,omitempty"`
+}
+
+// TransferResultCleanup defines model for TransferResult.Cleanup.
+type TransferResultCleanup string
+
+// TransferResultCommitOutcome defines model for TransferResult.CommitOutcome.
+type TransferResultCommitOutcome string
+
+// TransferResultDirection defines model for TransferResult.Direction.
+type TransferResultDirection string
+
+// TransferResultStatus defines model for TransferResult.Status.
+type TransferResultStatus string
+
 // WebAuthnAuthenticationOptions @simplewebauthn generateAuthenticationOptions() output, spread at the top level alongside `challengeId` (and `action` for step-up). Modeled loosely.
 type WebAuthnAuthenticationOptions struct {
 	ChallengeId          *string                `json:"challengeId,omitempty"`
@@ -1114,6 +1492,34 @@ type ResolveActionJSONBody struct {
 	// Signature base64url
 	Signature *string `json:"signature,omitempty"`
 }
+
+// ListAuditFileTransfersParams defines parameters for ListAuditFileTransfers.
+type ListAuditFileTransfersParams struct {
+	// SessionId Only operations of this session.
+	SessionId *string `form:"sessionId,omitempty" json:"sessionId,omitempty"`
+
+	// Direction `upload`, `download` or `list`; any other value is a 400.
+	Direction *ListAuditFileTransfersParamsDirection `form:"direction,omitempty" json:"direction,omitempty"`
+
+	// Tier `inline` or `link`; any other value is a 400.
+	Tier *ListAuditFileTransfersParamsTier `form:"tier,omitempty" json:"tier,omitempty"`
+
+	// Status A FileTransferRow status; any other value is a 400.
+	Status *ListAuditFileTransfersParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Cursor *string                             `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAuditFileTransfersParamsDirection defines parameters for ListAuditFileTransfers.
+type ListAuditFileTransfersParamsDirection string
+
+// ListAuditFileTransfersParamsTier defines parameters for ListAuditFileTransfers.
+type ListAuditFileTransfersParamsTier string
+
+// ListAuditFileTransfersParamsStatus defines parameters for ListAuditFileTransfers.
+type ListAuditFileTransfersParamsStatus string
 
 // ListAuditNotificationsParams defines parameters for ListAuditNotifications.
 type ListAuditNotificationsParams struct {

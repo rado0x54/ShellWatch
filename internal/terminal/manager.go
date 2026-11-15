@@ -9,11 +9,14 @@ package terminal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pkg/sftp"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
 )
@@ -350,6 +353,50 @@ func (m *Manager) SendInput(sessionID, input string) error {
 	mg.session.LastActivityAt = m.clk.Now()
 	m.mu.Unlock()
 	return nil
+}
+
+// ErrNoFileTransport is returned by OpenSFTP when the session's transport has
+// no file capability (mock transports, future non-SSH transports).
+var ErrNoFileTransport = errors.New("this session's transport does not support file transfer")
+
+// OpenSFTP opens a new SFTP channel on an OPEN session's SSH connection
+// (#263). The capability is looked up through the transport's Unwrap chain,
+// so decorating wrappers do not hide it.
+func (m *Manager) OpenSFTP(ctx context.Context, sessionID string) (*sftp.Client, error) {
+	m.mu.Lock()
+	mg, ok := m.terminals[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("terminal %s not found", sessionID)
+	}
+	status := mg.session.Status
+	transport := mg.transport
+	m.mu.Unlock()
+	if status != StatusOpen || transport == nil {
+		return nil, fmt.Errorf("terminal %s is not open (status: %s)", sessionID, status)
+	}
+	for t := transport; t != nil; {
+		if ft, ok := t.(FileTransport); ok {
+			return ft.OpenSFTP(ctx)
+		}
+		u, ok := t.(Unwrapper)
+		if !ok {
+			break
+		}
+		t = u.Unwrap()
+	}
+	return nil, ErrNoFileTransport
+}
+
+// TouchActivity records non-terminal activity on an open session (#263): the
+// idle sweep only sees PTY input/output, so file operations call this to keep
+// a session alive while it is being used through the file tools alone.
+func (m *Manager) TouchActivity(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mg, ok := m.terminals[sessionID]; ok && mg.session.Status == StatusOpen {
+		mg.session.LastActivityAt = m.clk.Now()
+	}
 }
 
 // SendKeys resolves named keys and writes them.

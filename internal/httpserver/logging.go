@@ -9,6 +9,7 @@ package httpserver
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/rado0x54/shellwatch/internal/clock"
 )
@@ -37,6 +38,18 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // handlers wrapped below.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// transferPathPrefix is the file-transfer link route (#263). The path segment
+// after it is a bearer credential and must never reach a log line.
+const transferPathPrefix = "/api/transfers/"
+
+// redactPath hides credentials carried in the URL path.
+func redactPath(path string) string {
+	if strings.HasPrefix(path, transferPathPrefix) {
+		return transferPathPrefix + "***"
+	}
+	return path
+}
+
 func requestLogger(clk clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +67,7 @@ func requestLogger(clk clock.Clock) func(http.Handler) http.Handler {
 			}
 			slog.LogAttrs(r.Context(), level, "http",
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", redactPath(r.URL.Path)),
 				slog.Int("status", rec.status),
 				slog.Duration("dur", clk.Now().Sub(start)),
 			)

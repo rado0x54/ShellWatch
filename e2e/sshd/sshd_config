@@ -28,6 +28,12 @@ X11Forwarding no
 # authentication attempt.
 LoginGraceTime 120
 
+# The MCP file tools (#263) run over the sftp subsystem of a session's
+# connection. internal-sftp needs no helper binary, so the same line works on
+# both images; it advertises posix-rename@openssh.com and hardlink@openssh.com,
+# which link uploads require.
+Subsystem sftp internal-sftp
+
 LogLevel VERBOSE
 PrintMotd no
 PrintLastLog no

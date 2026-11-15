@@ -108,7 +108,10 @@ security:
   #     max: 10
   #     windowMinutes: 15
 
-  # IP allowlist for /mcp and /agent-proxy. CIDRs in standard notation.
+  # IP allowlist for /mcp, /agent-proxy and the file-transfer links
+  # (/api/transfers/*). CIDRs in standard notation. A transfer link is used by
+  # whatever runs the `curl` command an agent was handed — a hosted sandbox
+  # egresses from a different IP than the MCP client and needs its own CIDR.
   # Default: loopback only. To disable the allowlist (e.g. behind a trusted
   # proxy with `server.trustProxy` set), allow everything:
   #   allowedNetworks:
@@ -137,6 +140,28 @@ security:
 # sessions:
 #   idleTimeoutMinutes: 30                              # default: 30
 #   cleanupIntervalSeconds: 60                          # how often the janitor runs (default: 60)
+
+# MCP file tools (#263): shellwatch_list_dir / _read_file / _write_file move
+# small files inline; shellwatch_transfer_file mints a short-lived single-use
+# link for large ones (PUT/GET /api/transfers/<token>, gated by
+# security.allowedNetworks). Both run over SFTP on an open session's SSH
+# connection. Every value below is the default.
+# transfer:
+#   maxInlineBytes: 262144                              # per inline read/write call, decoded (256 KiB; max 16 MiB)
+#   maxTransferBytes: 1073741824                        # per link transfer (1 GiB)
+#   linkTtlSeconds: 300                                 # a minted link must be used within this
+#   idleTimeoutSeconds: 60                              # active transfer with no bytes moved -> failed
+#   maxDurationSeconds: 3600                            # hard cap per active transfer
+#   maxPendingPerSession: 4                             # minted-but-unused links per session
+#   maxPendingGlobal: 64                                # ... and on the whole server
+#   maxActivePerAccount: 4                              # concurrently streaming transfers; excess gets 503 + Retry-After
+#   maxActiveGlobal: 16
+#   commitTimeoutSeconds: 30                            # no reply to an upload's commit within this -> failed, commitOutcome "unknown"
+#   cleanupTimeoutSeconds: 5                            # bound on best-effort staging-directory cleanup
+#   maxInlineConcurrency: 2                             # concurrent inline calls per session (others wait)
+#   inlineTimeoutSeconds: 30                            # whole inline call, incl. SFTP channel setup
+#   statusRetentionSeconds: 3600                        # finished transfers stay queryable in memory this long
+#   maxStatusRecords: 1000                              # cap on that in-memory map (> maxPendingGlobal + maxActiveGlobal)
 
 # SSH agent proxy — allows system SSH clients to use ShellWatch-managed keys.
 # Requires the shellwatch-agent thin client on the user's workstation.

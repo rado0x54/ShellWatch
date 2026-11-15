@@ -19,6 +19,7 @@
     { path: "/audit/sessions", label: "Sessions" },
     { path: "/audit/signings", label: "Signing Requests" },
     { path: "/audit/notifications", label: "Notifications" },
+    { path: "/audit/file-transfers", label: "File Transfers" },
     ...($account?.isAdmin === true
       ? [{ path: "/audit/oauth-clients" as Pathname, label: "OAuth Clients" }]
       : []),

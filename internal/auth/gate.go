@@ -55,6 +55,10 @@ var exemptExact = map[string]bool{
 
 // Path prefixes that never require a token (see bearer-gate.ts for why).
 var exemptPrefixes = []string{
+	// File-transfer links (#263): the single-use token in the path is the only
+	// credential — the agent's sandbox has no OAuth token. The route sits
+	// behind the IP allowlist instead (httpserver).
+	"/api/transfers/",
 	"/api/hydra/",
 	"/api/passkey-invite/",
 	"/passkey-invite/",

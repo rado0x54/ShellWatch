@@ -94,6 +94,32 @@ type Endpoint struct {
 	HostKeyPinnedBy    sql.NullString
 }
 
+type FileTransfer struct {
+	ID               string
+	AccountID        string
+	SessionID        string
+	EndpointID       string
+	Tier             string
+	Direction        string
+	Path             string
+	Status           string
+	Bytes            int64
+	TotalBytes       sql.NullInt64
+	Sha256           sql.NullString
+	Error            sql.NullString
+	Truncated        sql.NullInt64
+	CommitOutcome    sql.NullString
+	Cleanup          sql.NullString
+	StagingPath      sql.NullString
+	ClientID         sql.NullString
+	McpClientName    sql.NullString
+	McpClientVersion sql.NullString
+	SourceIp         sql.NullString
+	CreatedAt        string
+	UpdatedAt        string
+	FinishedAt       sql.NullString
+}
+
 type Notification struct {
 	ID        string
 	AccountID string

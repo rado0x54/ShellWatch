@@ -29,6 +29,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/ratelimit"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/rest"
+	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
 )
@@ -84,6 +85,8 @@ type Params struct {
 	Keys         *rest.Keys
 	AuthSessions *rest.AuthSessions
 	Push         *rest.Push
+	// Transfers mounts the file-transfer link route (#263; nil-able).
+	Transfers *transfer.Service
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -243,6 +246,18 @@ func New(p Params) http.Handler {
 		mcpHandler := ipGate(p.MCP.Handler())
 		r.Handle("/mcp", mcpHandler)
 		r.Handle("/mcp/*", mcpHandler)
+	}
+	if p.Transfers != nil {
+		// File-transfer links (#263). The single-use token in the path is the
+		// only credential (the bearer gate exempts the prefix), so the route
+		// sits behind the same CIDR allowlist as every other agent-facing
+		// surface. Every method is routed here so the allowlist answers first;
+		// the handler gives a method that does not fit the link the same 404
+		// as an unknown token.
+		ipGate := auth.NewIPChecker(p.Config.Security.AllowedNetworks).Middleware
+		r.Handle("/api/transfers/{token}", ipGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p.Transfers.Handle(w, r, chi.URLParam(r, "token"))
+		})))
 	}
 	if p.AgentProxy != nil && agentProxy {
 		r.Get("/agent-proxy", p.AgentProxy.Handler())

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
+import type { FileTransferEvent } from "./file-transfers.js";
 import type { AppNotification } from "./notifications.js";
 import {
   addToast,
@@ -61,6 +62,8 @@ type ServerMessage =
   | { type: "terminal:status"; sessionId: string; status: string }
   | { type: "terminal:closed"; sessionId: string }
   | { type: "terminal:mode"; sessionId: string; mode: SessionMode }
+  // An MCP agent moved a file through an attached session (#263).
+  | FileTransferEvent
   | { type: "sessions:changed"; sessions: SessionListEntry[] }
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }

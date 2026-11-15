@@ -216,7 +216,16 @@ The web UI sees ALL of the account's sessions regardless of source, labelled `ui
 
 Stateless streamable HTTP MCP endpoint at `/mcp` (official Go SDK), serving spec revision `2026-07-28` alongside the `2025-11-25`/`2025-06-18` handshake eras (#243). There are no protocol-level sessions: every POST builds a fresh SDK server bound to an `AgentSession` (`internal/agent`) scoped to the request's `(account, OAuth client_id)`. Requires a bearer token with the `mcp` scope and a source IP inside `security.allowedNetworks`.
 
-**Tools:** `shellwatch_create_session`, `shellwatch_list_sessions`, `shellwatch_send_keys`, `shellwatch_read_output` (with `waitMs` long-polling), `shellwatch_close_session`, `shellwatch_manage_endpoints`, `shellwatch_manage_keys` — payloads in [`docs/api/mcp-tools.md`](./api/mcp-tools.md).
+**Tools:** `shellwatch_create_session`, `shellwatch_list_sessions`, `shellwatch_send_keys`, `shellwatch_read_output` (with `waitMs` long-polling), `shellwatch_close_session`, `shellwatch_manage_endpoints`, `shellwatch_manage_keys`, and the file tools `shellwatch_list_dir`, `shellwatch_read_file`, `shellwatch_write_file`, `shellwatch_transfer_file` — payloads in [`docs/api/mcp-tools.md`](./api/mcp-tools.md).
+
+### File transfer (`internal/transfer`)
+
+The MCP file tools (#263) run over the **SFTP subsystem on the SSH connection of an open session** — SSH multiplexes channels, so the PTY and SFTP coexist and no new signature or approval is involved. The SSH transport exposes this as the optional `terminal.FileTransport` capability (`OpenSFTP`); the Manager finds it through the transport's `Unwrap` chain, so the passkey factory's end-watch wrapper does not hide it.
+
+- **Inline tier** — `list_dir` / `read_file` / `write_file` for small files (`transfer.maxInlineBytes`), over one lazily opened SFTP channel per session with a per-session concurrency bound and a whole-call timeout.
+- **Link tier** — `transfer_file` mints a short-lived, single-use token; the agent's host moves the bytes with `curl` through `PUT`/`GET /api/transfers/{token}` (token-only credential, behind `security.allowedNetworks`, token redacted from the access log). Uploads stage in a private `0700` directory next to the destination and commit atomically (hardlink for no-clobber, posix-rename for replace); each link transfer uses its own SFTP channel, so cancelling one never touches the PTY.
+
+Tokens and live transfers are process memory (single-instance, like pending actions). The `file_transfers` audit row is saved ahead of every state transition and reconciled at startup, so a restart leaves a truthful record. The service subscribes to the Manager's status hook: a session leaving `open` invalidates its links and aborts its transfers. File activity touches the session's idle clock. Every operation fans out as a `terminal:file` WebSocket frame to connections attached to the session; failed link transfers also raise a notification.
 
 **Server→client updates:** sessions are resources (`shellwatch://sessions`, `shellwatch://sessions/{id}`); `2026-07-28` clients subscribe over `subscriptions/listen` and receive `notifications/resources/updated` — debounced per session for output (`notifications.mcp.debounceMs`, default 100 ms), immediate for status changes. Older clients long-poll with `read_output waitMs`.
 
@@ -267,12 +276,15 @@ Append-only audit of session lifecycle and signing-request outcomes. Writers are
 
 Audit reads are account-scoped — admin is a role, not a global view — with exactly **one deliberate exception**: the OAuth client registration log (`oauth_client_registrations`, `GET /api/audit/oauth-clients`). Client onboarding happens before any account is identified — there is no subject, only a peer address and a `client_id` — so those rows cannot be scoped to an account at all, and the route is gated on the admin role instead of an account filter.
 
+The file-transfer log (`file_transfers`, `GET /api/audit/file-transfers`, #263) is account-scoped like the rest but is not strictly append-only: a link transfer's row is saved **ahead of each state transition** (`pending → active → committing → terminal`) and carries the staging path from the moment staging exists, because tokens and live transfers are in-memory only. Startup reconciliation closes out rows a previous process left unfinished (`failed`, with `commitOutcome: unknown` for an interrupted commit) and notifies the account.
+
 That log is a **log, not a registry**: current client state stays in Hydra, which already serves name, scope, redirect URIs, `created_at` and the `metadata.shellwatch.origin` marker ShellWatch writes (`cimd` or `dcr`). Nothing is reconciled against Hydra, so a client deleted there keeps its history, `client_id` is an indexed column rather than a key, and a rejected CIMD document — which never becomes a Hydra client at all — still gets a row. Runtime allow/deny policy over these clients is tracked separately in #255.
 
 ## Security
 
 - **Bearer gate** (`internal/auth/gate.go`) — the single authentication gate for `/api/*`, `/ws` (token via `Sec-WebSocket-Protocol`), `/mcp` and `/agent-proxy`; scope by path; introspection fails closed.
-- **IP allowlist** (`internal/auth/ipallowlist.go`) — CIDR filter on `/mcp` and `/agent-proxy` (`security.allowedNetworks`, default loopback). Handles IPv4, IPv6 and IPv4-mapped IPv6.
+- **IP allowlist** (`internal/auth/ipallowlist.go`) — CIDR filter on `/mcp`, `/agent-proxy` and the file-transfer links `/api/transfers/*` (`security.allowedNetworks`, default loopback). Handles IPv4, IPv6 and IPv4-mapped IPv6.
+- **Transfer links** (`internal/transfer`) — `/api/transfers/{token}` is exempt from the bearer gate: the 32-byte, single-use, short-lived token bound to one transfer is its only credential (the sandbox running `curl` has no OAuth token). The token is redacted from the access log and responses are `Cache-Control: no-store`; the server never fetches a URL an agent names.
 - **Client IP** (`internal/realip`) — `server.trustProxy` decides whether `X-Forwarded-For` is honoured (false, true, or CIDR list; hop counts are rejected at config load).
 - **Rate limits** (`internal/ratelimit`) — per-IP limits on self-registration, passkey registration and login ceremonies (`security.rateLimit`).
 - **Step-up** — revoking a passkey or an authorized client requires a fresh passkey assertion.

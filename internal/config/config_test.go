@@ -369,3 +369,38 @@ vMQVLBeqcFYF0+EBfaz1mMBSo9igy85w1puFDvNeoV0xiDLoU7J/iu9W7iwOzZ/Y
 r5ivhFClgaczf/CHVzjUbEkcFEG4qMlQCSYr8yONVixqvur6cTm7Z3KMd/KcX5s=
 -----END CERTIFICATE-----
 `
+
+// transfer.* (#263): every field defaults, a partial block keeps the other
+// defaults, and the status map must be able to hold every unfinished transfer.
+func TestTransferConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Transfer != DefaultTransfer() {
+		t.Errorf("transfer defaults: got %+v", cfg.Transfer)
+	}
+	if d := cfg.Transfer; d.MaxInlineBytes != 262144 || d.MaxTransferBytes != 1073741824 || d.LinkTtlSeconds != 300 ||
+		d.MaxInlineConcurrency != 2 || d.InlineTimeoutSeconds != 30 || d.MaxStatusRecords != 1000 {
+		t.Errorf("documented defaults drifted: %+v", d)
+	}
+
+	cfg, err = Load(writeConfig(t, minimalConfig+"transfer:\n  maxInlineBytes: 4096\n  linkTtlSeconds: 60\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Transfer.MaxInlineBytes != 4096 || cfg.Transfer.LinkTtlSeconds != 60 || cfg.Transfer.MaxActiveGlobal != 16 {
+		t.Errorf("partial transfer block: got %+v", cfg.Transfer)
+	}
+
+	for name, block := range map[string]string{
+		"negative ttl":          "transfer:\n  linkTtlSeconds: -1\n",
+		"oversized inline":      "transfer:\n  maxInlineBytes: 999999999\n",
+		"status map too small":  "transfer:\n  maxStatusRecords: 80\n",
+		"pending fills the map": "transfer:\n  maxPendingGlobal: 990\n",
+	} {
+		if _, err := Load(writeConfig(t, minimalConfig+block)); err == nil || !strings.Contains(err.Error(), "transfer.") {
+			t.Errorf("%s: expected a transfer.* validation error, got %v", name, err)
+		}
+	}
+}

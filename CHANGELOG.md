@@ -105,6 +105,28 @@ and never skips consent for a CIMD client. Configure under `hydra.cimd` (on by
 default; see `config.sample.yaml`). Both onboarding paths now write an
 admin-only registration log (Audit → OAuth clients).
 
+### New: MCP file transfer tools (#263)
+
+Agents can now move files without scraping the terminal. Four new MCP tools run
+over the SFTP subsystem of an **open session's existing SSH connection** — no
+new signature, no approval prompt — as the SSH login user, absolute paths only:
+
+- `shellwatch_list_dir`, `shellwatch_read_file`, `shellwatch_write_file` for
+  small text/config files inline (256 KiB by default; `base64` for binaries).
+- `shellwatch_transfer_file` for large or binary files: it mints a short-lived,
+  single-use URL plus an exact `curl` command, so the bytes never pass through
+  the model. Uploads are staged privately next to the destination and committed
+  atomically (requires an OpenSSH-compatible `sftp-server`); downloads stream
+  with a running sha256.
+
+Everything is visible: a new **Audit → File Transfers** tab
+(`GET /api/audit/file-transfers`), a live transfer strip above the terminal
+(`terminal:file` over `/ws`), and a `file-transfer-failed` notification when a
+link transfer fails or expires. The link route `/api/transfers/{token}` is
+gated by `security.allowedNetworks` like `/mcp` — a sandbox that egresses from
+a different IP than the MCP client needs its own CIDR. Limits live under the
+new `transfer` config block (all optional; see `config.sample.yaml`).
+
 ### New: account notification log (#252)
 
 Server events a user must not miss — host-key mismatches and every failed SSH

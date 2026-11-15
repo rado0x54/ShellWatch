@@ -116,6 +116,17 @@ var goldenCoverage = map[string]coverage{
 	"listAuditOAuthClients": goldened("audit-oauth-clients",
 		"audit-oauth-clients-forbidden", "audit-oauth-clients-invalid-origin"),
 
+	// --- File transfers (#263) ---
+	"listAuditFileTransfers": goldened("audit-file-transfers-page1", "audit-file-transfers-page2",
+		"audit-file-transfers-invalid-direction"),
+	"uploadTransfer": excluded("A transfer link streams a raw body to an SFTP server behind a random " +
+		"single-use token and a live SSH session: there is no deterministic JSON exchange to pin. " +
+		"Characterized against a real SFTP server by internal/transfer/link_test.go (staging, commit, " +
+		"cancel/commit race, limits, 503 retry) and at the router by internal/httpserver/transfers_test.go " +
+		"(uniform 404, IP allowlist, no-store, token redaction)."),
+	"downloadTransfer": excluded("Binary response body behind a single-use token; see uploadTransfer. " +
+		"Characterized by internal/transfer/link_test.go (byte-identical download, shrink/grow observation)."),
+
 	// --- Pending actions + push ---
 	"getAction":              goldened("action-get"),
 	"resolveAction":          goldened("action-resolve"),
