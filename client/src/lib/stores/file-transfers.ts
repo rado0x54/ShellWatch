@@ -154,7 +154,8 @@ export function isUnfinished(status: string): boolean {
 /**
  * Upsert a transfer into a newest-first list. A known transfer is updated in
  * place — it keeps its position, so a progress frame never reorders the list —
- * and a new one goes on top. The list is capped at `max`.
+ * and a new one goes on top. The list is capped at `max` finished entries
+ * (see capHistory); unfinished transfers are always kept.
  *
  * A frame for a transfer that already finished is ignored unless it is itself
  * a finished frame (the late cleanup frame): the server orders its own frames,
@@ -162,7 +163,7 @@ export function isUnfinished(status: string): boolean {
  */
 export function upsertTransfer(list: TransferView[], next: TransferView, max = 50): TransferView[] {
   const i = list.findIndex((t) => t.transferId === next.transferId);
-  if (i === -1) return [next, ...list].slice(0, max);
+  if (i === -1) return capHistory([next, ...list], max);
   const current = list[i];
   if (!isUnfinished(current.status) && isUnfinished(next.status)) return list;
   const copy = list.slice();
@@ -190,7 +191,24 @@ export function mergeHistory(
     return row && isUnfinished(t.status) && !isUnfinished(row.status) ? row : t;
   });
   const known = new Set(live.map((t) => t.transferId));
-  return [...merged, ...history.filter((t) => !known.has(t.transferId))].slice(0, max);
+  return capHistory([...merged, ...history.filter((t) => !known.has(t.transferId))], max);
+}
+
+/**
+ * Cap a newest-first list at `max` finished entries, keeping order. Unfinished
+ * transfers are never evicted: a stalled transfer sends no further frames, so
+ * once dropped it would never come back, and it is the entry the strip most
+ * needs to show (#288).
+ *
+ * The cap runs only when an entry is added (upsertTransfer, new id) or history
+ * is merged — not on an in-place update. So when a transfer held past the cap
+ * finishes, the list briefly holds more than `max` finished entries; the next
+ * add or merge trims it. Deliberate: capping on the update would evict the
+ * transfer the moment it completes, before the strip ever shows its result.
+ */
+export function capHistory(list: TransferView[], max: number): TransferView[] {
+  let finished = 0;
+  return list.filter((t) => isUnfinished(t.status) || finished++ < max);
 }
 
 /** Page size and page cap of a strip history load (see loadSessionHistory). */
