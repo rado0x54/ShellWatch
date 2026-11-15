@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatBytes,
+  loadSessionHistory,
   mergeHistory,
   transferProgress,
   transferVerb,
@@ -98,6 +99,56 @@ describe("mergeHistory", () => {
       [t("a", { status: "failed" })],
     );
     expect(merged[0].cleanup).toBe("failed");
+  });
+});
+
+describe("loadSessionHistory", () => {
+  const row = (id: string, status: string) =>
+    ({ ...t(id, { status }), sessionId: "sess_1" }) as unknown as FileTransferRow;
+
+  it("reads one page when nothing is in flight", async () => {
+    const calls: (string | undefined)[] = [];
+    const views = await loadSessionHistory("sess_1", [], async (_f, cursor) => {
+      calls.push(cursor);
+      return { rows: [row("a", "completed")], nextCursor: "c1" };
+    });
+    expect(calls).toEqual([undefined]);
+    expect(views.map((v) => v.transferId)).toEqual(["a"]);
+  });
+
+  it("follows pagination until every in-flight entry is accounted for", async () => {
+    // "old" finished during an outage and sits behind a full page of newer rows.
+    const pages: Record<string, { rows: FileTransferRow[]; nextCursor: string | null }> = {
+      first: { rows: [row("n1", "completed"), row("n2", "completed")], nextCursor: "c1" },
+      c1: { rows: [row("n3", "completed"), row("old", "completed")], nextCursor: "c2" },
+      c2: { rows: [row("older", "completed")], nextCursor: null },
+    };
+    const calls: string[] = [];
+    const views = await loadSessionHistory("sess_1", ["old"], async (filters, cursor, limit) => {
+      expect(filters).toEqual({ sessionId: "sess_1" });
+      expect(limit).toBe(50);
+      calls.push(cursor ?? "first");
+      return pages[cursor ?? "first"];
+    });
+    expect(calls).toEqual(["first", "c1"]); // stops once "old" was seen
+    const merged = mergeHistory([t("old", { status: "active" })], views);
+    expect(merged.find((v) => v.transferId === "old")?.status).toBe("completed");
+  });
+
+  it("stops at the end of the log and at the page cap", async () => {
+    let calls = 0;
+    await loadSessionHistory("sess_1", ["ghost"], async () => {
+      calls++;
+      return { rows: [], nextCursor: calls < 3 ? "more" : null };
+    });
+    expect(calls).toBe(3);
+
+    calls = 0;
+    await loadSessionHistory("sess_1", ["ghost"], async () => {
+      calls++;
+      return { rows: [], nextCursor: "always" };
+    });
+    expect(calls).toBe(10);
   });
 });
 

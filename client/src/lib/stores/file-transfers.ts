@@ -193,6 +193,38 @@ export function mergeHistory(
   return [...merged, ...history.filter((t) => !known.has(t.transferId))].slice(0, max);
 }
 
+/** Page size and page cap of a strip history load (see loadSessionHistory). */
+const HISTORY_PAGE_SIZE = 50;
+const HISTORY_MAX_PAGES = 10;
+
+/**
+ * Load a session's transfer history for the strip. The first page is always
+ * read; further pages are followed only while `unsettled` — the ids the strip
+ * still shows as in flight — are not all accounted for. The strip keeps more
+ * entries than one page holds, so an old long-running transfer that finished
+ * during a socket outage can sit behind many newer rows: stopping at page one
+ * would leave it "in progress" forever. Bounded by HISTORY_MAX_PAGES.
+ */
+export async function loadSessionHistory(
+  sessionId: string,
+  unsettled: string[],
+  fetchPage: typeof fetchFileTransfersPage = fetchFileTransfersPage,
+): Promise<TransferView[]> {
+  const missing = new Set(unsettled);
+  const out: TransferView[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < HISTORY_MAX_PAGES; page++) {
+    const res = await fetchPage({ sessionId }, cursor, HISTORY_PAGE_SIZE);
+    for (const row of res.rows) {
+      out.push(viewFromRow(row));
+      missing.delete(row.transferId);
+    }
+    if (missing.size === 0 || !res.nextCursor) break;
+    cursor = res.nextCursor;
+  }
+  return out;
+}
+
 export function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "—";
   if (n < 1024) return `${n} B`;

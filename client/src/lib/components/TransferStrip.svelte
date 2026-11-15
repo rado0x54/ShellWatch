@@ -10,16 +10,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    fetchFileTransfersPage,
     formatBytes,
     isUnfinished,
+    loadSessionHistory,
     mergeHistory,
     shortSha,
     transferProgress,
     transferVerb,
     upsertTransfer,
     viewFromEvent,
-    viewFromRow,
     type TransferView,
   } from "$lib/stores/file-transfers.js";
   import { get } from "svelte/store";
@@ -62,8 +61,10 @@
   // History is best effort: the strip is useful from live frames alone.
   async function loadHistory() {
     try {
-      const page = await fetchFileTransfersPage({ sessionId }, undefined, 20);
-      transfers = mergeHistory(transfers, page.rows.map(viewFromRow));
+      // Pages are followed until every entry still shown as in flight has
+      // been found in the log, however far back it sits.
+      const unsettled = transfers.filter((t) => isUnfinished(t.status)).map((t) => t.transferId);
+      transfers = mergeHistory(transfers, await loadSessionHistory(sessionId, unsettled));
     } catch {
       // keep what the socket delivered
     }

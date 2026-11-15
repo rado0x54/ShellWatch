@@ -26,6 +26,10 @@
   let tier = $state<string>("");
   let status = $state<string>("");
   let loading = $state(false);
+  // A filter change that lands while a fetch is in flight is queued, not
+  // dropped: the controls stay enabled, and the list must end up showing the
+  // filters the user sees selected.
+  let pendingReset = false;
 
   const endpointLabel = $derived((id: string) => $endpoints.find((e) => e.id === id)?.label ?? id);
   const isLive = $derived((id: string) => $sessions.some((s) => s.sessionId === id));
@@ -35,8 +39,14 @@
   });
 
   async function load(reset: boolean) {
-    if (loading) return;
+    if (loading) {
+      if (reset) pendingReset = true;
+      return;
+    }
     loading = true;
+    // Captured now: a page that comes back after the filters changed belongs
+    // to the old selection and must not be shown under the new one.
+    const requested = `${direction}|${tier}|${status}`;
     try {
       const page = await fetchFileTransfersPage(
         {
@@ -46,12 +56,18 @@
         },
         reset ? undefined : (nextCursor ?? undefined),
       );
-      rows = reset ? page.rows : [...rows, ...page.rows];
-      nextCursor = page.nextCursor;
+      if (requested === `${direction}|${tier}|${status}`) {
+        rows = reset ? page.rows : [...rows, ...page.rows];
+        nextCursor = page.nextCursor;
+      }
     } catch (err) {
       toastError(errorMessage(err));
     } finally {
       loading = false;
+      if (pendingReset) {
+        pendingReset = false;
+        void load(true);
+      }
     }
   }
 
