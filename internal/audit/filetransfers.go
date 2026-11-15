@@ -177,7 +177,7 @@ func (f *FileTransfers) Get(ctx context.Context, accountID, transferID string) (
 // out truthfully. pending/active rows become failed ("server restarted", and
 // cleanup failed when a staging directory was recorded); committing rows
 // become failed with commitOutcome "unknown", since the commit may have been
-// issued. A finished upload (completed or failed) that still records a
+// issued. A finished upload (completed, failed or cancelled) that still records a
 // staging path but no cleanup result was interrupted between persisting its
 // outcome and removing its staging directory (#287): it keeps its status,
 // commit outcome and error, and only gets cleanup failed. Staging paths are

@@ -43,6 +43,7 @@ func TestFileTransfersReconcileInterrupted(t *testing.T) {
 	// Finished, but the restart hit before cleanupStaging recorded a result
 	// (#287): outcome kept, cleanup failed, reported.
 	seed("xfer_done_staged", "completed", str("/srv/.f.cc.tmp"))
+	seed("xfer_cancelled_staged", "cancelled", str("/srv/.f.ff.tmp"))
 	failedStaged := base
 	failedStaged.TransferID, failedStaged.Status, failedStaged.StagingPath = "xfer_failed_staged", "failed", str("/srv/.f.dd.tmp")
 	failedStaged.CommitOutcome, failedStaged.Error = str("failed"), str("commit failed: boom")
@@ -61,10 +62,10 @@ func TestFileTransfersReconcileInterrupted(t *testing.T) {
 	for _, r := range rows {
 		got[r.TransferID] = r
 	}
-	if len(rows) != 5 {
-		t.Fatalf("reconciled %d rows, want 5: %v", len(rows), got)
+	if len(rows) != 6 {
+		t.Fatalf("reconciled %d rows, want 6: %v", len(rows), got)
 	}
-	for _, id := range []string{"xfer_pending", "xfer_active", "xfer_committing", "xfer_done_staged", "xfer_failed_staged"} {
+	for _, id := range []string{"xfer_pending", "xfer_active", "xfer_committing", "xfer_done_staged", "xfer_failed_staged", "xfer_cancelled_staged"} {
 		if _, ok := got[id]; !ok {
 			t.Errorf("%s not reported", id)
 		}
@@ -102,6 +103,10 @@ func TestFileTransfersReconcileInterrupted(t *testing.T) {
 	if doneStaged.Status != "completed" || doneStaged.Error != nil || *doneStaged.Cleanup != "failed" ||
 		*doneStaged.StagingPath != "/srv/.f.cc.tmp" || *doneStaged.FinishedAt != "2026-03-01T12:00:00.000Z" {
 		t.Errorf("completed+staged row: %+v", doneStaged)
+	}
+	if c := get("xfer_cancelled_staged"); c.Status != "cancelled" || c.Error != nil || *c.Cleanup != "failed" ||
+		*c.StagingPath != "/srv/.f.ff.tmp" {
+		t.Errorf("cancelled+staged row: %+v", c)
 	}
 	failedStagedRow := get("xfer_failed_staged")
 	if failedStagedRow.Status != "failed" || *failedStagedRow.CommitOutcome != "failed" ||

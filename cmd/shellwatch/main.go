@@ -345,9 +345,10 @@ func run() error {
 	fileTransferLog := audit.NewFileTransfers(db, clk)
 	notifyTransferFailed := func(p transferFailure) {
 		title := fmt.Sprintf("File %s of %s %s", p.Direction, p.Path, p.Status)
-		if p.Status == string(transfer.StateCompleted) && p.Cleanup == transfer.CleanupFailed {
-			// Only the startup reconciliation reports a completed transfer:
-			// its staging cleanup was cut short by the restart (#287).
+		if (p.Status == string(transfer.StateCompleted) || p.Status == string(transfer.StateCancelled)) &&
+			p.Cleanup == transfer.CleanupFailed {
+			// Only the startup reconciliation reports a completed or cancelled
+			// transfer: its staging cleanup was cut short by the restart (#287).
 			title += ", staging cleanup failed"
 		}
 		detail := fmt.Sprintf("Transfer:  %s\nSession:   %s\nPath:      %s", p.TransferID, p.SessionID, p.Path)

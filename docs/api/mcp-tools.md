@@ -415,8 +415,8 @@ consistency guarantee.
   `cleanup: "failed"` with the staging path.
 - A link transfer that ends `failed` or `expired` raises a
   `file-transfer-failed` notification for the account, as does every row the
-  startup reconciliation closes out (including a `completed` upload whose
-  staging cleanup was interrupted).
+  startup reconciliation closes out (including a `completed` or `cancelled`
+  upload whose staging cleanup was interrupted).
 
 ## Resources & server → client updates
 

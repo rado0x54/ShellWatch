@@ -175,8 +175,8 @@ gracefully — render title/detail, no typed action):
 
 - `file-transfer-failed` (#263) — an out-of-band file transfer ended `failed`
   or `expired`, including one interrupted by a server restart, or a finished
-  upload (`status` may be `completed`) whose staging cleanup a restart cut
-  short; severity `warning`. Payload:
+  upload (`status` may be `completed` or `cancelled`) whose staging cleanup a
+  restart cut short; severity `warning`. Payload:
 
   ```ts
   {
@@ -185,7 +185,7 @@ gracefully — render title/detail, no typed action):
     endpointId: string;
     direction: string; // "upload" | "download"
     path: string;
-    status: string; // "failed" | "expired"
+    status: string; // "failed" | "expired"; "completed" | "cancelled" only from startup reconciliation (cleanup "failed")
     error: string;
     bytes: number;
     commitOutcome: string; // "" | "ok" | "failed" | "unknown"
