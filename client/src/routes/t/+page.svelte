@@ -19,6 +19,7 @@
     takeTokenFromLocation,
     type GuestStatus,
     type RedeemFailure,
+    clockOffsetMs,
   } from "$lib/guest/guest-client.js";
 
   type Phase =
@@ -35,6 +36,9 @@
   const RECONNECT_DELAY_MS = 2000;
   /** Matches the server's reconnect grace: past it the session is gone. */
   const RECONNECT_GIVE_UP_MS = 60_000;
+  /** A reload with no token: how long to retry the first handshake before
+   * concluding this browser has no guest session. */
+  const RELOAD_ATTACH_RETRY_MS = 5000;
 
   let phase = $state<Phase>("loading");
   let token = $state("");
@@ -45,10 +49,20 @@
   let lifetimeDeadline = $state<number | null>(null);
   let endedMessage = $state("");
   let reconnecting = $state(false);
+  /** Server clock minus this device's clock: deadlines come from the server,
+   * and the guest device's clock may be wrong. */
+  let clockOffset = 0;
+  /** The server's idea of now, advanced by the ticker. */
+  const serverNow = (): number => Date.now() + clockOffset;
   let now = $state(Date.now());
   let socket: GuestSocket | null = null;
   let term = $state<GuestTerminal | null>(null);
   let dropSince: number | null = null;
+  /** Until when a failed first handshake is retried: right after redeeming
+   * this is the server's attach deadline (the session stays attachable until
+   * then), so one network blip or 429 cannot lock out a guest whose ticket
+   * is already spent. */
+  let firstConnectDeadline = 0;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -62,6 +76,10 @@
   }
 
   function onStatus(st: GuestStatus): void {
+    if (st.serverTime) {
+      clockOffset = clockOffsetMs(st.serverTime, Date.now());
+      now = serverNow();
+    }
     reconnecting = false;
     dropSince = null;
     if (st.code) code = st.code;
@@ -89,8 +107,13 @@
   function onDrop(): void {
     if (phase === "ended" || phase === "invalid") return;
     if (phase === "connecting" && dropSince === null && !reconnecting) {
-      // The very first handshake failed: there is no guest session for this
-      // browser (reload after the session ended, or a copied URL).
+      // The first handshake failed. Keep trying while the session can still
+      // be attached. Past that, there is no guest session for this browser
+      // (reload after the session ended, or a copied URL).
+      if (Date.now() < firstConnectDeadline) {
+        reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        return;
+      }
       phase = "invalid";
       failure = null;
       return;
@@ -143,6 +166,10 @@
     // The ticket is spent now; the link cannot be used again.
     token = "";
     code = res.redeemed.confirmationCode;
+    clockOffset = res.clockOffsetMs;
+    // In local time: the server's attach deadline shifted by the offset.
+    const attachBy = Date.parse(res.redeemed.attachDeadline) - clockOffset;
+    firstConnectDeadline = Number.isNaN(attachBy) ? Date.now() + 30_000 : attachBy;
     phase = "connecting";
     connect();
   }
@@ -178,11 +205,12 @@
 
   onMount(() => {
     const t = takeTokenFromLocation(window.location, window.history);
-    ticker = setInterval(() => (now = Date.now()), 1000);
+    ticker = setInterval(() => (now = serverNow()), 1000);
     if (t === null) {
       // No link in the address bar: a reload of a live guest session (the
       // cookie reattaches), or nothing to do here.
       phase = "connecting";
+      firstConnectDeadline = Date.now() + RELOAD_ATTACH_RETRY_MS;
       connect();
       return;
     }

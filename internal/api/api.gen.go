@@ -2048,7 +2048,7 @@ type ListTicketsParams struct {
 
 // RedeemTicketJSONBody defines parameters for RedeemTicket.
 type RedeemTicketJSONBody struct {
-	// Reason Why the guest wants access. Control characters are stripped and it is capped at 200 bytes. Required (non-empty) when the ticket says so.
+	// Reason Why the guest wants access. Control characters are stripped and it is capped at 200 characters. Required (non-empty) when the ticket says so.
 	Reason *string `json:"reason,omitempty"`
 	Token  string  `json:"token"`
 }

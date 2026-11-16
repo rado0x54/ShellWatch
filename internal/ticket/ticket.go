@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,11 +49,11 @@ const (
 	MaxOutstanding = 20
 	// MaxConnections caps guest WebSocket connections per guest session.
 	MaxConnections = 8
-	// ReasonMaxLen caps the guest's reason (bytes, after sanitizing).
+	// ReasonMaxLen caps the guest's reason (characters, after sanitizing).
 	ReasonMaxLen = 200
-	// LabelMaxLen caps a ticket label.
+	// LabelMaxLen caps a ticket label (characters).
 	LabelMaxLen = 100
-	// UserAgentMaxLen caps the recorded user agent.
+	// UserAgentMaxLen caps the recorded user agent (characters).
 	UserAgentMaxLen = 256
 )
 
@@ -98,6 +100,10 @@ var (
 	ErrGone = errors.New("guest session not found")
 	// ErrTooManyConnections: the guest session is at MaxConnections.
 	ErrTooManyConnections = errors.New("too many guest connections")
+	// ErrUnavailable: redemption could not check eligibility (a cancelled
+	// request, a database error). The ticket is left untouched, so the
+	// guest can simply try again.
+	ErrUnavailable = errors.New("temporarily unavailable")
 )
 
 // OptionError is a mint option outside its bounds.
@@ -129,6 +135,10 @@ type Status struct {
 	LifetimeDeadline string `json:"lifetimeDeadline,omitempty"`
 	// Message is a fixed generic text (refused, closed).
 	Message string `json:"message,omitempty"`
+	// ServerTime is the server's clock when the frame was built. The guest
+	// device's clock may be wrong, so the page counts the deadlines down
+	// against this, not against its own time.
+	ServerTime string `json:"serverTime"`
 }
 
 // Publisher delivers guest frames to the guest's WebSocket connections
@@ -176,8 +186,9 @@ type Params struct {
 	// ResolveEndpoint resolves an endpoint for an account (nil when it does
 	// not resolve: unknown, foreign, deleted or disabled).
 	ResolveEndpoint func(ctx context.Context, endpointID, accountID string) (*terminal.EndpointRef, error)
-	// AccountActive reports whether the account exists and is enabled.
-	AccountActive func(ctx context.Context, accountID string) bool
+	// AccountActive reports whether the account exists and is enabled. An
+	// error means "could not tell" and never invalidates a ticket.
+	AccountActive func(ctx context.Context, accountID string) (bool, error)
 	// NewID mints ticket ids.
 	NewID func() string
 }
@@ -367,7 +378,7 @@ type Minted struct {
 
 // ValidateOptions checks the option bounds; zero durations take defaults.
 func ValidateOptions(o Options) (Options, error) {
-	o.Label = util.SanitizeClientReportedMax(o.Label, LabelMaxLen)
+	o.Label = util.SanitizeFreeText(o.Label, LabelMaxLen)
 	if o.RedeemTTL == 0 {
 		o.RedeemTTL = DefaultRedeemTTL
 	}
@@ -512,17 +523,14 @@ func (s *Service) List(accountID string) []View {
 			out = append(out, s.viewLocked(t))
 		}
 	}
-	sortViews(out)
-	return out
-}
-
-func sortViews(v []View) {
-	for i := 1; i < len(v); i++ {
-		for j := i; j > 0 && (v[j].CreatedAt < v[j-1].CreatedAt ||
-			(v[j].CreatedAt == v[j-1].CreatedAt && v[j].ID < v[j-1].ID)); j-- {
-			v[j], v[j-1] = v[j-1], v[j]
+	// Oldest first; the id breaks ties within one timestamp.
+	slices.SortFunc(out, func(a, b View) int {
+		if c := strings.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
 		}
-	}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
 }
 
 // Revoke ends a ticket in any state: an unredeemed ticket is deleted,
@@ -573,15 +581,14 @@ type RedeemParams struct {
 // Redeemed is a successful redemption: the guest cookie (returned exactly
 // once) and what the waiting screen shows.
 type Redeemed struct {
-	Cookie            string
-	CookieMaxAge      time.Duration
-	ConfirmationCode  string
-	AttachDeadline    time.Time
-	AdmissionWindow   time.Duration
-	Lifetime          time.Duration
-	ReasonRequired    bool
-	AgentForward      bool
-	RetryAfterSeconds int
+	Cookie           string
+	CookieMaxAge     time.Duration
+	ConfirmationCode string
+	AttachDeadline   time.Time
+	AdmissionWindow  time.Duration
+	Lifetime         time.Duration
+	ReasonRequired   bool
+	AgentForward     bool
 }
 
 // CapacityError is ErrCapacity with a retry hint.
@@ -630,26 +637,36 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "expired", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrNotFound
 	}
-	reason := util.SanitizeClientReportedMax(p.Reason, ReasonMaxLen)
+	reason := util.SanitizeFreeText(p.Reason, ReasonMaxLen)
 	if snapshot.opts.ReasonRequired && reason == "" {
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "reason required", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrReasonRequired
 	}
 	// Eligibility recheck: the account and the endpoint must still be there.
-	if s.p.AccountActive != nil && !s.p.AccountActive(ctx, snapshot.accountID) {
-		s.invalidate(t, audit.TicketInvalidated, "account removed or disabled")
-		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "account removed or disabled", "sourceIp", p.SourceIP)
-		return Redeemed{}, ErrNotFound
+	// Only a definite "gone" spends the ticket; a failed lookup (cancelled
+	// request, database error) leaves it redeemable.
+	if s.p.AccountActive != nil {
+		active, err := s.p.AccountActive(ctx, snapshot.accountID)
+		if err != nil {
+			slog.Warn("ticket: redeem eligibility check failed", "ticket", t.id, "check", "account",
+				"sourceIp", p.SourceIP, "err", err)
+			return Redeemed{}, ErrUnavailable
+		}
+		if !active {
+			s.invalidate(t, audit.TicketInvalidated, "account removed or disabled")
+			slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "account removed or disabled", "sourceIp", p.SourceIP)
+			return Redeemed{}, ErrNotFound
+		}
 	}
 	ref, err := s.p.ResolveEndpoint(ctx, snapshot.endpointID, snapshot.accountID)
-	if err != nil || ref == nil {
-		why := "endpoint removed or disabled"
-		if err != nil {
-			why = "endpoint lookup failed"
-			slog.Warn("ticket: endpoint lookup failed", "ticket", t.id, "err", err)
-		}
-		s.invalidate(t, audit.TicketInvalidated, why)
-		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", why, "sourceIp", p.SourceIP)
+	if err != nil {
+		slog.Warn("ticket: redeem eligibility check failed", "ticket", t.id, "check", "endpoint",
+			"sourceIp", p.SourceIP, "err", err)
+		return Redeemed{}, ErrUnavailable
+	}
+	if ref == nil {
+		s.invalidate(t, audit.TicketInvalidated, "endpoint removed or disabled")
+		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "endpoint removed or disabled", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrNotFound
 	}
 
@@ -657,7 +674,7 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	g := &guest{
 		id: randomID(), t: t, cookieHash: hash(cookie), code: confirmationCode(),
 		reason: reason, sourceIP: p.SourceIP,
-		userAgent: util.SanitizeClientReportedMax(p.UserAgent, UserAgentMaxLen),
+		userAgent: util.SanitizeFreeText(p.UserAgent, UserAgentMaxLen),
 		channel:   p.Channel, state: StateRedeemed,
 		redeemedAt: now, attachDeadline: now.Add(AttachWindow),
 	}
@@ -883,7 +900,7 @@ func (s *Service) publishStatusLocked(g *guest) {
 }
 
 func (s *Service) statusLocked(g *guest) Status {
-	st := Status{State: g.state}
+	st := Status{State: g.state, ServerTime: iso(s.clk.Now())}
 	switch g.state {
 	case StateRedeemed, StatePending:
 		st.State = StatePending
@@ -930,33 +947,48 @@ func (s *Service) startAttemptLocked(g *guest, fx *effects) {
 			LifetimeSeconds: int(t.opts.Lifetime / time.Second),
 		},
 	}
-	go s.runAttempt(ctx, g.id, n, t.accountID, t.endpointID, t.opts.AgentForward, trigger)
+	go s.runAttempt(ctx, attemptParams{
+		guestID: g.id, n: n, accountID: t.accountID, endpointID: t.endpointID,
+		agentForward: t.opts.AgentForward, trigger: trigger,
+	})
 }
 
-func (s *Service) runAttempt(ctx context.Context, guestID string, n int, accountID, endpointID string, agentForward bool, trigger terminal.Trigger) {
-	ref, err := s.p.ResolveEndpoint(ctx, endpointID, accountID)
+// attemptParams describe one admission attempt (runAttempt).
+type attemptParams struct {
+	guestID string
+	// n is the attempt number; events of a superseded attempt are ignored.
+	n                     int
+	accountID, endpointID string
+	// agentForward is the ticket's option (the endpoint's setting also
+	// applies).
+	agentForward bool
+	trigger      terminal.Trigger
+}
+
+func (s *Service) runAttempt(ctx context.Context, a attemptParams) {
+	ref, err := s.p.ResolveEndpoint(ctx, a.endpointID, a.accountID)
 	if err != nil || ref == nil {
 		if err == nil {
 			// The endpoint was removed or disabled since redemption: the
 			// guest session cannot be admitted any more.
-			s.closeByID(guestID, terminal.CloseEndpointRemoved)
+			s.closeByID(a.guestID, terminal.CloseEndpointRemoved)
 			return
 		}
-		s.attemptFailed(guestID, n, "endpoint lookup failed: "+err.Error())
+		s.attemptFailed(a.guestID, a.n, "endpoint lookup failed: "+err.Error())
 		return
 	}
 	ep := *ref
 	// Agent forwarding never goes beyond the endpoint's own setting.
-	ep.AgentForward = ep.AgentForward && agentForward
-	sess, err := s.p.Manager.Create(ctx, ep, accountID, trigger)
+	ep.AgentForward = ep.AgentForward && a.agentForward
+	sess, err := s.p.Manager.Create(ctx, ep, a.accountID, a.trigger)
 	if err != nil {
-		s.attemptFailed(guestID, n, err.Error())
+		s.attemptFailed(a.guestID, a.n, err.Error())
 		return
 	}
 	// Backstop: a session that went live for a guest session that is gone,
 	// or for an attempt that is no longer current, must not stay open.
 	s.mu.Lock()
-	g, ok := s.guests[guestID]
+	g, ok := s.guests[a.guestID]
 	live := ok && g.state == StateOpen && g.sessionID == sess.SessionID
 	s.mu.Unlock()
 	if !live {
@@ -1100,7 +1132,7 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 		msg = MsgNotGranted
 	}
 	if s.pub != nil {
-		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: msg})
+		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: msg, ServerTime: iso(s.clk.Now())})
 	}
 	now := s.clk.Now()
 	ev := s.event(g.t, g, audit.TicketEnded)

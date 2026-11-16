@@ -26,7 +26,27 @@ export type RedeemFailure =
   | "forbidden"
   | "error";
 
-export type RedeemResult = { ok: true; redeemed: Redeemed } | { ok: false; failure: RedeemFailure };
+export type RedeemResult =
+  | {
+      ok: true;
+      redeemed: Redeemed;
+      /** Server clock minus this device's clock (from the `Date` header; 0
+       * when it is missing). */
+      clockOffsetMs: number;
+    }
+  | { ok: false; failure: RedeemFailure };
+
+/**
+ * How far the server's clock is ahead of this device's (ms; negative when
+ * behind). The guest device's clock may be wrong, so deadlines from the server
+ * are counted down against `Date.now() + offset`. An unparsable server time
+ * gives 0 (trust the local clock rather than invent an offset).
+ */
+export function clockOffsetMs(serverTime: string | null | undefined, localNow: number): number {
+  if (!serverTime) return 0;
+  const t = Date.parse(serverTime);
+  return Number.isNaN(t) ? 0 : t - localNow;
+}
 
 /** Fixed texts for every failure: the server's error bodies are never shown. */
 export const REDEEM_FAILURE_TEXT: Record<RedeemFailure, string> = {
@@ -76,7 +96,11 @@ export async function redeemTicket(
   switch (res.status) {
     case 202:
       try {
-        return { ok: true, redeemed: (await res.json()) as Redeemed };
+        return {
+          ok: true,
+          redeemed: (await res.json()) as Redeemed,
+          clockOffsetMs: clockOffsetMs(res.headers.get("Date"), Date.now()),
+        };
       } catch {
         return { ok: false, failure: "error" };
       }
@@ -103,6 +127,8 @@ export interface GuestStatus {
   remainingSeconds?: number;
   lifetimeDeadline?: string;
   message?: string;
+  /** The server's clock when the frame was built (ISO 8601). */
+  serverTime?: string;
 }
 
 export type GuestFrame =

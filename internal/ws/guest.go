@@ -104,12 +104,12 @@ func (h *GuestHub) all() []*guestConn {
 	return out
 }
 
+// statusFrame is a guest status message: the Status fields plus its type.
 func statusFrame(st ticket.Status) []byte {
-	raw, _ := json.Marshal(st)
-	var m map[string]any
-	_ = json.Unmarshal(raw, &m)
-	m["type"] = "status"
-	out, _ := json.Marshal(m)
+	out, _ := json.Marshal(struct {
+		Type string `json:"type"`
+		ticket.Status
+	}{"status", st})
 	return out
 }
 
@@ -140,16 +140,26 @@ func (h *GuestHub) bind(c *guestConn, sessionID string) {
 	}
 	// The catch-up is always the whole buffer with reset: a reconnecting
 	// page (dropped socket, no reload) clears what it showed before.
-	frames := [][]byte{marshalFrame(outputFrame(true, sessionID, buffered.Data, buffered.Offset, true))}
+	frames := [][]byte{marshalFrame(outputFrame(outputFrameParams{
+		guest: true, sessionID: sessionID, data: buffered.Data, offset: buffered.Offset, reset: true,
+	}))}
 	c.attachWithCatchUp(sessionID, true, buffered.Offset, frames)
 	c.flushOutput(h.mgr, sessionID)
 }
 
-// GuestClose implements ticket.Publisher: the final status, then every
-// connection closes once its queue has drained.
+// GuestClose implements ticket.Publisher: the output still pending for the
+// guest's session, then the final status, then every connection closes once
+// its queue has drained. The flush mirrors the account hub's closeSession: a
+// session that ends on the remote side (logout, the last command's result)
+// emits its tail right before closing, and the guest must see it too. It
+// runs inside the Manager's closed-status hook, before the session is
+// removed, so the buffer is still readable.
 func (h *GuestHub) GuestClose(guestID string, st ticket.Status) {
 	raw := statusFrame(st)
 	for _, c := range h.snapshot(guestID) {
+		for _, sid := range c.attachedIDs() {
+			c.flushOutput(h.mgr, sid)
+		}
 		c.enqueue(raw)
 		c.finish()
 	}

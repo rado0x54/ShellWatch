@@ -461,9 +461,9 @@ func run() error {
 	tickets := ticket.New(ticket.Params{
 		Ctx: ctx, Manager: manager, Clock: clk, Audit: ticketLog, Notifier: wsHub,
 		ResolveEndpoint: epSvc.ActiveRefForAccount,
-		AccountActive: func(ctx context.Context, accountID string) bool {
+		AccountActive: func(ctx context.Context, accountID string) (bool, error) {
 			acc, err := accountsStore.Get(ctx, accountID)
-			return err == nil && acc != nil && acc.Enabled
+			return err == nil && acc != nil && acc.Enabled, err
 		},
 		NewID: newUUID,
 	})

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -64,6 +65,13 @@ func (t *Tickets) mint(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, f.key+" must be positive")
 			return
 		}
+		// Clamp before converting: a huge value would overflow the
+		// Duration and could wrap into the allowed range. Anything this
+		// large fails the bounds check in ValidateOptions anyway.
+		const maxSeconds = 1e9
+		if n > maxSeconds {
+			n = maxSeconds
+		}
 		*f.dst = time.Duration(n) * time.Second
 	}
 	for _, f := range []struct {
@@ -81,7 +89,7 @@ func (t *Tickets) mint(w http.ResponseWriter, r *http.Request) {
 		*f.dst = string(raw) == "true"
 	}
 	minted, err := t.Service.Mint(r.Context(), ticket.MintParams{
-		AccountID: acc, EndpointID: chi.URLParam(r, "id"), Options: opts,
+		AccountID: acc, EndpointID: pathParam(r, "id"), Options: opts,
 	})
 	var optErr *ticket.OptionError
 	switch {
@@ -117,7 +125,7 @@ func (t *Tickets) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (t *Tickets) revoke(w http.ResponseWriter, r *http.Request) {
-	if !t.Service.Revoke(accountID(r), chi.URLParam(r, "id")) {
+	if !t.Service.Revoke(accountID(r), pathParam(r, "id")) {
 		writeErr(w, 404, "Ticket not found")
 		return
 	}
@@ -167,6 +175,10 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ticket.ErrReasonRequired):
 		apierr.Write(w, http.StatusBadRequest, "A reason is required")
 		return
+	case errors.Is(err, ticket.ErrUnavailable):
+		// The ticket is untouched; the guest page offers to try again.
+		apierr.Write(w, http.StatusServiceUnavailable, "Temporarily unavailable; try again")
+		return
 	case errors.As(err, &capErr):
 		w.Header().Set("Retry-After", strconv.Itoa(int(capErr.RetryAfter.Round(time.Second)/time.Second)))
 		apierr.Write(w, http.StatusTooManyRequests, "Too many guest sessions right now; try again later")
@@ -187,4 +199,15 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"lifetimeSeconds":        int(res.Lifetime / time.Second),
 		"agentForward":           res.AgentForward,
 	})
+}
+
+// pathParam is a URL parameter decoded. chi matches on the escaped path, so
+// an id the client sent through encodeURIComponent (a demo id's ":" arrives
+// as %3A) is still escaped in chi.URLParam.
+func pathParam(r *http.Request, key string) string {
+	raw := chi.URLParam(r, key)
+	if v, err := url.PathUnescape(raw); err == nil {
+		return v
+	}
+	return raw
 }

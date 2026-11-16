@@ -212,3 +212,33 @@ func TestValidateOptionsDefaults(t *testing.T) {
 		}
 	}
 }
+
+// A failed endpoint lookup at redeem time (database error, cancelled
+// request) is not "endpoint gone": the ticket stays redeemable.
+func TestRedeemEndpointLookupErrorKeepsTicket(t *testing.T) {
+	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
+	var fail bool
+	s := New(Params{
+		Manager: f, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
+			if fail {
+				return nil, context.Canceled
+			}
+			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
+		},
+		NewID: func() string { return "tk" },
+	})
+	t.Cleanup(s.Close)
+	m, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("lookup error: %v, want ErrUnavailable", err)
+	}
+	fail = false
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+}

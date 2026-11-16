@@ -11,28 +11,42 @@ import "strings"
 const ClientHeaderMaxLen = 128
 
 // SanitizeClientReported strips ASCII control chars (incl. newlines, tabs,
-// DEL) and clamps length; empty result -> "". Idempotent.
+// DEL) and clamps length to ClientHeaderMaxLen bytes; empty result -> "".
+// Idempotent.
 func SanitizeClientReported(raw string) string {
-	return SanitizeClientReportedMax(raw, ClientHeaderMaxLen)
-}
-
-// SanitizeClientReportedMax is SanitizeClientReported with a caller-chosen
-// cap in bytes (the ticket reason allows more than a header value, #306).
-// The cut never splits a UTF-8 sequence, and surrounding whitespace is
-// trimmed so a reason of only spaces counts as empty.
-func SanitizeClientReportedMax(raw string, maxLen int) string {
 	var b strings.Builder
 	for _, r := range raw {
-		if r <= 0x1f || r == 0x7f {
+		if isControl(r) {
 			continue
 		}
-		if b.Len()+len(string(r)) > maxLen {
+		if b.Len()+len(string(r)) > ClientHeaderMaxLen {
 			break
 		}
 		b.WriteRune(r)
 	}
-	if maxLen == ClientHeaderMaxLen {
-		return b.String()
+	return b.String()
+}
+
+// SanitizeFreeText cleans text a person typed on an untrusted client (a
+// ticket's reason, #306), or a value shown next to it: ASCII control chars
+// are stripped, the result is capped at maxChars characters (runes, so the
+// limit matches an HTML maxlength for non-Latin text and never splits a
+// UTF-8 sequence), and surrounding whitespace is trimmed, so a value of only
+// spaces counts as empty.
+func SanitizeFreeText(raw string, maxChars int) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range raw {
+		if isControl(r) {
+			continue
+		}
+		if n == maxChars {
+			break
+		}
+		b.WriteRune(r)
+		n++
 	}
 	return strings.TrimSpace(b.String())
 }
+
+func isControl(r rune) bool { return r <= 0x1f || r == 0x7f }

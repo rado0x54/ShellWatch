@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { GuestSocket, redeemTicket, takeTokenFromLocation } from "./guest-client.js";
+import { clockOffsetMs, GuestSocket, redeemTicket, takeTokenFromLocation } from "./guest-client.js";
 
 const TOKEN = "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5";
 
@@ -67,6 +67,7 @@ describe("redeemTicket", () => {
     [409, "live-session"],
     [429, "busy"],
     [500, "error"],
+    [503, "error"],
   ])("maps %i to %s without reading the server's text", async (status, failure) => {
     const fetchFn = vi.fn(
       async () => new Response(JSON.stringify({ error: "secret detail" }), { status }),
@@ -75,6 +76,22 @@ describe("redeemTicket", () => {
       ok: false,
       failure,
     });
+  });
+});
+
+describe("clockOffsetMs", () => {
+  const local = Date.parse("2026-01-01T12:00:00.000Z");
+  it("is server minus local, so a device clock running late still counts down correctly", () => {
+    expect(clockOffsetMs("2026-01-01T12:05:00.000Z", local)).toBe(5 * 60_000);
+    expect(clockOffsetMs("2026-01-01T11:59:00.000Z", local)).toBe(-60_000);
+  });
+  it("accepts an HTTP Date header", () => {
+    expect(clockOffsetMs("Thu, 01 Jan 2026 12:00:10 GMT", local)).toBe(10_000);
+  });
+  it("falls back to 0 when the server time is missing or unparsable", () => {
+    expect(clockOffsetMs(undefined, local)).toBe(0);
+    expect(clockOffsetMs(null, local)).toBe(0);
+    expect(clockOffsetMs("nonsense", local)).toBe(0);
   });
 });
 

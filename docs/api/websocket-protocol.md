@@ -335,6 +335,11 @@ Every other frame (any `terminal:*` type included) is silently dropped.
 | `status` | `state`, plus the fields below                   | The guest session's state. Sent on every transition and to each connection when it attaches.                                            |
 | `output` | `data: string`, `offset: number`, `reset?: true` | Terminal output of the admitted session. On (re)attach after admission the whole buffer is sent once with `reset: true`; deltas follow. |
 
+Every `status` frame carries `serverTime` (ISO 8601, the server's clock when
+the frame was built). The guest device's clock may be off, so the page counts
+`admissionDeadline` / `lifetimeDeadline` down against the offset between
+`serverTime` and its own clock, not against local time alone.
+
 `status` fields by `state` — none ever names the endpoint (label, address,
 user) or carries a server error text; `message` is one of a few fixed texts:
 

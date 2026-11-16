@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -111,6 +112,11 @@ type ticketRig struct {
 	gate    *gatedFactory
 	db      *sql.DB
 	maxSess int
+	// demoID is a demo endpoint's id ("demo:…"), visible to every account.
+	demoID string
+	// lookupErr makes the redeem-time account check fail (a database
+	// error), for the transient-failure path.
+	lookupErr atomic.Bool
 }
 
 const guestOrigin = externalURL // "https://shellwatch.example"
@@ -142,16 +148,23 @@ func ticketServer(t *testing.T) *ticketRig {
 	hub := wshub.NewHub(mgr)
 	t.Cleanup(hub.Close)
 	epStore := store.NewEndpoints(db, clk)
-	epSvc := &endpointsvc.Service{Endpoints: epStore, Demo: demo.NewService(nil)}
+	epSvc := &endpointsvc.Service{Endpoints: epStore, Demo: demo.NewService([]config.SeedEndpoint{{
+		Label: "Demo", Parsed: config.EndpointAddress{Host: "demo.example", Port: 22, Username: "sw"},
+	}})}
+	rig := &ticketRig{clk: clk, mgr: mgr, hub: hub, gate: gate, db: db, maxSess: 1,
+		demoID: epSvc.Demo.List("acc-a")[0].ID}
 	accounts := store.NewAccounts(db)
 	audit.NewWriter(db, clk).AttachManager(mgr, mgr.GetSession)
 	ticketLog := audit.NewTicketEvents(db, clk)
 	svc := ticket.New(ticket.Params{
 		Manager: mgr, Clock: clk, Audit: ticketLog, Notifier: hub,
 		ResolveEndpoint: epSvc.ActiveRefForAccount,
-		AccountActive: func(ctx context.Context, id string) bool {
+		AccountActive: func(ctx context.Context, id string) (bool, error) {
+			if rig.lookupErr.Load() {
+				return false, errors.New("database is locked")
+			}
 			a, err := accounts.Get(ctx, id)
-			return err == nil && a != nil && a.Enabled
+			return err == nil && a != nil && a.Enabled, err
 		},
 		NewID: ids.NewUUID,
 	})
@@ -175,7 +188,7 @@ func ticketServer(t *testing.T) *ticketRig {
 		}
 		return nil
 	})
-	rig := &ticketRig{clk: clk, mgr: mgr, svc: svc, hub: hub, gate: gate, db: db, maxSess: 1}
+	rig.svc = svc
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WSHub:     hub,
@@ -396,10 +409,14 @@ func TestTicketMintDefaultsAndBounds(t *testing.T) {
 		t.Errorf("token %q: want 43 base64url chars (32 bytes)", tok)
 	}
 	for body, want := range map[string]int{
-		`{"redeemTtlSeconds":59}`:                      400,
-		`{"redeemTtlSeconds":86401}`:                   400,
-		`{"lifetimeSeconds":59}`:                       400,
-		`{"lifetimeSeconds":28801}`:                    400,
+		`{"redeemTtlSeconds":59}`:    400,
+		`{"redeemTtlSeconds":86401}`: 400,
+		`{"lifetimeSeconds":59}`:     400,
+		`{"lifetimeSeconds":28801}`:  400,
+		// Would wrap past int64 nanoseconds to about 60 s if converted first.
+		`{"redeemTtlSeconds":18446744134}`:             400,
+		`{"lifetimeSeconds":18446744134}`:              400,
+		`{"lifetimeSeconds":1e300}`:                    400,
 		`{"lifetimeSeconds":"x"}`:                      400,
 		`{"agentForward":"yes"}`:                       400,
 		`{"redeemTtlSeconds":86400}`:                   201,
@@ -792,6 +809,42 @@ func TestTicketOwnerKillClosesGuest(t *testing.T) {
 	readUntil(t, c, statusIs("closed"))
 	if _, st := r.dialGuest(t, cookie, guestOrigin); st != 404 {
 		t.Errorf("cookie after kill: %d", st)
+	}
+}
+
+// Output the remote side emits right before hanging up (a logout message, a
+// last command's result) reaches the guest before the final closed status.
+func TestTicketGuestGetsTailOutputBeforeClose(t *testing.T) {
+	r := ticketServer(t)
+	c, _, _, _ := r.admit(t)
+	r.gate.mu.Lock()
+	tr := r.gate.last
+	r.gate.mu.Unlock()
+	tr.Push([]byte("logout\r\n"))
+	_ = tr.Close()
+	var out strings.Builder
+	readUntil(t, c, func(m map[string]any) bool {
+		if m["type"] == "output" {
+			out.WriteString(m["data"].(string))
+		}
+		return m["type"] == "status" && m["state"] == "closed"
+	})
+	if !strings.Contains(out.String(), "logout") {
+		t.Errorf("guest missed the tail output: %q", out.String())
+	}
+}
+
+// Every guest status frame carries the server's clock, so the page can
+// count deadlines down without trusting the guest device's clock.
+func TestTicketStatusCarriesServerTime(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	r.clk.Advance(7 * time.Second)
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	st := readUntil(t, c, statusIs("pending"))
+	if want := r.clk.Now().UTC().Format(clock.ISOMillis); st["serverTime"] != want {
+		t.Errorf("serverTime = %v, want %s", st["serverTime"], want)
 	}
 }
 
@@ -1226,5 +1279,40 @@ func TestTicketGateExemptionIsMethodExact(t *testing.T) {
 		if st, _ := r.ownerJSON(t, m, "/api/tickets/redeem", "", ""); st != 401 {
 			t.Errorf("%s /api/tickets/redeem without bearer: %d, want 401", m, st)
 		}
+	}
+}
+
+// A demo endpoint's id contains ":", which the client sends percent-encoded
+// (encodeURIComponent): minting must decode it.
+func TestTicketMintForDemoEndpoint(t *testing.T) {
+	r := ticketServer(t)
+	escaped := strings.ReplaceAll(r.demoID, ":", "%3A")
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints/"+escaped+"/tickets", "ui", ``)
+	if st != 201 {
+		t.Fatalf("mint for %s: %d %v", escaped, st, out)
+	}
+	if got := out["ticket"].(map[string]any)["endpointId"]; got != r.demoID {
+		t.Errorf("endpointId = %v, want %s", got, r.demoID)
+	}
+	tk := out["ticket"].(map[string]any)["id"].(string)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+tk, "ui", ""); st != 200 {
+		t.Errorf("revoke: %d", st)
+	}
+}
+
+// A failed eligibility lookup during redeem (database error, cancelled
+// request) answers 503 and leaves the ticket redeemable; only a definite
+// "account/endpoint gone" spends it.
+func TestTicketRedeemTransientLookupFailureKeepsTicket(t *testing.T) {
+	r := ticketServer(t)
+	_, out := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", `{"reasonRequired":false}`)
+	token := out["token"].(string)
+	r.lookupErr.Store(true)
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 503 || res.cookie != "" {
+		t.Fatalf("redeem with failing lookup: %d %s (cookie set: %v)", res.status, res.raw, res.cookie != "")
+	}
+	r.lookupErr.Store(false)
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 202 {
+		t.Fatalf("retry after the failure: %d %s", res.status, res.raw)
 	}
 }

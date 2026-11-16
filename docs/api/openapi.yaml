@@ -2045,7 +2045,7 @@ paths:
                   type: string
                   description: >-
                     Why the guest wants access. Control characters are stripped
-                    and it is capped at 200 bytes. Required (non-empty) when the
+                    and it is capped at 200 characters. Required (non-empty) when the
                     ticket says so.
               required: [token]
       responses:
@@ -2105,6 +2105,13 @@ paths:
           description: >-
             The account is at its cap of 3 live guest sessions (`Retry-After`
             set; the ticket is not consumed), or the per-IP rate limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >-
+            The account or endpoint could not be checked (a database error or
+            an aborted request). The ticket is not consumed; try again.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
