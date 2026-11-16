@@ -67,6 +67,18 @@ func notificationsServer(t *testing.T) *httptest.Server {
 		AccountID: auditAccount, Type: "future-kind", Severity: "info",
 		Title: "A kind this client version does not know",
 	})
+	clk.Advance(time.Second)
+	svc.Publish(ctx, notify.PublishParams{
+		AccountID: auditAccount, Type: notify.TypeUnauthenticatedEndpoint, Severity: "error",
+		Title:  "Connection refused: no authentication",
+		Detail: `"Open Box" (deploy@open-01:22) accepted SSH access as deploy without a key. ShellWatch does not open sessions on such servers. Check the server's SSH configuration.`,
+		Payload: map[string]any{
+			"endpointId": "audit-endpoint-3", "endpointLabel": "Open Box",
+			"endpointAddress": "deploy@open-01:22", "remoteUser": "deploy",
+			"trigger": "mcp", "mcpClientName": "codex", "sourceIp": "",
+			"auditId": "act_0000000000000000000010",
+		},
+	})
 
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL

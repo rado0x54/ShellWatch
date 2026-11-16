@@ -69,3 +69,37 @@ func TestAbsorbedOpenStillAudited(t *testing.T) {
 		t.Fatalf("closing-from-open inserted a duplicate row: %d", n)
 	}
 }
+
+// The none-auth refusal (#311) is one born-resolved row: type
+// unauthenticated-endpoint, outcome denied, carrying the observed host key.
+// The type is accepted by the migrated CHECK constraint.
+func TestRecordUnauthenticatedEndpoint(t *testing.T) {
+	db, err := store.Open("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('acc','A','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWriter(db, clock.NewFake(time.Unix(1000, 0)))
+	id := w.RecordHostKeyEvent(HostKeyEvent{
+		Type: "unauthenticated-endpoint", Source: "endpoint-auth", AccountID: "acc",
+		EndpointID: "e1", EndpointLabel: "Open Box", EndpointAddress: "deploy@h:22",
+		Fingerprint: "SHA256:observed", SourceIP: "203.0.113.7",
+	})
+	if id == "" {
+		t.Fatal("insert failed (CHECK constraint not widened?)")
+	}
+	var typ, outcome, fp, resolved string
+	if err := db.QueryRow(`SELECT type, outcome, host_key_fingerprint, resolved_at FROM audit_signing_requests WHERE id = ?`, id).
+		Scan(&typ, &outcome, &fp, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if typ != "unauthenticated-endpoint" || outcome != "denied" || fp != "SHA256:observed" || resolved == "" {
+		t.Fatalf("row: type=%q outcome=%q fp=%q resolved=%q", typ, outcome, fp, resolved)
+	}
+}

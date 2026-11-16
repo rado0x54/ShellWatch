@@ -15,14 +15,16 @@ package sshx
 
 import (
 	"context"
-	"io"
-	"slices"
-	"sync"
-
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
+	"io"
+	"slices"
 	"strings"
+	"sync"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
 // keyAuth hands x/crypto one publickey method per signer, in order, and keeps
@@ -42,6 +44,11 @@ type keyAuth struct {
 	mu      sync.Mutex
 	next    int
 	lastErr error
+	// signed is sticky: set the first time any signer of this connection
+	// returns a signature, never cleared (#311). Kept apart from lastErr,
+	// which keeps the last rejection for the failed-handshake diagnostics
+	// even when a later key succeeded.
+	signed bool
 }
 
 func newKeyAuth(ctx context.Context, signers []ssh.Signer) *keyAuth {
@@ -74,10 +81,25 @@ func (k *keyAuth) callback(actx *ssh.ClientAuthContext) (ssh.AuthMethod, error) 
 	return ssh.PublicKeys(wrapRecording(s, k.record)), nil
 }
 
+// record is called with the result of every Sign / SignWithAlgorithm: an
+// error becomes lastErr, a success sets the sticky signed flag.
 func (k *keyAuth) record(err error) {
 	k.mu.Lock()
-	k.lastErr = err
+	if err != nil {
+		k.lastErr = err
+	} else {
+		k.signed = true
+	}
 	k.mu.Unlock()
+}
+
+// signatureProduced reports whether any signer of this connection returned a
+// signature (#311). A handshake that succeeded without one was accepted by
+// the server without authentication ("none").
+func (k *keyAuth) signatureProduced() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.signed
 }
 
 // authError returns the most useful error for a failed handshake: the last
@@ -106,7 +128,7 @@ func (k *keyAuth) authError(handshakeErr error) error {
 // failure (no key accepted, denied, or expired).
 const authFailedMessage = "All configured authentication methods failed"
 
-// wrapRecording returns s with Sign errors reported to rec, preserving the
+// wrapRecording returns s with every Sign result (error or nil) reported to rec, preserving the
 // AlgorithmSigner / MultiAlgorithmSigner capabilities x/crypto type-asserts
 // (an RSA key wrapped as a plain Signer would be forced down to ssh-rsa/SHA-1).
 func wrapRecording(s ssh.Signer, rec func(error)) ssh.Signer {
@@ -127,9 +149,7 @@ type recordingSigner struct {
 
 func (r *recordingSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	sig, err := r.Signer.Sign(rand, data)
-	if err != nil {
-		r.rec(err)
-	}
+	r.rec(err)
 	return sig, err
 }
 
@@ -140,9 +160,7 @@ type recordingAlgoSigner struct {
 
 func (r *recordingAlgoSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
 	sig, err := r.as.SignWithAlgorithm(rand, data, algorithm)
-	if err != nil {
-		r.rec(err)
-	}
+	r.rec(err)
 	return sig, err
 }
 
@@ -152,3 +170,34 @@ type recordingMultiSigner struct {
 }
 
 func (r *recordingMultiSigner) Algorithms() []string { return r.ms.Algorithms() }
+
+// UnauthenticatedEndpointError refuses a connection whose server completed
+// the handshake without any signer of this connection producing a signature,
+// i.e. it accepted SSH "none" authentication (#311). There is no approval to
+// give and no way to allow it: Connect closes the connection before any
+// channel is opened.
+type UnauthenticatedEndpointError struct {
+	EndpointID string
+	// Observed host key, for the audit row ("" when none was recorded).
+	HostKeyType        string
+	HostKeyFingerprint string
+}
+
+func (e *UnauthenticatedEndpointError) Error() string {
+	return "the endpoint accepted the connection without authentication; ShellWatch refuses such connections"
+}
+
+// UnauthenticatedEndpointEvent is the account-facing payload a factory emits
+// when Connect refused an endpoint that accepted "none" auth: no pending
+// action exists, so audit + WS + push are the only surfaces that tell the
+// human.
+type UnauthenticatedEndpointEvent struct {
+	AccountID          string
+	EndpointID         string
+	EndpointLabel      string
+	EndpointAddress    string
+	RemoteUser         string
+	HostKeyType        string
+	HostKeyFingerprint string
+	Trigger            terminal.Trigger
+}

@@ -251,6 +251,48 @@ func run() error {
 			}
 			return n.ID
 		},
+		// None-auth refusal (#311): the server accepted the connection without
+		// asking for a key, so Connect closed it before opening any channel.
+		// Nothing was approved or denied — audit it, publish one error-severity
+		// notification (notification:new to every tab) and push it. The
+		// refusal itself never depends on this bookkeeping: a failed audit
+		// write or publish only loses the id the error would carry.
+		OnUnauthenticatedEndpoint: func(ev sshx.UnauthenticatedEndpointEvent) string {
+			auditID := auditWriter.RecordHostKeyEvent(audit.HostKeyEvent{
+				Type: "unauthenticated-endpoint", Source: "endpoint-auth",
+				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
+				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
+				Fingerprint: ev.HostKeyFingerprint,
+				SourceIP:    ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
+				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
+			})
+			n := notifSvc.Publish(context.Background(), notify.PublishParams{
+				AccountID: ev.AccountID,
+				Type:      notify.TypeUnauthenticatedEndpoint,
+				Severity:  notify.SeverityError,
+				Title:     "Connection refused: no authentication",
+				Detail: fmt.Sprintf("%q (%s) accepted SSH access as %s without a key. "+
+					"ShellWatch does not open sessions on such servers. Check the server's SSH configuration.",
+					ev.EndpointLabel, ev.EndpointAddress, ev.RemoteUser),
+				Payload: map[string]any{
+					"endpointId":      ev.EndpointID,
+					"endpointLabel":   ev.EndpointLabel,
+					"endpointAddress": ev.EndpointAddress,
+					"remoteUser":      ev.RemoteUser,
+					"trigger":         ev.Trigger.Kind,
+					"mcpClientName":   ev.Trigger.MCPClientName,
+					"sourceIp":        ev.Trigger.SourceIP,
+					"auditId":         auditID,
+				},
+			})
+			if pushChannel != nil {
+				pushChannel.NotifyUnauthenticatedEndpoint(push.UnauthenticatedEndpoint{
+					AccountID: ev.AccountID, EndpointLabel: ev.EndpointLabel,
+					EndpointAddress: ev.EndpointAddress, RemoteUser: ev.RemoteUser,
+				})
+			}
+			return n.ID
+		},
 		// Dead terminal connection -> cancel its stranded sign prompts and
 		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
 		OnConnectionEnded: func(connID, reason string) {
@@ -264,15 +306,18 @@ func run() error {
 	})
 	// Every failed connect — UI click or MCP agent — lands in the notification
 	// log (#252): the agent-triggered ones have no other human-visible surface.
-	// Events a more specific producer already published (host-key mismatch)
-	// arrive as NotifiedError and are not double-logged; everything else is
-	// published here and tagged the same way, so the HTTP error body carries
-	// the notification id and the toast dedupes by identity.
+	// Events a more specific producer already published (host-key mismatch,
+	// none-auth refusal) arrive as NotifiedError and are not double-logged;
+	// everything else is published here and tagged the same way, so the HTTP
+	// error body carries the notification id and the toast dedupes by
+	// identity. A none-auth refusal is never re-published as
+	// session-connect-failed, even when its own publish failed (#311).
 	factory := func(ctx context.Context, fp terminal.FactoryParams) (terminal.Transport, error) {
 		transport, err := passkeyFactory(ctx, fp)
 		if err != nil {
 			var already *sshx.NotifiedError
-			if !errors.As(err, &already) {
+			var unauth *sshx.UnauthenticatedEndpointError
+			if !errors.As(err, &already) && !errors.As(err, &unauth) {
 				addr := fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port)
 				source := string(fp.Trigger.Kind)
 				if fp.Trigger.MCPClientName != "" {

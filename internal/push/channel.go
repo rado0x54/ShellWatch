@@ -132,6 +132,36 @@ func (c *Channel) NotifyHostKeyMismatch(m HostKeyMismatch) {
 	}()
 }
 
+// UnauthenticatedEndpoint is the push payload input for a connection refused
+// because the server accepted SSH "none" authentication (#311).
+type UnauthenticatedEndpoint struct {
+	AccountID       string
+	EndpointLabel   string
+	EndpointAddress string
+	RemoteUser      string
+}
+
+// NotifyUnauthenticatedEndpoint pushes the none-auth refusal alert. There is
+// no action to resolve, so the push carries no actionId and no /sign/:id
+// link: it opens the Notifications tab. Fire-and-forget like Notify.
+func (c *Channel) NotifyUnauthenticatedEndpoint(m UnauthenticatedEndpoint) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		raw, err := json.Marshal(payload{
+			Title: "Connection refused: no authentication",
+			Body: `"` + m.EndpointLabel + `" (` + m.EndpointAddress + `) accepted SSH access as ` + m.RemoteUser +
+				` without a key. ShellWatch does not open sessions on such servers. Check the server's SSH configuration.`,
+			DeepLink:   "/audit/notifications",
+			ActionType: "unauthenticated-endpoint",
+		})
+		if err != nil {
+			return
+		}
+		c.sendToAccount(ctx, m.AccountID, raw, "unauthenticated-endpoint")
+	}()
+}
+
 func (c *Channel) deliver(action *approval.Action, deepLink string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

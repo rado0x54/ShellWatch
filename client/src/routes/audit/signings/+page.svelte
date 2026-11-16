@@ -102,7 +102,11 @@
 
   function actionTarget(row: SigningRequestRow): string {
     if (row.type === "webauthn-sign") return row.passkeyLabel ?? row.credentialId ?? "passkey";
-    if (row.type === "host-key-mismatch" || row.type === "host-key-cleared") {
+    if (
+      row.type === "host-key-mismatch" ||
+      row.type === "host-key-cleared" ||
+      row.type === "unauthenticated-endpoint"
+    ) {
       return row.endpointLabel ?? row.hostKeyFingerprint ?? "host key";
     }
     return row.keyLabel ?? row.keyFingerprint ?? "key";
@@ -252,6 +256,13 @@
                 <dt>Pinned host key</dt>
                 <dd><code>{row.hostKeyPriorFingerprint}</code></dd>
               {/if}
+              {#if row.hostKeyFingerprint}
+                <dt>Presented host key</dt>
+                <dd><code>{row.hostKeyFingerprint}</code></dd>
+              {/if}
+            {:else if row.type === "unauthenticated-endpoint"}
+              <dt>Refusal</dt>
+              <dd>The endpoint accepted the connection without authentication (SSH "none")</dd>
               {#if row.hostKeyFingerprint}
                 <dt>Presented host key</dt>
                 <dd><code>{row.hostKeyFingerprint}</code></dd>

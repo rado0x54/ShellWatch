@@ -160,7 +160,8 @@ components:
           description: >-
             Present when the failure was also published to the account's
             notification log (#252), e.g. a session create refused by a
-            host-key mismatch. Clients deduplicate their error display against
+            host-key mismatch or by an endpoint accepting SSH "none"
+            authentication (#311). Clients deduplicate their error display against
             the notification:new WebSocket message by this id instead of
             matching error text.
       additionalProperties: true
@@ -627,7 +628,13 @@ components:
             because the server presented a key that differs from the pin
             (payload: endpointId, endpointLabel, endpointAddress, keyType,
             observedFingerprint, pinnedFingerprint, auditId of the
-            host-key-mismatch audit row); session-connect-failed — any other
+            host-key-mismatch audit row); unauthenticated-endpoint (#311,
+            severity error) — a connection was refused because the server
+            accepted SSH "none" authentication, so no key was asked for and
+            no human approved it; there is no action to resolve (payload:
+            endpointId, endpointLabel, endpointAddress, remoteUser, trigger,
+            mcpClientName, sourceIp, auditId of the unauthenticated-endpoint
+            audit row); session-connect-failed — any other
             failed SSH connect, whatever the trigger (payload: endpointId,
             endpointLabel, endpointAddress, trigger, mcpClientName,
             mcpClientVersion, mcpReason, sourceIp, error);
@@ -666,7 +673,11 @@ components:
             host-key-mismatch (a connection aborted before authentication
             because the presented key differed from the pin; outcome is
             "denied") and host-key-cleared (a pin removed — host/port change
-            or a human forgetting the key; outcome stays null).
+            or a human forgetting the key; outcome stays null); and
+            unauthenticated-endpoint (#311: a connection refused because the
+            server accepted SSH "none" authentication; source endpoint-auth,
+            outcome "denied", hostKeyFingerprint is the observed key; no
+            pending action ever existed).
         source:
           type: string
           enum: [endpoint-auth, agent-forwarding, agent-proxy, endpoint-admin]
@@ -1736,7 +1747,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "400":
-          description: Connect failed
+          description: >-
+            Connect failed. `error` is the connect error chain. A connection
+            refused because the endpoint accepted SSH "none" authentication
+            (#311) reads "SSH connection to <host:port> refused: the endpoint
+            accepted the connection without authentication; ShellWatch
+            refuses such connections" — never the "All configured
+            authentication methods failed" wording, and not an approval
+            outcome. Failures that were published to the notification log
+            (host-key-mismatch, unauthenticated-endpoint,
+            session-connect-failed) carry `notificationId`, present only when
+            the notification was actually persisted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -170,28 +170,19 @@ func TestDenyOrExpiryLeavesNoPin(t *testing.T) {
 	}
 }
 
-// A server that accepts auth without any approval-gated signer (gliderlabs
-// with no auth handlers accepts anonymous/none auth) must still not yield a
-// session on a provisionally accepted key: fail closed.
+// Backstop (#241): a signer that is NOT approval-gated (a raw key, which no
+// production path hands to Connect) authenticates without any approval pinning
+// the provisional key — Connect must still fail closed. Servers accepting
+// "none" auth are refused earlier, by the none-auth check (#311,
+// noneauth_test.go).
 func TestFailClosedWithoutApproval(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hostSigner := newHostKeySigner(t)
-	srv := &gliderssh.Server{Handler: func(s gliderssh.Session) {
-		s.Pty()
-		io.WriteString(s, "ready\n")
-		io.Copy(io.Discard, s)
-	}}
-	srv.AddHostKey(hostSigner)
-	go srv.Serve(ln)
-	t.Cleanup(func() { srv.Close(); ln.Close() })
-	port := ln.Addr().(*net.TCPAddr).Port
+	host, port, hostPub := startEchoServer(t)
+	raw := newTestSigner(t)
 
 	hostKeys := newMemHostKeys()
-	_, err = Connect(context.Background(), ConnectParams{
-		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+	_, err := Connect(context.Background(), ConnectParams{
+		Host: host, Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+		Signers: []ssh.Signer{raw},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no approval pinned it") {
 		t.Fatalf("expected fail-closed abort, got %v", err)
@@ -201,9 +192,10 @@ func TestFailClosedWithoutApproval(t *testing.T) {
 	}
 
 	// With a pre-provisioned pin the same server connects fine.
-	hostKeys.prePin("e1", hostSigner.PublicKey())
+	hostKeys.prePin("e1", hostPub)
 	tr, err := Connect(context.Background(), ConnectParams{
-		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+		Host: host, Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+		Signers: []ssh.Signer{raw},
 	})
 	if err != nil {
 		t.Fatalf("pinned connect: %v", err)
@@ -249,11 +241,14 @@ func TestHostKeyAlgorithmsFollowThePin(t *testing.T) {
 	}
 	rsaSigner, _ := ssh.NewSignerFromKey(rsaKey)
 	edSigner := newHostKeySigner(t)
-	srv := &gliderssh.Server{Handler: func(s gliderssh.Session) {
-		s.Pty()
-		io.WriteString(s, "ready\n")
-		io.Copy(io.Discard, s)
-	}}
+	srv := &gliderssh.Server{
+		Handler: func(s gliderssh.Session) {
+			s.Pty()
+			io.WriteString(s, "ready\n")
+			io.Copy(io.Discard, s)
+		},
+		PublicKeyHandler: func(gliderssh.Context, gliderssh.PublicKey) bool { return true },
+	}
 	// ed25519 first: the server's own preference differs from the pin.
 	srv.AddHostKey(edSigner)
 	srv.AddHostKey(rsaSigner)
@@ -265,6 +260,7 @@ func TestHostKeyAlgorithmsFollowThePin(t *testing.T) {
 	hostKeys.prePin("e1", rsaSigner.PublicKey())
 	tr, err := Connect(context.Background(), ConnectParams{
 		Host: "127.0.0.1", Port: port, Username: "u", EndpointID: "e1", HostKeys: hostKeys,
+		Signers: []ssh.Signer{newTestSigner(t)},
 	})
 	if err != nil {
 		t.Fatalf("connect with RSA pin against multi-key server: %v", err)

@@ -5,6 +5,25 @@
       {
         "accountId": "test-account-00000000-0000-0000-0000-000000000000",
         "createdAt": "<TS>",
+        "detail": "\"Open Box\" (deploy@open-01:22) accepted SSH access as deploy without a key. ShellWatch does not open sessions on such servers. Check the server's SSH configuration.",
+        "id": "ntf_0000000000000000000004",
+        "payload": {
+          "auditId": "act_0000000000000000000010",
+          "endpointAddress": "deploy@open-01:22",
+          "endpointId": "audit-endpoint-3",
+          "endpointLabel": "Open Box",
+          "mcpClientName": "codex",
+          "remoteUser": "deploy",
+          "sourceIp": "",
+          "trigger": "mcp"
+        },
+        "severity": "error",
+        "title": "Connection refused: no authentication",
+        "type": "unauthenticated-endpoint"
+      },
+      {
+        "accountId": "test-account-00000000-0000-0000-0000-000000000000",
+        "createdAt": "<TS>",
         "detail": null,
         "id": "ntf_0000000000000000000003",
         "payload": null,

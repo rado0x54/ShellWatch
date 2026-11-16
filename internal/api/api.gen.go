@@ -1098,7 +1098,7 @@ type EndpointHostKey struct {
 type Error struct {
 	Error string `json:"error"`
 
-	// NotificationId Present when the failure was also published to the account's notification log (#252), e.g. a session create refused by a host-key mismatch. Clients deduplicate their error display against the notification:new WebSocket message by this id instead of matching error text.
+	// NotificationId Present when the failure was also published to the account's notification log (#252), e.g. a session create refused by a host-key mismatch or by an endpoint accepting SSH "none" authentication (#311). Clients deduplicate their error display against the notification:new WebSocket message by this id instead of matching error text.
 	NotificationId       *string                `json:"notificationId,omitempty"`
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
@@ -1193,7 +1193,7 @@ type Notification struct {
 	// Title Short headline sized for a toast.
 	Title string `json:"title"`
 
-	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); unauthenticated-endpoint (#311, severity error) — a connection was refused because the server accepted SSH "none" authentication, so no key was asked for and no human approved it; there is no action to resolve (payload: endpointId, endpointLabel, endpointAddress, remoteUser, trigger, mcpClientName, sourceIp, auditId of the unauthenticated-endpoint audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
 	Type string `json:"type"`
 }
 
@@ -1400,7 +1400,7 @@ type SigningRequestRow struct {
 	Source   *SigningRequestRowSource `json:"source,omitempty"`
 	SourceIp *string                  `json:"sourceIp,omitempty"`
 
-	// Type webauthn-sign | key-approve, plus the host-key event types (#241): host-key-mismatch (a connection aborted before authentication because the presented key differed from the pin; outcome is "denied") and host-key-cleared (a pin removed — host/port change or a human forgetting the key; outcome stays null).
+	// Type webauthn-sign | key-approve, plus the host-key event types (#241): host-key-mismatch (a connection aborted before authentication because the presented key differed from the pin; outcome is "denied") and host-key-cleared (a pin removed — host/port change or a human forgetting the key; outcome stays null); and unauthenticated-endpoint (#311: a connection refused because the server accepted SSH "none" authentication; source endpoint-auth, outcome "denied", hostKeyFingerprint is the observed key; no pending action ever existed).
 	Type             *string `json:"type,omitempty"`
 	UserVerification *string `json:"userVerification,omitempty"`
 }

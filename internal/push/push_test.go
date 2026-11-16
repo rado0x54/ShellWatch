@@ -167,3 +167,35 @@ func TestRefusalReason(t *testing.T) {
 		}
 	}
 }
+
+// The none-auth refusal push (#311) opens the Notifications tab: there is no
+// action to resolve, so no actionId and no /sign/:id link.
+func TestNotifyUnauthenticatedEndpointPayload(t *testing.T) {
+	subs := pushStore(t)
+	if _, err := subs.Upsert(context.Background(), "acc", "https://fcm.googleapis.com/send/live", "p", "a", "id1"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	ch := NewChannel(subs, Vapid{Subject: "mailto:x@y", PublicKey: "pub", PrivateKey: "priv"})
+	ch.send = func(_ context.Context, message []byte, _ *webpush.Subscription, _ *webpush.Options) (int, string, error) {
+		got <- string(message)
+		return 201, "", nil
+	}
+	ch.NotifyUnauthenticatedEndpoint(UnauthenticatedEndpoint{
+		AccountID: "acc", EndpointLabel: "Open Box", EndpointAddress: "deploy@h:22", RemoteUser: "deploy",
+	})
+	var raw string
+	select {
+	case raw = <-got:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no push sent")
+	}
+	var p map[string]any
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p["title"] != "Connection refused: no authentication" || p["deepLink"] != "/audit/notifications" ||
+		p["actionType"] != "unauthenticated-endpoint" || p["actionId"] != "" {
+		t.Errorf("payload: %s", raw)
+	}
+}
