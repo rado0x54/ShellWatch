@@ -51,3 +51,31 @@ func TestWSChannelNotifyKeyApprove(t *testing.T) {
 		t.Error("key-approve payload must not carry credentialId (SPA reads it only for webauthn-sign)")
 	}
 }
+
+// A ticket guest's prompt (#306) carries the guest context so the toast can
+// show the confirmation code; ordinary prompts carry no ticket key.
+func TestWSChannelNotifyTicket(t *testing.T) {
+	cap := &capturingSender{}
+	ch := &WSChannel{Hub: cap}
+	ch.Notify(&Action{
+		ID: "act3", AccountID: "acc", Type: TypeKeyApprove, KeyLabel: "k",
+		Context: Context{Source: "endpoint-auth", TriggerKind: "ticket", SourceIP: "203.0.113.7",
+			MCPReason: "fix the printer",
+			Ticket:    &TicketContext{TicketID: "tk1", Label: "Printer", ConfirmationCode: "AB2C"}},
+	}, "https://x/sign/act3")
+	tk, ok := cap.last["ticket"].(map[string]any)
+	if !ok {
+		t.Fatalf("no ticket in %v", cap.last)
+	}
+	for k, v := range map[string]any{"ticketId": "tk1", "ticketLabel": "Printer", "confirmationCode": "AB2C",
+		"reason": "fix the printer", "sourceIp": "203.0.113.7"} {
+		if tk[k] != v {
+			t.Errorf("ticket.%s = %v, want %v", k, tk[k], v)
+		}
+	}
+	ch.Notify(&Action{ID: "act4", AccountID: "acc", Type: TypeKeyApprove,
+		Context: Context{Source: "endpoint-auth", TriggerKind: "ui"}}, "https://x/sign/act4")
+	if _, ok := cap.last["ticket"]; ok {
+		t.Error("non-ticket prompt carries ticket")
+	}
+}

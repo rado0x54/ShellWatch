@@ -18,7 +18,10 @@
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": "transport-error"
+        "closeReason": "transport-error",
+        "ticketId": null,
+        "ticketLabel": null,
+        "reason": null
       },
       {
         "sessionId": "sess_<ID>",
@@ -36,7 +39,10 @@
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": "client.mcp"
+        "closeReason": "client.mcp",
+        "ticketId": null,
+        "ticketLabel": null,
+        "reason": null
       }
     ],
     "nextCursor": "<CURSOR>"

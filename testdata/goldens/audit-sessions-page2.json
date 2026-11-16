@@ -18,7 +18,10 @@
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": null
+        "closeReason": null,
+        "ticketId": null,
+        "ticketLabel": null,
+        "reason": null
       }
     ],
     "nextCursor": null

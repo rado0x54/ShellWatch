@@ -2,6 +2,7 @@
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
 import type { FileTransferEvent } from "./file-transfers.js";
+import { fetchTickets } from "./tickets.js";
 import type { AppNotification } from "./notifications.js";
 import {
   addToast,
@@ -10,6 +11,7 @@ import {
   toastNotification,
   type SignRequestAction,
   type SignRequestHostKey,
+  type SignRequestTicket,
 } from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
@@ -27,6 +29,10 @@ export interface SessionListEntry {
   createdAt: string;
   source: string;
   mode: SessionMode;
+  /** Guest sessions (source "ticket", #306) only. */
+  ticketId?: string;
+  ticketLabel?: string;
+  guestAttached?: boolean;
 }
 
 type SignRequestMessage = {
@@ -39,6 +45,8 @@ type SignRequestMessage = {
   endpointAddress?: string;
   // host-key pinning (#241): set on endpoint-auth actions
   hostKey?: SignRequestHostKey;
+  // one-time access guest (#306): set when approving admits a ticket guest
+  ticket?: SignRequestTicket;
   // webauthn-sign fields
   passkeyLabel?: string;
   credentialId?: string;
@@ -68,6 +76,8 @@ type ServerMessage =
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
   | NotificationMessage
+  // A one-time access ticket or its guest session changed (#306).
+  | { type: "tickets:changed" }
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
@@ -105,6 +115,7 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
     endpointLabel: msg.endpointLabel,
     endpointAddress: msg.endpointAddress,
     hostKey: msg.hostKey,
+    ticket: msg.ticket,
   };
 
   if (msg.actionType === "key-approve") {
@@ -181,8 +192,9 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
       }
 
       if (msg.type === "sign:request") {
-        const message =
-          msg.actionType === "key-approve"
+        const message = msg.ticket
+          ? "Guest access requested"
+          : msg.actionType === "key-approve"
             ? "SSH key approval requested"
             : "Passkey signature requested";
         addToast({
@@ -194,6 +206,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
 
       if (msg.type === "sign:resolved") {
         clearAction(msg.actionId);
+      }
+
+      if (msg.type === "tickets:changed") {
+        void fetchTickets();
       }
 
       if (msg.type === "notification:new") {

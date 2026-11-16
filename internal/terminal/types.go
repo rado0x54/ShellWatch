@@ -26,7 +26,15 @@ const (
 	SourceUI  Source = "ui"
 	SourceMCP Source = "mcp"
 	SourceSSH Source = "ssh"
+	// SourceTicket is a guest session admitted through a one-time access
+	// ticket (#306). Its channel (web, later ssh) rides on the trigger.
+	SourceTicket Source = "ticket"
 )
+
+// TicketChannel is how a ticket was redeemed (#306: web; #307: ssh).
+type TicketChannel string
+
+const TicketChannelWeb TicketChannel = "web"
 
 // CloseReason records why a session ended (CloseReason in types.ts).
 type CloseReason string
@@ -41,6 +49,16 @@ const (
 	CloseServerHangup    CloseReason = "server-hangup"
 	CloseTransportError  CloseReason = "transport-error"
 	CloseShutdown        CloseReason = "shutdown"
+
+	// Guest-session end reasons (#306). The ticket service is the only
+	// producer; those that end a terminal session are also its close reason.
+	CloseClientGuest       CloseReason = "client.guest"
+	CloseGuestDisconnected CloseReason = "guest-disconnected"
+	CloseTicketLifetime    CloseReason = "ticket-lifetime"
+	CloseTicketNotAdmitted CloseReason = "ticket-not-admitted"
+	CloseTicketUnattached  CloseReason = "ticket-unattached"
+	CloseTicketRevoked     CloseReason = "ticket-revoked"
+	CloseEndpointRemoved   CloseReason = "endpoint-removed"
 )
 
 // Session is a terminal session (TerminalSession). Time fields serialize as
@@ -62,6 +80,13 @@ type Session struct {
 	MCPReason     string
 	MCPClientName string
 	MCPClientVer  string
+	// Ticket fields (source ticket only, #306).
+	TicketID      string
+	TicketLabel   string
+	TicketChannel TicketChannel
+	// Reason is the self-reported reason of a ticket guest (MCP sessions
+	// keep theirs in MCPReason for wire compatibility).
+	Reason string
 }
 
 // Trigger carries create-time metadata (EndpointAuthTrigger subset).
@@ -72,6 +97,25 @@ type Trigger struct {
 	OwnerClientID string
 	MCPClientName string
 	MCPClientVer  string
+	// SessionID pre-assigns the session id (optional): the ticket service
+	// must recognize its attempt's status events, including the closed
+	// broadcast of a failed create that never returns a session.
+	SessionID string
+	// Ticket is set for source ticket (#306): what the approval prompt shows.
+	Ticket *TicketTrigger
+}
+
+// TicketTrigger is the ticket context of a guest session's create (#306).
+// Everything here is shown on the approval prompt; UserAgent and the reason
+// (Trigger.Reason) are self-reported by the guest.
+type TicketTrigger struct {
+	TicketID         string
+	Label            string
+	Channel          TicketChannel
+	UserAgent        string
+	ConfirmationCode string
+	AgentForward     bool
+	LifetimeSeconds  int
 }
 
 // GenerateSessionID returns a "sess_<12 hex>" id (generateSessionId()).

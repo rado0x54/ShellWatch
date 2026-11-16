@@ -26,7 +26,7 @@ func TestSPACacheHeaders(t *testing.T) {
 		"_app/immutable/chunks/x-abc.js":  {Data: []byte("js")},
 		"_app/immutable/assets/y-def.css": {Data: []byte("css")},
 	}
-	handler := spaHandler(staticFS)
+	handler := spaHandler(staticFS, func() string { return "http://localhost:3000" })
 
 	cases := []struct {
 		path       string

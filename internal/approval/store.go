@@ -62,6 +62,22 @@ type Context struct {
 	MCPReason     string `json:"-"`
 	MCPClientName string `json:"-"`
 	MCPClientVer  string `json:"-"`
+	// Ticket is set when TriggerKind is "ticket" (#306): the guest's
+	// redemption context. Reason rides in MCPReason (the generic trigger
+	// reason) so the audit column stays one.
+	Ticket *TicketContext `json:"-"`
+}
+
+// TicketContext is what an endpoint-auth prompt raised for a ticket guest
+// shows (#306). UserAgent and the trigger reason are self-reported.
+type TicketContext struct {
+	TicketID         string
+	Label            string
+	Channel          string
+	UserAgent        string
+	ConfirmationCode string
+	AgentForward     bool
+	LifetimeSeconds  int
 }
 
 // MarshalJSON emits the source-discriminated wire shape (SignRequestContext):
@@ -96,6 +112,22 @@ func (c Context) MarshalJSON() ([]byte, error) {
 			}
 			if c.MCPClientVer != "" {
 				tr["mcpClientVersion"] = c.MCPClientVer
+			}
+		}
+		if c.TriggerKind == "ticket" {
+			if c.MCPReason != "" {
+				tr["reason"] = c.MCPReason
+			}
+			if t := c.Ticket; t != nil {
+				tr["ticketId"] = t.TicketID
+				tr["ticketLabel"] = t.Label
+				tr["channel"] = t.Channel
+				if t.UserAgent != "" {
+					tr["userAgent"] = t.UserAgent
+				}
+				tr["confirmationCode"] = t.ConfirmationCode
+				tr["agentForward"] = t.AgentForward
+				tr["lifetimeSeconds"] = t.LifetimeSeconds
 			}
 		}
 		m["trigger"] = tr

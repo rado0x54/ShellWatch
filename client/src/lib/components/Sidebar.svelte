@@ -3,6 +3,7 @@
   import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import { resolvePath } from "$lib/utils/resolve-path.js";
   import { page } from "$app/state";
   import Identicon from "$lib/components/Identicon.svelte";
   import Wordmark from "$lib/components/Wordmark.svelte";
@@ -11,6 +12,7 @@
   import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
   import { ApiError } from "$lib/api.js";
   import { closeSession, createSession } from "$lib/stores/sessions-api.js";
+  import { revokeTicket } from "$lib/stores/tickets.js";
   import { toastError, toastRequestError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { logout } from "$lib/stores/webauthn.js";
@@ -54,6 +56,17 @@
     }
   }
 
+  // A guest session (#306) is ended by revoking its ticket: one owner action
+  // that also ends the guest's access, not just this terminal session.
+  async function handleRevokeGuest(ticketId: string) {
+    try {
+      await revokeTicket(ticketId);
+    } catch (err) {
+      console.error("Failed to revoke ticket:", err);
+      toastError(`Failed to revoke guest access: ${errorMessage(err)}`);
+    }
+  }
+
   async function handleSessionClick(sessionId: string) {
     await goto(resolve(`/session/${sessionId}`));
     onMobileClose?.();
@@ -65,7 +78,8 @@
   }
 
   async function navTo(path: import("$app/types").Pathname) {
-    await goto(resolve(path));
+    // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolvePath calls resolve()
+    await goto(resolvePath(path));
     onMobileClose?.();
   }
 
@@ -206,6 +220,14 @@
                 {#if isObserver}
                   <span class="badge badge-observer">observer</span>
                 {/if}
+                {#if sess.source === "ticket"}
+                  <span
+                    class="badge"
+                    class:badge-available={sess.guestAttached}
+                    title={sess.guestAttached ? "Guest is connected" : "Guest is not connected"}
+                    >guest{sess.guestAttached ? "" : " (away)"}</span
+                  >
+                {/if}
               </span>
               <span class="session-detail">{sess.sessionId} ({sess.source})</span>
             </div>
@@ -263,9 +285,10 @@
               <button
                 type="button"
                 class="btn btn-secondary btn-icon"
-                aria-label="Close session"
-                title="Close session"
-                onclick={() => handleClose(sess.sessionId)}
+                aria-label={sess.ticketId ? "Revoke guest access" : "Close session"}
+                title={sess.ticketId ? "Revoke guest access" : "Close session"}
+                onclick={() =>
+                  sess.ticketId ? handleRevokeGuest(sess.ticketId) : handleClose(sess.sessionId)}
               >
                 <svg
                   viewBox="0 0 16 16"

@@ -34,6 +34,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/ticket"
 	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -77,6 +78,10 @@ func fullHandler(t *testing.T) chi.Router {
 
 	transfers := transfer.New(transfer.Params{Manager: manager})
 	t.Cleanup(transfers.Close)
+	tickets := ticket.New(ticket.Params{Manager: manager, ResolveEndpoint: epSvc.RefForAccount, NewID: func() string { return "id" }})
+	t.Cleanup(tickets.Close)
+	guestHub := ws.NewGuestHub(ws.GuestHubParams{Manager: manager, Service: tickets, ExternalURL: func() string { return externalURL }})
+	t.Cleanup(guestHub.Close)
 
 	h := New(Params{
 		Config: cfg, Resolve: auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
@@ -97,8 +102,12 @@ func fullHandler(t *testing.T) chi.Router {
 			IsAdmin:      fakeAdminCheck{},
 
 			FileTransfers: audit.NewFileTransfers(db, nil),
+			Tickets:       audit.NewTicketEvents(db, nil),
 		},
 		Transfers:    transfers,
+		Tickets:      &rest.Tickets{Service: tickets},
+		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return externalURL }},
+		GuestHub:     guestHub,
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},
 		Accounts:     &rest.Accounts{Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc, Now: func() string { return "" }},
 		Credentials:  &rest.Credentials{Store: credStore, Admin: fake, StepUp: stepUp},

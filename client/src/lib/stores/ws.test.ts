@@ -25,6 +25,7 @@ import {
   wsSendResize,
   wsTakeControl,
 } from "./ws.js";
+import { toasts } from "./toasts.js";
 
 // Mock WebSocket
 class MockWebSocket {
@@ -103,6 +104,32 @@ describe("ws store", () => {
     ws.simulateMessage({ type: "sessions:changed", sessions: mockSessions });
 
     expect(get(sessions)).toEqual(mockSessions);
+  });
+
+  it("sign:request for a ticket guest carries the guest context onto the toast (#306)", async () => {
+    toasts.set([]);
+    await connectWs();
+    const ticket = {
+      ticketId: "tk1",
+      ticketLabel: "Printer",
+      confirmationCode: "AB2C",
+      reason: "fix the printer",
+      sourceIp: "203.0.113.7",
+    };
+    MockWebSocket.instances[0].simulateMessage({
+      type: "sign:request",
+      actionId: "a1",
+      actionType: "key-approve",
+      deepLink: "/sign/a1",
+      source: "endpoint-auth",
+      keyLabel: "k",
+      keyFingerprint: "SHA256:x",
+      ticket,
+    });
+    const [toast] = get(toasts);
+    expect(toast?.message).toBe("Guest access requested");
+    expect(toast?.action?.ticket).toEqual(ticket);
+    toasts.set([]);
   });
 
   it("onWsMessage registers a handler and returns unsubscribe", async () => {

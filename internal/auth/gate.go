@@ -68,6 +68,15 @@ var exemptPrefixes = []string{
 	"/_app/",
 }
 
+// Gate-exempt guest routes (#306), exempt for one method only: each checks
+// its own credential (the ticket in the redeem body; the guest cookie on the
+// WebSocket handshake). The gate never reads cookies, so a guest cookie is
+// worthless on every bearer-gated route.
+var exemptMethodExact = map[string]string{
+	"/api/tickets/redeem": http.MethodPost,
+	"/ws/guest":           http.MethodGet,
+}
+
 type principalKey struct{}
 
 // PrincipalFrom returns the authenticated principal, if the gate set one.
@@ -92,6 +101,12 @@ func Gate(p GateParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
+			if m, ok := exemptMethodExact[path]; ok && r.Method == m {
+				// No token is read on these paths: no principal ever enters
+				// the guest handlers' context.
+				next.ServeHTTP(w, r)
+				return
+			}
 			if isExempt(path) {
 				next.ServeHTTP(w, r)
 				return

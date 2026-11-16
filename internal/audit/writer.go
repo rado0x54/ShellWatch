@@ -83,10 +83,11 @@ func (w *Writer) handleSessionStatus(e terminal.StatusEvent, snapshot func(sessi
 
 func (w *Writer) insertOpen(s *terminal.Session) {
 	_, err := w.db.Exec(
-		`INSERT INTO audit_session_lifecycle (session_id, account_id, endpoint_id, source, status, created_at, source_ip, mcp_reason, mcp_client_name, mcp_client_version)
-		 VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+		`INSERT INTO audit_session_lifecycle (session_id, account_id, endpoint_id, source, status, created_at, source_ip, mcp_reason, mcp_client_name, mcp_client_version, ticket_id, ticket_label, reason)
+		 VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.SessionID, s.AccountID, s.EndpointID, string(s.Source), s.CreatedAt.UTC().Format(isoMillis),
-		nz(s.SourceIP), nz(s.MCPReason), nz(s.MCPClientName), nz(s.MCPClientVer))
+		nz(s.SourceIP), nz(s.MCPReason), nz(s.MCPClientName), nz(s.MCPClientVer),
+		nz(s.TicketID), nz(s.TicketLabel), nz(s.Reason))
 	if err != nil {
 		slog.Warn("audit: insert session-open failed", "session", s.SessionID, "err", err)
 	}

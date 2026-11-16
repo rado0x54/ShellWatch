@@ -43,6 +43,9 @@ type HostKeyAuditor interface {
 type Endpoints struct {
 	Svc      *endpointsvc.Service
 	Sessions SessionLister
+	// OnDeleted fires after an endpoint was deleted, so its outstanding
+	// tickets and guest sessions end with it (#306). nil-able.
+	OnDeleted func(accountID, endpointID string)
 	// NewID generates endpoint ids (UUID); injected for testability.
 	NewID func() string
 	// StepUp gates the host-key routes (#241).
@@ -230,6 +233,9 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 	if _, err := e.Svc.Endpoints.Delete(r.Context(), id, accountID(r)); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if e.OnDeleted != nil {
+		e.OnDeleted(accountID(r), id)
 	}
 	writeJSON(w, 200, api.StatusDeleted{Status: api.Deleted})
 }

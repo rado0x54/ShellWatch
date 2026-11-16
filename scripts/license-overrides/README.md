@@ -32,5 +32,8 @@ notice text exists), synthesize the standard SPDX template using the
 When you add or update an override, drop a one-line note in this file
 with the source URL so future maintainers can re-verify.
 
-(Currently empty: every production dependency of the client bundle ships its
-LICENSE file. Go module licenses are bundled by `scripts/bundle-go-licenses.sh`.)
+- `qrcode-generator.txt` — the npm tarball ships no LICENSE file; verbatim
+  from https://github.com/kazuhikoarase/qrcode-generator/blob/master/LICENSE
+  (MIT, Kazuhiko Arase). Used by the one-time access share sheet (#306).
+
+Go module licenses are bundled by `scripts/bundle-go-licenses.sh`.

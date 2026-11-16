@@ -238,8 +238,12 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		return nil, fmt.Errorf("unknown endpoint: %s", ep.ID)
 	}
 	now := m.clk.Now()
+	sessionID := trigger.SessionID
+	if sessionID == "" {
+		sessionID = GenerateSessionID()
+	}
 	sess := &Session{
-		SessionID: GenerateSessionID(), EndpointID: ep.ID, AccountID: ep.AccountID,
+		SessionID: sessionID, EndpointID: ep.ID, AccountID: ep.AccountID,
 		Status: StatusOpening, CreatedAt: now, LastActivityAt: now, Source: trigger.Kind,
 		SourceIP: trigger.SourceIP,
 	}
@@ -248,6 +252,12 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		sess.MCPReason = trigger.Reason
 		sess.MCPClientName = trigger.MCPClientName
 		sess.MCPClientVer = trigger.MCPClientVer
+	}
+	if trigger.Kind == SourceTicket && trigger.Ticket != nil {
+		sess.TicketID = trigger.Ticket.TicketID
+		sess.TicketLabel = trigger.Ticket.Label
+		sess.TicketChannel = trigger.Ticket.Channel
+		sess.Reason = trigger.Reason
 	}
 
 	// Register BEFORE the factory runs: connecting can block for minutes
@@ -259,6 +269,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	defer cancelSetup()
 	mg := &managed{session: sess, output: NewOutputBuffer(m.maxBufferSize), pumpDone: make(chan struct{}), cancelSetup: cancelSetup}
 	m.mu.Lock()
+	if _, taken := m.terminals[sess.SessionID]; taken {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session id %s already in use", sess.SessionID)
+	}
 	if m.destroyed {
 		// Destroy already snapshotted the registry: registering now would
 		// create a session nothing ever closes (an in-flight create request
@@ -545,15 +559,16 @@ func (m *Manager) ListForAccount(accountID string) []Session {
 }
 
 // CountOpenForAccount counts the account's status-open sessions — the REST
-// session-cap semantics: account-wide, UI and MCP sessions alike. (The MCP
-// cap in agent.Session deliberately differs: it counts only that agent's own
-// live sessions.)
+// session-cap semantics: account-wide, UI and MCP sessions alike. Guest
+// sessions (source ticket) are excluded: they have their own cap in the
+// ticket service (#306). (The MCP cap in agent.Session deliberately differs:
+// it counts only that agent's own live sessions.)
 func (m *Manager) CountOpenForAccount(accountID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n := 0
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID && mg.session.Status == StatusOpen {
+		if mg.session.AccountID == accountID && mg.session.Status == StatusOpen && mg.session.Source != SourceTicket {
 			n++
 		}
 	}
@@ -831,6 +846,9 @@ func sessionAttrs(sess *Session, ep EndpointRef) []any {
 		"address", fmt.Sprintf("%s@%s:%d", ep.Username, ep.Host, ep.Port), "source", sess.Source}
 	if sess.Source == SourceMCP {
 		attrs = append(attrs, "mcpClient", sess.MCPClientName)
+	}
+	if sess.Source == SourceTicket {
+		attrs = append(attrs, "ticket", sess.TicketID, "channel", sess.TicketChannel)
 	}
 	return attrs
 }

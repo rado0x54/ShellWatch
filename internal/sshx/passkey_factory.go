@@ -231,6 +231,12 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		MCPClientName:   fp.Trigger.MCPClientName,
 		MCPClientVer:    fp.Trigger.MCPClientVer,
 	}
+	if t := fp.Trigger.Ticket; t != nil && fp.Trigger.Kind == terminal.SourceTicket {
+		actionCtx.Ticket = &approval.TicketContext{
+			TicketID: t.TicketID, Label: t.Label, Channel: string(t.Channel), UserAgent: t.UserAgent,
+			ConfirmationCode: t.ConfirmationCode, AgentForward: t.AgentForward, LifetimeSeconds: t.LifetimeSeconds,
+		}
+	}
 	// Approving on /sign/:id lands the human in the session being opened.
 	redirectTo := sessionRedirect(fp.SessionID)
 	// File keys first, then passkeys (composite-ssh-agent.ts:94-103): when the

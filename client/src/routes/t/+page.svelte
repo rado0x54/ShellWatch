@@ -1,0 +1,402 @@
+<!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
+<script lang="ts">
+  // One-time access guest page (#306). Opened on an untrusted browser from a
+  // link the owner shared: `/t#<token>`. The guest states a reason, redeems
+  // the ticket, and waits while the owner approves on a trusted device. It
+  // ends up with a terminal on one endpoint and nothing else.
+  //
+  // This page is a public path: the root layout skips the authenticated
+  // bootstrap here (no token refresh, no OAuth redirect, no /ws, no fetches).
+  // It never reads the SPA's stored tokens, never sends Authorization and
+  // stores nothing; the HttpOnly guest cookie is its only credential. It has
+  // no client-side links into the app.
+  import { onDestroy, onMount } from "svelte";
+  import GuestTerminal from "$lib/components/GuestTerminal.svelte";
+  import {
+    GuestSocket,
+    REDEEM_FAILURE_TEXT,
+    redeemTicket,
+    takeTokenFromLocation,
+    type GuestStatus,
+    type RedeemFailure,
+  } from "$lib/guest/guest-client.js";
+
+  type Phase =
+    | "loading"
+    | "form"
+    | "redeeming"
+    | "connecting"
+    | "pending"
+    | "refused"
+    | "open"
+    | "ended"
+    | "invalid";
+
+  const RECONNECT_DELAY_MS = 2000;
+  /** Matches the server's reconnect grace: past it the session is gone. */
+  const RECONNECT_GIVE_UP_MS = 60_000;
+
+  let phase = $state<Phase>("loading");
+  let token = $state("");
+  let reason = $state("");
+  let failure = $state<RedeemFailure | null>(null);
+  let code = $state("");
+  let admissionDeadline = $state<number | null>(null);
+  let lifetimeDeadline = $state<number | null>(null);
+  let endedMessage = $state("");
+  let reconnecting = $state(false);
+  let now = $state(Date.now());
+  let socket: GuestSocket | null = null;
+  let term = $state<GuestTerminal | null>(null);
+  let dropSince: number | null = null;
+  let ticker: ReturnType<typeof setInterval> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const secondsLeft = (deadline: number | null): number =>
+    deadline === null ? 0 : Math.max(0, Math.round((deadline - now) / 1000));
+
+  function fmt(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  function onStatus(st: GuestStatus): void {
+    reconnecting = false;
+    dropSince = null;
+    if (st.code) code = st.code;
+    if (st.admissionDeadline) admissionDeadline = Date.parse(st.admissionDeadline);
+    switch (st.state) {
+      case "pending":
+        phase = "pending";
+        break;
+      case "refused":
+        phase = "refused";
+        break;
+      case "open":
+        if (st.lifetimeDeadline) lifetimeDeadline = Date.parse(st.lifetimeDeadline);
+        phase = "open";
+        break;
+      case "closed":
+        endedMessage = st.message ?? "The session has ended.";
+        phase = "ended";
+        socket?.close();
+        socket = null;
+        break;
+    }
+  }
+
+  function onDrop(): void {
+    if (phase === "ended" || phase === "invalid") return;
+    if (phase === "connecting" && dropSince === null && !reconnecting) {
+      // The very first handshake failed: there is no guest session for this
+      // browser (reload after the session ended, or a copied URL).
+      phase = "invalid";
+      failure = null;
+      return;
+    }
+    const t = Date.now();
+    dropSince ??= t;
+    if (t - dropSince > RECONNECT_GIVE_UP_MS) {
+      endedMessage = "The connection was lost and the session has ended.";
+      phase = "ended";
+      return;
+    }
+    reconnecting = true;
+    reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+  }
+
+  // Output that arrives before the terminal is mounted (the catch-up frame
+  // follows the open status immediately) is held until it is.
+  const heldOutput: Array<{ data: string; reset: boolean }> = [];
+
+  $effect(() => {
+    if (term) for (const o of heldOutput.splice(0)) term.write(o.data, o.reset);
+  });
+
+  function connect(): void {
+    socket = new GuestSocket({
+      onStatus,
+      onOutput: (data, reset) => {
+        if (term) term.write(data, reset);
+        else heldOutput.push({ data, reset });
+      },
+      onDrop,
+    });
+    socket.connect();
+  }
+
+  function submit(event: SubmitEvent): void {
+    event.preventDefault();
+    void redeem();
+  }
+
+  async function redeem(): Promise<void> {
+    failure = null;
+    phase = "redeeming";
+    const res = await redeemTicket(token, reason);
+    if (!res.ok) {
+      failure = res.failure;
+      phase = res.failure === "not-found" || res.failure === "forbidden" ? "invalid" : "form";
+      return;
+    }
+    // The ticket is spent now; the link cannot be used again.
+    token = "";
+    code = res.redeemed.confirmationCode;
+    phase = "connecting";
+    connect();
+  }
+
+  /** 409: end this browser's current guest session, then redeem this link. */
+  function endCurrentAndContinue(): void {
+    failure = null;
+    phase = "redeeming";
+    const tmp = new GuestSocket({
+      onStatus: (st) => {
+        if (st.state !== "closed") {
+          tmp.end();
+          return;
+        }
+        tmp.close();
+        void redeem();
+      },
+      onOutput: () => {},
+      onDrop: () => {
+        if (!tmp.isEnded) void redeem();
+      },
+    });
+    tmp.connect();
+  }
+
+  function askAgain(): void {
+    socket?.retry();
+  }
+
+  function endSession(): void {
+    socket?.end();
+  }
+
+  onMount(() => {
+    const t = takeTokenFromLocation(window.location, window.history);
+    ticker = setInterval(() => (now = Date.now()), 1000);
+    if (t === null) {
+      // No link in the address bar: a reload of a live guest session (the
+      // cookie reattaches), or nothing to do here.
+      phase = "connecting";
+      connect();
+      return;
+    }
+    if (t === "") {
+      phase = "invalid";
+      failure = "not-found";
+      return;
+    }
+    token = t;
+    phase = "form";
+  });
+
+  onDestroy(() => {
+    if (ticker) clearInterval(ticker);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    socket?.close();
+  });
+</script>
+
+<svelte:head>
+  <title>ShellWatch — guest access</title>
+  <meta name="referrer" content="no-referrer" />
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
+{#if phase === "open"}
+  <div class="guest-shell">
+    <header class="guest-bar">
+      <span class="guest-title">Guest session</span>
+      <span class="guest-meta">
+        {#if reconnecting}
+          <span class="reconnecting">Reconnecting…</span>
+        {/if}
+        {#if lifetimeDeadline !== null}
+          Ends in {fmt(secondsLeft(lifetimeDeadline))}
+        {/if}
+      </span>
+      <button type="button" class="btn btn-secondary" onclick={endSession}>End session</button>
+    </header>
+    <div class="guest-term">
+      <GuestTerminal
+        bind:this={term}
+        onInput={(data) => socket?.input(data)}
+        onResize={(cols, rows) => socket?.resize(cols, rows)}
+      />
+    </div>
+  </div>
+{:else}
+  <main class="guest-page">
+    <div class="guest-card">
+      <h1>Guest access</h1>
+
+      {#if phase === "loading" || phase === "redeeming" || phase === "connecting"}
+        <p class="muted">Please wait…</p>
+      {:else if phase === "form"}
+        <p>
+          Someone shared one-time access to a terminal with you. Say why you need it; the person who
+          shared it has to approve the request.
+        </p>
+        <form onsubmit={submit}>
+          <label for="reason">Reason for access</label>
+          <textarea
+            id="reason"
+            bind:value={reason}
+            maxlength="200"
+            rows="3"
+            autocomplete="off"
+            placeholder="e.g. Fixing the print server, as discussed on the phone"
+          ></textarea>
+          {#if failure}
+            <p class="error" role="alert">{REDEEM_FAILURE_TEXT[failure]}</p>
+          {/if}
+          {#if failure === "live-session"}
+            <button type="button" class="btn btn-warn" onclick={endCurrentAndContinue}>
+              End the current session and use this link
+            </button>
+          {:else}
+            <button type="submit" class="btn btn-primary">Request access</button>
+          {/if}
+        </form>
+        <p class="fineprint">
+          Everything you type and see is visible to the owner, who can end the session at any time.
+        </p>
+      {:else if phase === "pending" || phase === "refused"}
+        <p>Tell the person who shared the link this code:</p>
+        <p class="code" aria-label="Confirmation code">{code}</p>
+        {#if phase === "pending"}
+          <p class="muted">Waiting for approval… {fmt(secondsLeft(admissionDeadline))} left.</p>
+        {:else}
+          <p class="error" role="alert">Access was not granted.</p>
+          <p class="muted">You can ask again for {fmt(secondsLeft(admissionDeadline))}.</p>
+          <button type="button" class="btn btn-primary" onclick={askAgain}>Ask again</button>
+        {/if}
+        {#if reconnecting}
+          <p class="muted">Reconnecting…</p>
+        {/if}
+        <button type="button" class="btn btn-ghost" onclick={endSession}>Cancel</button>
+      {:else if phase === "ended"}
+        <p>{endedMessage}</p>
+        <p class="muted">You can close this window.</p>
+      {:else if phase === "invalid"}
+        <p class="error" role="alert">
+          {failure
+            ? REDEEM_FAILURE_TEXT[failure]
+            : "There is no active guest session in this browser."}
+        </p>
+        <p class="muted">Ask the person who shared it for a new link.</p>
+      {/if}
+    </div>
+  </main>
+{/if}
+
+<style>
+  .guest-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-5, 16px);
+    background: var(--surface, #0e0e0e);
+    color: var(--on-surface, #f2f2f2);
+  }
+
+  .guest-card {
+    width: 100%;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4, 12px);
+    padding: var(--space-6, 24px);
+    background: var(--surface-container-low, #161616);
+    border-radius: var(--radius-md, 8px);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: var(--title-lg, 1.25rem);
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3, 8px);
+  }
+
+  textarea {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+    padding: var(--space-3, 8px);
+    background: var(--surface-container, #1c1c1c);
+    color: inherit;
+    border: 1px solid var(--outline-variant, #333);
+    border-radius: var(--radius-sm, 4px);
+  }
+
+  .code {
+    font-family: var(--font-mono, monospace);
+    font-size: 2.5rem;
+    letter-spacing: 0.3em;
+    text-align: center;
+    margin: var(--space-2, 4px) 0;
+    color: var(--primary, #69f6b8);
+  }
+
+  .muted,
+  .fineprint {
+    color: var(--on-surface-variant, #adaaaa);
+  }
+
+  .fineprint {
+    font-size: var(--label-md, 0.8rem);
+  }
+
+  .error {
+    color: var(--error, #ff5a5a);
+  }
+
+  .guest-shell {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #0e0e0e;
+  }
+
+  .guest-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4, 12px);
+    padding: var(--space-2, 4px) var(--space-4, 12px);
+    background: var(--surface-container-low, #161616);
+    color: var(--on-surface, #f2f2f2);
+    flex-shrink: 0;
+  }
+
+  .guest-title {
+    font-weight: 600;
+  }
+
+  .guest-meta {
+    flex: 1;
+    color: var(--on-surface-variant, #adaaaa);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--label-md, 0.8rem);
+  }
+
+  .reconnecting {
+    color: var(--warning, #f8a010);
+    margin-right: var(--space-3, 8px);
+  }
+
+  .guest-term {
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-2, 4px);
+  }
+</style>

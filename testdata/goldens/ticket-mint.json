@@ -1,0 +1,19 @@
+{
+  "status": 201,
+  "body": {
+    "ticket": {
+      "agentForward": false,
+      "createdAt": "<TS>",
+      "endpointId": "ep-a",
+      "expiresAt": "<TS>",
+      "guest": null,
+      "id": "<UUID>",
+      "label": "Printer fix",
+      "lifetimeSeconds": 900,
+      "reasonRequired": true,
+      "redeemTtlSeconds": 300,
+      "state": "minted"
+    },
+    "token": "<REDACTED>"
+  }
+}

@@ -72,3 +72,8 @@ WHERE id = ? AND account_id = ? AND host_key_fingerprint IS NOT NULL;
 -- so a config hostKey is matched to DB rows by address tuple.
 SELECT id, host_key_fingerprint FROM endpoints
 WHERE account_id = ? AND host = ? AND port = ? AND username = ? AND enabled = 1;
+
+-- name: GetEndpointEnabled :one
+-- Whether an endpoint exists for the account and is not soft-deleted (#306:
+-- tickets refuse a deleted endpoint, unlike get-by-id above).
+SELECT enabled FROM endpoints WHERE id = ? AND account_id = ?;

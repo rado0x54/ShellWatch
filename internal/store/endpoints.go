@@ -109,6 +109,16 @@ func (e *Endpoints) GetForAccount(ctx context.Context, id, accountID string) (*E
 	return &ep, nil
 }
 
+// IsActive reports whether the endpoint exists for the account and is not
+// soft-deleted (#306: unlike GetForAccount, which keeps Node parity).
+func (e *Endpoints) IsActive(ctx context.Context, id, accountID string) (bool, error) {
+	n, err := gen.New(e.db).GetEndpointEnabled(ctx, gen.GetEndpointEnabledParams{ID: id, AccountID: accountID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return n != 0, err
+}
+
 // Create inserts an endpoint (id + defaults resolved by the caller).
 func (e *Endpoints) Create(ctx context.Context, ep Endpoint) error {
 	now := e.clk.Now().UTC().Format(isoMillis)

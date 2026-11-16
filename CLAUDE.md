@@ -61,6 +61,7 @@ internal/
   terminal/               # Manager, Session, OutputBuffer, Transport interface
   sshx/, signing/         # x/crypto/ssh transport + signers; WebAuthn→SSH signature format
   transfer/               # MCP file tools: inline SFTP read/write + single-use transfer links (#263)
+  ticket/                 # One-time access tickets: mint/redeem/admission lifecycle of guest sessions (#306)
   approval/, push/        # Pending actions, broker, WS + Web Push channels
   webauthn/               # Passkey ceremonies, challenge/step-up/invite stores
   hydra/, auth/           # Hydra providers + admin client + introspection; bearer gate, IP allowlist
@@ -94,6 +95,7 @@ client/                   # SvelteKit frontend app (adapter-static → web/dist)
       passkey-invite/     # Passkey invite flow
       register/           # Initial admin registration
       session/            # Session detail
+      t/                  # One-time access guest page (public; no app bootstrap)
       sign/               # FIDO/SSH signing approval
       settings/           # Settings with tab sub-routes
 agent-client/             # Go agent binary (separate module, MIT)

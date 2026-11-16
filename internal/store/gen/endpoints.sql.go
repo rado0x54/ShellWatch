@@ -50,6 +50,24 @@ func (q *Queries) DeleteEndpointForAccount(ctx context.Context, arg DeleteEndpoi
 	return result.RowsAffected()
 }
 
+const getEndpointEnabled = `-- name: GetEndpointEnabled :one
+SELECT enabled FROM endpoints WHERE id = ? AND account_id = ?
+`
+
+type GetEndpointEnabledParams struct {
+	ID        string
+	AccountID string
+}
+
+// Whether an endpoint exists for the account and is not soft-deleted (#306:
+// tickets refuse a deleted endpoint, unlike get-by-id above).
+func (q *Queries) GetEndpointEnabled(ctx context.Context, arg GetEndpointEnabledParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getEndpointEnabled, arg.ID, arg.AccountID)
+	var enabled int64
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
 const getEndpointForAccount = `-- name: GetEndpointForAccount :one
 SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
   host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by

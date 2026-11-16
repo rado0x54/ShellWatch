@@ -41,6 +41,9 @@ type AuditSessionLifecycle struct {
 	ClientOs         sql.NullString
 	ClientVersion    sql.NullString
 	CloseReason      sql.NullString
+	TicketID         sql.NullString
+	TicketLabel      sql.NullString
+	Reason           sql.NullString
 }
 
 type AuditSigningRequest struct {
@@ -72,6 +75,29 @@ type AuditSigningRequest struct {
 	HostKeyFingerprint      sql.NullString
 	HostKeyPriorFingerprint sql.NullString
 	HostKeyPinned           sql.NullInt64
+}
+
+type AuditTicketEvent struct {
+	ID               string
+	AccountID        string
+	TicketID         string
+	Event            string
+	CreatedAt        string
+	EndpointID       string
+	TicketLabel      sql.NullString
+	Channel          sql.NullString
+	RedeemTtlSeconds int64
+	LifetimeSeconds  int64
+	ReasonRequired   int64
+	AgentForward     int64
+	Reason           sql.NullString
+	SourceIp         sql.NullString
+	UserAgent        sql.NullString
+	ConfirmationCode sql.NullString
+	SessionID        sql.NullString
+	Attempt          sql.NullInt64
+	EndReason        sql.NullString
+	DurationMs       sql.NullInt64
 }
 
 type Endpoint struct {

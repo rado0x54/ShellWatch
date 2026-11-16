@@ -38,6 +38,30 @@ type Hub struct {
 	// must hold back live terminal:file frames while deliver runs, so no
 	// frame is lost between the snapshot and the attach. nil -> none.
 	fileSnapshot func(sessionID string, deliver func(frames []any))
+
+	// guestAttached reports whether a ticket guest is attached to a session
+	// (#306; ok=false for non-guest sessions). nil -> never.
+	guestAttached func(sessionID string) (attached, ok bool)
+}
+
+// SetGuestAttached wires the ticket service's attach lookup (set once at
+// the composition root).
+func (h *Hub) SetGuestAttached(fn func(sessionID string) (attached, ok bool)) {
+	h.mu.Lock()
+	h.guestAttached = fn
+	h.mu.Unlock()
+}
+
+// TicketsChanged tells the account's browsers to refetch GET /api/tickets
+// (#306).
+func (h *Hub) TicketsChanged(accountID string) {
+	h.SendToAccount(accountID, map[string]any{"type": "tickets:changed"})
+}
+
+// SessionsChanged re-sends the account's session list (a guest attached or
+// detached, #306).
+func (h *Hub) SessionsChanged(accountID string) {
+	h.onRegistered("", accountID)
 }
 
 // SetFileSnapshot wires the file-transfer snapshot source (set once at the
@@ -202,15 +226,27 @@ func (h *Hub) onOutput(sessionID string, _ int64) {
 // (buildSessionList in ws-message-router.ts).
 func (h *Hub) sessionList(c *conn) map[string]any {
 	entries := make([]sessionListEntry, 0)
+	h.mu.Lock()
+	guestAttached := h.guestAttached
+	h.mu.Unlock()
 	for _, s := range h.mgr.ListForAccount(c.accountID) {
 		mode := "observer"
 		if c.hasControl(s.SessionID) {
 			mode = "control"
 		}
-		entries = append(entries, sessionListEntry{
+		e := sessionListEntry{
 			SessionID: s.SessionID, EndpointID: s.EndpointID, Status: string(s.Status),
 			CreatedAt: s.CreatedAt.UTC().Format(isoMillis), Source: string(s.Source), Mode: mode,
-		})
+		}
+		if s.Source == terminal.SourceTicket {
+			e.TicketID, e.TicketLabel = s.TicketID, &s.TicketLabel
+			attached := false
+			if guestAttached != nil {
+				attached, _ = guestAttached(s.SessionID)
+			}
+			e.GuestAttached = &attached
+		}
+		entries = append(entries, e)
 	}
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }

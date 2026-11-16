@@ -34,4 +34,8 @@ type sessionListEntry struct {
 	CreatedAt  string `json:"createdAt"`
 	Source     string `json:"source"`
 	Mode       string `json:"mode"`
+	// Ticket guest sessions only (#306).
+	TicketID      string  `json:"ticketId,omitempty"`
+	TicketLabel   *string `json:"ticketLabel,omitempty"`
+	GuestAttached *bool   `json:"guestAttached,omitempty"`
 }

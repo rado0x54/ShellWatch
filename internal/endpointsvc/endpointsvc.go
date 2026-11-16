@@ -101,3 +101,16 @@ func (s *Service) RefForAccount(ctx context.Context, id, accountID string) (*ter
 	}
 	return &ref, nil
 }
+
+// ActiveRefForAccount is RefForAccount restricted to endpoints that are not
+// soft-deleted — what one-time access tickets resolve (#306): a ticket must
+// not reach an endpoint its owner deleted. Demo endpoints are always active.
+func (s *Service) ActiveRefForAccount(ctx context.Context, id, accountID string) (*terminal.EndpointRef, error) {
+	if !demo.IsID(id) {
+		active, err := s.Endpoints.IsActive(ctx, id, accountID)
+		if err != nil || !active {
+			return nil, err
+		}
+	}
+	return s.RefForAccount(ctx, id, accountID)
+}
