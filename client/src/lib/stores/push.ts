@@ -31,31 +31,55 @@ async function registerWithServer(sub: PushSubscription): Promise<void> {
 }
 
 /**
- * Sets the toggle from what the server holds, not just the browser: a local
- * subscription is re-sent to the server and counts as enabled only once the
- * server accepts it. A row lost server-side (DB reset, pruned) is re-created
- * on the way. Throws the server's refusal so the caller can surface it.
+ * Every push operation (status check, subscribe, unsubscribe) takes a new
+ * generation and holds pushLoading, which disables the toggle, so a user
+ * action cannot start while a check is in flight. When operations still
+ * overlap (e.g. leaving and re-entering the settings page mid-request), only
+ * the newest one may clear pushLoading, and a superseded status check
+ * discards its result instead of overwriting the newer state.
  */
-export async function checkPushStatus(): Promise<void> {
-  if (!pushSupported) return;
-  const reg = await navigator.serviceWorker.ready;
-  const sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    pushEnabled.set(false);
-    return;
-  }
+let generation = 0;
+
+async function exclusive<T>(op: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
+  const gen = ++generation;
+  const isCurrent = () => gen === generation;
+  pushLoading.set(true);
   try {
-    await registerWithServer(sub);
-    pushEnabled.set(true);
-  } catch (err) {
-    pushEnabled.set(false);
-    throw err;
+    return await op(isCurrent);
+  } finally {
+    if (isCurrent()) pushLoading.set(false);
   }
 }
 
+/**
+ * Sets the toggle from what the server holds, not just the browser: a local
+ * subscription is re-sent to the server and counts as enabled only once the
+ * server accepts it. A row lost server-side (DB reset, pruned) is re-created
+ * on the way. Throws the server's refusal so the caller can surface it; a
+ * check superseded by a newer operation neither updates the toggle nor throws.
+ */
+export async function checkPushStatus(): Promise<void> {
+  if (!pushSupported) return;
+  await exclusive(async (isCurrent) => {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (isCurrent()) pushEnabled.set(false);
+      return;
+    }
+    try {
+      await registerWithServer(sub);
+      if (isCurrent()) pushEnabled.set(true);
+    } catch (err) {
+      if (!isCurrent()) return;
+      pushEnabled.set(false);
+      throw err;
+    }
+  });
+}
+
 export async function subscribePush(): Promise<void> {
-  pushLoading.set(true);
-  try {
+  await exclusive(async () => {
     const publicKey = (window as unknown as { __VAPID_PUBLIC_KEY__?: string }).__VAPID_PUBLIC_KEY__;
     if (!publicKey) throw new Error("Push notifications not available on this server");
 
@@ -74,14 +98,11 @@ export async function subscribePush(): Promise<void> {
     }
 
     pushEnabled.set(true);
-  } finally {
-    pushLoading.set(false);
-  }
+  });
 }
 
 export async function unsubscribePush(): Promise<void> {
-  pushLoading.set(true);
-  try {
+  await exclusive(async () => {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
@@ -93,7 +114,5 @@ export async function unsubscribePush(): Promise<void> {
       await sub.unsubscribe();
     }
     pushEnabled.set(false);
-  } finally {
-    pushLoading.set(false);
-  }
+  });
 }

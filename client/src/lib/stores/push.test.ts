@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // stubbed first and the module is imported fresh per test.
 const fakeSub = {
   endpoint: "https://web.push.apple.com/x",
+  unsubscribe: () => unsubscribeLocal(),
   toJSON: () => ({ endpoint: "https://web.push.apple.com/x", keys: { p256dh: "p", auth: "a" } }),
 };
 let localSub: typeof fakeSub | null;
+const unsubscribeLocal = vi.fn(async () => {
+  localSub = null;
+  return true;
+});
 
 async function loadPush() {
   vi.resetModules();
@@ -72,5 +77,40 @@ describe("checkPushStatus", () => {
 
     await expect(push.checkPushStatus()).rejects.toThrow("different account");
     expect(get(push.pushEnabled)).toBe(false);
+  });
+
+  it("holds pushLoading while the server confirms, so the toggle is disabled", async () => {
+    let respond!: (r: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockReturnValueOnce(new Promise((r) => (respond = r)));
+    const push = await loadPush();
+
+    const check = push.checkPushStatus();
+    await vi.waitFor(() => expect(get(push.pushLoading)).toBe(true));
+    respond(new Response(JSON.stringify({ id: "s1" })));
+    await check;
+
+    expect(get(push.pushLoading)).toBe(false);
+    expect(get(push.pushEnabled)).toBe(true);
+  });
+
+  it("ignores a check that resolves after the user unsubscribed", async () => {
+    let respondCheck!: (r: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_path, init) =>
+      init?.method === "POST"
+        ? new Promise((r) => (respondCheck = r))
+        : Promise.resolve(new Response(JSON.stringify({ ok: true }))),
+    );
+    const push = await loadPush();
+    push.pushEnabled.set(true); // stale value from an earlier visit
+
+    const check = push.checkPushStatus();
+    await vi.waitFor(() => expect(respondCheck).toBeDefined());
+    await push.unsubscribePush();
+    respondCheck(new Response(JSON.stringify({ id: "s1" })));
+    await check;
+
+    expect(unsubscribeLocal).toHaveBeenCalled();
+    expect(get(push.pushEnabled)).toBe(false);
+    expect(get(push.pushLoading)).toBe(false);
   });
 });
