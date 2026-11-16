@@ -62,8 +62,13 @@ export function applySignActionLoad<A>(actionId: string, r: SignActionLoad<A>): 
 export interface SignPageController {
   /** (Re)load for `actionId`; resets the state synchronously. */
   load(actionId: string): void;
-  /** The id of the most recent load (handlers drop results for stale ids). */
-  current(): string | null;
+  /**
+   * Token for the current visit: every load and every leave starts a new one.
+   * Handlers capture it when they start and apply their result only while it
+   * is still current — comparing ids is not enough (A -> B -> A is a new
+   * visit with the same id).
+   */
+  visit(): number;
   /** The page is gone (destroyed, or about to load another id). */
   leave(): void;
 }
@@ -73,11 +78,9 @@ export function createSignPageController<A>(
   onState: (s: SignPageState<A>) => void,
 ): SignPageController {
   let seq = 0;
-  let currentId: string | null = null;
   return {
     load(actionId) {
       const mine = ++seq;
-      currentId = actionId;
       onState(freshSignPageState<A>(actionId));
       fetchAction(actionId)
         .catch((): SignActionLoad<A> => ({ kind: "error" }))
@@ -86,10 +89,9 @@ export function createSignPageController<A>(
           onState(applySignActionLoad(actionId, r));
         });
     },
-    current: () => currentId,
+    visit: () => seq,
     leave() {
-      seq++; // drop any in-flight load
-      currentId = null;
+      seq++; // drop any in-flight load and invalidate running handlers
     },
   };
 }

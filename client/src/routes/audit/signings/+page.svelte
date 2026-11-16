@@ -126,7 +126,7 @@
       <select id="outcome-filter" bind:value={outcome} onchange={onFilterChange}>
         <option value="">All outcomes</option>
         <option value="approved">Approved</option>
-        <option value="denied">Skipped</option>
+        <option value="denied">Skipped / blocked</option>
         <option value="expired">Expired</option>
         <option value="cancelled">Cancelled</option>
       </select>
@@ -172,7 +172,7 @@
           <span class="badge badge-source">{row.source}</span>
           {#if row.outcome}
             <span class="badge badge-outcome badge-outcome-{row.outcome}"
-              >{outcomeLabel(row.outcome)}</span
+              >{outcomeLabel(row.type, row.outcome)}</span
             >
           {:else}
             <span class="badge badge-outcome badge-outcome-pending">pending</span>

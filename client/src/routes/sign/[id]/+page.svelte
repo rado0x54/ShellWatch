@@ -103,24 +103,31 @@
   const action = $derived(st.action);
   const isKeyApprove = $derived(action?.type === "key-approve");
 
-  /** Still showing the request `id` (the user may have navigated meanwhile). */
-  function stillOn(id: string): boolean {
-    return controller.current() === id;
+  /** Still the visit that started a handler (the user may have navigated). */
+  function stillOn(visit: number): boolean {
+    return controller.visit() === visit;
   }
 
   // After a skip the page stays put and shows the end state; the next key's
   // request, if any, arrives as a normal toast. An automatic skip also gets an
   // info toast saying why — the user didn't press anything.
-  function afterSkip(id: string, skip: SkipResult, mode: "manual" | "auto", label?: string) {
+  function afterSkip(
+    id: string,
+    visit: number,
+    skip: SkipResult,
+    mode: "manual" | "auto",
+    label?: string,
+  ) {
     clearAction(id);
     if (mode === "auto") toastInfo(skipResultMessage(skip, mode, label));
-    if (stillOn(id)) st.resultStatus = skip.kind === "skipped" ? "denied" : skip.status;
+    if (stillOn(visit)) st.resultStatus = skip.kind === "skipped" ? "denied" : skip.status;
   }
 
   async function handleAction() {
     const a = st.action;
     if (!a) return;
     const id = st.actionId;
+    const visit = controller.visit();
     processing = true;
     st.error = null;
 
@@ -137,7 +144,7 @@
         });
         if (outcome.kind === "auto-skipped") {
           // Cancelled ceremony / passkey not on this device: skipped.
-          afterSkip(id, outcome.skip, "auto", a.passkeyLabel);
+          afterSkip(id, visit, outcome.skip, "auto", a.passkeyLabel);
           return;
         }
         response = outcome.response;
@@ -146,7 +153,7 @@
       toastInfo(
         a.type === "key-approve" ? "Key usage approved" : "Signature completed successfully",
       );
-      if (!stillOn(id)) return;
+      if (!stillOn(visit)) return;
       st.resultStatus = "completed";
       // Land on the session the approval was for — same as approving from
       // the toast (#273). In-app navigation, no reload: the socket and any
@@ -161,9 +168,9 @@
           ? err.message
           : `${a.type === "key-approve" ? "Approval" : "Signing"} failed: ${errorMessage(err)}`;
       toastError(msg);
-      if (stillOn(id)) st.error = errorMessage(err);
+      if (stillOn(visit)) st.error = errorMessage(err);
     } finally {
-      if (stillOn(id)) processing = false;
+      if (stillOn(visit)) processing = false;
     }
   }
 
@@ -171,17 +178,18 @@
     const a = st.action;
     if (!a) return;
     const id = st.actionId;
+    const visit = controller.visit();
     processing = true;
     st.error = null;
     try {
       const skip = await skipAction(id);
-      afterSkip(id, skip, "manual");
+      afterSkip(id, visit, skip, "manual");
     } catch (err) {
       // Nothing was skipped: stay on the page and show why.
       toastError(errorMessage(err));
-      if (stillOn(id)) st.error = errorMessage(err);
+      if (stillOn(visit)) st.error = errorMessage(err);
     } finally {
-      if (stillOn(id)) processing = false;
+      if (stillOn(visit)) processing = false;
     }
   }
 

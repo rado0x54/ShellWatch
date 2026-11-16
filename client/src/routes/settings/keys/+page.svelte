@@ -349,7 +349,7 @@
     }
   }
 
-  // Keyboard path (and the visible up/down buttons): move one step, save.
+  // Keyboard path (arrow keys on the focused handle): move one step, save.
   function movePasskey(id: string, delta: number) {
     if (savingOrder || dragId) return;
     const prev = orderedPasskeys.map((c) => c.id);
@@ -434,7 +434,7 @@
             aria-label="Reorder {pk.label} (position {index +
               1} of {orderedPasskeys.length}); use the arrow keys to move"
             title="Drag to reorder"
-            disabled={savingOrder}
+            aria-disabled={savingOrder}
             onpointerdown={(e) => handleDragStart(e, pk.id)}
             onkeydown={(e) => handleOrderKeydown(e, pk.id)}>⠿</button
           >
@@ -474,24 +474,6 @@
         <span class="row-dot">·</span>last used {formatDate(pk.lastUsedAt)}
       {/snippet}
       {#snippet actions()}
-        {#if ordered && orderedPasskeys.length > 1}
-          <button
-            type="button"
-            class="btn btn-ghost order-step"
-            aria-label="Move {pk.label} up"
-            title="Move up"
-            disabled={savingOrder || index === 0}
-            onclick={() => movePasskey(pk.id, -1)}>↑</button
-          >
-          <button
-            type="button"
-            class="btn btn-ghost order-step"
-            aria-label="Move {pk.label} down"
-            title="Move down"
-            disabled={savingOrder || index === orderedPasskeys.length - 1}
-            onclick={() => movePasskey(pk.id, 1)}>↓</button
-          >
-        {/if}
         {#if pk.authorizedKeysEntry && !pk.revoked && pk.state === "active"}
           <button
             type="button"
@@ -527,7 +509,7 @@
 
   {#if orderedPasskeys.length > 1}
     <p class="order-hint">
-      SSH sign-in tries your passkeys top to bottom. Drag to reorder, or use the arrows.
+      SSH sign-in tries your passkeys top to bottom. Drag the handle to reorder.
     </p>
   {/if}
   <SettingsList empty={$credentials.length === 0} emptyText="No passkeys registered">
@@ -1096,8 +1078,12 @@
     font-size: 1.1rem;
     line-height: 1;
     padding: var(--space-1) var(--space-2);
-    /* The handle owns touch gestures, so dragging it doesn't scroll. */
+    /* The handle owns touch gestures, so dragging it doesn't scroll, and a
+       long press doesn't select text or open the iOS callout. */
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .order-handle:active {
@@ -1108,14 +1094,21 @@
     outline: 1px solid var(--primary);
   }
 
-  .order-handle:disabled {
-    cursor: default;
+  /* Not `disabled` while a save is in flight: disabling the focused handle
+     would drop keyboard focus mid-reorder. movePasskey / handleDragStart
+     already ignore input while saving. */
+  .order-handle[aria-disabled="true"] {
+    cursor: progress;
     opacity: 0.5;
   }
 
-  .order-step {
-    padding: var(--space-1) var(--space-2);
-    min-width: 2rem;
+  /* Touch: a finger-sized target. */
+  @media (pointer: coarse) {
+    .order-handle {
+      min-width: 44px;
+      min-height: 44px;
+      font-size: 1.35rem;
+    }
   }
 
   .inline-rename:focus {

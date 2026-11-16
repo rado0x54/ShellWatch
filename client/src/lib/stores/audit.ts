@@ -118,11 +118,14 @@ export async function fetchSigningsPage(
 }
 
 /**
- * Display label for a signing-request outcome. The wire and stored value stay
- * "denied", but the button that produces it is "Skip" — it drops that one key
- * and the next accepted key may be offered (#308) — so the views say
- * "skipped".
+ * Display label for a signing-request outcome. For a sign prompt
+ * (webauthn-sign, key-approve) the wire and stored value stay "denied", but
+ * the button that produces it is "Skip" — it drops that one key and the next
+ * accepted key may be offered (#308) — so the views say "skipped". Other rows
+ * keep their outcome: a host-key-mismatch "denied" means the connection was
+ * blocked, not that anyone skipped a key.
  */
-export function signingOutcomeLabel(outcome: string): string {
-  return outcome === "denied" ? "skipped" : outcome;
+export function signingOutcomeLabel(type: string, outcome: string): string {
+  const isPrompt = type === "webauthn-sign" || type === "key-approve";
+  return isPrompt && outcome === "denied" ? "skipped" : outcome;
 }

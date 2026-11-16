@@ -54,7 +54,6 @@ describe("sign page controller (#308 §4)", () => {
     expect(b.action?.status).toBe("pending");
     expect(b.resultStatus).toBeNull();
     expect(b.loading).toBe(false);
-    expect(ctrl.current()).toBe("B");
   });
 
   it("drops a late response for an id the page has left", async () => {
@@ -102,7 +101,7 @@ describe("sign page controller (#308 §4)", () => {
     expect(states.at(-1)).toMatchObject({ loading: false, action: null, ...want });
   });
 
-  it("leave() invalidates the current id and drops an in-flight load", async () => {
+  it("leave() invalidates the visit and drops an in-flight load", async () => {
     const slow = deferred<SignActionLoad<A>>();
     const states: SignPageState<A>[] = [];
     const ctrl = createSignPageController<A>(
@@ -110,12 +109,39 @@ describe("sign page controller (#308 §4)", () => {
       (s) => states.push(s),
     );
     ctrl.load("A");
-    expect(ctrl.current()).toBe("A");
+    const visit = ctrl.visit();
     ctrl.leave(); // navigated away from the sign page
-    expect(ctrl.current()).toBeNull();
+    expect(ctrl.visit()).not.toBe(visit);
     slow.resolve(ok("A"));
     await flush();
     expect(states).toHaveLength(1); // only the synchronous reset
+  });
+
+  it("A -> B -> A is a new visit, so a handler from the first A visit is stale", async () => {
+    const ctrl = createSignPageController<A>(
+      async (id) => ok(id),
+      () => {},
+    );
+    ctrl.load("A");
+    await flush();
+    const first = ctrl.visit(); // a handler starts here (e.g. Sign pressed)
+    ctrl.leave();
+    ctrl.load("B");
+    ctrl.leave();
+    ctrl.load("A");
+    await flush();
+    expect(ctrl.visit()).not.toBe(first);
+  });
+
+  it("the visit stays current while the page shows the same load", async () => {
+    const ctrl = createSignPageController<A>(
+      async (id) => ok(id),
+      () => {},
+    );
+    ctrl.load("A");
+    const v = ctrl.visit();
+    await flush(); // the load completing is not a new visit
+    expect(ctrl.visit()).toBe(v);
   });
 
   it("a thrown fetch is a load error", async () => {
