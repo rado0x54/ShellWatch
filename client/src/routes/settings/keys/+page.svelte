@@ -372,10 +372,17 @@
   // Pointer-based drag on the handle: one code path for mouse, pen and touch
   // (HTML5 drag-and-drop doesn't fire for touch). The row under the pointer
   // swaps in live; the order is saved on release.
+  //
+  // The pointer is captured on the <ol>, not the handle: reordering moves the
+  // keyed rows in the DOM, and a moved (briefly detached) handle would lose
+  // capture, so the release would never arrive. A lost capture on the list
+  // still ends the drag (saves), so dragId can't get stuck.
+  let orderListEl = $state<HTMLOListElement | null>(null);
+
   function handleDragStart(e: PointerEvent, id: string) {
-    if (savingOrder || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (savingOrder || !orderListEl || (e.pointerType === "mouse" && e.button !== 0)) return;
     e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    orderListEl.setPointerCapture(e.pointerId);
     dragStartOrder = orderedPasskeys.map((c) => c.id);
     localOrder = dragStartOrder.slice();
     dragId = id;
@@ -429,9 +436,6 @@
             title="Drag to reorder"
             disabled={savingOrder}
             onpointerdown={(e) => handleDragStart(e, pk.id)}
-            onpointermove={handleDragMove}
-            onpointerup={handleDragEnd}
-            onpointercancel={handleDragCancel}
             onkeydown={(e) => handleOrderKeydown(e, pk.id)}>⠿</button
           >
         {/if}
@@ -527,7 +531,15 @@
     </p>
   {/if}
   <SettingsList empty={$credentials.length === 0} emptyText="No passkeys registered">
-    <ol class="order-list" aria-label="Passkey priority order">
+    <ol
+      class="order-list"
+      aria-label="Passkey priority order"
+      bind:this={orderListEl}
+      onpointermove={handleDragMove}
+      onpointerup={handleDragEnd}
+      onpointercancel={handleDragCancel}
+      onlostpointercapture={handleDragEnd}
+    >
       {#each orderedPasskeys as pk, i (pk.id)}
         <li class="order-item" class:dragging={dragId === pk.id} data-passkey-id={pk.id}>
           {@render passkeyRow(pk, true, i)}

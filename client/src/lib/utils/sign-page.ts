@@ -64,6 +64,8 @@ export interface SignPageController {
   load(actionId: string): void;
   /** The id of the most recent load (handlers drop results for stale ids). */
   current(): string | null;
+  /** The page is gone (destroyed, or about to load another id). */
+  leave(): void;
 }
 
 export function createSignPageController<A>(
@@ -85,6 +87,10 @@ export function createSignPageController<A>(
         });
     },
     current: () => currentId,
+    leave() {
+      seq++; // drop any in-flight load
+      currentId = null;
+    },
   };
 }
 

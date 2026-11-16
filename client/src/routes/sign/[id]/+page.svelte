@@ -95,6 +95,9 @@
   });
   $effect(() => {
     controller.load(actionId);
+    // Leaving the page (or switching ids) invalidates in-flight handlers, so
+    // a late response never navigates a user who has moved on.
+    return () => controller.leave();
   });
 
   const action = $derived(st.action);
@@ -105,18 +108,13 @@
     return controller.current() === id;
   }
 
-  // After a skip, manual or automatic, return home (#308 §3). The next key's
-  // request, if any, arrives there as a normal toast — the sign page does not
-  // follow it.
-  async function leaveAfterSkip(
-    id: string,
-    skip: SkipResult,
-    mode: "manual" | "auto",
-    label: string | undefined,
-  ) {
+  // After a skip the page stays put and shows the end state; the next key's
+  // request, if any, arrives as a normal toast. An automatic skip also gets an
+  // info toast saying why — the user didn't press anything.
+  function afterSkip(id: string, skip: SkipResult, mode: "manual" | "auto", label?: string) {
     clearAction(id);
-    if (stillOn(id)) await goto(resolve("/"));
-    toastInfo(skipResultMessage(skip, mode, label));
+    if (mode === "auto") toastInfo(skipResultMessage(skip, mode, label));
+    if (stillOn(id)) st.resultStatus = skip.kind === "skipped" ? "denied" : skip.status;
   }
 
   async function handleAction() {
@@ -139,7 +137,7 @@
         });
         if (outcome.kind === "auto-skipped") {
           // Cancelled ceremony / passkey not on this device: skipped.
-          await leaveAfterSkip(id, outcome.skip, "auto", a.passkeyLabel);
+          afterSkip(id, outcome.skip, "auto", a.passkeyLabel);
           return;
         }
         response = outcome.response;
@@ -177,12 +175,7 @@
     st.error = null;
     try {
       const skip = await skipAction(id);
-      await leaveAfterSkip(
-        id,
-        skip,
-        "manual",
-        a.type === "key-approve" ? a.keyLabel : a.passkeyLabel,
-      );
+      afterSkip(id, skip, "manual");
     } catch (err) {
       // Nothing was skipped: stay on the page and show why.
       toastError(errorMessage(err));

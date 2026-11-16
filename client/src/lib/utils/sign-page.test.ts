@@ -102,6 +102,22 @@ describe("sign page controller (#308 §4)", () => {
     expect(states.at(-1)).toMatchObject({ loading: false, action: null, ...want });
   });
 
+  it("leave() invalidates the current id and drops an in-flight load", async () => {
+    const slow = deferred<SignActionLoad<A>>();
+    const states: SignPageState<A>[] = [];
+    const ctrl = createSignPageController<A>(
+      () => slow.promise,
+      (s) => states.push(s),
+    );
+    ctrl.load("A");
+    expect(ctrl.current()).toBe("A");
+    ctrl.leave(); // navigated away from the sign page
+    expect(ctrl.current()).toBeNull();
+    slow.resolve(ok("A"));
+    await flush();
+    expect(states).toHaveLength(1); // only the synchronous reset
+  });
+
   it("a thrown fetch is a load error", async () => {
     const states: SignPageState<A>[] = [];
     createSignPageController<A>(
