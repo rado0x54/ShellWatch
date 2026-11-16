@@ -192,17 +192,22 @@ func TestPriorityMigrationBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustExec(t, db, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('x','X','t','t'), ('y','Y','t','t')`)
-	ins := func(id, acct, created, state string, revoked int) {
-		mustExec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,label,state,revoked,created_at) VALUES (?,?,?,x'01',?,?,?,?)`,
-			id, acct, "cid-"+id, id, state, revoked, created)
+	type legacyCred struct {
+		id, acct, created, state string
+		revoked                  int
 	}
-	ins("x3", "x", "2026-03-01", "active", 0)
-	ins("x1", "x", "2026-01-01", "active", 0)
-	ins("x2b", "x", "2026-02-01", "active", 0)
-	ins("x2a", "x", "2026-02-01", "active", 0) // same created_at: id breaks the tie
-	ins("xp", "x", "2026-01-15", "pending_confirmation", 0)
-	ins("xr", "x", "2026-01-10", "active", 1)
-	ins("y1", "y", "2026-05-01", "active", 0)
+	for _, c := range []legacyCred{
+		{"x3", "x", "2026-03-01", "active", 0},
+		{"x1", "x", "2026-01-01", "active", 0},
+		{"x2b", "x", "2026-02-01", "active", 0},
+		{"x2a", "x", "2026-02-01", "active", 0}, // same created_at: id breaks the tie
+		{"xp", "x", "2026-01-15", "pending_confirmation", 0},
+		{"xr", "x", "2026-01-10", "active", 1},
+		{"y1", "y", "2026-05-01", "active", 0},
+	} {
+		mustExec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,label,state,revoked,created_at) VALUES (?,?,?,x'01',?,?,?,?)`,
+			c.id, c.acct, "cid-"+c.id, c.id, c.state, c.revoked, c.created)
+	}
 	if err := Migrate(db); err != nil {
 		t.Fatal(err)
 	}

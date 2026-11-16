@@ -111,13 +111,17 @@
   // After a skip the page stays put and shows the end state; the next key's
   // request, if any, arrives as a normal toast. An automatic skip also gets an
   // info toast saying why — the user didn't press anything.
-  function afterSkip(
-    id: string,
-    visit: number,
-    skip: SkipResult,
-    mode: "manual" | "auto",
-    label?: string,
-  ) {
+  interface AfterSkipParams {
+    id: string;
+    /** controller.visit() captured when the handler started. */
+    visit: number;
+    skip: SkipResult;
+    mode: "manual" | "auto";
+    /** Passkey label for the automatic-skip toast. */
+    label?: string;
+  }
+
+  function afterSkip({ id, visit, skip, mode, label }: AfterSkipParams) {
     clearAction(id);
     if (mode === "auto") toastInfo(skipResultMessage(skip, mode, label));
     if (stillOn(visit)) st.resultStatus = skip.kind === "skipped" ? "denied" : skip.status;
@@ -144,7 +148,7 @@
         });
         if (outcome.kind === "auto-skipped") {
           // Cancelled ceremony / passkey not on this device: skipped.
-          afterSkip(id, visit, outcome.skip, "auto", a.passkeyLabel);
+          afterSkip({ id, visit, skip: outcome.skip, mode: "auto", label: a.passkeyLabel });
           return;
         }
         response = outcome.response;
@@ -183,7 +187,7 @@
     st.error = null;
     try {
       const skip = await skipAction(id);
-      afterSkip(id, visit, skip, "manual");
+      afterSkip({ id, visit, skip, mode: "manual" });
     } catch (err) {
       // Nothing was skipped: stay on the page and show why.
       toastError(errorMessage(err));

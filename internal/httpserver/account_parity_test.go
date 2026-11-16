@@ -153,13 +153,18 @@ func seedCredentialsGroup(t *testing.T, db *sql.DB) {
 	exec(t, db, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES (?,'Admin',?,?)`, acct, ts, ts)
 	exec(t, db, `INSERT INTO admin_account (singleton, account_id) VALUES (1, ?)`, acct)
 	cose := []byte{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, 0xaa, 0x25, 0x58, 0x20, 0xbb}
-	add := func(id, credID, label, openssh, state string, priority any) {
-		exec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,counter,label,public_key_openssh,revoked,state,created_at,priority) VALUES (?,?,?,?,0,?,?,0,?,?,?)`,
-			id, acct, credID, cose, label, openssh, state, ts, priority)
+	type seedCred struct {
+		id, credID, label, openssh, state string
+		priority                          any // nil for pending
 	}
-	add("cred-active-1", "Y3JlZC1hY3RpdmUtMQ", "Primary", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQUklNQVJZ primary", "active", 0)
-	add("cred-active-2", "Y3JlZC1hY3RpdmUtMg", "Backup", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRCQUNLVVA backup", "active", 1)
-	add("cred-pending-1", "Y3JlZC1wZW5kaW5nLTE", "Pending Device", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQRU5ESU5H pending", "pending_confirmation", nil)
+	for _, c := range []seedCred{
+		{"cred-active-1", "Y3JlZC1hY3RpdmUtMQ", "Primary", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQUklNQVJZ primary", "active", 0},
+		{"cred-active-2", "Y3JlZC1hY3RpdmUtMg", "Backup", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRCQUNLVVA backup", "active", 1},
+		{"cred-pending-1", "Y3JlZC1wZW5kaW5nLTE", "Pending Device", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQRU5ESU5H pending", "pending_confirmation", nil},
+	} {
+		exec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,counter,label,public_key_openssh,revoked,state,created_at,priority) VALUES (?,?,?,?,0,?,?,0,?,?,?)`,
+			c.id, acct, c.credID, cose, c.label, c.openssh, c.state, ts, c.priority)
+	}
 }
 
 func TestCredentialsGoldens(t *testing.T) {
