@@ -25,9 +25,15 @@ describe("checkPushStatus", () => {
     localSub = fakeSub;
     vi.stubGlobal("PushManager", function PushManager() {});
     vi.stubGlobal("window", globalThis); // node env: pushSupported checks `"PushManager" in window`
+    vi.stubGlobal("__VAPID_PUBLIC_KEY__", "test-vapid-key");
     vi.stubGlobal("navigator", {
       serviceWorker: {
-        ready: Promise.resolve({ pushManager: { getSubscription: async () => localSub } }),
+        ready: Promise.resolve({
+          pushManager: {
+            getSubscription: async () => localSub,
+            subscribe: async () => (localSub = fakeSub),
+          },
+        }),
       },
     });
   });
@@ -93,7 +99,7 @@ describe("checkPushStatus", () => {
     expect(get(push.pushEnabled)).toBe(true);
   });
 
-  it("ignores a check that resolves after the user unsubscribed", async () => {
+  it("runs an unsubscribe only after a pending check, so the check can't re-enable", async () => {
     let respondCheck!: (r: Response) => void;
     vi.spyOn(globalThis, "fetch").mockImplementation((_path, init) =>
       init?.method === "POST"
@@ -105,12 +111,47 @@ describe("checkPushStatus", () => {
 
     const check = push.checkPushStatus();
     await vi.waitFor(() => expect(respondCheck).toBeDefined());
-    await push.unsubscribePush();
+    const unsubscribe = push.unsubscribePush(); // queued behind the check
     respondCheck(new Response(JSON.stringify({ id: "s1" })));
-    await check;
+    await Promise.all([check, unsubscribe]);
 
     expect(unsubscribeLocal).toHaveBeenCalled();
     expect(get(push.pushEnabled)).toBe(false);
     expect(get(push.pushLoading)).toBe(false);
+  });
+
+  it("keeps the toggle locked while an earlier subscribe is pending behind a newer check", async () => {
+    const posts: Array<(r: Response) => void> = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_path, init) =>
+        init?.method === "POST"
+          ? new Promise((r) => posts.push(r))
+          : Promise.resolve(new Response(JSON.stringify({ ok: true }))),
+      );
+    localSub = null;
+    const push = await loadPush();
+
+    // Enable, leave and re-enter settings (a new check), then disable.
+    const subscribe = push.subscribePush();
+    await vi.waitFor(() => expect(posts).toHaveLength(1));
+    const check = push.checkPushStatus();
+    const unsubscribe = push.unsubscribePush();
+
+    // The check waits for the subscribe; nothing has unlocked the toggle.
+    await Promise.resolve();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(get(push.pushLoading)).toBe(true);
+
+    posts[0](new Response(JSON.stringify({ id: "s1" }))); // subscribe completes
+    await vi.waitFor(() => expect(posts).toHaveLength(2));
+    expect(get(push.pushLoading)).toBe(true);
+    posts[1](new Response(JSON.stringify({ id: "s1" }))); // check completes
+    await Promise.all([subscribe, check, unsubscribe]);
+
+    // The user's last action (disable) wins.
+    expect(get(push.pushEnabled)).toBe(false);
+    expect(get(push.pushLoading)).toBe(false);
+    expect(localSub).toBeNull();
   });
 });

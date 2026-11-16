@@ -31,47 +31,44 @@ async function registerWithServer(sub: PushSubscription): Promise<void> {
 }
 
 /**
- * Every push operation (status check, subscribe, unsubscribe) takes a new
- * generation and holds pushLoading, which disables the toggle, so a user
- * action cannot start while a check is in flight. When operations still
- * overlap (e.g. leaving and re-entering the settings page mid-request), only
- * the newest one may clear pushLoading, and a superseded status check
- * discards its result instead of overwriting the newer state.
+ * Push operations (status check, subscribe, unsubscribe) run one at a time,
+ * in call order, and pushLoading (which disables the toggle) stays set while
+ * any of them is running or queued. Nothing overlaps, so no operation can
+ * finish after a later one and overwrite its result, e.g. a check or an
+ * earlier subscribe resolving after the user disabled notifications.
  */
-let generation = 0;
+let queue: Promise<unknown> = Promise.resolve();
+let pending = 0;
 
-async function exclusive<T>(op: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
-  const gen = ++generation;
-  const isCurrent = () => gen === generation;
+function serialized<T>(op: () => Promise<T>): Promise<T> {
+  pending++;
   pushLoading.set(true);
-  try {
-    return await op(isCurrent);
-  } finally {
-    if (isCurrent()) pushLoading.set(false);
-  }
+  const run = queue.then(op);
+  queue = run.catch(() => {}); // a failed operation must not block the next
+  return run.finally(() => {
+    if (--pending === 0) pushLoading.set(false);
+  });
 }
 
 /**
  * Sets the toggle from what the server holds, not just the browser: a local
  * subscription is re-sent to the server and counts as enabled only once the
  * server accepts it. A row lost server-side (DB reset, pruned) is re-created
- * on the way. Throws the server's refusal so the caller can surface it; a
- * check superseded by a newer operation neither updates the toggle nor throws.
+ * on the way. Throws the server's refusal so the caller can surface it.
  */
 export async function checkPushStatus(): Promise<void> {
   if (!pushSupported) return;
-  await exclusive(async (isCurrent) => {
+  await serialized(async () => {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) {
-      if (isCurrent()) pushEnabled.set(false);
+      pushEnabled.set(false);
       return;
     }
     try {
       await registerWithServer(sub);
-      if (isCurrent()) pushEnabled.set(true);
+      pushEnabled.set(true);
     } catch (err) {
-      if (!isCurrent()) return;
       pushEnabled.set(false);
       throw err;
     }
@@ -79,7 +76,7 @@ export async function checkPushStatus(): Promise<void> {
 }
 
 export async function subscribePush(): Promise<void> {
-  await exclusive(async () => {
+  await serialized(async () => {
     const publicKey = (window as unknown as { __VAPID_PUBLIC_KEY__?: string }).__VAPID_PUBLIC_KEY__;
     if (!publicKey) throw new Error("Push notifications not available on this server");
 
@@ -102,7 +99,7 @@ export async function subscribePush(): Promise<void> {
 }
 
 export async function unsubscribePush(): Promise<void> {
-  await exclusive(async () => {
+  await serialized(async () => {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
