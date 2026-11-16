@@ -349,26 +349,6 @@
     }
   }
 
-  // Keyboard path (arrow keys on the focused handle): move one step, save.
-  function movePasskey(id: string, delta: number) {
-    if (savingOrder || dragId) return;
-    const prev = orderedPasskeys.map((c) => c.id);
-    const i = prev.indexOf(id);
-    const j = i + delta;
-    if (i < 0 || j < 0 || j >= prev.length) return;
-    void commitOrder(moveItem(prev, i, j), prev);
-  }
-
-  function handleOrderKeydown(e: KeyboardEvent, id: string) {
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      movePasskey(id, -1);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      movePasskey(id, 1);
-    }
-  }
-
   // Pointer-based drag on the handle: one code path for mouse, pen and touch
   // (HTML5 drag-and-drop doesn't fire for touch). The row under the pointer
   // swaps in live; the order is saved on release.
@@ -424,19 +404,19 @@
 <section>
   <!-- Passkeys -->
   <h2>Passkeys</h2>
-  {#snippet passkeyRow(pk: WebAuthnCredential, ordered: boolean, index: number)}
+  {#snippet passkeyRow(pk: WebAuthnCredential, ordered: boolean)}
     <SettingsRow>
       {#snippet primary()}
         {#if ordered}
-          <button
-            type="button"
+          <!-- Pointer-only grip (mouse + touch); reordering has no keyboard
+               path by design (#308), so it stays out of the tab order and
+               the accessibility tree. -->
+          <span
             class="order-handle"
-            aria-label="Reorder {pk.label} (position {index +
-              1} of {orderedPasskeys.length}); use the arrow keys to move"
+            class:busy={savingOrder}
+            aria-hidden="true"
             title="Drag to reorder"
-            aria-disabled={savingOrder}
-            onpointerdown={(e) => handleDragStart(e, pk.id)}
-            onkeydown={(e) => handleOrderKeydown(e, pk.id)}>⠿</button
+            onpointerdown={(e) => handleDragStart(e, pk.id)}>⠿</span
           >
         {/if}
         {#if editingId === pk.id}
@@ -522,14 +502,14 @@
       onpointercancel={handleDragCancel}
       onlostpointercapture={handleDragEnd}
     >
-      {#each orderedPasskeys as pk, i (pk.id)}
+      {#each orderedPasskeys as pk (pk.id)}
         <li class="order-item" class:dragging={dragId === pk.id} data-passkey-id={pk.id}>
-          {@render passkeyRow(pk, true, i)}
+          {@render passkeyRow(pk, true)}
         </li>
       {/each}
     </ol>
     {#each otherPasskeys as pk (pk.id)}
-      {@render passkeyRow(pk, false, -1)}
+      {@render passkeyRow(pk, false)}
     {/each}
   </SettingsList>
 
@@ -1071,8 +1051,9 @@
   }
 
   .order-handle {
-    background: none;
-    border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--on-surface-variant);
     cursor: grab;
     font-size: 1.1rem;
@@ -1090,14 +1071,8 @@
     cursor: grabbing;
   }
 
-  .order-handle:focus-visible {
-    outline: 1px solid var(--primary);
-  }
-
-  /* Not `disabled` while a save is in flight: disabling the focused handle
-     would drop keyboard focus mid-reorder. movePasskey / handleDragStart
-     already ignore input while saving. */
-  .order-handle[aria-disabled="true"] {
+  /* A save is in flight: handleDragStart ignores new drags until it lands. */
+  .order-handle.busy {
     cursor: progress;
     opacity: 0.5;
   }
