@@ -65,6 +65,7 @@ export function mergeLivePage(
 export function notificationLink(n: AppNotification): { href: string; label: string } | undefined {
   switch (n.type) {
     case "host-key-mismatch":
+    case "unauthenticated-endpoint":
       return { href: "/settings/endpoints", label: "Review endpoint" };
     case "file-transfer-failed":
       return { href: "/audit/file-transfers", label: "View file transfers" };

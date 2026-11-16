@@ -156,6 +156,27 @@ gracefully — render title/detail, no typed action):
   }
   ```
 
+- `unauthenticated-endpoint` (#311) — a connection was **refused** because
+  the server accepted SSH `none` authentication: the handshake completed
+  without any key being asked for, so no human approved it. ShellWatch closes
+  the connection before opening any channel; there is no action to resolve
+  and no way to allow such an endpoint. Severity `error`. Replaces
+  `session-connect-failed` for this case (exactly one notification per
+  refusal). Payload:
+
+  ```ts
+  {
+    endpointId: string;
+    endpointLabel: string;
+    endpointAddress: string; // user@host:port
+    remoteUser: string; // the SSH user the server let in
+    trigger: string; // "ui" | "mcp" | "ssh"
+    mcpClientName: string; // "" outside MCP
+    sourceIp: string;
+    auditId: string; // the unauthenticated-endpoint row in /api/audit/signings ("" if the audit write failed)
+  }
+  ```
+
 - `session-connect-failed` — any other failed SSH connect, whatever the
   trigger (UI click or MCP agent); severity `warning`. Payload:
 

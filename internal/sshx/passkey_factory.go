@@ -71,6 +71,12 @@ type PasskeyFactoryParams struct {
 	// the connect error as a NotifiedError so HTTP callers can reference the
 	// notification instead of re-reporting the text (#252).
 	OnHostKeyMismatch func(ev HostKeyMismatchEvent) string
+	// OnUnauthenticatedEndpoint fires when Connect refused a server that
+	// accepted SSH "none" authentication (#311): like a mismatch there is no
+	// pending action, so the account is told out-of-band. It returns the
+	// persisted notification's id ("" when none); the refusal error carries
+	// it as a NotifiedError. The refusal itself never depends on this hook.
+	OnUnauthenticatedEndpoint func(ev UnauthenticatedEndpointEvent) string
 }
 
 // labeledFileKey is one admin file key selected for a connection.
@@ -131,10 +137,26 @@ func NewPasskeyFactory(p PasskeyFactoryParams) terminal.TransportFactory {
 			Host: fp.Endpoint.Host, Port: fp.Endpoint.Port, Username: fp.Endpoint.Username,
 			EndpointID: fp.Endpoint.ID, HostKeys: p.HostKeys, HostKeyState: hostState,
 			Signers: signers, AgentForward: fp.Endpoint.AgentForward, ForwardingAgent: fwdAgent,
+			AccountID: fp.Endpoint.AccountID, SourceIP: fp.Trigger.SourceIP,
 		})
 		if err != nil {
 			var mismatch *HostKeyMismatchError
-			if errors.As(err, &mismatch) && p.OnHostKeyMismatch != nil {
+			var unauth *UnauthenticatedEndpointError
+			if errors.As(err, &unauth) && p.OnUnauthenticatedEndpoint != nil {
+				notifID := p.OnUnauthenticatedEndpoint(UnauthenticatedEndpointEvent{
+					AccountID:          fp.Endpoint.AccountID,
+					EndpointID:         fp.Endpoint.ID,
+					EndpointLabel:      fp.Endpoint.Label,
+					EndpointAddress:    fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
+					RemoteUser:         fp.Endpoint.Username,
+					HostKeyType:        unauth.HostKeyType,
+					HostKeyFingerprint: unauth.HostKeyFingerprint,
+					Trigger:            fp.Trigger,
+				})
+				if notifID != "" {
+					err = &NotifiedError{NotificationID: notifID, Err: err}
+				}
+			} else if errors.As(err, &mismatch) && p.OnHostKeyMismatch != nil {
 				notifID := p.OnHostKeyMismatch(HostKeyMismatchEvent{
 					AccountID:           fp.Endpoint.AccountID,
 					EndpointID:          fp.Endpoint.ID,

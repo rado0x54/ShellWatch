@@ -123,9 +123,14 @@ export async function fetchSigningsPage(
  * the button that produces it is "Skip" — it drops that one key and the next
  * accepted key may be offered (#308) — so the views say "skipped". Other rows
  * keep their outcome: a host-key-mismatch "denied" means the connection was
- * blocked, not that anyone skipped a key.
+ * blocked, not that anyone skipped a key. An unauthenticated-endpoint row
+ * (#311) reads "Refused: no authentication".
  */
 export function signingOutcomeLabel(type: string, outcome: string): string {
+  // A none-auth refusal (#311) is stored as "denied", but nothing was denied:
+  // the endpoint let ShellWatch in without a key and was refused for it.
+  if (type === "unauthenticated-endpoint" && outcome === "denied")
+    return "Refused: no authentication";
   const isPrompt = type === "webauthn-sign" || type === "key-approve";
   return isPrompt && outcome === "denied" ? "skipped" : outcome;
 }

@@ -147,11 +147,14 @@ func (w *Writer) MarkHostKeyPinned(actionID string) {
 	}
 }
 
-// HostKeyEvent is a host-key audit record (#241): a mismatch that aborted a
-// handshake ('host-key-mismatch', outcome denied) or a pin removal
-// ('host-key-cleared' — host/port change or a human forgetting the key).
+// HostKeyEvent is an endpoint-connection audit record with no pending phase:
+// a mismatch that aborted a handshake ('host-key-mismatch', outcome denied,
+// #241), a connection refused because the server accepted "none" auth
+// ('unauthenticated-endpoint', outcome denied, #311; Fingerprint is the
+// observed host key), or a pin removal ('host-key-cleared' — host/port change
+// or a human forgetting the key).
 type HostKeyEvent struct {
-	Type             string // "host-key-mismatch" | "host-key-cleared"
+	Type             string // "host-key-mismatch" | "unauthenticated-endpoint" | "host-key-cleared"
 	AccountID        string
 	EndpointID       string
 	EndpointLabel    string
@@ -174,7 +177,7 @@ func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) string {
 	now := w.clk.Now().UTC().Format(isoMillis)
 	id := w.newEventID()
 	outcome := sql.NullString{}
-	if ev.Type == "host-key-mismatch" {
+	if ev.Type == "host-key-mismatch" || ev.Type == "unauthenticated-endpoint" {
 		outcome = sql.NullString{String: "denied", Valid: true}
 	}
 	_, err := w.db.Exec(

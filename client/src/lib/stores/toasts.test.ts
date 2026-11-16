@@ -125,3 +125,50 @@ describe("notification toast dedupe (#252)", () => {
     toasts.set([]);
   });
 });
+
+function unauthenticatedNotification(): AppNotification {
+  return {
+    id: "ntf-311",
+    accountId: "acc",
+    type: "unauthenticated-endpoint",
+    severity: "error",
+    title: "Connection refused: no authentication",
+    detail:
+      '"Open Box" (deploy@h:22) accepted SSH access as deploy without a key. ' +
+      "ShellWatch does not open sessions on such servers. Check the server's SSH configuration.",
+    payload: { endpointId: "e1", remoteUser: "deploy", auditId: "act-1" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+const refusalError =
+  "Failed to create session: SSH connection to h:22 refused: the endpoint accepted the " +
+  "connection without authentication; ShellWatch refuses such connections";
+
+describe("unauthenticated-endpoint warning (#311)", () => {
+  it("WS first: one persistent error toast; the HTTP error is suppressed", () => {
+    toasts.set([]);
+    toastNotification(unauthenticatedNotification());
+    toastRequestError(refusalError, "ntf-311");
+    const all = get(toasts);
+    expect(all).toHaveLength(1);
+    expect(all[0].variant).toBe("error");
+    expect(all[0].message).toBe("Connection refused: no authentication");
+    expect(all[0].detail).toContain("accepted SSH access as deploy without a key");
+    expect(all[0].dismissAfterMs).toBeUndefined();
+    expect(all[0].link).toEqual({ href: "/settings/endpoints", label: "Review endpoint" });
+    toasts.set([]);
+  });
+
+  it("HTTP first: the refusal error shows, and the late push replaces it", () => {
+    toasts.set([]);
+    toastRequestError(refusalError, "ntf-311");
+    expect(get(toasts)).toHaveLength(1);
+    toastNotification(unauthenticatedNotification());
+    const all = get(toasts);
+    expect(all).toHaveLength(1);
+    expect(all[0].message).toBe("Connection refused: no authentication");
+    expect(all[0].dismissAfterMs).toBeUndefined();
+    toasts.set([]);
+  });
+});
