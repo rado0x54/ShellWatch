@@ -77,6 +77,7 @@ var goldenCoverage = map[string]coverage{
 	// --- Passkey credentials + invites ---
 	"getPasskeyStatus":                goldened("passkey-status"),
 	"listPasskeys":                    goldened("credentials-list"),
+	"reorderPasskeys":                 goldened("credentials-order"),
 	"confirmPasskey":                  goldened("credential-confirm"),
 	"updatePasskeyLabel":              goldened("credential-label"),
 	"revokePasskey":                   goldened("credential-revoke"),

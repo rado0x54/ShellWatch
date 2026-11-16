@@ -1,16 +1,23 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  import { apiFetch } from "$lib/api.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import Modal from "$lib/components/Modal.svelte";
-  import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
+  import {
+    toasts,
+    removeToast,
+    toastError,
+    toastInfo,
+    type SignRequestAction,
+  } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
     approveAction,
-    performSignCeremony,
-    resolveAction,
     sessionIdFromRedirect,
+    signOrAutoSkip,
+    skipAction,
+    skipResultMessage,
+    SkipFailedError,
     sourceLabels,
     type ResolveResponse,
   } from "$lib/utils/webauthn-sign.js";
@@ -53,13 +60,26 @@
     let response: ResolveResponse;
     try {
       if (action.actionType === "webauthn-sign") {
-        const result = await performSignCeremony(action);
-        response = await resolveAction(action.actionId, result);
+        const outcome = await signOrAutoSkip(action.actionId, action);
+        if (outcome.kind === "auto-skipped") {
+          // The ceremony was cancelled / no matching passkey here (#308):
+          // skipped like the Skip button would; the user stays where they are.
+          removeToast(toastId);
+          toastInfo(skipResultMessage(outcome.skip, "auto", action.passkeyLabel));
+          return;
+        }
+        response = outcome.response;
       } else {
         response = await approveAction(action.actionId);
       }
       removeToast(toastId);
     } catch (err) {
+      if (err instanceof SkipFailedError) {
+        // Nothing was skipped: the prompt stays.
+        console.error(err);
+        toastError(err.message);
+        return;
+      }
       const verb = action.actionType === "key-approve" ? "Approval" : "Signing";
       console.error(`${verb} failed:`, err);
       toastError(`${verb} failed: ${errorMessage(err)}`);
@@ -79,17 +99,23 @@
     await goto(resolve("/sign/[id]", { id: actionId }));
   }
 
-  async function handleDeny(actionId: string, toastId: string) {
+  // Skip drops this one key; the next key the server accepts arrives as a new
+  // request (#308). The user stays on their current page.
+  async function handleSkip(action: SignRequestAction, toastId: string) {
+    activeActionId = action.actionId;
     try {
-      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
-      if (!res.ok) {
-        toastError(`Failed to deny action: ${await res.text()}`);
+      const skip = await skipAction(action.actionId);
+      removeToast(toastId);
+      if (skip.kind === "ended") {
+        toastInfo(skipResultMessage(skip, "manual", undefined));
       }
     } catch (err) {
-      console.error("Failed to deny action:", err);
-      toastError(`Failed to deny action: ${errorMessage(err)}`);
+      // Nothing was skipped: the prompt stays.
+      console.error(err);
+      toastError(errorMessage(err));
+    } finally {
+      activeActionId = null;
     }
-    removeToast(toastId);
   }
 </script>
 
@@ -173,10 +199,11 @@
             <button
               type="button"
               class="btn btn-secondary"
-              onclick={() => handleDeny(toast.action!.actionId, toast.id)}
+              onclick={() => handleSkip(toast.action!, toast.id)}
               disabled={isProcessing}
+              title="Don't use this key; the next matching key may be offered"
             >
-              Deny
+              Skip
             </button>
             <button
               type="button"

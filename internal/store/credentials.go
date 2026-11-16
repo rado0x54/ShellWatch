@@ -143,9 +143,10 @@ func (c *Credentials) FindForAccount(ctx context.Context, rowID, accountID strin
 	return &PendingCredential{RowID: row.ID, State: row.State, Revoked: row.Revoked != 0}, nil
 }
 
-// SetState flips a credential's lifecycle state (confirm: pending -> active).
-func (c *Credentials) SetState(ctx context.Context, rowID, state string) error {
-	return gen.New(c.db).SetCredentialState(ctx, gen.SetCredentialStateParams{State: state, ID: rowID})
+// Activate flips a pending credential to active (confirm) and appends it to
+// the bottom of the account's priority order in the same statement (#308).
+func (c *Credentials) Activate(ctx context.Context, rowID string) error {
+	return gen.New(c.db).ActivateCredential(ctx, rowID)
 }
 
 // AccountName returns an account's display name.
@@ -176,7 +177,13 @@ type Inserted struct {
 // deduplicating the label. newUUID is injected so callers control id
 // generation (Math/rand is unavailable in some contexts; tests want it too).
 func (c *Credentials) Insert(ctx context.Context, accountID string, dec DecodedCredential, state, id string) (Inserted, error) {
-	return c.insertTx(ctx, c.db, accountID, dec, state, id)
+	var ins Inserted
+	err := WithTx(ctx, c.db, func(tx *sql.Tx) error {
+		var err error
+		ins, err = c.insertTx(ctx, tx, accountID, dec, state, id)
+		return err
+	})
+	return ins, err
 }
 
 func (c *Credentials) insertTx(ctx context.Context, q gen.DBTX, accountID string, dec DecodedCredential, state, id string) (Inserted, error) {
@@ -203,6 +210,13 @@ func (c *Credentials) insertTx(ctx context.Context, q gen.DBTX, accountID string
 	})
 	if err != nil {
 		return Inserted{}, err
+	}
+	// A passkey registered as active joins the end of the priority order
+	// (#308); a pending one gets its priority on activation.
+	if state == CredentialStateActive {
+		if err := gen.New(q).AppendCredentialPriority(ctx, id); err != nil {
+			return Inserted{}, err
+		}
 	}
 	return Inserted{ID: id, Label: label}, nil
 }

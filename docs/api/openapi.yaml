@@ -165,6 +165,33 @@ components:
             matching error text.
       additionalProperties: true
 
+    PasskeyList:
+      type: object
+      properties:
+        credentials:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              credentialId: { type: string }
+              label: { type: string }
+              algorithm: { type: string }
+              fingerprint: { type: string }
+              authorizedKeysEntry: { type: string, nullable: true }
+              revoked: { type: boolean }
+              state: { type: string }
+              createdAt: { type: string, format: date-time }
+              lastUsedAt: { type: string, format: date-time, nullable: true }
+              priority:
+                type: integer
+                nullable: true
+                description: >-
+                  Position in the SSH signing order (lower = tried first).
+                  Null for pending and revoked credentials. Gaps are
+                  possible; only the relative order matters.
+        sshdConfig: { type: string }
+
     StatusCreated:
       type: object
       properties:
@@ -2362,30 +2389,52 @@ paths:
       operationId: listPasskeys
       tags: [webauthn]
       summary: List the account's passkeys
+      description: >-
+        Active passkeys come first, in priority order (the order every SSH
+        signing path offers them, #308); pending and revoked credentials
+        follow with a null priority.
       responses:
         "200":
           description: Credentials
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  credentials:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string }
-                        credentialId: { type: string }
-                        label: { type: string }
-                        algorithm: { type: string }
-                        fingerprint: { type: string }
-                        authorizedKeysEntry: { type: string, nullable: true }
-                        revoked: { type: boolean }
-                        state: { type: string }
-                        createdAt: { type: string, format: date-time }
-                        lastUsedAt: { type: string, format: date-time, nullable: true }
-                  sshdConfig: { type: string }
+              schema: { $ref: "#/components/schemas/PasskeyList" }
+  /api/webauthn/credentials/order:
+    put:
+      operationId: reorderPasskeys
+      tags: [webauthn]
+      summary: Set the passkey priority order
+      description: >-
+        Rewrites the priorities of the account's active passkeys to 0..n-1 in
+        the given order (first = tried first for SSH signing). `ids` are
+        credential row ids (`id` in the list response), not WebAuthn
+        `credentialId`s, and must be exactly the account's active,
+        non-revoked credentials: a missing, extra, duplicate or foreign id is
+        rejected with 400 and nothing changes. Validation and rewrite run in
+        one transaction. A new order applies to new connections; open
+        sessions and agent connections keep the order they started with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+              required: [ids]
+      responses:
+        "200":
+          description: The updated list, same shape as listPasskeys
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyList" }
+        "400":
+          description: Malformed body, or ids are not exactly the active passkeys
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/webauthn/credentials/{id}/label:
     patch:
       operationId: updatePasskeyLabel

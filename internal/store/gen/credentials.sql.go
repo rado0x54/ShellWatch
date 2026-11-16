@@ -10,6 +10,34 @@ import (
 	"database/sql"
 )
 
+const activateCredential = `-- name: ActivateCredential :exec
+UPDATE webauthn_credentials SET state = 'active', priority = (
+  SELECT COALESCE(MAX(w.priority), -1) + 1 FROM webauthn_credentials AS w
+  WHERE w.account_id = webauthn_credentials.account_id
+)
+WHERE webauthn_credentials.id = ?
+`
+
+// Activation appends: max(priority) + 1 of the account, in the same
+// statement as the state change (#308).
+func (q *Queries) ActivateCredential(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, activateCredential, id)
+	return err
+}
+
+const appendCredentialPriority = `-- name: AppendCredentialPriority :exec
+UPDATE webauthn_credentials SET priority = (
+  SELECT COALESCE(MAX(w.priority), -1) + 1 FROM webauthn_credentials AS w
+  WHERE w.account_id = webauthn_credentials.account_id
+)
+WHERE webauthn_credentials.id = ?
+`
+
+func (q *Queries) AppendCredentialPriority(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, appendCredentialPriority, id)
+	return err
+}
+
 const countActiveCredentials = `-- name: CountActiveCredentials :one
 SELECT COUNT(*) AS n FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active'
 `
@@ -242,9 +270,38 @@ func (q *Queries) ListActiveCredentialLabelsForAccount(ctx context.Context, acco
 	return items, nil
 }
 
+const listActiveCredentialRowIDs = `-- name: ListActiveCredentialRowIDs :many
+SELECT id FROM webauthn_credentials
+WHERE account_id = ? AND revoked = 0 AND state = 'active'
+`
+
+func (q *Queries) ListActiveCredentialRowIDs(ctx context.Context, accountID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveCredentialRowIDs, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveCredentialsForAuth = `-- name: ListActiveCredentialsForAuth :many
 SELECT id, credential_id, public_key_openssh, label FROM webauthn_credentials
 WHERE account_id = ? AND revoked = 0 AND state = 'active'
+ORDER BY priority, created_at, id
 `
 
 type ListActiveCredentialsForAuthRow struct {
@@ -311,8 +368,9 @@ func (q *Queries) ListAllActiveCredentialIDs(ctx context.Context) ([]string, err
 }
 
 const listCredentialsForAccountFull = `-- name: ListCredentialsForAccountFull :many
-SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at
+SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at, priority
 FROM webauthn_credentials WHERE account_id = ?
+ORDER BY priority IS NULL, priority, created_at, id
 `
 
 type ListCredentialsForAccountFullRow struct {
@@ -325,8 +383,11 @@ type ListCredentialsForAccountFullRow struct {
 	State            string
 	CreatedAt        string
 	LastUsedAt       sql.NullString
+	Priority         sql.NullInt64
 }
 
+// Active passkeys first in priority order, then pending/revoked (NULL
+// priority) by creation.
 func (q *Queries) ListCredentialsForAccountFull(ctx context.Context, accountID string) ([]ListCredentialsForAccountFullRow, error) {
 	rows, err := q.db.QueryContext(ctx, listCredentialsForAccountFull, accountID)
 	if err != nil {
@@ -346,6 +407,7 @@ func (q *Queries) ListCredentialsForAccountFull(ctx context.Context, accountID s
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Priority,
 		); err != nil {
 			return nil, err
 		}
@@ -361,7 +423,7 @@ func (q *Queries) ListCredentialsForAccountFull(ctx context.Context, accountID s
 }
 
 const revokeCredentialByID = `-- name: RevokeCredentialByID :exec
-UPDATE webauthn_credentials SET revoked = 1 WHERE id = ?
+UPDATE webauthn_credentials SET revoked = 1, priority = NULL WHERE id = ?
 `
 
 func (q *Queries) RevokeCredentialByID(ctx context.Context, id string) error {
@@ -369,17 +431,18 @@ func (q *Queries) RevokeCredentialByID(ctx context.Context, id string) error {
 	return err
 }
 
-const setCredentialState = `-- name: SetCredentialState :exec
-UPDATE webauthn_credentials SET state = ? WHERE id = ?
+const setCredentialPriority = `-- name: SetCredentialPriority :exec
+UPDATE webauthn_credentials SET priority = ? WHERE id = ? AND account_id = ?
 `
 
-type SetCredentialStateParams struct {
-	State string
-	ID    string
+type SetCredentialPriorityParams struct {
+	Priority  sql.NullInt64
+	ID        string
+	AccountID string
 }
 
-func (q *Queries) SetCredentialState(ctx context.Context, arg SetCredentialStateParams) error {
-	_, err := q.db.ExecContext(ctx, setCredentialState, arg.State, arg.ID)
+func (q *Queries) SetCredentialPriority(ctx context.Context, arg SetCredentialPriorityParams) error {
+	_, err := q.db.ExecContext(ctx, setCredentialPriority, arg.Priority, arg.ID, arg.AccountID)
 	return err
 }
 
