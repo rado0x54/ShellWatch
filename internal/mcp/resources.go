@@ -122,8 +122,8 @@ type watcher struct {
 	debounce time.Duration
 
 	mu         sync.Mutex
-	subscribed map[string]int           // uri -> registration refcount
-	pending    map[string]*time.Timer   // session uri -> debounce timer
+	subscribed map[string]int         // uri -> registration refcount
+	pending    map[string]*time.Timer // session uri -> debounce timer
 	unsubs     []func()
 }
 
