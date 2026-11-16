@@ -54,7 +54,13 @@ func (p *Push) subscribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "endpoint already registered to a different account")
 		return
 	}
-	slog.Info("push: subscribed", "account", accountID(r), "subscription", res.ID, "pushHost", endpointHost(body.Endpoint))
+	// The settings page re-sends its subscription on every visit to keep the
+	// toggle honest, so a refresh of a known row is routine noise.
+	if res.Created {
+		slog.Info("push: subscribed", "account", accountID(r), "subscription", res.ID, "pushHost", endpointHost(body.Endpoint))
+	} else {
+		slog.Debug("push: subscription refreshed", "account", accountID(r), "subscription", res.ID, "pushHost", endpointHost(body.Endpoint))
+	}
 	writeJSON(w, 200, map[string]string{"id": res.ID})
 }
 

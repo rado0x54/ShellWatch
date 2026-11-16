@@ -72,14 +72,14 @@ func TestChannelDeliversPayloadAndPrunesExpired(t *testing.T) {
 	var mu sync.Mutex
 	var payloads []string
 	ch := NewChannel(subs, Vapid{Subject: "mailto:x@y", PublicKey: "pub", PrivateKey: "priv"})
-	ch.send = func(_ context.Context, message []byte, s *webpush.Subscription, _ *webpush.Options) (int, error) {
+	ch.send = func(_ context.Context, message []byte, s *webpush.Subscription, _ *webpush.Options) (int, string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		payloads = append(payloads, string(message))
 		if s.Endpoint == "https://fcm.googleapis.com/send/dead" {
-			return 410, nil
+			return 410, "", nil
 		}
-		return 201, nil
+		return 201, "", nil
 	}
 
 	action := &approval.Action{
@@ -141,14 +141,29 @@ func TestNewChannelNormalizesVapidSubject(t *testing.T) {
 		t.Run(tc.subject, func(t *testing.T) {
 			ch := NewChannel(subs, Vapid{Subject: tc.subject, PublicKey: "pub", PrivateKey: "priv"})
 			var got string
-			ch.send = func(_ context.Context, _ []byte, _ *webpush.Subscription, o *webpush.Options) (int, error) {
+			ch.send = func(_ context.Context, _ []byte, _ *webpush.Subscription, o *webpush.Options) (int, string, error) {
 				got = o.Subscriber
-				return 201, nil
+				return 201, "", nil
 			}
 			ch.sendToAccount(ctx, "acc", []byte("{}"), "test")
 			if got != tc.want {
 				t.Errorf("Options.Subscriber = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRefusalReason(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{`{"reason":"BadJwtToken"}`, "BadJwtToken"}, // Apple
+		{"authorization header must be specified.\n", "authorization header must be specified."},
+		{`{"code":403,"errno":109,"error":"Forbidden"}`, `{"code":403,"errno":109,"error":"Forbidden"}`},
+		{"  multi\n line \t text ", "multi line text"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := refusalReason([]byte(tc.body)); got != tc.want {
+			t.Errorf("refusalReason(%q) = %q, want %q", tc.body, got, tc.want)
+		}
 	}
 }

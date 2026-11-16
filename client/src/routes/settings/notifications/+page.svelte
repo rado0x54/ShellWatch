@@ -20,7 +20,11 @@
     vapidConfigured = vapidAvailable();
     if (pushSupported) {
       permissionState = Notification.permission;
-      await checkPushStatus();
+      try {
+        await checkPushStatus();
+      } catch (err) {
+        toastError(`Couldn't confirm push notifications with the server: ${errorMessage(err)}`);
+      }
     }
   });
 
