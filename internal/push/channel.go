@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -36,7 +37,17 @@ type Channel struct {
 
 // NewChannel builds the channel.
 func NewChannel(subs *store.PushSubs, vapid Vapid) *Channel {
+	vapid.Subject = subscriberForLib(vapid.Subject)
 	return &Channel{Subs: subs, Vapid: vapid, send: defaultSend}
+}
+
+// subscriberForLib adapts the configured VAPID subject to webpush-go, which
+// prepends "mailto:" to anything not starting with "https:". The config
+// documents the RFC 8292 form ("mailto:admin@example.com"); passed through
+// as-is it becomes "mailto:mailto:…", which Apple's push service rejects
+// with 403 BadJwtToken (FCM and Mozilla tolerate it).
+func subscriberForLib(subject string) string {
+	return strings.TrimPrefix(subject, "mailto:")
 }
 
 func defaultSend(ctx context.Context, message []byte, s *webpush.Subscription, o *webpush.Options) (int, error) {

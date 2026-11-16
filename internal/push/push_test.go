@@ -122,3 +122,16 @@ func TestChannelDeliversPayloadAndPrunesExpired(t *testing.T) {
 		t.Fatalf("prune mismatch: %+v", remaining)
 	}
 }
+
+func TestSubscriberForLib(t *testing.T) {
+	cases := map[string]string{
+		"mailto:admin@example.com": "admin@example.com", // documented form: lib re-adds mailto:
+		"admin@example.com":        "admin@example.com",
+		"https://example.com":      "https://example.com",
+	}
+	for in, want := range cases {
+		if got := subscriberForLib(in); got != want {
+			t.Errorf("subscriberForLib(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
