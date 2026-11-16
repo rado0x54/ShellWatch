@@ -1,21 +1,30 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  import { apiFetch } from "$lib/api.js";
   import { beginLogin } from "$lib/oauth.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
-  import { onMount } from "svelte";
   import type { PageProps } from "./$types";
   import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
+  import {
+    createSignPageController,
+    fetchSignAction,
+    freshSignPageState,
+    type SignPageState,
+  } from "$lib/utils/sign-page.js";
   import {
     approveAction,
-    performSignCeremony,
-    resolveAction,
     sessionIdFromRedirect,
+    signOrAutoSkip,
+    skipAction,
+    skipResultMessage,
+    SkipFailedError,
     sourceLabels,
     triggerKindLabels,
+    type ResolveResponse,
+    type SkipResult,
   } from "$lib/utils/webauthn-sign.js";
 
   const actionId = $derived((page.params as PageProps["params"]).id);
@@ -73,102 +82,113 @@
     keyFingerprint?: string;
   }
 
-  let action = $state<ActionData | null>(null);
-  let loading = $state(true);
+  let st = $state<SignPageState<ActionData>>(freshSignPageState(""));
   let processing = $state(false);
-  let error = $state<string | null>(null);
-  let resultStatus = $state<string | null>(null);
-  let parentSessionTail = $state<string | null>(null);
 
-  const isKeyApprove = $derived(action?.type === "key-approve");
-
-  onMount(async () => {
-    try {
-      const res = await apiFetch(`/api/actions/${actionId}`);
-      if (res.status === 401) {
-        await beginLogin(`/sign/${actionId}`);
-        return;
-      }
-      if (!res.ok) {
-        error = "Action not found";
-        return;
-      }
-      action = await res.json();
-
-      // For agent-forwarding requests, surface what's happening in the parent
-      // session so the approver can see the command that triggered the forward
-      // (e.g. `git push`, nested `ssh`). Best-effort — if the fetch fails we
-      // just hide the preview rather than blocking approval.
-      if (action && action.context.source === "agent-forwarding") {
-        try {
-          const tailRes = await apiFetch(
-            `/api/sessions/${action.context.sessionId}/tail?limit=2000`,
-          );
-          if (tailRes.ok) {
-            const body = (await tailRes.json()) as { data?: string };
-            parentSessionTail = body.data ?? "";
-          }
-        } catch {
-          // ignore — preview is non-essential
-        }
-      }
-    } catch {
-      error = "Failed to load action";
-    } finally {
-      loading = false;
-    }
+  // Load whenever the id changes, not just on mount (#308 §4): navigating
+  // /sign/A -> /sign/B reuses this component, and onMount would leave A's
+  // state under B's URL. The controller resets first and drops stale loads.
+  const controller = createSignPageController<ActionData>(fetchSignAction, (next) => {
+    st = next;
+    processing = false;
+    if (next.needsLogin) void beginLogin(`/sign/${next.actionId}`);
+  });
+  $effect(() => {
+    controller.load(actionId);
   });
 
+  const action = $derived(st.action);
+  const isKeyApprove = $derived(action?.type === "key-approve");
+
+  /** Still showing the request `id` (the user may have navigated meanwhile). */
+  function stillOn(id: string): boolean {
+    return controller.current() === id;
+  }
+
+  // After a skip, manual or automatic, return home (#308 §3). The next key's
+  // request, if any, arrives there as a normal toast — the sign page does not
+  // follow it.
+  async function leaveAfterSkip(
+    id: string,
+    skip: SkipResult,
+    mode: "manual" | "auto",
+    label: string | undefined,
+  ) {
+    clearAction(id);
+    if (stillOn(id)) await goto(resolve("/"));
+    toastInfo(skipResultMessage(skip, mode, label));
+  }
+
   async function handleAction() {
-    if (!action) return;
+    const a = st.action;
+    if (!a) return;
+    const id = st.actionId;
     processing = true;
-    error = null;
+    st.error = null;
 
     try {
-      let response;
-      if (action.type === "key-approve") {
-        response = await approveAction(actionId);
+      let response: ResolveResponse;
+      if (a.type === "key-approve") {
+        response = await approveAction(id);
       } else {
-        const result = await performSignCeremony({
-          credentialId: action.credentialId as string,
-          challenge: action.challenge as string,
-          rpId: action.rpId as string,
-          userVerification: action.userVerification,
+        const outcome = await signOrAutoSkip(id, {
+          credentialId: a.credentialId as string,
+          challenge: a.challenge as string,
+          rpId: a.rpId as string,
+          userVerification: a.userVerification,
         });
-        response = await resolveAction(actionId, result);
+        if (outcome.kind === "auto-skipped") {
+          // Cancelled ceremony / passkey not on this device: skipped.
+          await leaveAfterSkip(id, outcome.skip, "auto", a.passkeyLabel);
+          return;
+        }
+        response = outcome.response;
       }
-      resultStatus = "completed";
-      clearAction(actionId);
-      toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
+      clearAction(id);
+      toastInfo(
+        a.type === "key-approve" ? "Key usage approved" : "Signature completed successfully",
+      );
+      if (!stillOn(id)) return;
+      st.resultStatus = "completed";
       // Land on the session the approval was for — same as approving from
       // the toast (#273). In-app navigation, no reload: the socket and any
       // follow-up prompt (a passkey after a key approval) survive.
       const sessionId = sessionIdFromRedirect(response.redirectTo);
       if (sessionId) await goto(resolve("/session/[id]", { id: sessionId }));
     } catch (err) {
-      error = (err as Error).message;
-      toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
+      // A failed resolve, a server error or a failed automatic skip: nothing
+      // was skipped, the prompt stays.
+      const msg =
+        err instanceof SkipFailedError
+          ? err.message
+          : `${a.type === "key-approve" ? "Approval" : "Signing"} failed: ${errorMessage(err)}`;
+      toastError(msg);
+      if (stillOn(id)) st.error = errorMessage(err);
     } finally {
-      processing = false;
+      if (stillOn(id)) processing = false;
     }
   }
 
-  async function handleDeny() {
-    if (!action) return;
+  async function handleSkip() {
+    const a = st.action;
+    if (!a) return;
+    const id = st.actionId;
+    processing = true;
+    st.error = null;
     try {
-      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
-      if (res.ok) {
-        // The server reports the store-asserted outcome: "denied", or
-        // "expired" when the action lapsed just before the deny landed.
-        const body = await res.json().catch(() => ({}));
-        resultStatus = body.status === "expired" ? "expired" : "denied";
-        clearAction(actionId);
-      } else {
-        const body = await res.json().catch(() => ({ error: "Unknown error" }));
-        error = body.error ?? "Failed to deny";
-      }
+      const skip = await skipAction(id);
+      await leaveAfterSkip(
+        id,
+        skip,
+        "manual",
+        a.type === "key-approve" ? a.keyLabel : a.passkeyLabel,
+      );
     } catch (err) {
-      error = (err as Error).message;
+      // Nothing was skipped: stay on the page and show why.
+      toastError(errorMessage(err));
+      if (stillOn(id)) st.error = errorMessage(err);
+    } finally {
+      if (stillOn(id)) processing = false;
     }
   }
 
@@ -177,7 +197,10 @@
   }
 
   const ctx = $derived(action?.context);
-  const displayStatus = $derived(resultStatus ?? action?.status);
+  const displayStatus = $derived(st.resultStatus ?? action?.status);
+  const loading = $derived(st.loading);
+  const error = $derived(st.error);
+  const parentSessionTail = $derived(st.parentSessionTail);
 
   /**
    * Client-reported fields grouped in the "self-reported" box.
@@ -239,7 +262,7 @@
         {#if displayStatus === "completed"}
           {isKeyApprove ? "Key Usage Approved" : "Signature Complete"}
         {:else if displayStatus === "denied"}
-          Request Denied
+          Key Skipped
         {:else if displayStatus === "expired"}
           Request Expired
         {:else}
@@ -252,7 +275,7 @@
             ? "The SSH key usage was approved successfully."
             : "The passkey signature was completed successfully."}
         {:else if displayStatus === "denied"}
-          This request was denied.
+          This key was skipped.
         {:else if displayStatus === "expired"}
           This request expired before it could be completed.
         {:else}
@@ -395,8 +418,12 @@
       {/if}
 
       <div class="sign-actions">
-        <button type="button" class="btn btn-secondary" onclick={handleDeny} disabled={processing}
-          >Deny</button
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={handleSkip}
+          disabled={processing}
+          title="Don't use this key; the next matching key may be offered">Skip</button
         >
         <button type="button" class="btn btn-primary" onclick={handleAction} disabled={processing}>
           {#if processing}

@@ -64,7 +64,8 @@ func FromConfig(ctx context.Context, db *sql.DB, cfg *config.Config, newID func(
 	}
 
 	// 2. Admin passkeys (idempotent on credential_id). state defaults to
-	// 'active' so a seeded passkey is immediately usable for login.
+	// 'active' so a seeded passkey is immediately usable for login; it joins
+	// the end of the admin's passkey priority order (#308).
 	for _, pk := range cfg.SeedAdminPasskeys {
 		var exists int
 		if err := db.QueryRowContext(ctx,
@@ -87,9 +88,10 @@ func FromConfig(ctx context.Context, db *sql.DB, cfg *config.Config, newID func(
 		}
 		transports, _ := json.Marshal(pk.Transports)
 		if _, err := db.ExecContext(ctx,
-			`INSERT INTO webauthn_credentials (id, account_id, credential_id, public_key, counter, transports, label, public_key_openssh, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			newID(), adminID, pk.CredentialID, pubKey, pk.Counter, string(transports), pk.Label, openssh, ts); err != nil {
+			`INSERT INTO webauthn_credentials (id, account_id, credential_id, public_key, counter, transports, label, public_key_openssh, created_at, priority)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+			   (SELECT COALESCE(MAX(priority), -1) + 1 FROM webauthn_credentials WHERE account_id = ?))`,
+			newID(), adminID, pk.CredentialID, pubKey, pk.Counter, string(transports), pk.Label, openssh, ts, adminID); err != nil {
 			return res, err
 		}
 		res.SeededAdminPasskey = true

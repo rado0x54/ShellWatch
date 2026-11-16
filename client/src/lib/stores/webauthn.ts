@@ -66,6 +66,50 @@ export interface WebAuthnCredential {
   state: CredentialState;
   createdAt: string;
   lastUsedAt: string | null;
+  /**
+   * Position in the SSH signing order, lower = tried first (#308). Null for
+   * pending and revoked credentials. The list arrives active-first, ordered.
+   */
+  priority: number | null;
+}
+
+/** Active, non-revoked passkeys: the ones that take part in the priority order. */
+export function isOrderedPasskey(c: WebAuthnCredential): boolean {
+  return !c.revoked && c.state === "active";
+}
+
+/**
+ * Error from PUT /api/webauthn/credentials/order. `stale` (400) means the
+ * list no longer matches the account's active passkeys — one was activated
+ * or revoked meanwhile — so the caller reloads.
+ */
+export class ReorderError extends Error {
+  constructor(
+    message: string,
+    readonly stale: boolean,
+  ) {
+    super(message);
+    this.name = "ReorderError";
+  }
+}
+
+/**
+ * Save the passkey priority order (#308): `ids` are credential row ids, top =
+ * tried first, and must be exactly the active passkeys. On success the store
+ * takes the server's list.
+ */
+export async function reorderPasskeys(ids: string[]): Promise<void> {
+  const res = await apiFetch("/api/webauthn/credentials/order", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ReorderError(body.error ?? `HTTP ${res.status}`, res.status === 400);
+  }
+  const data = (await res.json()) as { credentials: WebAuthnCredential[] };
+  credentials.set(data.credentials);
 }
 
 export interface PasskeyInvite {

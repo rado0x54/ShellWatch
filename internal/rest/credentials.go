@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // WebAuthn credential management (/api/webauthn/credentials) REST (port of
-// credentials.ts): list, rename (PATCH label), revoke (step-up gated). Pinned
-// by credentials-list / credential-label / credential-revoke goldens.
+// credentials.ts): list, rename (PATCH label), revoke (step-up gated), and
+// the passkey priority order (PUT order, #308). Pinned by credentials-list /
+// credential-label / credential-revoke / credentials-order goldens.
 package rest
 
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -32,13 +34,20 @@ type Credentials struct {
 
 func (c *Credentials) Mount(r chi.Router) {
 	r.Get("/api/webauthn/credentials", c.list)
+	r.Put("/api/webauthn/credentials/order", c.order)
 	r.Patch("/api/webauthn/credentials/{id}/label", c.label)
 	r.With(c.StepUp.RequireStepUp(webauthn.ActionRevokePasskey)).
 		Post("/api/webauthn/credentials/{id}/revoke", c.revoke)
 }
 
 func (c *Credentials) list(w http.ResponseWriter, r *http.Request) {
-	creds, err := c.Store.ListForAccountFull(r.Context(), accountID(r))
+	c.writeList(w, r, accountID(r))
+}
+
+// writeList renders the list response (GET, and the PUT order response).
+// Active passkeys come first in priority order.
+func (c *Credentials) writeList(w http.ResponseWriter, r *http.Request, acct string) {
+	creds, err := c.Store.ListForAccountFull(r.Context(), acct)
 	if err != nil {
 		writeInternal(w, r, err)
 		return
@@ -58,13 +67,39 @@ func (c *Credentials) list(w http.ResponseWriter, r *http.Request) {
 			"id": cr.ID, "credentialId": cr.CredentialID, "label": cr.Label,
 			"algorithm": webauthn.DetectAlgorithm(cr.PublicKeyCOSE), "fingerprint": fingerprint,
 			"authorizedKeysEntry": authorizedKeys, "revoked": cr.Revoked, "state": cr.State,
-			"createdAt": cr.CreatedAt, "lastUsedAt": cr.LastUsedAt,
+			"createdAt": cr.CreatedAt, "lastUsedAt": cr.LastUsedAt, "priority": cr.Priority,
 		})
 	}
 	writeJSON(w, 200, map[string]any{
 		"credentials": out,
 		"sshdConfig":  webauthn.SshdConfigLine(),
 	})
+}
+
+// order rewrites the passkey priority order. The body lists credential row
+// ids; it must be exactly the account's active, non-revoked credentials or
+// the request is rejected (400) and nothing changes.
+func (c *Credentials) order(w http.ResponseWriter, r *http.Request) {
+	acct := accountID(r)
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IDs == nil {
+		slog.Info("credentials: order rejected", "account", acct, "reason", "malformed body")
+		writeErr(w, 400, "ids must be an array of credential ids")
+		return
+	}
+	if err := c.Store.Reorder(r.Context(), acct, body.IDs); err != nil {
+		if store.IsInvalidOrder(err) {
+			slog.Info("credentials: order rejected", "account", acct, "reason", err.Error())
+			writeErr(w, 400, "ids must list exactly the account's active passkeys")
+			return
+		}
+		writeInternal(w, r, err)
+		return
+	}
+	slog.Info("credentials: order updated", "account", acct, "count", len(body.IDs))
+	c.writeList(w, r, acct)
 }
 
 func (c *Credentials) label(w http.ResponseWriter, r *http.Request) {

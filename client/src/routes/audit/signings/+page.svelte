@@ -5,6 +5,7 @@
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import {
     fetchSigningsPage,
+    signingOutcomeLabel as outcomeLabel,
     type SigningRequestRow,
     type SigningsFilters,
   } from "$lib/stores/audit.js";
@@ -125,7 +126,7 @@
       <select id="outcome-filter" bind:value={outcome} onchange={onFilterChange}>
         <option value="">All outcomes</option>
         <option value="approved">Approved</option>
-        <option value="denied">Denied</option>
+        <option value="denied">Skipped</option>
         <option value="expired">Expired</option>
         <option value="cancelled">Cancelled</option>
       </select>
@@ -170,7 +171,9 @@
           <span class="badge badge-type">{row.type}</span>
           <span class="badge badge-source">{row.source}</span>
           {#if row.outcome}
-            <span class="badge badge-outcome badge-outcome-{row.outcome}">{row.outcome}</span>
+            <span class="badge badge-outcome badge-outcome-{row.outcome}"
+              >{outcomeLabel(row.outcome)}</span
+            >
           {:else}
             <span class="badge badge-outcome badge-outcome-pending">pending</span>
           {/if}

@@ -5,8 +5,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 
 	"github.com/rado0x54/shellwatch/internal/store/gen"
 )
@@ -22,6 +24,9 @@ type CredentialRow struct {
 	State            string
 	CreatedAt        string
 	LastUsedAt       *string
+	// Priority is the passkey's position in the account's signing order
+	// (lower = tried first); nil for pending and revoked credentials.
+	Priority *int64
 }
 
 // ListForAccountFull returns all of an account's credentials (list endpoint).
@@ -36,6 +41,7 @@ func (c *Credentials) ListForAccountFull(ctx context.Context, accountID string) 
 			ID: r.ID, CredentialID: r.CredentialID, PublicKeyCOSE: r.PublicKey,
 			PublicKeyOpenSSH: nsp(r.PublicKeyOpenssh), Label: r.Label, Revoked: r.Revoked != 0,
 			State: r.State, CreatedAt: r.CreatedAt, LastUsedAt: nsp(r.LastUsedAt),
+			Priority: nip(r.Priority),
 		})
 	}
 	return out, nil
@@ -89,4 +95,64 @@ func (c *Credentials) ExportSeed(ctx context.Context, accountID string) ([]SeedP
 		})
 	}
 	return out, nil
+}
+
+func nip(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Int64
+	return &v
+}
+
+// ErrInvalidOrder is returned by Reorder when the id list is not exactly the
+// account's active, non-revoked credentials (missing, extra, duplicate or
+// foreign ids). Nothing is changed.
+type ErrInvalidOrder struct{ Reason string }
+
+func (e *ErrInvalidOrder) Error() string { return "invalid credential order: " + e.Reason }
+
+// IsInvalidOrder reports whether err is an *ErrInvalidOrder.
+func IsInvalidOrder(err error) bool {
+	var e *ErrInvalidOrder
+	return errors.As(err, &e)
+}
+
+// Reorder rewrites the account's passkey priorities to 0..n-1 in the order
+// of ids (credential row ids). ids must be exactly the account's active,
+// non-revoked credentials; validation and the rewrite run in one transaction
+// so a concurrent activation or revocation can't slip in between (#308).
+func (c *Credentials) Reorder(ctx context.Context, accountID string, ids []string) error {
+	return WithTx(ctx, c.db, func(tx *sql.Tx) error {
+		q := gen.New(tx)
+		active, err := q.ListActiveCredentialRowIDs(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		want := make(map[string]bool, len(active))
+		for _, id := range active {
+			want[id] = true
+		}
+		seen := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			if seen[id] {
+				return &ErrInvalidOrder{Reason: "duplicate id"}
+			}
+			seen[id] = true
+			if !want[id] {
+				return &ErrInvalidOrder{Reason: "unknown or inactive id"}
+			}
+		}
+		if len(ids) != len(active) {
+			return &ErrInvalidOrder{Reason: "missing ids"}
+		}
+		for i, id := range ids {
+			if err := q.SetCredentialPriority(ctx, gen.SetCredentialPriorityParams{
+				Priority: sql.NullInt64{Int64: int64(i), Valid: true}, ID: id, AccountID: accountID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

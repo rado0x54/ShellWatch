@@ -116,3 +116,13 @@ export async function fetchSigningsPage(
   }
   return res.json();
 }
+
+/**
+ * Display label for a signing-request outcome. The wire and stored value stay
+ * "denied", but the button that produces it is "Skip" — it drops that one key
+ * and the next accepted key may be offered (#308) — so the views say
+ * "skipped".
+ */
+export function signingOutcomeLabel(outcome: string): string {
+  return outcome === "denied" ? "skipped" : outcome;
+}

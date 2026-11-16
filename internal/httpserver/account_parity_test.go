@@ -153,13 +153,13 @@ func seedCredentialsGroup(t *testing.T, db *sql.DB) {
 	exec(t, db, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES (?,'Admin',?,?)`, acct, ts, ts)
 	exec(t, db, `INSERT INTO admin_account (singleton, account_id) VALUES (1, ?)`, acct)
 	cose := []byte{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, 0xaa, 0x25, 0x58, 0x20, 0xbb}
-	add := func(id, credID, label, openssh, state string) {
-		exec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,counter,label,public_key_openssh,revoked,state,created_at) VALUES (?,?,?,?,0,?,?,0,?,?)`,
-			id, acct, credID, cose, label, openssh, state, ts)
+	add := func(id, credID, label, openssh, state string, priority any) {
+		exec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,counter,label,public_key_openssh,revoked,state,created_at,priority) VALUES (?,?,?,?,0,?,?,0,?,?,?)`,
+			id, acct, credID, cose, label, openssh, state, ts, priority)
 	}
-	add("cred-active-1", "Y3JlZC1hY3RpdmUtMQ", "Primary", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQUklNQVJZ primary", "active")
-	add("cred-active-2", "Y3JlZC1hY3RpdmUtMg", "Backup", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRCQUNLVVA backup", "active")
-	add("cred-pending-1", "Y3JlZC1wZW5kaW5nLTE", "Pending Device", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQRU5ESU5H pending", "pending_confirmation")
+	add("cred-active-1", "Y3JlZC1hY3RpdmUtMQ", "Primary", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQUklNQVJZ primary", "active", 0)
+	add("cred-active-2", "Y3JlZC1hY3RpdmUtMg", "Backup", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRCQUNLVVA backup", "active", 1)
+	add("cred-pending-1", "Y3JlZC1wZW5kaW5nLTE", "Pending Device", "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhAAAACG5pc3RwMjU2AAAAQQRQRU5ESU5H pending", "pending_confirmation", nil)
 }
 
 func TestCredentialsGoldens(t *testing.T) {
@@ -171,6 +171,9 @@ func TestCredentialsGoldens(t *testing.T) {
 
 	s, b = req(t, ts, "PATCH", "/api/webauthn/credentials/cred-active-1/label", `{"label":"Renamed"}`, "")
 	assertEnvelope(t, "credential-label", "/api/webauthn/credentials/cred-active-1/label", s, b)
+
+	s, b = req(t, ts, "PUT", "/api/webauthn/credentials/order", `{"ids":["cred-active-2","cred-active-1"]}`, "")
+	assertEnvelope(t, "credentials-order", "/api/webauthn/credentials/order", s, b)
 
 	tok := "stepup-revoke-tok"
 	stepUp.Mint(tok, acct, webauthn.ActionRevokePasskey)
@@ -282,5 +285,34 @@ func TestHydraLogout(t *testing.T) {
 	// Stale/unknown challenge -> forgiving redirect home.
 	if s, loc := get("/api/hydra/logout?logout_challenge=nope"); s != 302 || loc != "/" {
 		t.Errorf("stale logout: got %d %q", s, loc)
+	}
+}
+
+// PUT /api/webauthn/credentials/order (#308): only the exact set of active
+// row ids is accepted; anything else is a 400 that changes nothing.
+func TestReorderPasskeysRejects(t *testing.T) {
+	ts, db, _, _ := authedApp(t, nil)
+	seedCredentialsGroup(t, db)
+	exec(t, db, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('other','Other','t','t')`)
+	exec(t, db, `INSERT INTO webauthn_credentials (id,account_id,credential_id,public_key,label,state,created_at,priority) VALUES ('cred-foreign','other','Zm9yZWlnbg',x'01','F','active','t',0)`)
+
+	for _, body := range []string{
+		`{}`,
+		`not json`,
+		`{"ids":[]}`,
+		`{"ids":["cred-active-1"]}`,
+		`{"ids":["cred-active-1","cred-active-2","cred-pending-1"]}`,
+		`{"ids":["cred-active-1","cred-active-1"]}`,
+		`{"ids":["cred-active-1","cred-foreign"]}`,
+		`{"ids":["Y3JlZC1hY3RpdmUtMQ","Y3JlZC1hY3RpdmUtMg"]}`, // WebAuthn credentialIds, not row ids
+	} {
+		if s, b := req(t, ts, "PUT", "/api/webauthn/credentials/order", body, ""); s != 400 {
+			t.Errorf("body %s: status %d (%v), want 400", body, s, b)
+		}
+	}
+	_, b := req(t, ts, "GET", "/api/webauthn/credentials", "", "")
+	creds := b["credentials"].([]any)
+	if first := creds[0].(map[string]any); first["id"] != "cred-active-1" || first["priority"] != float64(0) {
+		t.Fatalf("order changed after rejections: %v", creds)
 	}
 }

@@ -181,4 +181,5 @@ type WebauthnCredential struct {
 	CreatedAt        string
 	LastUsedAt       sql.NullString
 	State            string
+	Priority         sql.NullInt64
 }

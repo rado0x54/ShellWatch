@@ -1252,6 +1252,26 @@ type OAuthClientRegistrationPage struct {
 	Rows       []OAuthClientRegistration `json:"rows"`
 }
 
+// PasskeyList defines model for PasskeyList.
+type PasskeyList struct {
+	Credentials *[]struct {
+		Algorithm           *string `json:"algorithm,omitempty"`
+		AuthorizedKeysEntry *string `json:"authorizedKeysEntry,omitempty"`
+		CreatedAt           *string `json:"createdAt,omitempty"`
+		CredentialId        *string `json:"credentialId,omitempty"`
+		Fingerprint         *string `json:"fingerprint,omitempty"`
+		Id                  *string `json:"id,omitempty"`
+		Label               *string `json:"label,omitempty"`
+		LastUsedAt          *string `json:"lastUsedAt,omitempty"`
+
+		// Priority Position in the SSH signing order (lower = tried first). Null for pending and revoked credentials. Gaps are possible; only the relative order matters.
+		Priority *int    `json:"priority,omitempty"`
+		Revoked  *bool   `json:"revoked,omitempty"`
+		State    *string `json:"state,omitempty"`
+	} `json:"credentials,omitempty"`
+	SshdConfig *string `json:"sshdConfig,omitempty"`
+}
+
 // PendingActionView Client-safe projection of a pending signing action (resolve/reject omitted). Discriminated on `type`.
 type PendingActionView struct {
 	AccountId    string  `json:"accountId"`
@@ -1777,6 +1797,11 @@ type GetSessionTailParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ReorderPasskeysJSONBody defines parameters for ReorderPasskeys.
+type ReorderPasskeysJSONBody struct {
+	Ids []string `json:"ids"`
+}
+
 // ConfirmPasskeyParams defines parameters for ConfirmPasskey.
 type ConfirmPasskeyParams struct {
 	// XShellWatchStepUpToken Single-use step-up token minted by POST /api/webauthn/stepup/verify, bound to the specific action. Sent on the header `x-shellwatch-stepup-token`. Absent/expired/wrong-action/wrong-account → 401.
@@ -1888,6 +1913,9 @@ type CreatePushSubscriptionJSONRequestBody CreatePushSubscriptionJSONBody
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody CreateSessionJSONBody
+
+// ReorderPasskeysJSONRequestBody defines body for ReorderPasskeys for application/json ContentType.
+type ReorderPasskeysJSONRequestBody ReorderPasskeysJSONBody
 
 // UpdatePasskeyLabelJSONRequestBody defines body for UpdatePasskeyLabel for application/json ContentType.
 type UpdatePasskeyLabelJSONRequestBody UpdatePasskeyLabelJSONBody

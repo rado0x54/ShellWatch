@@ -89,7 +89,7 @@ func (d *Deps) confirmCredential(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, 400, "Credential is already active")
 		return
 	}
-	if err := d.Credentials.SetState(r.Context(), id, store.CredentialStateActive); err != nil {
+	if err := d.Credentials.Activate(r.Context(), id); err != nil {
 		writeInternal(w, r, err)
 		return
 	}
