@@ -9,6 +9,7 @@ package push
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -32,7 +33,8 @@ type Channel struct {
 	Subs  *store.PushSubs
 	Vapid Vapid
 	// send is swappable in tests; defaults to webpush.SendNotificationWithContext.
-	send func(ctx context.Context, message []byte, s *webpush.Subscription, o *webpush.Options) (int, error)
+	// It returns the HTTP status and, for non-2xx, the push service's reason.
+	send func(ctx context.Context, message []byte, s *webpush.Subscription, o *webpush.Options) (int, string, error)
 }
 
 // NewChannel builds the channel.
@@ -50,13 +52,33 @@ func subscriberForLib(subject string) string {
 	return strings.TrimPrefix(subject, "mailto:")
 }
 
-func defaultSend(ctx context.Context, message []byte, s *webpush.Subscription, o *webpush.Options) (int, error) {
+// maxReasonBytes bounds how much of a refusal body is read and logged.
+const maxReasonBytes = 256
+
+func defaultSend(ctx context.Context, message []byte, s *webpush.Subscription, o *webpush.Options) (int, string, error) {
 	res, err := webpush.SendNotificationWithContext(ctx, message, s, o)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer res.Body.Close()
-	return res.StatusCode, nil
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		return res.StatusCode, "", nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, maxReasonBytes))
+	return res.StatusCode, refusalReason(body), nil
+}
+
+// refusalReason condenses a push service's error body for the log: Apple
+// answers {"reason":"BadJwtToken"}, FCM and Mozilla a short text or JSON.
+// The body names the failure only; it carries no subscription secrets.
+func refusalReason(body []byte) string {
+	var apple struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(body, &apple) == nil && apple.Reason != "" {
+		return apple.Reason
+	}
+	return strings.Join(strings.Fields(string(body)), " ")
 }
 
 var _ approval.Channel = (*Channel)(nil)
@@ -146,7 +168,7 @@ func (c *Channel) sendToAccount(ctx context.Context, accountID string, raw []byt
 	}
 	sent := 0
 	for _, sub := range subs {
-		status, err := c.send(ctx, raw, &webpush.Subscription{
+		status, reason, err := c.send(ctx, raw, &webpush.Subscription{
 			Endpoint: sub.Endpoint,
 			Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
 		}, &webpush.Options{
@@ -162,7 +184,7 @@ func (c *Channel) sendToAccount(ctx context.Context, accountID string, raw []byt
 		// 410 Gone / 404: the subscription expired — clean it up.
 		if status == 404 || status == 410 {
 			_ = c.Subs.Delete(ctx, accountID, sub.Endpoint)
-			slog.Info("push: removed expired subscription", "account", accountID, "pushHost", endpointHost(sub.Endpoint), "status", status)
+			slog.Info("push: removed expired subscription", "account", accountID, "pushHost", endpointHost(sub.Endpoint), "status", status, "reason", reason)
 			continue
 		}
 		if status >= 200 && status < 300 {
@@ -171,7 +193,7 @@ func (c *Channel) sendToAccount(ctx context.Context, accountID string, raw []byt
 		}
 		// Anything else (403 VAPID mismatch, 413, 429 …) drops the
 		// notification for this device; the subscription stays.
-		slog.Warn("push: push service refused the notification", "ref", logRef, "pushHost", endpointHost(sub.Endpoint), "status", status)
+		slog.Warn("push: push service refused the notification", "ref", logRef, "pushHost", endpointHost(sub.Endpoint), "status", status, "reason", reason)
 	}
 	slog.Info("push: notifications sent", "ref", logRef, "account", accountID, "sent", sent, "subscriptions", len(subs))
 }
