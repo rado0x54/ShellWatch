@@ -1,3 +1,26 @@
+## v2.2.0 (2026-11-17)
+
+## What's Changed
+
+- chore: update agent CHANGELOG.md for agent/v1.2.0 by @github-actions[bot] in https://github.com/rado0x54/ShellWatch/pull/300
+- fix: strip mailto: from VAPID subject so Apple push accepts the JWT by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/302
+- feat: log push-service refusal reasons and confirm the notification toggle with the server by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/304
+- chore: gofmt internal/mcp/resources.go by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/305
+- feat: sign prompt Skip flow and passkey priority order (#308) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/309
+- fix: refuse connections to endpoints that accept SSH none authentication and warn the account (#311) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/312
+- feat: one-time access tickets for guest terminal sessions (web) (#306) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/314
+- fix: guest access review follow-ups (#306) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/320
+- refactor: replace mcpReason with a generic trigger reason across code, DB and wire (#319) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/323
+- fix: answer a dead guest cookie with a closed frame and use one reconnect path on the guest page (#321) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/330
+- fix: treat soft-deleted endpoints as not found on every by-id path (#313) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/331
+- refactor: one open-session path, one session limit and one endpoint service for REST, MCP and tickets (#326) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/332
+- refactor: one guest session = one terminal session; drop Ask again and the in-memory ended list (#327) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/333
+- refactor: guest connections on the shared WebSocket hub and protocol; one terminal component (#328) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/334
+- refactor: one session view for REST and WebSocket; Manager.Create without source branches (#329) by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/335
+- Release by @rado0x54 in https://github.com/rado0x54/ShellWatch/pull/336
+
+**Full Changelog**: https://github.com/rado0x54/ShellWatch/compare/v2.1.1...v2.2.0
+
 ## v2.1.1 (2026-11-15)
 
 ## What's Changed
