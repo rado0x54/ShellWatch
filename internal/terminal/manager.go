@@ -71,6 +71,7 @@ type StatusEvent struct {
 	Previous  Status
 	Reason    CloseReason
 	CreatedAt time.Time
+	Deadline  time.Time // Session.Deadline (zero when none)
 }
 
 // DefaultIdleTimeout matches Node's DEFAULT_IDLE_TIMEOUT (terminal-manager.ts).
@@ -78,6 +79,10 @@ const DefaultIdleTimeout = 30 * time.Minute
 
 // DefaultIdleSweepInterval matches Node's DEFAULT_CLEANUP_INTERVAL.
 const DefaultIdleSweepInterval = time.Minute
+
+// DeadlineSweepInterval is how often hard deadlines (Trigger.Lifetime) are
+// enforced: they must not run on for an idle-sweep interval.
+const DeadlineSweepInterval = time.Second
 
 // Ended sessions (closed or errored on their own, not closed explicitly) stay
 // in the registry briefly so their last output is still readable (an agent's
@@ -114,6 +119,8 @@ type Manager struct {
 	// teardown must not stall the idle janitor / shutdown / every other close
 	// behind it). Tests shorten it.
 	closeJoinTimeout time.Duration
+	// deadlineInterval is the deadline loop's tick (tests shorten it).
+	deadlineInterval time.Duration
 }
 
 // NewManager builds a Manager. factory establishes transports.
@@ -130,6 +137,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		removedSubs:      map[int]func(RemovedEvent){},
 		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
+		deadlineInterval: DeadlineSweepInterval,
 	}
 }
 
@@ -146,6 +154,21 @@ func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = DefaultIdleSweepInterval
 	}
+	// Deadlines run on their own loop: SweepIdle waits for its closes, and a
+	// stuck one (up to closeJoinTimeout) must not keep a session open past
+	// its hard deadline.
+	go func() {
+		d := time.NewTicker(m.deadlineInterval)
+		defer d.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.C:
+				m.SweepDeadlines()
+			}
+		}
+	}()
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -155,6 +178,28 @@ func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 			m.SweepIdle()
 			m.SweepEnded()
+		}
+	}
+}
+
+// SweepDeadlines closes open sessions past their Deadline with DeadlineReason.
+// It does not wait for the closes: one stuck in its pump join (up to
+// closeJoinTimeout) must not delay the next deadline. Each Close moves its
+// session to closing at once (input refused, not swept again).
+func (m *Manager) SweepDeadlines() {
+	m.mu.Lock()
+	now := m.clk.Now()
+	due := map[CloseReason][]string{}
+	for id, mg := range m.terminals {
+		if s := mg.session; s.Status == StatusOpen && !s.Deadline.IsZero() && !now.Before(s.Deadline) {
+			due[s.DeadlineReason] = append(due[s.DeadlineReason], id)
+		}
+	}
+	m.mu.Unlock()
+	for reason, ids := range due {
+		slog.Info("terminal: deadline reached", "sessions", len(ids), "reason", reason)
+		for _, id := range ids {
+			go m.Close(id, reason)
 		}
 	}
 }
@@ -322,6 +367,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		sess.TicketChannel = trigger.Ticket.Channel
 		sess.Reason = trigger.Reason
 	}
+	sess.DeadlineReason = trigger.LifetimeReason // used once Deadline is set
 
 	// Register BEFORE the factory runs: connecting can block for minutes
 	// (human approval of the SSH signature), and every sweep — consent
@@ -343,6 +389,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// (srv.Close before Destroy) narrows this window but cannot close it.
 		m.mu.Unlock()
 		return nil, fmt.Errorf("server is shutting down")
+	}
+	if err := ctx.Err(); err != nil { // the caller gave up: nothing may go live for it
+		m.mu.Unlock()
+		return nil, err
 	}
 	if trigger.MaxActive > 0 && m.countActiveLocked(sess.AccountID) >= trigger.MaxActive {
 		m.mu.Unlock()
@@ -369,10 +419,15 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	mg.resizeMu.Lock()
 	m.mu.Lock()
 	mg.cancelSetup = nil
-	aborted := sess.Status != StatusOpening // a Close raced the setup
+	// A Close raced the setup, or the caller gave up during it (a factory
+	// that ignored the cancellation must not take the session live).
+	aborted := sess.Status != StatusOpening || ctx.Err() != nil
 	adopted := err == nil && !aborted
 	if adopted {
 		mg.transport = transport
+		if trigger.Lifetime > 0 { // counted from here, the moment it goes live
+			sess.Deadline = m.clk.Now().Add(trigger.Lifetime)
+		}
 	}
 	m.mu.Unlock()
 	// A browser that attached while the session was opening already sent its
@@ -944,7 +999,8 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	for _, fn := range m.statusSubs {
 		subs = append(subs, fn)
 	}
-	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason, CreatedAt: mg.session.CreatedAt}
+	ev := StatusEvent{SessionID: mg.session.SessionID, Status: status, Previous: prev, Reason: mg.session.CloseReason,
+		CreatedAt: mg.session.CreatedAt, Deadline: mg.session.Deadline}
 	m.mu.Unlock()
 
 	if status == StatusClosed || status == StatusError {

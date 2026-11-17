@@ -9,9 +9,9 @@ export interface TicketEventRow {
   id: string;
   accountId: string;
   ticketId: string;
-  /** minted | redeemed | attached | attempt-failed | retried | admitted |
-   * detached | reattached | ended | revoked | expired | invalidated — an open
-   * string, not a union. */
+  /** minted | redeemed | attached | attempt-failed | admitted | detached |
+   * reattached | ended | revoked | expired | invalidated — an open string, not
+   * a union (rows from before #327 may read `retried`). */
   event: string;
   createdAt: string;
   endpointId: string;
@@ -28,6 +28,7 @@ export interface TicketEventRow {
   userAgent: string | null;
   confirmationCode: string | null;
   sessionId: string | null;
+  /** Null since #327 (one connect per guest session). */
   attempt: number | null;
   endReason: string | null;
   durationMs: number | null;
@@ -43,7 +44,6 @@ export const TICKET_EVENTS = [
   "redeemed",
   "attached",
   "attempt-failed",
-  "retried",
   "admitted",
   "detached",
   "reattached",

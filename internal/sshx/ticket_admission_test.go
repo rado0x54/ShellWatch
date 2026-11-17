@@ -2,7 +2,7 @@
 // One-time access tickets (#306) against a real SSH server: a guest
 // session is admitted only through the normal endpoint-auth approval (here
 // a file key's key-approve prompt), the prompt carries the ticket trigger,
-// skipping it refuses the attempt, Ask again raises a fresh prompt, and an
+// skipping it ends the guest session, approving it admits the guest, and an
 // endpoint that accepts "none" authentication never admits anyone (#311).
 package sshx
 
@@ -154,7 +154,7 @@ func (r *ticketSSHRig) nextAction(t *testing.T) *approval.Action {
 func TestTicketAdmittedThroughFileKeyApproval(t *testing.T) {
 	_, port, _ := startEchoServer(t)
 	r := newTicketSSHRig(t, port)
-	guestID, code, _ := r.redeemAndAttach(t)
+	_, code, cookie := r.redeemAndAttach(t)
 
 	// The prompt is the normal key-approve, with the ticket trigger.
 	a := r.nextAction(t)
@@ -176,17 +176,18 @@ func TestTicketAdmittedThroughFileKeyApproval(t *testing.T) {
 		}
 	}
 
-	// Skip: the attempt fails, the guest session waits in refused.
+	// Skip: the one connect fails and the guest session ends.
 	r.store.Deny(a.ID)
-	waitFor(t, "refused", func() bool { return r.pub.last() == ticket.StateRefused })
+	waitFor(t, "closed", func() bool { return r.pub.last() == ticket.StateClosed })
+	if _, ok := r.svc.GuestByCookie(cookie); ok {
+		t.Error("a denied guest session is still live")
+	}
 
-	// Ask again (after the cooldown): a fresh prompt; approving it admits
-	// the guest.
-	r.clk.Advance(ticket.RetryCooldown)
-	r.svc.Retry(guestID)
+	// A new ticket raises a fresh prompt; approving it admits the guest.
+	guestID, code, _ := r.redeemAndAttach(t)
 	a2 := r.nextAction(t)
 	if a2.ID == a.ID || a2.Context.Ticket == nil || a2.Context.Ticket.ConfirmationCode != code {
-		t.Fatalf("retry prompt %+v", a2.Context.Ticket)
+		t.Fatalf("second prompt %+v", a2.Context.Ticket)
 	}
 	r.store.ResolveKey(a2.ID)
 	waitFor(t, "open", func() bool { return r.pub.last() == ticket.StateOpen })
@@ -233,7 +234,7 @@ func TestTicketNoneAuthEndpointNeverAdmits(t *testing.T) {
 	port, _, channels := startNoneAuthServer(t)
 	r := newTicketSSHRig(t, port)
 	r.redeemAndAttach(t)
-	waitFor(t, "refused", func() bool { return r.pub.last() == ticket.StateRefused })
+	waitFor(t, "closed", func() bool { return r.pub.last() == ticket.StateClosed })
 	if channels.Load() != 0 {
 		t.Errorf("a channel was opened on a none-auth server")
 	}

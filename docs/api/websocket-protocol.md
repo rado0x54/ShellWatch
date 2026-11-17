@@ -287,51 +287,40 @@ neither the code nor the reason.
 # Guest WebSocket (`/ws/guest`, #306)
 
 The connection a one-time access guest's browser holds while it waits for
-admission and then uses as its terminal. It is a separate endpoint with its
-own registry: a guest connection is never in the account hub's connection set,
-so `sessions:changed`, `sign:request`, `notification:new`, `tickets:changed`
-and other sessions' output can never reach it.
+admission and then uses as its terminal. A separate endpoint with its own
+registry: `sessions:changed`, `sign:request`, `notification:new`,
+`tickets:changed` and other sessions' output can never reach it.
 
 ## Transport & auth
 
-- Endpoint: `GET /ws/guest` (HTTP upgrade). Gate-exempt: **no bearer** is read
-  (a present, valid or invalid `Authorization` changes nothing), and no
-  subprotocol is negotiated.
+- `GET /ws/guest` (HTTP upgrade). Gate-exempt: **no bearer** is read (an
+  `Authorization` header changes nothing); no subprotocol is negotiated.
 - Credential: the `__Host-sw_guest` cookie set by `POST /api/tickets/redeem`
-  (`Secure; HttpOnly; SameSite=Strict; Path=/`, no `Domain`). It is valid only
-  here, maps to one guest session, and is deleted server-side when the guest
-  session closes, whatever the browser still holds.
-- **Origin check** (cross-site WebSocket hijacking): the upgrade is accepted
-  only when `Origin` exactly equals `server.externalUrl`'s origin (scheme, host
-  and port; lowercased; the scheme's default port dropped on both sides).
-  Missing, `null` or any other origin — a sibling subdomain included — answers
-  **403** before the upgrade (log: `ws: guest origin rejected`). The expected
-  origin never comes from `Host` or the connection's scheme, so a reverse proxy
-  that rewrites `Host` or terminates TLS changes nothing.
-- No live guest session for the cookie (ended, revoked, never existed, or no
-  cookie at all — the server keeps no state to tell them apart) → the upgrade
-  is **accepted**, a single `status` frame `closed` / "The session has ended."
-  (with `serverTime`) is sent, and the connection closes normally (log:
-  `ws: guest rejected`). A browser cannot see why a handshake failed, so a
-  refused upgrade would look like a network drop and the page would keep
-  reconnecting. Such a connection never attaches. The wrong-`Origin` 403
-  still comes first. Also behind `security.allowedNetworks` (403) and a
-  per-IP rate limit (429).
-- Several tabs of the redeeming browser may attach at once (each gets the
-  catch-up, then the same output; input from any goes to the session); at most
-  8 connections per guest session. A further one receives a final `closed`
-  status and is closed.
+  (`Secure; HttpOnly; SameSite=Strict; Path=/`, no `Domain`). Valid only here,
+  one guest session, deleted server-side when the guest session closes.
+- **Origin check** (cross-site WebSocket hijacking): accepted only when
+  `Origin` equals `server.externalUrl`'s origin (scheme, host and port;
+  lowercased; default port dropped). Anything else — missing, `null`, a sibling
+  subdomain — answers **403** before the upgrade (log: `ws: guest origin
+rejected`). Never derived from `Host` or the connection's scheme.
+- No live guest session for the cookie (ended, revoked, never existed, no
+  cookie) → the upgrade is **accepted**, one `status` frame `closed` / "The
+  session has ended." is sent and the connection closes normally (log:
+  `ws: guest rejected`): a browser cannot see why a handshake failed, and the
+  page would keep reconnecting. Such a connection never attaches. Also behind
+  `security.allowedNetworks` (403) and a per-IP rate limit (429).
+- Several tabs may attach at once (each gets the catch-up, then the same
+  output; input from any reaches the session), at most 8 per guest session.
 - Inbound frames are capped at 1 MiB. The connection **is** the attachment:
   there are no attach/detach messages.
 
 ## Client → Server
 
-| `type`   | Fields                         | Effect                                                                                                                                                                                             |
-| -------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | `data: string`                 | Input to the admitted session. Dropped before admission.                                                                                                                                           |
-| `resize` | `cols: number`, `rows: number` | Resize the admitted session's PTY. Dropped before admission.                                                                                                                                       |
-| `end`    | —                              | End the guest session now (end reason `client.guest`), from any tab; closes every connection.                                                                                                      |
-| `retry`  | —                              | Ask again: start a fresh admission attempt. Accepted only in `refused`, inside the admission window, from `retryAt` on, while attempts remain; otherwise silently ignored (no frame is sent back). |
+| `type`   | Fields                         | Effect                                                                                        |
+| -------- | ------------------------------ | --------------------------------------------------------------------------------------------- |
+| `input`  | `data: string`                 | Input to the admitted session. Dropped before admission.                                      |
+| `resize` | `cols: number`, `rows: number` | Resize the admitted session's PTY. Dropped before admission.                                  |
+| `end`    | —                              | End the guest session now (end reason `client.guest`), from any tab; closes every connection. |
 
 Every other frame (any `terminal:*` type included) is silently dropped.
 
@@ -342,40 +331,38 @@ Every other frame (any `terminal:*` type included) is silently dropped.
 | `status` | `state`, plus the fields below                   | The guest session's state. Sent on every transition and to each connection when it attaches.                                            |
 | `output` | `data: string`, `offset: number`, `reset?: true` | Terminal output of the admitted session. On (re)attach after admission the whole buffer is sent once with `reset: true`; deltas follow. |
 
-Every `status` frame carries `serverTime` (ISO 8601, the server's clock when
-the frame was built). The guest device's clock may be off, so the page counts
-`admissionDeadline` / `lifetimeDeadline` down against the offset between
-`serverTime` and its own clock, not against local time alone.
+Every `status` frame carries `serverTime` (the server's clock, ISO 8601): the
+page counts `admissionDeadline` / `lifetimeDeadline` down against it, not
+against the guest device's own clock.
 
 `status` fields by `state` — none ever names the endpoint (label, address,
 user) or carries a server error text; `message` is one of a few fixed texts:
 
-| `state`   | Fields                                                                                                           | Meaning                                                                                                                                                                                                                                                                                                                                      |
-| --------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pending` | `code`, `admissionDeadline?`                                                                                     | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                         |
-| `refused` | `code`, `admissionDeadline`, `remainingSeconds`, `retryAt`, `attemptsLeft`, `message: "Access was not granted."` | The attempt ended without admission (every key skipped or expired, or the connect failed). The guest may send `retry` from `retryAt` (15 s after the refusal) until the deadline. A guest session has at most 3 attempts; when the last one is refused, or no retry could start before the admission deadline, it closes instead (`closed`). |
-| `open`    | `lifetimeDeadline`                                                                                               | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                            |
-| `closed`  | `message: "The session has ended."` (whatever the cause) or `"Too many open windows for this session."`          | Final. The server closes the connection after it. The cap text means only this connection was refused; the session itself goes on in the guest's other tabs. The real end reason is only in the owner's audit log.                                                                                                                           |
+| `state`   | Fields                       | Meaning                                                                                                                                                                                                                                                                                                                                       |
+| --------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pending` | `code`, `admissionDeadline?` | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                          |
+| `open`    | `lifetimeDeadline`           | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                             |
+| `closed`  | `message` (one of the below) | Final; the server closes the connection after it. `"Access was not granted."` — it ended before admission (denied, connect failed, admission window over, revoked). `"The session has ended."` — any end after admission, or no live guest session. `"Too many open windows for this session."` — only this connection was refused (the cap). |
 
 ## Lifecycle bounds
 
-| Bound            | Covers                                   | Value                    |
-| ---------------- | ---------------------------------------- | ------------------------ |
-| Redeem TTL       | minted → redeemed                        | per ticket, 1 min – 24 h |
-| Attach window    | redeemed → first `/ws/guest` attach      | 30 s                     |
-| Admission window | first attach → open, across all attempts | 5 min                    |
-| Session lifetime | starts at admission                      | per ticket, 1 min – 8 h  |
-| Reconnect grace  | after the last guest connection closes   | 60 s                     |
+| Bound            | Covers                              | Value                    |
+| ---------------- | ----------------------------------- | ------------------------ |
+| Redeem TTL       | minted → redeemed                   | per ticket, 1 min – 24 h |
+| Attach window    | redeemed → first `/ws/guest` attach | 30 s                     |
+| Admission window | first attach → open                 | 5 min                    |
+| Session lifetime | starts at admission                 | per ticket, 1 min – 8 h  |
+| Reconnect grace  | after the last guest connection     | 60 s                     |
 
-The first attempt starts on the first attach, so the owner is never prompted
-for a guest that cannot see the code. A disconnect (reload, lost network) is
-not an end: within the reconnect grace a new connection with the cookie
+One guest session is one terminal session: the first attach starts its one
+connect (the owner is never prompted for a guest that cannot see the code), and
+anything that ends it before admission ends the guest session — the owner mints
+a new ticket. Within the reconnect grace a new connection with the cookie
 reattaches and catches up. End reasons (also the terminal session's close
-reason where one exists): `client.guest`, `guest-disconnected`,
-`ticket-lifetime`, `ticket-not-admitted`, `ticket-unattached`,
-`ticket-revoked`, `endpoint-removed`, `account-deleted`, `shutdown`, or the
-terminal session's own close reason after admission (`client.ui`,
-`idle-timeout`, `server-hangup`, …).
+reason): `client.guest`, `guest-disconnected`, `ticket-lifetime`,
+`ticket-not-admitted`, `ticket-unattached`, `ticket-revoked`,
+`endpoint-removed`, `account-deleted`, `shutdown`, or the terminal session's
+own after admission (`client.ui`, `idle-timeout`, `server-hangup`, …).
 
 ## Asymmetry notes
 

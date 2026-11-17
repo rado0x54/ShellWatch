@@ -20,7 +20,9 @@ type fakeSessions struct {
 	sub     func(terminal.StatusEvent)
 	creates chan terminal.Trigger
 	answers chan error
-	closed  []string
+	// hold, when set, delays Create's return after a successful open.
+	hold   chan struct{}
+	closed []closeReq
 }
 
 func (f *fakeSessions) Create(ctx context.Context, _ terminal.EndpointRef, _ string, tr terminal.Trigger) (*terminal.Session, error) {
@@ -32,6 +34,9 @@ func (f *fakeSessions) Create(ctx context.Context, _ terminal.EndpointRef, _ str
 			return nil, err
 		}
 		f.emit(tr.SessionID, terminal.StatusOpen, terminal.StatusOpening, "")
+		if f.hold != nil {
+			<-f.hold
+		}
 		return &terminal.Session{SessionID: tr.SessionID}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -43,9 +48,9 @@ func (f *fakeSessions) open(ctx context.Context, acc, id string, tr terminal.Tri
 	return f.Create(ctx, terminal.EndpointRef{ID: id, AccountID: acc}, acc, tr)
 }
 
-func (f *fakeSessions) Close(sessionID string, _ terminal.CloseReason) {
+func (f *fakeSessions) Close(sessionID string, reason terminal.CloseReason) {
 	f.mu.Lock()
-	f.closed = append(f.closed, sessionID)
+	f.closed = append(f.closed, closeReq{sessionID: sessionID, reason: reason})
 	f.mu.Unlock()
 }
 
@@ -58,21 +63,34 @@ func (f *fakeSessions) emit(sid string, st, prev terminal.Status, reason termina
 	f.sub(terminal.StatusEvent{SessionID: sid, Status: st, Previous: prev, Reason: reason})
 }
 
-func (f *fakeSessions) closedIDs() []string {
+// closes returns the reasons sessionID was closed with, in order.
+func (f *fakeSessions) closes(sessionID string) []terminal.CloseReason {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.closed...)
+	var out []terminal.CloseReason
+	for _, c := range f.closed {
+		if c.sessionID == sessionID {
+			out = append(out, c.reason)
+		}
+	}
+	return out
 }
 
 type pubLog struct {
 	mu     sync.Mutex
 	states []string
+	closed Status
 }
 
 func (p *pubLog) GuestStatus(_ string, st Status) { p.add(st.State) }
 func (p *pubLog) GuestOpen(string, string)        {}
-func (p *pubLog) GuestClose(_ string, st Status)  { p.add(st.State) }
-func (p *pubLog) add(s string)                    { p.mu.Lock(); p.states = append(p.states, s); p.mu.Unlock() }
+func (p *pubLog) GuestClose(_ string, st Status) {
+	p.mu.Lock()
+	p.closed = st
+	p.mu.Unlock()
+	p.add(st.State)
+}
+func (p *pubLog) add(s string) { p.mu.Lock(); p.states = append(p.states, s); p.mu.Unlock() }
 func (p *pubLog) last() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -126,49 +144,64 @@ func redeemAttached(t *testing.T, s *Service) string {
 	return id
 }
 
-// Events from an attempt that is no longer current change nothing; a stale
-// attempt that goes live anyway is closed, never admitted.
-func TestStaleAttemptEventsAreIgnored(t *testing.T) {
-	s, f, pub, clk := newTestService(t)
-	gid := redeemAttached(t, s)
-	first := <-f.creates
-	f.answers <- errors.New("skipped")
-	waitUntil(t, "refused", func() bool { return pub.last() == StateRefused })
-
-	clk.Advance(RetryCooldown)
-	s.Retry(gid)
-	second := <-f.creates
-	if second.SessionID == first.SessionID {
-		t.Fatal("retry reused the session id")
-	}
-	// Late events of the first attempt: an open (it must not admit, and is
-	// closed), then its closed.
-	f.emit(first.SessionID, terminal.StatusOpen, terminal.StatusOpening, "")
-	if pub.last() != StatePending {
-		t.Errorf("late open of an old attempt admitted the guest (%s)", pub.last())
-	}
-	f.emit(first.SessionID, terminal.StatusClosed, terminal.StatusOpen, terminal.CloseTicketNotAdmitted)
-	if pub.last() != StatePending {
-		t.Errorf("late closed of an old attempt changed the state to %s", pub.last())
-	}
-	waitUntil(t, "stale session closed", func() bool {
-		for _, id := range f.closedIDs() {
-			if id == first.SessionID {
-				return true
-			}
+// One connect per guest session: a denial (or failed connect) closes it with
+// "Access was not granted." and starts nothing else; an admitted session
+// ending on the Manager side closes it with "The session has ended."
+func TestOneConnectPerGuestSession(t *testing.T) {
+	t.Run("denied", func(t *testing.T) {
+		s, f, pub, _ := newTestService(t)
+		redeemAttached(t, s)
+		<-f.creates
+		f.answers <- errors.New("skipped")
+		waitUntil(t, "closed", func() bool { return pub.last() == StateClosed })
+		if pub.closed.Message != MsgNotGranted {
+			t.Errorf("closed message %q, want %q", pub.closed.Message, MsgNotGranted)
 		}
-		return false
+		if len(s.List("acc")) != 0 {
+			t.Error("the ended ticket is still listed")
+		}
+		select {
+		case tr := <-f.creates:
+			t.Errorf("a second connect started: %+v", tr)
+		case <-time.After(50 * time.Millisecond):
+		}
 	})
-	// The current attempt still admits.
+	t.Run("admitted, then ended by the Manager", func(t *testing.T) {
+		s, f, pub, _ := newTestService(t)
+		redeemAttached(t, s)
+		tr := <-f.creates
+		if tr.Lifetime != DefaultLifetime || tr.LifetimeReason != terminal.CloseTicketLifetime {
+			t.Errorf("trigger lifetime %v / %q", tr.Lifetime, tr.LifetimeReason)
+		}
+		f.answers <- nil
+		waitUntil(t, "open", func() bool { return pub.last() == StateOpen })
+		f.emit(tr.SessionID, terminal.StatusClosed, terminal.StatusOpen, terminal.CloseTicketLifetime)
+		if pub.last() != StateClosed || pub.closed.Message != MsgEnded {
+			t.Errorf("after the session ended: %s %q", pub.last(), pub.closed.Message)
+		}
+		if _, ok := s.GuestAttached(tr.SessionID); ok {
+			t.Error("guest still tracked after close")
+		}
+	})
+}
+
+// #322: a revoke right after admission — before Create has even returned —
+// closes the terminal session once, with ticket-revoked.
+func TestRevokeRightAfterAdmission(t *testing.T) {
+	s, f, pub, _ := newTestService(t)
+	f.hold = make(chan struct{})
+	redeemAttached(t, s)
+	tr := <-f.creates
 	f.answers <- nil
 	waitUntil(t, "open", func() bool { return pub.last() == StateOpen })
-	// An admitted session ending on the Manager side closes the guest.
-	f.emit(second.SessionID, terminal.StatusClosed, terminal.StatusOpen, terminal.CloseIdleTimeout)
-	if pub.last() != StateClosed {
-		t.Errorf("state after the admitted session ended: %s", pub.last())
+	if err := s.Revoke("acc", s.List("acc")[0].ID); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := s.GuestAttached(second.SessionID); ok {
-		t.Error("guest still tracked after close")
+	close(f.hold)
+	waitUntil(t, "session closed", func() bool { return len(f.closes(tr.SessionID)) > 0 })
+	time.Sleep(50 * time.Millisecond) // nothing else may close it
+	if got := f.closes(tr.SessionID); len(got) != 1 || got[0] != terminal.CloseTicketRevoked {
+		t.Errorf("closes %v, want [%s]", got, terminal.CloseTicketRevoked)
 	}
 }
 
@@ -247,59 +280,25 @@ func TestRedeemEndpointLookupErrorKeepsTicket(t *testing.T) {
 	}
 }
 
-// A closed guest session stays in the owner's list (state closed, with the
-// reason, no connections) for ClosedRetention, at most MaxClosedPerAccount
-// per account; a revoke of a closed one is refused and removes nothing.
-func TestClosedTicketsRetainedBriefly(t *testing.T) {
+// A ticket whose guest session ended leaves the owner's list at once (the
+// audit keeps it); revoking it then is a plain not-found.
+func TestEndedTicketLeavesTheList(t *testing.T) {
 	s, _, _, clk := newTestService(t)
-	redeemUnattached := func() string {
-		m, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); err != nil {
-			t.Fatal(err)
-		}
-		return m.Ticket.ID
+	m, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	first := redeemUnattached()
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); err != nil {
+		t.Fatal(err)
+	}
 	clk.Advance(AttachWindow)
 	s.Sweep()
-	views := s.List("acc")
-	if len(views) != 1 || views[0].State != StateClosed || views[0].EndedAt == nil ||
-		views[0].EndReason == nil || *views[0].EndReason != string(terminal.CloseTicketUnattached) {
-		t.Fatalf("closed view: %+v", views)
+	if v := s.List("acc"); len(v) != 0 {
+		t.Fatalf("ended ticket listed: %+v", v)
 	}
-	clk.Advance(ClosedRetention - time.Second)
-	s.Sweep()
-	if len(s.List("acc")) != 1 {
-		t.Fatal("dropped before the retention")
+	if err := s.Revoke("acc", m.Ticket.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoke of an ended ticket: %v", err)
 	}
-	clk.Advance(time.Second)
-	s.Sweep()
-	if len(s.List("acc")) != 0 {
-		t.Fatal("kept past the retention")
-	}
-
-	// The cap: the 11th closed one drops the oldest.
-	var ids []string
-	for i := 0; i < MaxClosedPerAccount+1; i++ {
-		ids = append(ids, redeemUnattached())
-		clk.Advance(AttachWindow)
-		s.Sweep()
-	}
-	listed := map[string]bool{}
-	for _, v := range s.List("acc") {
-		listed[v.ID] = true
-	}
-	if listed[ids[0]] || len(listed) != MaxClosedPerAccount {
-		t.Errorf("cap: %d listed, oldest listed=%v", len(listed), listed[ids[0]])
-	}
-	// Revoking a closed one changes nothing: it leaves the list on its own.
-	if err := s.Revoke("acc", ids[1]); !errors.Is(err, ErrAlreadyEnded) || len(s.List("acc")) != MaxClosedPerAccount {
-		t.Errorf("revoke of a closed ticket: %v, %d listed", err, len(s.List("acc")))
-	}
-	_ = first
 }
 
 // blockingClose is a Manager whose Close hangs (a wedged transport).
@@ -408,8 +407,8 @@ func TestGuestFlapsAreBatchedForTheOwner(t *testing.T) {
 }
 
 // A deadline that has passed is enforced by the next event itself, not only
-// by the janitor: an approval after the admission window, a reconnect after
-// the grace, and Ask again after the window all end the guest session.
+// by the janitor: an approval after the admission window and a reconnect
+// after the grace both end the guest session.
 func TestDeadlinesHoldBetweenSweeps(t *testing.T) {
 	t.Run("approval after the admission window", func(t *testing.T) {
 		s, f, pub, clk := newTestService(t)
@@ -419,12 +418,8 @@ func TestDeadlinesHoldBetweenSweeps(t *testing.T) {
 		f.answers <- nil             // the owner approves too late; the session goes live
 		waitUntil(t, "closed", func() bool { return pub.last() == StateClosed })
 		waitUntil(t, "late session closed", func() bool {
-			for _, id := range f.closedIDs() {
-				if id == tr.SessionID {
-					return true
-				}
-			}
-			return false
+			got := f.closes(tr.SessionID)
+			return len(got) == 1 && got[0] == terminal.CloseTicketNotAdmitted
 		})
 	})
 	t.Run("reconnect after the grace", func(t *testing.T) {
@@ -440,23 +435,6 @@ func TestDeadlinesHoldBetweenSweeps(t *testing.T) {
 		}
 		if pub.last() != StateClosed {
 			t.Errorf("state %s, want closed", pub.last())
-		}
-	})
-	t.Run("ask again after the admission window", func(t *testing.T) {
-		s, f, pub, clk := newTestService(t)
-		gid := redeemAttached(t, s)
-		<-f.creates
-		f.answers <- errors.New("skipped")
-		waitUntil(t, "refused", func() bool { return pub.last() == StateRefused })
-		clk.Advance(AdmissionWindow) // no Sweep
-		s.Retry(gid)
-		if pub.last() != StateClosed {
-			t.Errorf("state %s, want closed", pub.last())
-		}
-		select {
-		case tr := <-f.creates:
-			t.Errorf("a new attempt started: %+v", tr)
-		default:
 		}
 	})
 }
@@ -509,8 +487,12 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := clk.Now().Add(AttachWindow); !res.AttachDeadline.Equal(want) {
-		t.Errorf("attach deadline %s, want %s (counted from consumption)", res.AttachDeadline, want)
+	gid, _ := s.GuestByCookie(res.Cookie)
+	s.mu.Lock()
+	got := s.guests[gid].attachDeadline
+	s.mu.Unlock()
+	if want := clk.Now().Add(AttachWindow); !got.Equal(want) {
+		t.Errorf("attach deadline %s, want %s (counted from consumption)", got, want)
 	}
 
 	// The janitor's expiry writes the same row shape as the redeem path.

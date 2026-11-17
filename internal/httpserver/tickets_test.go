@@ -2,10 +2,10 @@
 // One-time access tickets (#306) at the router level: mint/list/revoke,
 // redemption (uniform 404, single use under concurrency, reason, capacity,
 // the one-session 409), the guest WebSocket (Origin check, admission,
-// refusal and Ask again, End vs disconnect, several tabs, isolation from the
-// account hub), every deadline on a fake clock, and the audit trail. The
-// SSH side is a gated factory: each attempt blocks until the test approves
-// or refuses it, which is what the human's sign prompt does in production.
+// denial, End vs disconnect, several tabs, isolation from the account hub),
+// every deadline on a fake clock, and the audit trail. The SSH side is a
+// gated factory: each connect blocks until the test approves or refuses it,
+// which is what the human's sign prompt does in production.
 package httpserver
 
 import (
@@ -387,9 +387,11 @@ func statusIs(state string) func(map[string]any) bool {
 	return func(m map[string]any) bool { return m["type"] == "status" && m["state"] == state }
 }
 
+// sweep advances the clock and runs both janitors' deadline passes.
 func (r *ticketRig) sweep(d time.Duration) {
 	r.clk.Advance(d)
 	r.svc.Sweep()
+	r.mgr.SweepDeadlines()
 }
 
 // admit redeems a fresh ticket, attaches, approves, and returns the open
@@ -634,10 +636,13 @@ func TestTicketRedeemReason(t *testing.T) {
 	if strings.ContainsRune(got, 7) || len(got) > ticket.ReasonMaxLen || !strings.HasPrefix(got, "printer is down") {
 		t.Errorf("sanitized reason = %q", got)
 	}
-	for _, k := range []string{"confirmationCode", "attachDeadline", "admissionWindowSeconds", "lifetimeSeconds", "agentForward"} {
+	for _, k := range []string{"confirmationCode", "admissionWindowSeconds", "lifetimeSeconds", "agentForward"} {
 		if _, ok := res.body[k]; !ok {
 			t.Errorf("202 body lacks %s: %v", k, res.body)
 		}
+	}
+	if _, ok := res.body["attachDeadline"]; ok {
+		t.Errorf("202 body still carries attachDeadline: %v", res.body)
 	}
 	code := res.body["confirmationCode"].(string)
 	if len(code) != 4 || strings.ContainsAny(code, "01OI") {
@@ -664,8 +669,7 @@ func TestTicketLostRedemptionResponse(t *testing.T) {
 		t.Fatal("guest session dropped before the attach window")
 	}
 	r.sweep(2 * time.Second)
-	if l := r.svc.List("acc-a"); len(l) != 1 || l[0].State != ticket.StateClosed ||
-		l[0].EndReason == nil || *l[0].EndReason != string(terminal.CloseTicketUnattached) {
+	if l := r.svc.List("acc-a"); len(l) != 0 {
 		t.Fatalf("after the attach window: %+v", l)
 	}
 	r.gate.noAttempt(t)
@@ -765,137 +769,61 @@ func TestTicketAgentForwardFollowsEndpointWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestTicketRefusedAskAgainAndAdmissionWindow(t *testing.T) {
+// One connect per guest session: every key skipped ends it with the generic
+// "not granted" text (no endpoint detail), nothing connects again, and the
+// ticket leaves the owner's list. The audit keeps the real failure cause.
+func TestTicketDenialClosesGuestSession(t *testing.T) {
 	r := ticketServer(t)
 	ticketID, token := r.mint(t, "ep-a", `{}`)
 	res := r.redeem(t, token, "x", redeemOpts{})
 	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
-	first := readUntil(t, c, statusIs("pending"))
-	fp1 := r.gate.waitStarted(t)
-
-	// retry while pending is ignored.
-	writeMsg(t, c, map[string]any{"type": "retry"})
-	r.gate.noAttempt(t)
-
-	// Every key skipped: the attempt fails, the guest session survives.
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
 	r.gate.decisions <- errors.New("All configured authentication methods failed (endpoint 10.1.2.3 root)")
-	refused := readUntil(t, c, statusIs("refused"))
-	if refused["message"] != "Access was not granted." || refused["remainingSeconds"] == nil || refused["code"] != first["code"] {
-		t.Errorf("refused frame %v", refused)
+	closed := readUntil(t, c, statusIs("closed"))
+	if closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("closed frame %v", closed)
 	}
-	raw, _ := json.Marshal(refused)
+	raw, _ := json.Marshal(closed)
 	for _, leak := range []string{"10.1.2.3", "root", "Secret Box", "authentication"} {
 		if strings.Contains(string(raw), leak) {
-			t.Errorf("refused frame leaks %q: %s", leak, raw)
+			t.Errorf("closed frame leaks %q: %s", leak, raw)
 		}
 	}
-	// Nothing retries by itself.
 	r.gate.noAttempt(t)
-	// Still counted once against the cap, cookie still valid.
-	if n := len(r.svc.List("acc-a")); n != 1 {
-		t.Errorf("%d live tickets after refusal", n)
+	if n := len(r.svc.List("acc-a")); n != 0 {
+		t.Errorf("%d tickets listed after the denial", n)
 	}
+	r.wantEndedFrame(t, res.cookie)
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "attempt-failed", "ended:ticket-not-admitted")
+	page, err := audit.NewTicketEvents(r.db, nil).List(context.Background(), "acc-a",
+		audit.TicketEventFilters{TicketID: ticketID, Event: audit.TicketAttemptFailed, Limit: 10})
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].EndReason == nil ||
+		!strings.Contains(*page.Rows[0].EndReason, "authentication methods failed") {
+		t.Fatalf("attempt-failed rows: %+v %v", page.Rows, err)
+	}
+}
 
-	// Ask again: a fresh attempt with the same code and reason.
-	r.clk.Advance(time.Minute)
-	writeMsg(t, c, map[string]any{"type": "retry"})
+// The admission window (5 min from the first attach) ends a connect whose
+// prompt is still open: the setup is cancelled and the guest is not granted.
+func TestTicketAdmissionWindow(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
 	readUntil(t, c, statusIs("pending"))
-	fp2 := r.gate.waitStarted(t)
-	if fp2.SessionID == fp1.SessionID || fp2.Trigger.Ticket.ConfirmationCode != fp1.Trigger.Ticket.ConfirmationCode ||
-		fp2.Trigger.Reason != fp1.Trigger.Reason {
-		t.Errorf("retry attempt %+v vs first %+v", fp2, fp1)
-	}
-	// The admission window (5 min from the first attach) is not extended by
-	// the retry: it ends this attempt while its prompt is still open.
-	r.sweep(4*time.Minute - time.Second)
+	fp := r.gate.waitStarted(t)
+	r.sweep(ticket.AdmissionWindow - time.Second)
 	if n := len(r.svc.List("acc-a")); n != 1 {
 		t.Fatal("closed before the admission window")
 	}
 	r.sweep(2 * time.Second)
-	closed := readUntil(t, c, statusIs("closed"))
-	if closed["message"] != ticket.MsgEnded {
+	if closed := readUntil(t, c, statusIs("closed")); closed["message"] != ticket.MsgNotGranted {
 		t.Errorf("closed frame %v", closed)
 	}
-	eventually(t, "attempt cancelled", func() bool { return r.gate.cancelledCount() == 1 })
-	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "attempt-failed", "retried", "ended:ticket-not-admitted")
-}
-
-// "Ask again" is bounded: a cooldown after each refusal and MaxAttempts in
-// total; the last refusal closes the guest session. The audit keeps each
-// attempt's real failure cause (not the Manager's generic transport-error).
-func TestTicketRetryCooldownAndAttemptLimit(t *testing.T) {
-	r := ticketServer(t)
-	ticketID, token := r.mint(t, "ep-a", `{}`)
-	res := r.redeem(t, token, "x", redeemOpts{})
-	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
-	readUntil(t, c, statusIs("pending"))
-	for attempt := 1; attempt <= ticket.MaxAttempts; attempt++ {
-		r.gate.waitStarted(t)
-		r.gate.decisions <- errors.New("owner skipped every key")
-		if attempt == ticket.MaxAttempts {
-			break
-		}
-		refused := readUntil(t, c, statusIs("refused"))
-		if left := refused["attemptsLeft"]; left != float64(ticket.MaxAttempts-attempt) {
-			t.Errorf("attempt %d: attemptsLeft %v", attempt, left)
-		}
-		if refused["retryAt"] != r.clk.Now().Add(ticket.RetryCooldown).UTC().Format(clock.ISOMillis) {
-			t.Errorf("retryAt %v", refused["retryAt"])
-		}
-		// Too early: silently ignored (no attempt, no frame).
-		writeMsg(t, c, map[string]any{"type": "retry"})
-		r.gate.noAttempt(t)
-		r.clk.Advance(ticket.RetryCooldown)
-		writeMsg(t, c, map[string]any{"type": "retry"})
-		readUntil(t, c, statusIs("pending"))
-	}
-	closed := readUntil(t, c, statusIs("closed"))
-	if closed["message"] != ticket.MsgEnded {
-		t.Errorf("closed after the last attempt: %v", closed)
-	}
-	wantEvents(t, r, ticketID, "minted", "redeemed", "attached",
-		"attempt-failed", "retried", "attempt-failed", "retried", "attempt-failed", "ended:ticket-not-admitted")
-	page, err := audit.NewTicketEvents(r.db, nil).List(context.Background(), "acc-a",
-		audit.TicketEventFilters{TicketID: ticketID, Event: audit.TicketAttemptFailed, Limit: 10})
-	if err != nil || len(page.Rows) != ticket.MaxAttempts {
-		t.Fatalf("attempt-failed rows: %d %v", len(page.Rows), err)
-	}
-	for _, row := range page.Rows {
-		if row.EndReason == nil || !strings.Contains(*row.EndReason, "owner skipped every key") {
-			t.Errorf("attempt-failed reason %v, want the real cause", row.EndReason)
-		}
-	}
-}
-
-// A refusal too close to the end of the admission window for another try
-// (the cooldown would end after it) closes the guest session at once,
-// instead of advertising a retry that can never start.
-func TestTicketRefusalNearDeadlineCloses(t *testing.T) {
-	r := ticketServer(t)
-	_, token := r.mint(t, "ep-a", `{}`)
-	res := r.redeem(t, token, "x", redeemOpts{})
-	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
-	readUntil(t, c, statusIs("pending"))
-	r.gate.waitStarted(t)
-	r.clk.Advance(ticket.AdmissionWindow - ticket.RetryCooldown + time.Second)
-	r.gate.decisions <- errors.New("skipped")
-	if st := readUntil(t, c, func(m map[string]any) bool { return m["type"] == "status" && m["state"] != "pending" }); st["state"] != "closed" {
-		t.Fatalf("refusal near the deadline: %v", st)
-	}
-}
-
-func TestTicketAdmissionWindowClosesFromRefused(t *testing.T) {
-	r := ticketServer(t)
-	_, token := r.mint(t, "ep-a", `{}`)
-	res := r.redeem(t, token, "x", redeemOpts{})
-	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
-	r.gate.waitStarted(t)
-	r.gate.decisions <- errors.New("skipped")
-	readUntil(t, c, statusIs("refused"))
-	r.sweep(5 * time.Minute)
-	readUntil(t, c, statusIs("closed"))
-	// retry after the window changes nothing.
-	r.gate.noAttempt(t)
+	eventually(t, "connect cancelled", func() bool { return r.gate.cancelledCount() == 1 })
+	eventually(t, "session gone", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "ended:ticket-not-admitted")
 }
 
 func TestTicketRevokeInEveryState(t *testing.T) {
@@ -925,21 +853,20 @@ func TestTicketRevokeInEveryState(t *testing.T) {
 	}
 	readUntil(t, c, statusIs("closed"))
 	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
-	// A closed one stays listed; revoking it again is refused and keeps it.
-	if st, out := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 409 || out["error"] != "Ticket already ended" {
-		t.Errorf("revoke of an ended ticket: %d %v", st, out)
+	var reason string
+	eventually(t, "lifecycle close", func() bool {
+		return r.db.QueryRow(`SELECT COALESCE(close_reason,'') FROM audit_session_lifecycle WHERE session_id = ?`, sid).
+			Scan(&reason) == nil && reason != ""
+	})
+	if reason != string(terminal.CloseTicketRevoked) {
+		t.Errorf("terminal close reason %q, want %q", reason, terminal.CloseTicketRevoked)
 	}
-	listed := false
-	for _, v := range r.svc.List("acc-a") {
-		if v.ID == id {
-			listed = true
-			if v.Guest == nil || v.Guest.Attached || v.Guest.Connections != 0 {
-				t.Errorf("closed ticket claims a connected guest: %+v", v.Guest)
-			}
-		}
+	// An ended ticket is gone from the list: revoking it again is a 404.
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 404 {
+		t.Errorf("revoke of an ended ticket: %d, want 404", st)
 	}
-	if !listed {
-		t.Error("revoke of an ended ticket removed it")
+	if n := len(r.svc.List("acc-a")); n != 0 {
+		t.Errorf("%d tickets listed after every revoke", n)
 	}
 }
 
@@ -1011,9 +938,10 @@ func TestTicketStatusCarriesServerTime(t *testing.T) {
 	}
 }
 
+// The lifetime counts from admission and is the Manager's deadline.
 func TestTicketSessionLifetime(t *testing.T) {
 	r := ticketServer(t)
-	_, token := r.mint(t, "ep-a", `{"lifetimeSeconds":60}`)
+	ticketID, token := r.mint(t, "ep-a", `{"lifetimeSeconds":60}`)
 	res := r.redeem(t, token, "x", redeemOpts{})
 	r.clk.Advance(20 * time.Second) // before admission: not counted
 	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
@@ -1026,8 +954,11 @@ func TestTicketSessionLifetime(t *testing.T) {
 		t.Fatal("closed before the lifetime")
 	}
 	r.sweep(2 * time.Second)
-	readUntil(t, c, statusIs("closed"))
+	if closed := readUntil(t, c, statusIs("closed")); closed["message"] != ticket.MsgEnded {
+		t.Errorf("closed frame %v", closed)
+	}
 	eventually(t, "session closed", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "admitted", "ended:ticket-lifetime")
 }
 
 // --- connections --------------------------------------------------------------
@@ -1176,7 +1107,9 @@ func TestSessionLimitCountsEverySource(t *testing.T) {
 		t.Errorf("MCP over the limit: %v", err)
 	}
 	g, _ := r.dialGuest(t, r.redeem(t, second, "x", redeemOpts{}).cookie, guestOrigin)
-	readUntil(t, g, statusIs("refused"))
+	if closed := readUntil(t, g, statusIs("closed")); closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("guest over the limit: %v", closed)
+	}
 	r.gate.noAttempt(t)
 }
 
@@ -1419,8 +1352,7 @@ func TestTicketGuestRoutesIgnoreBearer(t *testing.T) {
 }
 
 // Endpoint delete is shared by REST and MCP: a live guest session (here a
-// refused one, which has no terminal session but may ask again) blocks it
-// like an open session; once the guest has ended, the delete succeeds and
+// pending one, its prompt still open) blocks it like an open session; once the guest has ended, the delete succeeds and
 // revokes the endpoint's outstanding tickets.
 func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
 	r := ticketServer(t)
@@ -1428,9 +1360,8 @@ func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
 	minted, _ := r.mint(t, "ep-a", `{}`)
 	res := r.redeem(t, token, "x", redeemOpts{})
 	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
 	r.gate.waitStarted(t)
-	r.gate.decisions <- errors.New("skipped")
-	readUntil(t, c, statusIs("refused"))
 
 	if st, out := r.ownerJSON(t, "DELETE", "/api/endpoints/ep-a", "ui", ""); st != 409 {
 		t.Fatalf("REST delete with a live guest: %d %v", st, out)
@@ -1442,7 +1373,9 @@ func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
 
 	writeMsg(t, c, map[string]any{"type": "end"})
 	readUntil(t, c, statusIs("closed"))
-	eventually(t, "guest gone", func() bool { return !r.svc.HasLiveGuestForEndpoint("acc-a", "ep-a") })
+	eventually(t, "guest gone", func() bool {
+		return !r.svc.HasLiveGuestForEndpoint("acc-a", "ep-a") && !r.mgr.HasActiveSession("acc-a", "ep-a")
+	})
 	if ok, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); err != nil || !ok {
 		t.Fatalf("MCP delete after the guest ended: %v %v", ok, err)
 	}

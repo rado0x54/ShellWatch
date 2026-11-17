@@ -481,25 +481,19 @@ func (e TicketGuestViewChannel) Valid() bool {
 
 // Defines values for TicketGuestViewState.
 const (
-	TicketGuestViewStateClosed   TicketGuestViewState = "closed"
 	TicketGuestViewStateOpen     TicketGuestViewState = "open"
 	TicketGuestViewStatePending  TicketGuestViewState = "pending"
 	TicketGuestViewStateRedeemed TicketGuestViewState = "redeemed"
-	TicketGuestViewStateRefused  TicketGuestViewState = "refused"
 )
 
 // Valid indicates whether the value is a known member of the TicketGuestViewState enum.
 func (e TicketGuestViewState) Valid() bool {
 	switch e {
-	case TicketGuestViewStateClosed:
-		return true
 	case TicketGuestViewStateOpen:
 		return true
 	case TicketGuestViewStatePending:
 		return true
 	case TicketGuestViewStateRedeemed:
-		return true
-	case TicketGuestViewStateRefused:
 		return true
 	default:
 		return false
@@ -508,19 +502,15 @@ func (e TicketGuestViewState) Valid() bool {
 
 // Defines values for TicketViewState.
 const (
-	TicketViewStateClosed   TicketViewState = "closed"
 	TicketViewStateMinted   TicketViewState = "minted"
 	TicketViewStateOpen     TicketViewState = "open"
 	TicketViewStatePending  TicketViewState = "pending"
 	TicketViewStateRedeemed TicketViewState = "redeemed"
-	TicketViewStateRefused  TicketViewState = "refused"
 )
 
 // Valid indicates whether the value is a known member of the TicketViewState enum.
 func (e TicketViewState) Valid() bool {
 	switch e {
-	case TicketViewStateClosed:
-		return true
 	case TicketViewStateMinted:
 		return true
 	case TicketViewStateOpen:
@@ -528,8 +518,6 @@ func (e TicketViewState) Valid() bool {
 	case TicketViewStatePending:
 		return true
 	case TicketViewStateRedeemed:
-		return true
-	case TicketViewStateRefused:
 		return true
 	default:
 		return false
@@ -1596,7 +1584,9 @@ type TicketEventPage struct {
 type TicketEventRow struct {
 	AccountId    string `json:"accountId"`
 	AgentForward bool   `json:"agentForward"`
-	Attempt      *int   `json:"attempt"`
+
+	// Attempt Always null since #327 (one connect per guest session); rows written before carry the admission attempt number.
+	Attempt *int `json:"attempt"`
 
 	// Channel `web` once redeemed.
 	Channel          *string `json:"channel"`
@@ -1610,7 +1600,7 @@ type TicketEventRow struct {
 	EndReason  *string `json:"endReason"`
 	EndpointId string  `json:"endpointId"`
 
-	// Event minted | redeemed | attached | attempt-failed | retried | admitted | detached | reattached | ended | revoked | expired | invalidated. Not enum-constrained.
+	// Event minted | redeemed | attached | attempt-failed | admitted | detached | reattached | ended | revoked | expired | invalidated. Not enum-constrained (rows written before #327 may also read `retried`).
 	//
 	// Example: minted
 	Event           string `json:"event"`
@@ -1638,9 +1628,6 @@ type TicketGuestView struct {
 	// Attached At least one guest connection is open.
 	Attached bool `json:"attached"`
 
-	// Attempt Number of admission attempts so far.
-	Attempt int `json:"attempt"`
-
 	// Channel `ssh` follows with #307.
 	Channel TicketGuestViewChannel `json:"channel"`
 
@@ -1655,7 +1642,7 @@ type TicketGuestView struct {
 	Reason     string `json:"reason"`
 	RedeemedAt string `json:"redeemedAt"`
 
-	// SessionId The admitted terminal session, or the running attempt's.
+	// SessionId The guest's one terminal session: set on the first attach (connecting while `pending`, admitted once `open`).
 	SessionId *string              `json:"sessionId"`
 	SourceIp  string               `json:"sourceIp"`
 	State     TicketGuestViewState `json:"state"`
@@ -1670,18 +1657,12 @@ type TicketGuestViewChannel string
 // TicketGuestViewState defines model for TicketGuestView.State.
 type TicketGuestViewState string
 
-// TicketView The owner's view of a one-time access ticket and, once redeemed, its guest session (#306). Tickets live in process memory: a restart invalidates them. Listed while the ticket is unredeemed or its guest session is live, then for 5 minutes as `closed` (at most 10 per account); afterwards only the audit log has it.
+// TicketView The owner's view of a one-time access ticket and, once redeemed, its guest session (#306). Tickets live in process memory: a restart invalidates them. Listed while the ticket is unredeemed or its guest session is live; once the guest session ends the ticket leaves the list at once and only the audit log (`GET /api/audit/tickets`) has it.
 type TicketView struct {
 	// AgentForward When true the endpoint's own agentForward setting is honoured; when false no forwarding channel is opened whatever the endpoint says.
 	AgentForward bool   `json:"agentForward"`
 	CreatedAt    string `json:"createdAt"`
-
-	// EndReason Why the guest session closed (a terminal close reason, e.g. `client.guest`, `ticket-revoked`, `ticket-lifetime`); state `closed` only.
-	EndReason *string `json:"endReason"`
-
-	// EndedAt When the guest session closed (state `closed` only).
-	EndedAt    *string `json:"endedAt"`
-	EndpointId string  `json:"endpointId"`
+	EndpointId   string `json:"endpointId"`
 
 	// ExpiresAt End of the redeem TTL.
 	ExpiresAt string `json:"expiresAt"`
@@ -1698,11 +1679,11 @@ type TicketView struct {
 	ReasonRequired   bool `json:"reasonRequired"`
 	RedeemTtlSeconds int  `json:"redeemTtlSeconds"`
 
-	// State `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted; `closed` — the guest session ended (`endReason`). A closed ticket stays listed for 5 minutes, at most 10 per account.
+	// State `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — the guest session's one connect is running (sign prompts are open); `open` — admitted. A denial, a failed connect or the end of the admission window ends the guest session; the owner mints a new ticket.
 	State TicketViewState `json:"state"`
 }
 
-// TicketViewState `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted; `closed` — the guest session ended (`endReason`). A closed ticket stays listed for 5 minutes, at most 10 per account.
+// TicketViewState `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — the guest session's one connect is running (sign prompts are open); `open` — admitted. A denial, a failed connect or the end of the admission window ends the guest session; the owner mints a new ticket.
 type TicketViewState string
 
 // TransferResult Outcome body of a transfer link request (upload always; download only when it failed before the response body started). Same shape as the shellwatch_transfer_file `status` result.

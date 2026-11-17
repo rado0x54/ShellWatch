@@ -5,14 +5,11 @@
       {
         "agentForward": false,
         "createdAt": "<TS>",
-        "endReason": null,
-        "endedAt": null,
         "endpointId": "ep-a",
         "expiresAt": "<TS>",
         "guest": {
           "admissionDeadline": null,
           "attached": false,
-          "attempt": 0,
           "channel": "web",
           "confirmationCode": "<REDACTED>",
           "connections": 0,

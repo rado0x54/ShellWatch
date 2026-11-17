@@ -2,11 +2,13 @@
 <!--
   Guest access (#306): everything the owner has shared, in one place.
   - Active: guests who used their link: connecting, waiting for approval,
-    refused (may ask again), connected. End access revokes the ticket.
+    connected. End access revokes the ticket.
   - Unused links: minted, not used yet. Revoke deletes the link.
-  - Recently ended: kept by the server for 5 minutes (at most 10), with why
-    it ended; they leave on their own. Audit → Tickets has the history.
-  The list is the tickets store, refreshed on every tickets:changed.
+  - Recently ended: the latest `ended` rows of the ticket audit, with why it
+    ended (an ended ticket leaves the live list at once). Audit → Tickets has
+    the full history.
+  The live list is the tickets store, refreshed on every tickets:changed; the
+  ended list is refetched whenever the live list changes.
 -->
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
@@ -18,6 +20,7 @@
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import { openConnectDialog } from "$lib/stores/connect-dialog.js";
   import { endpoints } from "$lib/stores/endpoints.js";
+  import { fetchTicketEvents, type TicketEventRow } from "$lib/stores/ticket-audit.js";
   import {
     endReasonLabel,
     fetchTickets,
@@ -40,6 +43,29 @@
   let confirmEnd = $state<Ticket | null>(null);
 
   const groups = $derived(groupTickets($tickets));
+
+  /** How many ended guest sessions "Recently ended" shows. */
+  const RECENT_ENDED = 10;
+  let ended = $state<TicketEventRow[]>([]);
+  /** Bumped by every fetch: only the latest one may set the list. */
+  let endedSeq = 0;
+
+  async function loadEnded(): Promise<void> {
+    const mine = ++endedSeq;
+    try {
+      const page = await fetchTicketEvents({ event: "ended" }, undefined, RECENT_ENDED);
+      if (mine === endedSeq) ended = page.rows;
+    } catch {
+      // Keep the last list; the next change refetches.
+    }
+  }
+
+  // Every ending changes the live list (the ticket leaves it), so a change
+  // there is when the ended list can have grown.
+  $effect(() => {
+    void $tickets;
+    void loadEnded();
+  });
 
   onMount(() => {
     void fetchTickets().catch(() => {});
@@ -78,8 +104,6 @@
         return { label: "connecting", cls: "badge-pending" };
       case "pending":
         return { label: "waiting for approval", cls: "badge-pending" };
-      case "refused":
-        return { label: "not admitted", cls: "badge-unavailable" };
       case "open":
         return t.guest?.attached
           ? { label: "connected", cls: "badge-available" }
@@ -123,8 +147,8 @@
     <div>
       <h1>Guest access</h1>
       <p class="subtitle">
-        One-time access you shared. Ended sessions stay here for 5 minutes; the full history is
-        under Audit → Tickets.
+        One-time access you shared. Recently ended shows the last {RECENT_ENDED}; the full history
+        is under Audit → Tickets.
       </p>
     </div>
     <button type="button" class="btn btn-primary" onclick={() => openConnectDialog("share")}>
@@ -207,24 +231,24 @@
 
   <section>
     <h2>Recently ended</h2>
-    <SettingsList empty={groups.ended.length === 0} emptyText="Nothing ended recently">
-      {#each groups.ended as t (t.id)}
+    <SettingsList empty={ended.length === 0} emptyText="Nothing ended recently">
+      {#each ended as row (row.id)}
         <SettingsRow detailLabel="Details">
           {#snippet primary()}
-            <span class="row-label">{t.label || "(no label)"}</span>
-            <span class="row-endpoint">{endpointLabel(t.endpointId)}</span>
-            <span class="badge">{endReasonLabel(t.endReason)}</span>
+            <span class="row-label">{row.ticketLabel || "(no label)"}</span>
+            <span class="row-endpoint">{endpointLabel(row.endpointId)}</span>
+            <span class="badge">{endReasonLabel(row.endReason)}</span>
           {/snippet}
           {#snippet secondary()}
-            ended {time(t.endedAt)}
-            {#if t.guest}
+            ended {time(row.createdAt)}
+            {#if row.confirmationCode}
               <span class="sep">·</span>code
-              <span class="code">{t.guest.confirmationCode}</span><span class="sep">·</span>{t.guest
-                .sourceIp}
+              <span class="code">{row.confirmationCode}</span><span class="sep">·</span
+              >{row.sourceIp}
             {/if}
           {/snippet}
           {#snippet detailSlot()}
-            {@render details(t)}
+            {@render endedDetails(row)}
           {/snippet}
         </SettingsRow>
       {/each}
@@ -247,35 +271,60 @@
       <dd>{t.guest.userAgent || "—"} <span class="muted">(reported by the guest)</span></dd>
       <dt>Used</dt>
       <dd>{time(t.guest.redeemedAt)}</dd>
-      <dt>Attempts</dt>
-      <dd>{t.guest.attempt}</dd>
-      {#if t.state !== "closed"}
-        <dt>Connections</dt>
-        <dd>{t.guest.connections}</dd>
-      {/if}
+      <dt>Connections</dt>
+      <dd>{t.guest.connections}</dd>
       {#if t.guest.sessionId}
         <dt>Session</dt>
         <dd><code>{t.guest.sessionId}</code></dd>
       {/if}
     {/if}
-    {#if t.endedAt}
-      <dt>Ended</dt>
-      <dd>{time(t.endedAt)} — {endReasonLabel(t.endReason)}</dd>
-    {/if}
     <dt>Created</dt>
     <dd>{time(t.createdAt)}</dd>
-    <dt>Options</dt>
-    <dd>
-      link valid {formatTicketDuration(t.redeemTtlSeconds)} · session {formatTicketDuration(
-        t.lifetimeSeconds,
-      )} · reason
-      {t.reasonRequired ? "required" : "optional"} · agent forwarding {t.agentForward
-        ? "on"
-        : "off"}
-    </dd>
+    {@render options(t)}
     <dt>Ticket</dt>
     <dd><code>{t.id}</code></dd>
   </dl>
+{/snippet}
+
+{#snippet endedDetails(row: TicketEventRow)}
+  <dl class="detail-grid">
+    <dt>Endpoint</dt>
+    <dd>{endpointLabel(row.endpointId)}</dd>
+    {#if row.confirmationCode}
+      <dt>Code</dt>
+      <dd class="code">{row.confirmationCode}</dd>
+      <dt>Reason</dt>
+      <dd>{row.reason || "—"} <span class="muted">(stated by the guest)</span></dd>
+      <dt>From</dt>
+      <dd>{row.sourceIp ?? "—"}</dd>
+      <dt>Browser</dt>
+      <dd>{row.userAgent || "—"} <span class="muted">(reported by the guest)</span></dd>
+    {/if}
+    {#if row.sessionId}
+      <dt>Session</dt>
+      <dd><code>{row.sessionId}</code></dd>
+    {/if}
+    <dt>Ended</dt>
+    <dd>{time(row.createdAt)} — {endReasonLabel(row.endReason)}</dd>
+    {@render options(row)}
+    <dt>Ticket</dt>
+    <dd><code>{row.ticketId}</code></dd>
+  </dl>
+{/snippet}
+
+{#snippet options(o: {
+  redeemTtlSeconds: number;
+  lifetimeSeconds: number;
+  reasonRequired: boolean;
+  agentForward: boolean;
+})}
+  <dt>Options</dt>
+  <dd>
+    link valid {formatTicketDuration(o.redeemTtlSeconds)} · session {formatTicketDuration(
+      o.lifetimeSeconds,
+    )} · reason
+    {o.reasonRequired ? "required" : "optional"} · agent forwarding {o.agentForward ? "on" : "off"}
+  </dd>
 {/snippet}
 
 {#if confirmEnd}

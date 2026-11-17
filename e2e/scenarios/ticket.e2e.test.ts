@@ -4,9 +4,9 @@
  * file-key endpoint; a headless guest (no bearer, only the ticket and then the
  * guest cookie) redeems it, attaches /ws/guest and waits; the owner's /ws gets
  * the normal endpoint-auth key-approve prompt carrying the ticket trigger and
- * the guest's confirmation code. Skipping it refuses the attempt, Ask again
- * raises a fresh prompt, approving it admits the guest onto the real sshd,
- * and End closes everything and kills the cookie.
+ * the guest's confirmation code. Skipping it ends the guest session (one
+ * connect per ticket); on a new ticket, approving the prompt admits the guest
+ * onto the real sshd, and End closes everything and kills the cookie.
  */
 import WebSocket from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,7 +20,7 @@ import {
   type WsClient,
 } from "../harness/clients.js";
 import { recordScenario } from "../harness/out.js";
-import { sleep, stripAnsi, waitFor } from "../harness/util.js";
+import { stripAnsi, waitFor } from "../harness/util.js";
 
 const target = sshdTargets()[0]!;
 const COOKIE = "__Host-sw_guest";
@@ -30,9 +30,6 @@ interface GuestFrame {
   state?: string;
   code?: string;
   message?: string;
-  remainingSeconds?: number;
-  retryAt?: string;
-  attemptsLeft?: number;
   data?: string;
   reset?: boolean;
 }
@@ -143,6 +140,12 @@ describe(`one-time access ticket on sshd-${target}`, () => {
 
   const nextPrompt = () => ws.next<SignRequestFrame>("sign:request", { timeoutMs: 20_000 });
 
+  /** A ticket's audit events, oldest first. */
+  const ticketEvents = async (id: string): Promise<string[]> =>
+    (await sc.api.get<{ rows: { event: string }[] }>(`/api/audit/tickets?ticketId=${id}`)).body.rows
+      .map((r) => r.event)
+      .reverse();
+
   it("admits a guest only through the owner's approval, on the real sshd", async () => {
     const minted = await sc.api.post<{ ticket: { id: string }; token: string }>(
       `/api/endpoints/${endpointId}/tickets`,
@@ -191,40 +194,53 @@ describe(`one-time access ticket on sshd-${target}`, () => {
       lifetimeSeconds: 900,
     });
 
-    // Skip every key: the attempt ends, the guest may ask again.
+    // Skip every key: the one connect fails and the guest session ends.
     await denySignRequest(sc.api, first);
-    const refused = await guest.status("refused", 30_000);
-    expect(refused.message).toBe("Access was not granted.");
-    expect(refused.remainingSeconds).toBeGreaterThan(0);
+    expect((await guest.status("closed", 30_000)).message).toBe("Access was not granted.");
     expect(JSON.stringify(guest.frames)).not.toMatch(/E2E ticket|filekey|authentication/);
+    guest.close();
+    expect(await ticketEvents(ticketId)).toEqual([
+      "minted",
+      "redeemed",
+      "attached",
+      "attempt-failed",
+      "ended",
+    ]);
 
-    // Ask again, once the cooldown has passed: a fresh prompt with the same
-    // code; approve it.
-    expect(refused.attemptsLeft).toBe(2);
-    // (+20 ms: timers are not exact, and an early retry is silently ignored.)
-    await sleep(Math.max(0, Date.parse(refused.retryAt!) - Date.now()) + 20);
-    guest.send({ type: "retry" });
-    await guest.status("pending");
+    // The owner mints a new ticket; approving its prompt admits the guest.
+    const again = await sc.api.post<{ ticket: { id: string }; token: string }>(
+      `/api/endpoints/${endpointId}/tickets`,
+      { label: "Printer fix" },
+    );
+    const ticketId2 = again.body.ticket.id;
+    const guest2 = new Guest();
+    expect((await guest2.redeem(again.body.token, "fix the printer")).status).toBe(202);
+    expect(await guest2.attach()).toBe(101);
+    await guest2.status("pending");
     const second = await nextPrompt();
     expect(second.actionId).not.toBe(first.actionId);
     const approved = await approveSignRequest(sc.api, second, null);
     expect(approved.status, JSON.stringify(approved.body)).toBe(200);
-    await guest.status("open", 30_000);
+    await guest2.status("open", 30_000);
 
     // A real shell round-trip as the guest.
-    await waitFor(() => /\$ ?$/m.test(guest.output()), { timeoutMs: 15_000, what: "prompt" });
-    guest.send({ type: "input", data: "echo guest-$((40 + 2))\n" });
-    await waitFor(() => guest.output().includes("guest-42"), { timeoutMs: 15_000, what: "echo" });
+    await waitFor(() => /\$ ?$/m.test(guest2.output()), { timeoutMs: 15_000, what: "prompt" });
+    guest2.send({ type: "input", data: "echo guest-$((40 + 2))\n" });
+    await waitFor(() => guest2.output().includes("guest-42"), { timeoutMs: 15_000, what: "echo" });
 
     // The owner sees the guest session in the normal list.
     const sessions = await sc.api.get<{ sessions: Record<string, unknown>[] }>("/api/sessions");
     const sess = sessions.body.sessions.find((s) => s.source === "ticket");
-    expect(sess).toMatchObject({ ticketId, ticketLabel: "Printer fix", guestAttached: true });
+    expect(sess).toMatchObject({
+      ticketId: ticketId2,
+      ticketLabel: "Printer fix",
+      guestAttached: true,
+    });
 
     // End: closed for good; the cookie no longer attaches.
-    guest.send({ type: "end" });
-    expect((await guest.status("closed")).message).toBe("The session has ended.");
-    guest.close();
+    guest2.send({ type: "end" });
+    expect((await guest2.status("closed")).message).toBe("The session has ended.");
+    guest2.close();
     await waitFor(
       async () => {
         const s = await sc.api.get<{ sessions: { source: string }[] }>("/api/sessions");
@@ -233,25 +249,17 @@ describe(`one-time access ticket on sshd-${target}`, () => {
       { what: "guest session gone" },
     );
     // A reconnect with the dead cookie is told at once, in a frame (#321).
-    expect(await guest.attach()).toBe(101);
-    expect((await guest.status("closed")).message).toBe("The session has ended.");
-    guest.close();
+    expect(await guest2.attach()).toBe(101);
+    expect((await guest2.status("closed")).message).toBe("The session has ended.");
+    guest2.close();
 
     const audit = await sc.api.get<{ rows: { event: string; endReason: string | null }[] }>(
-      `/api/audit/tickets?ticketId=${ticketId}`,
+      `/api/audit/tickets?ticketId=${ticketId2}`,
     );
     const events = audit.body.rows.map((r) => r.event).reverse();
-    expect(events).toEqual([
-      "minted",
-      "redeemed",
-      "attached",
-      "attempt-failed",
-      "retried",
-      "admitted",
-      "ended",
-    ]);
+    expect(events).toEqual(["minted", "redeemed", "attached", "admitted", "ended"]);
     expect(audit.body.rows[0]!.endReason).toBe("client.guest");
-    rec.note(`ticket ${ticketId}: ${events.join(" → ")}`);
+    rec.note(`ticket ${ticketId2}: ${events.join(" → ")}`);
   });
 
   it("revoking from the prompt ends a waiting guest at once", async () => {
@@ -264,7 +272,7 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     expect(await guest.attach()).toBe(101);
     const prompt = await nextPrompt();
     expect((await sc.api.delete(`/api/tickets/${minted.body.ticket.id}`)).status).toBe(200);
-    expect((await guest.status("closed")).message).toBe("The session has ended.");
+    expect((await guest.status("closed")).message).toBe("Access was not granted.");
     await waitFor(
       async () =>
         (await sc.api.get<{ status: string }>(`/api/actions/${prompt.actionId}`)).status !== 200 ||

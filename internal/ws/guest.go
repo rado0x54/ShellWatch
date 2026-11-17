@@ -38,7 +38,6 @@ type GuestService interface {
 	Attach(guestID string) error
 	Detach(guestID string)
 	End(guestID string)
-	Retry(guestID string)
 }
 
 // GuestHub owns every guest connection, keyed by guest session.
@@ -355,7 +354,7 @@ func (h *GuestHub) serve(ctx context.Context, wsc *websocket.Conn, guestID strin
 	}
 }
 
-// route accepts only input, resize, end and retry — always for the guest's
+// route accepts only input, resize and end — always for the guest's
 // own session. Everything else is dropped.
 func (h *GuestHub) route(c *guestConn, msg *guestMessage) {
 	switch msg.Type {
@@ -369,8 +368,6 @@ func (h *GuestHub) route(c *guestConn, msg *guestMessage) {
 		}
 	case "end":
 		h.svc.End(c.guestID)
-	case "retry":
-		h.svc.Retry(c.guestID)
 	}
 }
 
