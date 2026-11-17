@@ -78,7 +78,7 @@ func fullHandler(t *testing.T) chi.Router {
 
 	transfers := transfer.New(transfer.Params{Manager: manager})
 	t.Cleanup(transfers.Close)
-	tickets := ticket.New(ticket.Params{Manager: manager, ResolveEndpoint: epSvc.RefForAccount, NewID: func() string { return "id" }})
+	tickets := ticket.New(ticket.Params{Manager: manager, ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open, NewID: func() string { return "id" }})
 	t.Cleanup(tickets.Close)
 	guestHub := ws.NewGuestHub(ws.GuestHubParams{Manager: manager, Service: tickets, ExternalURL: func() string { return externalURL }})
 	t.Cleanup(guestHub.Close)
@@ -88,7 +88,7 @@ func fullHandler(t *testing.T) chi.Router {
 		StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WebAuthn: waDeps, HydraAdmin: fake, HasPasskeys: func() bool { return true },
 		Endpoints: &rest.Endpoints{Svc: withSessions(epSvc, manager), NewID: func() string { return "id" }, StepUp: stepUp},
-		Sessions:  &rest.Sessions{Manager: manager, Svc: epSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
+		Sessions:  &rest.Sessions{Manager: manager, Svc: epSvc},
 		WSHub:     hub,
 		MCP:       &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
 		Actions:   &rest.Actions{Store: actionStore},
@@ -179,7 +179,7 @@ func TestRouteCoverageAgainstSpec(t *testing.T) {
 }
 
 // withSessions wires the endpoint-delete active-session guard.
-func withSessions(svc *endpointsvc.Service, sessions endpointsvc.ActiveSessions) *endpointsvc.Service {
+func withSessions(svc *endpointsvc.Service, sessions endpointsvc.SessionManager) *endpointsvc.Service {
 	svc.Sessions = sessions
 	return svc
 }

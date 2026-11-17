@@ -460,7 +460,7 @@ func run() error {
 	ticketLog := audit.NewTicketEvents(db, clk)
 	tickets := ticket.New(ticket.Params{
 		Ctx: ctx, Manager: manager, Clock: clk, Audit: ticketLog, Notifier: wsHub,
-		ResolveEndpoint: epSvc.RefForAccount,
+		ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open,
 		AccountActive: func(ctx context.Context, accountID string) (bool, error) {
 			acc, err := accountsStore.Get(ctx, accountID)
 			return err == nil && acc != nil && acc.Enabled, err
@@ -471,8 +471,11 @@ func run() error {
 	// Endpoint delete (REST and MCP alike) is refused while sessions or
 	// guests are active, and revokes the endpoint's tickets afterwards.
 	epSvc.Sessions = manager
+	epSvc.MaxSessions = accountsStore.MaxSessions
+	epSvc.Audit = auditWriter
 	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
 	epSvc.OnDeleted = tickets.CloseForEndpoint
+	epSvc.OnTargetChanged = tickets.RevokeUnredeemedForEndpoint
 	guestHub := ws.NewGuestHub(ws.GuestHubParams{
 		Manager: manager, Service: tickets,
 		ExternalURL: func() string { return cfg.Server.ExternalURL },
@@ -484,11 +487,10 @@ func run() error {
 
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
-		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
+		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc},
 		Keys:           store.NewSSHKeys(db),
 		Version:        buildInfo.Display,
 		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
-		MaxOwned:       store.NewAccounts(db).MaxSessions,
 		Transfers:      transfers,
 	}
 
@@ -534,12 +536,10 @@ func run() error {
 			Svc:    epSvc,
 			NewID:  newUUID,
 			StepUp: webauthnDeps.StepUp,
-			Audit:  auditWriter,
 		},
 		Sessions: &rest.Sessions{
 			Manager:       manager,
 			Svc:           epSvc,
-			MaxSessions:   store.NewAccounts(db).MaxSessions,
 			GuestAttached: tickets.GuestAttached,
 		},
 		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},

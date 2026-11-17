@@ -2215,8 +2215,9 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
           description: >-
-            The account is at its cap of 3 live guest sessions (`Retry-After`
-            set; the ticket is not consumed), or the per-IP rate limit.
+            The per-IP rate limit. There is no separate guest cap: a guest's
+            session counts against the owner's `max_sessions` when it
+            connects, and a guest refused there sees an ended attempt.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2272,7 +2273,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: Per-account concurrent session limit reached
+          description: >-
+            The account's `max_sessions` is reached. It counts every opening
+            or open session of the account, whatever the source (UI, MCP or a
+            one-time access guest). `error` reads "Maximum concurrent
+            sessions (N) reached".
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

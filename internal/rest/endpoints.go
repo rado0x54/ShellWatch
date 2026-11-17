@@ -12,25 +12,20 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rado0x54/shellwatch/internal/api"
-	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/config"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
+	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
-// HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
-// nil skips auditing — tests). The returned audit id is unused here.
-type HostKeyAuditor interface {
-	RecordHostKeyEvent(ev audit.HostKeyEvent) string
-}
+const demoReadOnlyMsg = "Demo endpoints are read-only — toggle visibility instead"
 
 // Endpoints wires the endpoint CRUD routes.
 type Endpoints struct {
@@ -39,8 +34,6 @@ type Endpoints struct {
 	NewID func() string
 	// StepUp gates the host-key routes (#241).
 	StepUp *webauthn.StepUpStore
-	// Audit records host-key-cleared events (#241); may be nil in tests.
-	Audit HostKeyAuditor
 }
 
 func (e *Endpoints) Mount(r chi.Router) {
@@ -84,52 +77,50 @@ func (e *Endpoints) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"endpoints": out})
 }
 
-func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
-	body := readRawBody(r)
-
-	label := strings.TrimSpace(stringField(body, "label"))
-	host := strings.TrimSpace(stringField(body, "host"))
-	if label == "" || host == "" {
-		writeErr(w, 400, "label and host are required")
-		return
-	}
-	uv := "required"
-	if raw, ok := body["userVerification"]; ok {
-		v := jsonString(raw)
-		if !endpointsvc.IsUserVerification(v) {
-			writeErr(w, 400, userVerificationErr())
-			return
+// patchFromBody decodes an endpoint body as Node did: a non-string string
+// field reads as "", a non-integer port is ignored. agentForward must be a
+// boolean and description a string or null; the service checks the rest.
+func patchFromBody(body map[string]json.RawMessage) (endpointsvc.EndpointPatch, string) {
+	var p endpointsvc.EndpointPatch
+	str := func(key string) *string {
+		raw, ok := body[key]
+		if !ok {
+			return nil
 		}
-		uv = v
+		v := jsonString(raw)
+		return &v
 	}
-	if raw, ok := body["agentForward"]; ok && !isJSONBool(raw) {
-		writeErr(w, 400, "agentForward must be a boolean")
-		return
-	}
-	desc, ok := normalizeDescription(body["description"])
-	if !ok {
-		writeErr(w, 400, descriptionErr())
-		return
-	}
-
-	port := int64(22)
+	p.Label, p.Host, p.Username, p.UserVerification = str("label"), str("host"), str("username"), str("userVerification")
 	if raw, ok := body["port"]; ok {
-		_ = json.Unmarshal(raw, &port)
+		var port *int64
+		if json.Unmarshal(raw, &port) == nil {
+			p.Port = port
+		}
 	}
-	username := "shellwatch"
-	if raw, ok := body["username"]; ok {
-		username = jsonString(raw)
-	}
-	agentForward := true
 	if raw, ok := body["agentForward"]; ok {
-		_ = json.Unmarshal(raw, &agentForward)
+		if !isJSONBool(raw) {
+			return p, "agentForward must be a boolean"
+		}
+		fwd := string(raw) == "true"
+		p.AgentForward = &fwd
 	}
+	if raw, ok := body["description"]; ok {
+		p.DescriptionSet = true
+		if json.Unmarshal(raw, &p.Description) != nil { // null clears
+			return p, "description must be a string up to 1000 characters"
+		}
+	}
+	return p, ""
+}
 
+func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
+	patch, msg := patchFromBody(readRawBody(r))
+	if msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
 	id := e.NewID()
-	if err := e.Svc.Endpoints.Create(r.Context(), store.Endpoint{
-		ID: id, AccountID: accountID(r), Label: label, Host: host, Port: port,
-		Username: username, UserVerification: uv, Description: desc, AgentForward: agentForward,
-	}); err != nil {
+	if err := e.Svc.Create(r.Context(), endpointsvc.CreateParams{ID: id, AccountID: accountID(r), Patch: patch}); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -137,72 +128,25 @@ func (e *Endpoints) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if demo.IsID(id) {
-		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
+	patch, msg := patchFromBody(readRawBody(r))
+	if msg != "" {
+		writeErr(w, 400, msg)
 		return
 	}
-	body := readRawBody(r)
-	if raw, ok := body["userVerification"]; ok && !endpointsvc.IsUserVerification(jsonString(raw)) {
-		writeErr(w, 400, userVerificationErr())
-		return
-	}
-	if raw, ok := body["agentForward"]; ok && !isJSONBool(raw) {
-		writeErr(w, 400, "agentForward must be a boolean")
-		return
-	}
-	descSet := false
-	var desc *string
-	if raw, present := body["description"]; present {
-		d, ok := normalizeDescription(raw)
-		if !ok {
-			writeErr(w, 400, descriptionErr())
-			return
-		}
-		desc, descSet = d, true
-	}
-
-	existing, err := e.Svc.Endpoints.GetForAccount(r.Context(), id, accountID(r))
-	if err != nil {
+	ok, err := e.Svc.Update(r.Context(), endpointsvc.UpdateParams{
+		ID: chi.URLParam(r, "id"), AccountID: accountID(r), Patch: patch,
+		By: endpointsvc.Actor{Via: "REST", SourceIP: realip.FromRequest(r)},
+	})
+	switch {
+	case errors.Is(err, endpointsvc.ErrDemoReadOnly):
+		writeErr(w, 400, demoReadOnlyMsg)
+	case err != nil:
 		writeErr(w, 400, err.Error())
-		return
-	}
-	if existing == nil {
+	case !ok:
 		writeErr(w, 400, "Endpoint not found")
-		return
+	default:
+		writeJSON(w, 200, api.StatusUpdated{Status: api.Updated})
 	}
-	merged := *existing
-	if raw, ok := body["label"]; ok {
-		merged.Label = jsonString(raw)
-	}
-	if raw, ok := body["host"]; ok {
-		merged.Host = jsonString(raw)
-	}
-	if raw, ok := body["port"]; ok {
-		_ = json.Unmarshal(raw, &merged.Port)
-	}
-	if raw, ok := body["username"]; ok {
-		merged.Username = jsonString(raw)
-	}
-	if raw, ok := body["userVerification"]; ok {
-		merged.UserVerification = jsonString(raw)
-	}
-	if raw, ok := body["agentForward"]; ok {
-		_ = json.Unmarshal(raw, &merged.AgentForward)
-	}
-	if descSet {
-		merged.Description = desc
-	}
-	if _, err := e.Svc.Endpoints.Update(r.Context(), merged); err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	// The store cleared the pin atomically when host/port changed (#241);
-	// record the audit trail here where the before/after values are known.
-	if existing.HostKey != nil && (existing.Host != merged.Host || existing.Port != merged.Port) {
-		e.auditHostKeyCleared(*existing, "endpoint host/port updated via REST")
-	}
-	writeJSON(w, 200, api.StatusUpdated{Status: api.Updated})
 }
 
 func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +154,7 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 	ok, err := e.Svc.Delete(r.Context(), id, accountID(r))
 	switch {
 	case errors.Is(err, endpointsvc.ErrDemoReadOnly):
-		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
+		writeErr(w, 400, demoReadOnlyMsg)
 		return
 	case errors.Is(err, endpointsvc.ErrActiveSessions):
 		writeErr(w, 409, err.Error())
@@ -232,7 +176,7 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 func (e *Endpoints) pinHostKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if demo.IsID(id) {
-		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
+		writeErr(w, 400, demoReadOnlyMsg)
 		return
 	}
 	body := readRawBody(r)
@@ -286,7 +230,7 @@ func (e *Endpoints) pinHostKey(w http.ResponseWriter, r *http.Request) {
 func (e *Endpoints) deleteHostKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if demo.IsID(id) {
-		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
+		writeErr(w, 400, demoReadOnlyMsg)
 		return
 	}
 	existing, err := e.Svc.Endpoints.GetForAccount(r.Context(), id, accountID(r))
@@ -304,54 +248,7 @@ func (e *Endpoints) deleteHostKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cleared && existing.HostKey != nil {
-		e.auditHostKeyCleared(*existing, "host key forgotten via settings")
+		e.Svc.AuditHostKeyCleared(*existing, "host key forgotten via settings", endpointsvc.Actor{Via: "REST"})
 	}
 	writeJSON(w, 200, api.StatusDeleted{Status: api.Deleted})
-}
-
-// auditHostKeyCleared writes the host-key-cleared audit row for a pin that
-// ep (the pre-change endpoint) carried.
-func (e *Endpoints) auditHostKeyCleared(ep store.Endpoint, reason string) {
-	if e.Audit == nil || ep.HostKey == nil {
-		return
-	}
-	e.Audit.RecordHostKeyEvent(audit.HostKeyEvent{
-		Type: "host-key-cleared", Source: "endpoint-admin",
-		AccountID: ep.AccountID, EndpointID: ep.ID, EndpointLabel: ep.Label,
-		EndpointAddress: endpointAddress(ep),
-		Fingerprint:     ep.HostKey.Fingerprint,
-		Reason:          reason,
-	})
-}
-
-func endpointAddress(ep store.Endpoint) string {
-	return ep.Username + "@" + ep.Host + ":" + strconv.FormatInt(ep.Port, 10)
-}
-
-// normalizeDescription mirrors normalizeDescription in endpoints.ts: tri-state
-// JSON (absent/null -> nil, string -> trimmed or nil, too long/non-string -> !ok).
-func normalizeDescription(raw json.RawMessage) (*string, bool) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, true
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, false
-	}
-	if len(s) > endpointsvc.DescriptionMaxLen {
-		return nil, false
-	}
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return nil, true
-	}
-	return &trimmed, true
-}
-
-func userVerificationErr() string {
-	return "userVerification must be one of: " + strings.Join(endpointsvc.UserVerificationValues, ", ")
-}
-
-func descriptionErr() string {
-	return "description must be a string up to 1000 characters"
 }

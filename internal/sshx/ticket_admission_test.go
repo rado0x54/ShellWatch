@@ -84,14 +84,19 @@ func newTicketSSHRig(t *testing.T, port int) *ticketSSHRig {
 		Username: "root", UserVerification: "required", AgentForward: true}
 	n := 0
 	clk := clock.NewFake(time.Now())
+	resolve := func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
+		if id == "e1" && acc == "acc" {
+			r := *ref
+			return &r, nil
+		}
+		return nil, nil
+	}
 	svc := ticket.New(ticket.Params{
-		Manager: mgr, Clock: clk,
-		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
-			if id == "e1" && acc == "acc" {
-				r := *ref
-				return &r, nil
-			}
-			return nil, nil
+		Manager: mgr, Clock: clk, ResolveEndpoint: resolve,
+		Open: func(ctx context.Context, acc, id string, tr terminal.Trigger) (*terminal.Session, error) {
+			r, _ := resolve(ctx, id, acc)
+			r.AgentForward = r.AgentForward && tr.Ticket.AgentForward
+			return mgr.Create(ctx, *r, acc, tr)
 		},
 		NewID: func() string { n++; return "tkt-" + string(rune('0'+n)) },
 	})

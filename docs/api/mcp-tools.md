@@ -130,7 +130,9 @@ Demo endpoints (`demo:*`) are read-only: create/update/delete return `isError`.
 while the endpoint has active sessions of any source — UI, MCP or a one-time
 access guest, including a guest still waiting for approval; ended sessions do
 not count. A successful delete revokes the endpoint's outstanding tickets. MCP
-has no way to force it (REST behaves the same; see #315).
+has no way to force it (REST behaves the same). An `update` never touches
+running sessions; changing `host`, `port` or `username` also revokes the
+endpoint's unredeemed tickets (they were minted for the old target).
 
 ### `shellwatch_create_session`
 
@@ -138,6 +140,12 @@ Input: `{ endpointId: string; reason: string /* ≤500, non-empty, trimmed */ }`
 `reason` is shown to the human approver. Success →
 `{ sessionId, endpointId, status }`. _(No `createdAt`/`source` — narrower than the
 REST/WS session object.)_
+
+The session limit is the account's `max_sessions` (default 20), counted
+account-wide: every opening or open session of the account, whether the UI,
+any MCP client or a one-time access guest opened it. Over the limit the tool
+returns `isError` with `Maximum concurrent sessions (N) reached`. Ended
+sessions do not count.
 
 Host-key errors (#241, Go only) surface as the usual `isError` text:
 

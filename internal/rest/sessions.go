@@ -6,7 +6,6 @@
 package rest
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,9 +23,8 @@ import (
 // Sessions wires the session routes.
 type Sessions struct {
 	Manager *terminal.Manager
-	Svc     *endpointsvc.Service
-	// MaxSessions resolves an account's concurrent-session cap.
-	MaxSessions func(ctx context.Context, accountID string) (int, bool)
+	// Svc opens sessions (endpoint lookup + max_sessions).
+	Svc *endpointsvc.Service
 	// GuestAttached reports whether a ticket guest is attached to a session
 	// (#306; ok=false for any other session). nil-able.
 	GuestAttached func(sessionID string) (attached, ok bool)
@@ -72,42 +70,26 @@ func toSessionDTO(s terminal.Session) api.TerminalSession {
 }
 
 func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
-	acc := accountID(r)
-	if s.MaxSessions != nil {
-		if max, ok := s.MaxSessions(r.Context(), acc); ok {
-			if s.Manager.CountOpenForAccount(acc) >= max {
-				writeErr(w, 429, "Maximum concurrent sessions ("+strconv.Itoa(max)+") reached")
-				return
-			}
-		}
-	}
-
-	body := readRawBody(r)
-	endpointID := stringField(body, "endpointId")
-
-	ref, err := s.Svc.RefForAccount(r.Context(), endpointID, acc)
-	if err != nil || ref == nil {
-		writeErr(w, 404, "Endpoint not found")
-		return
-	}
-	sess, err := s.Manager.Create(r.Context(), *ref, acc, terminal.Trigger{
+	sess, err := s.Svc.Open(r.Context(), accountID(r), stringField(readRawBody(r), "endpointId"), terminal.Trigger{
 		Kind: terminal.SourceUI, SourceIP: realip.FromRequest(r),
 	})
-	if err != nil {
-		// The SSH connect (incl. passkey signing handshake) failed; the
-		// Manager logs the reason (terminal: session connect failed).
-		// A failure that was already published to the notification log (e.g. a
-		// host-key mismatch) carries the notification id (#252): the client
-		// dedupes its error toast against the pushed notification by identity.
-		var notified *sshx.NotifiedError
-		if errors.As(err, &notified) {
-			apierr.WriteNotified(w, 400, err.Error(), notified.NotificationID)
-			return
-		}
+	var limit *terminal.LimitError
+	var notified *sshx.NotifiedError
+	switch {
+	case errors.Is(err, endpointsvc.ErrEndpointNotFound), errors.Is(err, endpointsvc.ErrEndpointLookup):
+		writeErr(w, 404, "Endpoint not found")
+	case errors.As(err, &limit):
+		writeErr(w, 429, err.Error())
+	case errors.As(err, &notified):
+		// The connect failed and was published to the notification log (e.g.
+		// a host-key mismatch, #252): the client dedupes its error toast
+		// against the pushed notification by id. The Manager logs the reason.
+		apierr.WriteNotified(w, 400, err.Error(), notified.NotificationID)
+	case err != nil:
 		writeErr(w, 400, err.Error())
-		return
+	default:
+		writeJSON(w, 200, toSessionDTO(*sess))
 	}
-	writeJSON(w, 200, toSessionDTO(*sess))
 }
 
 func (s *Sessions) list(w http.ResponseWriter, r *http.Request) {

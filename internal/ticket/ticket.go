@@ -28,6 +28,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/util"
 )
@@ -41,9 +42,6 @@ const (
 	// ReconnectGrace is how long a guest session survives with no guest
 	// connection attached.
 	ReconnectGrace = 60 * time.Second
-	// MaxGuestSessions caps an account's live guest sessions (redeemed,
-	// pending, refused and open). Separate from max_sessions.
-	MaxGuestSessions = 3
 	// MaxOutstanding caps an account's unredeemed tickets.
 	MaxOutstanding = 20
 	// MaxConnections caps guest WebSocket connections per guest session.
@@ -98,9 +96,6 @@ var (
 	ErrLiveGuest = errors.New("a guest session is already active in this browser")
 	// ErrReasonRequired: the ticket requires a reason and none was given.
 	ErrReasonRequired = errors.New("a reason is required")
-	// ErrCapacity: the account is at its guest-session cap; the ticket is
-	// NOT consumed.
-	ErrCapacity = errors.New("too many guest sessions")
 	// ErrTooManyTickets: the account has MaxOutstanding unredeemed tickets.
 	ErrTooManyTickets = errors.New("too many outstanding tickets")
 	// ErrEndpointNotFound: mint for an endpoint the account cannot use.
@@ -186,7 +181,6 @@ type Auditor interface {
 
 // Sessions is the subset of the terminal Manager the service drives.
 type Sessions interface {
-	Create(ctx context.Context, ep terminal.EndpointRef, expectedAccountID string, trigger terminal.Trigger) (*terminal.Session, error)
 	Close(sessionID string, reason terminal.CloseReason)
 	SubscribeStatus(fn func(terminal.StatusEvent)) func()
 }
@@ -203,6 +197,9 @@ type Params struct {
 	// ResolveEndpoint resolves an endpoint for an account (nil when it does
 	// not resolve: unknown, foreign, deleted or disabled).
 	ResolveEndpoint func(ctx context.Context, endpointID, accountID string) (*terminal.EndpointRef, error)
+	// Open opens a guest's terminal session (endpointsvc.Service.Open: the
+	// account's max_sessions applies, guests included).
+	Open func(ctx context.Context, accountID, endpointID string, trigger terminal.Trigger) (*terminal.Session, error)
 	// AccountActive reports whether the account exists and is enabled. An
 	// error means "could not tell" and never invalidates a ticket.
 	AccountActive func(ctx context.Context, accountID string) (bool, error)
@@ -671,12 +668,6 @@ type Redeemed struct {
 	AgentForward     bool
 }
 
-// CapacityError is ErrCapacity with a retry hint.
-type CapacityError struct{ RetryAfter time.Duration }
-
-func (e *CapacityError) Error() string { return ErrCapacity.Error() }
-func (e *CapacityError) Unwrap() error { return ErrCapacity }
-
 // HasLiveGuestForEndpoint reports whether the account has a live guest
 // session (any state before closed) on the endpoint.
 func (s *Service) HasLiveGuestForEndpoint(accountID, endpointID string) bool {
@@ -843,19 +834,6 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 			replaced = old
 		}
 	}
-	live := s.liveGuestsLocked(t.accountID)
-	if replaced != nil && replaced.t.accountID == t.accountID {
-		live-- // its slot is freed below
-	}
-	if live >= MaxGuestSessions {
-		// Checked before the replaced session is closed: a rejected
-		// redemption leaves the browser's current session alone.
-		retry := s.retryAfterLocked(t.accountID)
-		s.mu.Unlock()
-		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "guest session cap reached",
-			"account", t.accountID, "sourceIp", p.SourceIP)
-		return Redeemed{}, &CapacityError{RetryAfter: retry}
-	}
 	if replaced != nil {
 		slog.Info("ticket: guest session replaced", "ticket", replaced.t.id, "by", t.id, "sourceIp", p.SourceIP)
 		s.closeLocked(replaced, terminal.CloseClientGuest, &fx)
@@ -894,44 +872,6 @@ func (s *Service) invalidate(t *ticket, event, why string) {
 	fx.ownerTickets(t.accountID)
 	s.mu.Unlock()
 	s.apply(&fx)
-}
-
-func (s *Service) liveGuestsLocked(accountID string) int {
-	n := 0
-	for _, g := range s.guests {
-		if g.t.accountID == accountID && g.state != StateClosed {
-			n++
-		}
-	}
-	return n
-}
-
-// retryAfterLocked estimates when a guest slot frees: the earliest hard
-// deadline among the account's live guest sessions.
-func (s *Service) retryAfterLocked(accountID string) time.Duration {
-	now := s.clk.Now()
-	best := time.Duration(0)
-	for _, g := range s.guests {
-		if g.t.accountID != accountID || g.state == StateClosed {
-			continue
-		}
-		var d time.Time
-		switch {
-		case g.state == StateOpen:
-			d = g.lifetimeDeadline
-		case g.admissionDeadline.IsZero():
-			d = g.attachDeadline
-		default:
-			d = g.admissionDeadline
-		}
-		if left := d.Sub(now); left > 0 && (best == 0 || left < best) {
-			best = left
-		}
-	}
-	if best < time.Second {
-		best = time.Second
-	}
-	return best
 }
 
 // --- guest connections ------------------------------------------------------
@@ -1177,8 +1117,7 @@ func (s *Service) startAttemptLocked(g *guest, fx *effects) {
 		},
 	}
 	go s.runAttempt(ctx, attemptParams{
-		guestID: g.id, n: n, accountID: t.accountID, endpointID: t.endpointID,
-		agentForward: t.opts.AgentForward, trigger: trigger,
+		guestID: g.id, n: n, accountID: t.accountID, endpointID: t.endpointID, trigger: trigger,
 	})
 }
 
@@ -1188,28 +1127,16 @@ type attemptParams struct {
 	// n is the attempt number; events of a superseded attempt are ignored.
 	n                     int
 	accountID, endpointID string
-	// agentForward is the ticket's option (the endpoint's setting also
-	// applies).
-	agentForward bool
-	trigger      terminal.Trigger
+	trigger               terminal.Trigger
 }
 
 func (s *Service) runAttempt(ctx context.Context, a attemptParams) {
-	ref, err := s.p.ResolveEndpoint(ctx, a.endpointID, a.accountID)
-	if err != nil || ref == nil {
-		if err == nil {
-			// The endpoint was removed or disabled since redemption: the
-			// guest session cannot be admitted any more.
-			s.closeByID(a.guestID, terminal.CloseEndpointRemoved)
-			return
-		}
-		s.attemptFailed(a.guestID, a.n, "endpoint lookup failed: "+err.Error())
+	sess, err := s.p.Open(ctx, a.accountID, a.endpointID, a.trigger)
+	if errors.Is(err, endpointsvc.ErrEndpointNotFound) {
+		// Removed or disabled since redemption: it cannot be admitted.
+		s.closeByID(a.guestID, terminal.CloseEndpointRemoved)
 		return
 	}
-	ep := *ref
-	// Agent forwarding never goes beyond the endpoint's own setting.
-	ep.AgentForward = ep.AgentForward && a.agentForward
-	sess, err := s.p.Manager.Create(ctx, ep, a.accountID, a.trigger)
 	if err != nil {
 		s.attemptFailed(a.guestID, a.n, err.Error())
 		return
@@ -1419,6 +1346,32 @@ func (s *Service) CloseForEndpoint(accountID, endpointID string) {
 	s.closeMatching(func(t *ticket) bool {
 		return t.accountID == accountID && t.endpointID == endpointID
 	}, terminal.CloseEndpointRemoved)
+}
+
+// RevokeUnredeemedForEndpoint drops the endpoint's unredeemed tickets: its
+// host, port or username changed, and they were minted for the old target.
+// Redeemed tickets and running guest sessions are left alone.
+func (s *Service) RevokeUnredeemedForEndpoint(accountID, endpointID string) {
+	var fx effects
+	s.mu.Lock()
+	n := 0
+	for _, t := range s.tickets {
+		if t.accountID == accountID && t.endpointID == endpointID && t.guest == nil && t.endedAt.IsZero() {
+			s.dropTicketLocked(t)
+			ev := s.event(t, nil, audit.TicketInvalidated)
+			ev.EndReason = "endpoint target changed"
+			fx.audits = append(fx.audits, ev)
+			n++
+		}
+	}
+	if n > 0 {
+		fx.ownerTickets(accountID)
+	}
+	s.mu.Unlock()
+	s.apply(&fx)
+	if n > 0 {
+		slog.Info("ticket: revoked for endpoint change", "account", accountID, "endpoint", endpointID, "count", n)
+	}
 }
 
 func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseReason) {

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Package endpointsvc is the shared endpoint read/resolution layer for REST,
-// the agent session (MCP), and session creation. It owns the demo-endpoint
-// merge rules and the field constraints both wire layers enforce — before it
-// existed, the demo-aware resolution was hand-rolled three times and the
-// validation constants twice, and the copies had already drifted once.
-// Delete is shared by REST and MCP (#314): the active-session guard and the
-// post-delete hooks must apply to both. Create/update still go straight to
-// Endpoints from each wire layer (#315 moves them here too): demo entries are
-// synthesized per request, never stored, and the wire layers reject demo ids
-// before mutating.
+// Package endpointsvc is the one endpoint service for REST, MCP and the
+// ticket service (#326): reads (demo-aware), create/update (defaults,
+// validation, merge, host-key audit), delete (active-session guard) and
+// opening a session (lookup, max_sessions, Manager.Create). The wire layers
+// only decode and map errors. Demo entries are synthesized per request,
+// never stored, and are read-only.
 package endpointsvc
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 
+	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
@@ -37,16 +37,23 @@ func IsUserVerification(v string) bool {
 	return false
 }
 
-// Service resolves endpoints account-scoped and demo-aware. Demo may be nil
-// (no demo endpoints configured).
+// DefaultMaxSessions applies when an account's max_sessions can't be read.
+const DefaultMaxSessions = 20
+
+// Service is the endpoint service. Demo may be nil (no demo endpoints
+// configured); every other nil-able field is noted.
 type Service struct {
 	Endpoints *store.Endpoints
 	Demo      *demo.Service
 
-	// Sessions reports active (not ended) terminal sessions, guest sessions
-	// included (terminal.Manager). nil skips that part of the delete guard
-	// (tests).
-	Sessions ActiveSessions
+	// Sessions is terminal.Manager: the delete guard and Open. nil skips the
+	// guard (tests); Open needs it.
+	Sessions SessionManager
+	// MaxSessions resolves an account's max_sessions; nil or a miss applies
+	// DefaultMaxSessions.
+	MaxSessions func(ctx context.Context, accountID string) (int, bool)
+	// Audit records host-key-cleared events (*audit.Writer). nil-able.
+	Audit HostKeyAuditor
 	// LiveGuest reports a live guest session for the endpoint, including one
 	// with no terminal session right now (waiting to attach, or refused and
 	// allowed to ask again): it may still dial the endpoint, so it blocks a
@@ -55,11 +62,20 @@ type Service struct {
 	// OnDeleted runs after a delete, so the endpoint's outstanding tickets
 	// end with it (#306). nil-able.
 	OnDeleted func(accountID, endpointID string)
+	// OnTargetChanged runs after an update changed host, port or username:
+	// unredeemed tickets were minted for the old target. nil-able.
+	OnTargetChanged func(accountID, endpointID string)
 }
 
-// ActiveSessions is satisfied by terminal.Manager.
-type ActiveSessions interface {
+// SessionManager is satisfied by terminal.Manager.
+type SessionManager interface {
 	HasActiveSession(accountID, endpointID string) bool
+	Create(ctx context.Context, ep terminal.EndpointRef, expectedAccountID string, trigger terminal.Trigger) (*terminal.Session, error)
+}
+
+// HostKeyAuditor records host-key audit events (satisfied by *audit.Writer).
+type HostKeyAuditor interface {
+	RecordHostKeyEvent(ev audit.HostKeyEvent) string
 }
 
 var (
@@ -67,7 +83,198 @@ var (
 	ErrDemoReadOnly = errors.New("Demo endpoints are read-only")
 	// ErrActiveSessions: the endpoint has active sessions (any source).
 	ErrActiveSessions = errors.New("Cannot delete endpoint with active sessions")
+	// ErrLabelHostRequired: create without a label or host.
+	ErrLabelHostRequired = errors.New("label and host are required")
+	// ErrEndpointNotFound: Open on an id that doesn't resolve for the account.
+	ErrEndpointNotFound = errors.New("Endpoint not found")
+	// ErrEndpointLookup: Open could not read the endpoint (wrapped cause).
+	ErrEndpointLookup = errors.New("endpoint lookup failed")
 )
+
+// FieldError is a patch field outside its constraints; Msg names the field
+// without a wire prefix (REST writes it as is, MCP prefixes "data.").
+type FieldError struct{ Msg string }
+
+func (e *FieldError) Error() string { return e.Msg }
+
+// EndpointPatch is a typed partial endpoint; nil fields keep the stored value
+// (update) or take the default (create). Description carries an explicit set
+// flag so a JSON null can clear it.
+type EndpointPatch struct {
+	Label            *string
+	Host             *string
+	Port             *int64
+	Username         *string
+	UserVerification *string
+	AgentForward     *bool
+	Description      *string // applied only when DescriptionSet; nil clears
+	DescriptionSet   bool
+}
+
+func (p EndpointPatch) validate() error {
+	if p.UserVerification != nil && !IsUserVerification(*p.UserVerification) {
+		return &FieldError{"userVerification must be one of: " + strings.Join(UserVerificationValues, ", ")}
+	}
+	if p.Description != nil && len(*p.Description) > DescriptionMaxLen {
+		return &FieldError{"description must be a string up to 1000 characters"}
+	}
+	return nil
+}
+
+// apply merges the patch into ep. Descriptions are trimmed; blank clears.
+func (p EndpointPatch) apply(ep *store.Endpoint) {
+	set := func(dst *string, v *string) {
+		if v != nil {
+			*dst = *v
+		}
+	}
+	set(&ep.Label, p.Label)
+	set(&ep.Host, p.Host)
+	set(&ep.Username, p.Username)
+	set(&ep.UserVerification, p.UserVerification)
+	if p.Port != nil {
+		ep.Port = *p.Port
+	}
+	if p.AgentForward != nil {
+		ep.AgentForward = *p.AgentForward
+	}
+	if p.DescriptionSet {
+		ep.Description = nil
+		if p.Description != nil {
+			if d := strings.TrimSpace(*p.Description); d != "" {
+				ep.Description = &d
+			}
+		}
+	}
+}
+
+// CreateParams configures Create. The id is the wire layer's (REST mints
+// one, MCP takes the caller's).
+type CreateParams struct {
+	ID, AccountID string
+	Patch         EndpointPatch
+}
+
+// Create stores a new endpoint. Defaults: port 22, username "shellwatch",
+// userVerification "required", agentForward true. Label and host are
+// trimmed and required.
+func (s *Service) Create(ctx context.Context, p CreateParams) error {
+	if demo.IsID(p.ID) {
+		return ErrDemoReadOnly
+	}
+	if err := p.Patch.validate(); err != nil {
+		return err
+	}
+	ep := store.Endpoint{
+		ID: p.ID, AccountID: p.AccountID, Port: 22, Username: "shellwatch",
+		UserVerification: "required", AgentForward: true,
+	}
+	p.Patch.DescriptionSet = true
+	p.Patch.apply(&ep)
+	ep.Label, ep.Host = strings.TrimSpace(ep.Label), strings.TrimSpace(ep.Host)
+	if ep.Label == "" || ep.Host == "" {
+		return ErrLabelHostRequired
+	}
+	if err := s.Endpoints.Create(ctx, ep); err != nil {
+		return err
+	}
+	slog.Info("endpoint: created", "account", p.AccountID, "endpoint", p.ID)
+	return nil
+}
+
+// Actor names who changed an endpoint, for the host-key audit.
+type Actor struct {
+	Via                             string // "REST" or "MCP"
+	MCPClientName, MCPClientVersion string
+	SourceIP                        string
+}
+
+// UpdateParams configures Update.
+type UpdateParams struct {
+	ID, AccountID string
+	Patch         EndpointPatch
+	By            Actor
+}
+
+// Update read-merges a patch into a stored endpoint. Running sessions keep
+// the copy they connected with. A host or port change clears the pinned host
+// key (in the store) and audits it; a host, port or username change revokes
+// the endpoint's unredeemed tickets. Returns false when nothing matched.
+func (s *Service) Update(ctx context.Context, p UpdateParams) (bool, error) {
+	if demo.IsID(p.ID) {
+		return false, ErrDemoReadOnly
+	}
+	if err := p.Patch.validate(); err != nil {
+		return false, err
+	}
+	old, err := s.Endpoints.GetForAccount(ctx, p.ID, p.AccountID)
+	if err != nil || old == nil {
+		return false, err
+	}
+	merged := *old
+	p.Patch.apply(&merged)
+	if ok, err := s.Endpoints.Update(ctx, merged); err != nil || !ok {
+		return ok, err
+	}
+	slog.Info("endpoint: updated", "account", p.AccountID, "endpoint", p.ID)
+	if old.Host != merged.Host || old.Port != merged.Port {
+		s.AuditHostKeyCleared(*old, "endpoint host/port updated via "+p.By.Via, p.By)
+	}
+	if (old.Host != merged.Host || old.Port != merged.Port || old.Username != merged.Username) && s.OnTargetChanged != nil {
+		s.OnTargetChanged(p.AccountID, p.ID)
+	}
+	return true, nil
+}
+
+// AuditHostKeyCleared records that ep's pinned host key (if any) was cleared.
+func (s *Service) AuditHostKeyCleared(ep store.Endpoint, reason string, by Actor) {
+	if s.Audit == nil || ep.HostKey == nil {
+		return
+	}
+	s.Audit.RecordHostKeyEvent(audit.HostKeyEvent{
+		Type: "host-key-cleared", Source: "endpoint-admin",
+		AccountID: ep.AccountID, EndpointID: ep.ID, EndpointLabel: ep.Label,
+		EndpointAddress: ep.Username + "@" + ep.Host + ":" + strconv.FormatInt(ep.Port, 10),
+		Fingerprint:     ep.HostKey.Fingerprint, Reason: reason,
+		MCPClientName: by.MCPClientName, MCPClientVersion: by.MCPClientVersion, SourceIP: by.SourceIP,
+	})
+}
+
+// Open is the one way to open a session (UI, MCP, guest): resolve the
+// endpoint, apply max_sessions — every opening or open session of the
+// account, any source — and connect. Errors: ErrEndpointNotFound,
+// ErrEndpointLookup, *terminal.LimitError, or the connect error. A guest's
+// agent forwarding never goes beyond the endpoint's own setting.
+func (s *Service) Open(ctx context.Context, accountID, endpointID string, trigger terminal.Trigger) (*terminal.Session, error) {
+	ref, err := s.RefForAccount(ctx, endpointID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrEndpointLookup, err)
+	}
+	if ref == nil {
+		return nil, ErrEndpointNotFound
+	}
+	if trigger.Ticket != nil {
+		ref.AgentForward = ref.AgentForward && trigger.Ticket.AgentForward
+	}
+	max := DefaultMaxSessions
+	if s.MaxSessions != nil {
+		if m, ok := s.MaxSessions(ctx, accountID); ok {
+			max = m
+		}
+	}
+	trigger.MaxActive = max
+	var sess *terminal.Session
+	if max <= 0 { // a stored 0 blocks every open; it never means "unlimited"
+		err = &terminal.LimitError{Max: max}
+	} else {
+		sess, err = s.Sessions.Create(ctx, *ref, accountID, trigger)
+	}
+	if limit := (*terminal.LimitError)(nil); errors.As(err, &limit) {
+		slog.Info("terminal: session refused", "account", accountID, "endpoint", endpointID,
+			"source", trigger.Kind, "reason", "session limit reached", "max", max)
+	}
+	return sess, err
+}
 
 // Delete removes an account-scoped endpoint for REST and MCP alike. It is
 // refused while the endpoint has active sessions (UI, MCP or guest, or a guest

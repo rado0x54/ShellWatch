@@ -5,6 +5,7 @@ package terminal
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -102,6 +103,17 @@ type Trigger struct {
 	SessionID string
 	// Ticket is set for source ticket (#306): what the approval prompt shows.
 	Ticket *TicketTrigger
+	// MaxActive > 0 refuses the create with a *LimitError when the account
+	// already has that many active (opening or open) sessions of any source.
+	// Checked under the registry lock, so concurrent creates cannot overshoot.
+	MaxActive int
+}
+
+// LimitError: the account is at its max_sessions.
+type LimitError struct{ Max int }
+
+func (e *LimitError) Error() string {
+	return fmt.Sprintf("Maximum concurrent sessions (%d) reached", e.Max)
 }
 
 // TicketTrigger is the ticket context of a guest session's create (#306).

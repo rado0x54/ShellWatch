@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -153,14 +154,14 @@ func ticketServer(t *testing.T) *ticketRig {
 	epSvc := &endpointsvc.Service{Endpoints: epStore, Demo: demo.NewService([]config.SeedEndpoint{{
 		Label: "Demo", Parsed: config.EndpointAddress{Host: "demo.example", Port: 22, Username: "sw"},
 	}})}
-	rig := &ticketRig{clk: clk, mgr: mgr, hub: hub, gate: gate, db: db, maxSess: 1,
+	rig := &ticketRig{clk: clk, mgr: mgr, hub: hub, gate: gate, db: db, maxSess: 20,
 		demoID: epSvc.Demo.List("acc-a")[0].ID}
 	accounts := store.NewAccounts(db)
 	audit.NewWriter(db, clk).AttachManager(mgr, mgr.GetSession)
 	ticketLog := audit.NewTicketEvents(db, clk)
 	svc := ticket.New(ticket.Params{
 		Manager: mgr, Clock: clk, Audit: ticketLog, Notifier: hub,
-		ResolveEndpoint: epSvc.RefForAccount,
+		ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open,
 		AccountActive: func(ctx context.Context, id string) (bool, error) {
 			if rig.lookupErr.Load() {
 				return false, errors.New("database is locked")
@@ -192,15 +193,16 @@ func ticketServer(t *testing.T) *ticketRig {
 	})
 	rig.svc = svc
 	epSvc.Sessions = mgr
+	epSvc.MaxSessions = func(context.Context, string) (int, bool) { return rig.maxSess, true }
 	epSvc.LiveGuest = svc.HasLiveGuestForEndpoint
 	epSvc.OnDeleted = svc.CloseForEndpoint
+	epSvc.OnTargetChanged = svc.RevokeUnredeemedForEndpoint
 	rig.epSvc = epSvc
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		WSHub:     hub,
-		Endpoints: &rest.Endpoints{Svc: epSvc, NewID: ids.NewUUID},
-		Sessions: &rest.Sessions{Manager: mgr, Svc: epSvc, GuestAttached: svc.GuestAttached,
-			MaxSessions: func(context.Context, string) (int, bool) { return rig.maxSess, true }},
+		WSHub:        hub,
+		Endpoints:    &rest.Endpoints{Svc: epSvc, NewID: ids.NewUUID},
+		Sessions:     &rest.Sessions{Manager: mgr, Svc: epSvc, GuestAttached: svc.GuestAttached},
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
 		Tickets:      &rest.Tickets{Service: svc, ExternalURL: func() string { return externalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: svc, ExternalURL: func() string { return externalURL }},
@@ -1141,59 +1143,88 @@ func dialOwnerWS(t *testing.T, ts *httptest.Server, token string) *websocket.Con
 
 // --- capacity ---------------------------------------------------------------
 
-func TestTicketGuestCapacity(t *testing.T) {
+// max_sessions counts every active session of the account, any source (#326):
+// a guest, a UI and an MCP session fill a limit of 3, and then every channel
+// is refused with the limit named.
+func TestSessionLimitCountsEverySource(t *testing.T) {
 	r := ticketServer(t)
-	var tokens []string
-	for i := 0; i < 5; i++ {
-		_, tok := r.mint(t, "ep-a", `{}`)
-		tokens = append(tokens, tok)
-	}
-	var wg sync.WaitGroup
-	results := make([]redeemResult, len(tokens))
-	for i, tok := range tokens {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = r.redeem(t, tok, "x", redeemOpts{})
-		}()
-	}
-	wg.Wait()
-	var ok, full []int
-	for i, res := range results {
-		switch res.status {
-		case 202:
-			ok = append(ok, i)
-		case 429:
-			full = append(full, i)
-			if res.header.Get("Retry-After") == "" {
-				t.Error("429 without Retry-After")
-			}
-		default:
-			t.Errorf("redeem %d: %d %s", i, res.status, res.raw)
-		}
-	}
-	if len(ok) != ticket.MaxGuestSessions || len(full) != 2 {
-		t.Fatalf("202s %v, 429s %v", ok, full)
-	}
-	// Guest sessions don't use up UI capacity (max_sessions 1 here): admit
-	// one guest, then open a UI session.
-	c, _ := r.dialGuest(t, results[ok[0]].cookie, guestOrigin)
+	r.maxSess = 3
+	ctx := context.Background()
+	_, first := r.mint(t, "ep-a", `{}`)
+	_, second := r.mint(t, "ep-a", `{}`)
+	c, _ := r.dialGuest(t, r.redeem(t, first, "x", redeemOpts{}).cookie, guestOrigin)
 	r.gate.waitStarted(t)
 	r.gate.decisions <- nil
 	readUntil(t, c, statusIs("open"))
-	if n := r.mgr.CountOpenForAccount("acc-a"); n != 0 {
-		t.Errorf("CountOpenForAccount counts guest sessions: %d", n)
-	}
 	r.gate.decisions <- nil
 	if st, out := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`); st != 200 {
-		t.Errorf("UI session next to a guest session: %d %v", st, out)
+		t.Fatalf("UI session: %d %v", st, out)
 	}
 	<-r.gate.started
-	// Ending a guest session frees a slot; the 429'd ticket was not consumed.
-	writeMsg(t, c, map[string]any{"type": "end"})
-	readUntil(t, c, statusIs("closed"))
-	if res := r.redeem(t, tokens[full[0]], "x", redeemOpts{}); res.status != 202 {
-		t.Errorf("429'd ticket after a slot freed: %d %s", res.status, res.raw)
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
+	r.gate.decisions <- nil
+	if _, err := mcp.CreateSession(ctx, "ep-a", "why"); err != nil {
+		t.Fatalf("MCP session: %v", err)
+	}
+	<-r.gate.started
+
+	const want = "Maximum concurrent sessions (3) reached"
+	if st, out := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`); st != 429 || out["error"] != want {
+		t.Errorf("UI over the limit: %d %v", st, out)
+	}
+	if _, err := mcp.CreateSession(ctx, "ep-a", "why"); err == nil || err.Error() != want {
+		t.Errorf("MCP over the limit: %v", err)
+	}
+	g, _ := r.dialGuest(t, r.redeem(t, second, "x", redeemOpts{}).cookie, guestOrigin)
+	readUntil(t, g, statusIs("refused"))
+	r.gate.noAttempt(t)
+}
+
+// An endpoint edit leaves running sessions alone; a host, port or username
+// change revokes the endpoint's unredeemed tickets (#326).
+func TestEndpointTargetChangeRevokesUnredeemedTickets(t *testing.T) {
+	r := ticketServer(t)
+	_, label := r.mint(t, "ep-a", `{}`)
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"label":"Renamed"}`); st != 200 {
+		t.Fatalf("label edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, label, "x", redeemOpts{}); res.status != 202 {
+		t.Fatalf("a label edit revoked a ticket: %d %s", res.status, res.raw)
+	}
+	_, token := r.mint(t, "ep-a", `{}`)
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"port":2222}`); st != 200 {
+		t.Fatalf("port edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 404 {
+		t.Errorf("ticket for the old target still redeemable: %d %s", res.status, res.raw)
+	}
+}
+
+// REST and MCP create through the one endpoint service: the same input is
+// stored identically apart from the id.
+func TestEndpointCreateRESTAndMCPStoreTheSameRow(t *testing.T) {
+	r := ticketServer(t)
+	ctx := context.Background()
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints", "ui",
+		`{"label":"Box","host":"h.example","port":2200,"username":"root","agentForward":false,"description":"jump"}`)
+	if st != 200 {
+		t.Fatalf("REST create: %d %v", st, out)
+	}
+	label, host, user, desc, port, fwd := "Box", "h.example", "root", "jump", int64(2200), false
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
+	if err := mcp.CreateEndpoint(ctx, "mcp-ep", endpointsvc.EndpointPatch{
+		Label: &label, Host: &host, Port: &port, Username: &user, AgentForward: &fwd, Description: &desc, DescriptionSet: true,
+	}); err != nil {
+		t.Fatalf("MCP create: %v", err)
+	}
+	viaREST, _ := mcp.GetEndpoint(ctx, out["id"].(string))
+	viaMCP, _ := mcp.GetEndpoint(ctx, "mcp-ep")
+	if viaREST == nil || viaMCP == nil {
+		t.Fatalf("rows: %v %v", viaREST, viaMCP)
+	}
+	viaMCP.ID = viaREST.ID
+	if !reflect.DeepEqual(*viaREST, *viaMCP) {
+		t.Errorf("REST %+v\nMCP  %+v", *viaREST, *viaMCP)
 	}
 }
 
@@ -1358,7 +1389,7 @@ func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
 	if st, out := r.ownerJSON(t, "DELETE", "/api/endpoints/ep-a", "ui", ""); st != 409 {
 		t.Fatalf("REST delete with a live guest: %d %v", st, out)
 	}
-	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c", MaxOwned: -1})
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
 	if _, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); !errors.Is(err, endpointsvc.ErrActiveSessions) {
 		t.Fatalf("MCP delete with a live guest: %v", err)
 	}
