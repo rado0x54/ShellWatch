@@ -265,11 +265,18 @@ type guest struct {
 
 // Service is the ticket lifecycle owner.
 type Service struct {
-	p      Params
-	clk    clock.Clock
-	ctx    context.Context
-	cancel context.CancelFunc
-	unsub  func()
+	p   Params
+	clk clock.Clock
+	// eventIDs orders audit rows by when events happen (see event).
+	eventIDs audit.OrderedIDs
+
+	// Batched owner notifications for guest attach/detach (notifySoon).
+	notifyMu      sync.Mutex
+	notifyPending map[string]bool // account -> session list too
+	notifyArmed   bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	unsub         func()
 
 	mu        sync.Mutex
 	pub       Publisher
@@ -369,8 +376,13 @@ func (s *Service) apply(fx *effects) {
 	}
 }
 
+// event builds an audit event, stamped with its time and a time-ordered id
+// now — callers hold s.mu, so ids follow the order events happen in, even
+// though apply writes them after the lock is released.
 func (s *Service) event(t *ticket, g *guest, name string) audit.TicketEvent {
+	at := s.clk.Now()
 	ev := audit.TicketEvent{
+		ID: s.eventIDs.Next(at), At: at,
 		AccountID: t.accountID, TicketID: t.id, Event: name, EndpointID: t.endpointID,
 		TicketLabel: t.opts.Label, RedeemTTLSeconds: int(t.opts.RedeemTTL / time.Second),
 		LifetimeSeconds: int(t.opts.Lifetime / time.Second),
@@ -951,8 +963,10 @@ func (s *Service) Attach(guestID string) error {
 		fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketAttached))
 		slog.Info("ticket: attached", "ticket", g.t.id, "account", g.t.accountID)
 		s.startAttemptLocked(g, &fx)
+		fx.ownerTickets(g.t.accountID)
 	} else {
-		if wasDetached && g.conns == 1 {
+		reattached := wasDetached && g.conns == 1
+		if reattached {
 			fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketReattached))
 			slog.Info("ticket: guest reattached", "ticket", g.t.id, "state", g.state)
 		}
@@ -960,10 +974,11 @@ func (s *Service) Attach(guestID string) error {
 		if g.state == StateOpen && s.pub != nil {
 			s.pub.GuestOpen(g.id, g.sessionID)
 		}
-	}
-	fx.ownerTickets(g.t.accountID)
-	if g.sessionID != "" {
-		fx.ownerSessions(g.t.accountID)
+		// Only the attached flag flipping changes what the owner sees (a
+		// second tab does not), and a flapping connection is batched.
+		if reattached {
+			defer s.notifySoon(g.t.accountID, g.sessionID != "")
+		}
 	}
 	s.mu.Unlock()
 	s.apply(&fx)
@@ -985,13 +1000,49 @@ func (s *Service) Detach(guestID string) {
 		g.graceDeadline = s.clk.Now().Add(ReconnectGrace)
 		fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketDetached))
 		slog.Info("ticket: guest detached", "ticket", g.t.id, "state", g.state, "grace", ReconnectGrace)
-		fx.ownerTickets(g.t.accountID)
-		if g.sessionID != "" {
-			fx.ownerSessions(g.t.accountID)
-		}
+		defer s.notifySoon(g.t.accountID, g.sessionID != "")
 	}
 	s.mu.Unlock()
 	s.apply(&fx)
+}
+
+// attachNotifyDelay batches the owner notifications of guest attach/detach
+// flips: a guest on a flaky link reconnects every few seconds, and each flip
+// would otherwise refetch the ticket list and resend the session list in
+// every owner tab.
+const attachNotifyDelay = time.Second
+
+// notifySoon queues an owner notification for the account (tickets, and the
+// session list when sessions is set) and sends all queued ones together
+// after attachNotifyDelay.
+func (s *Service) notifySoon(accountID string, sessions bool) {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	if s.notifyPending == nil {
+		s.notifyPending = map[string]bool{}
+	}
+	s.notifyPending[accountID] = s.notifyPending[accountID] || sessions
+	if !s.notifyArmed {
+		s.notifyArmed = true
+		time.AfterFunc(attachNotifyDelay, s.flushNotify)
+	}
+}
+
+func (s *Service) flushNotify() {
+	s.notifyMu.Lock()
+	pending := s.notifyPending
+	s.notifyPending = nil
+	s.notifyArmed = false
+	s.notifyMu.Unlock()
+	if s.p.Notifier == nil {
+		return
+	}
+	for acc, sessions := range pending {
+		s.p.Notifier.TicketsChanged(acc)
+		if sessions {
+			s.p.Notifier.SessionsChanged(acc)
+		}
+	}
 }
 
 // End is the guest's End button: close immediately.
@@ -1310,7 +1361,11 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 		d := now.Sub(g.openedAt).Milliseconds()
 		ev.DurationMs = &d
 	}
-	fx.audits = append(fx.audits, ev)
+	if reason != terminal.CloseAccountDeleted {
+		// An account's audit rows go with the account (ON DELETE CASCADE):
+		// there is nothing to write them into, only a failed insert to log.
+		fx.audits = append(fx.audits, ev)
+	}
 	fx.ownerTickets(g.t.accountID)
 	if prev == StateOpen || prev == StatePending {
 		fx.ownerSessions(g.t.accountID)
@@ -1355,9 +1410,11 @@ func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseR
 		}
 		if t.guest == nil {
 			s.dropTicketLocked(t)
-			ev := s.event(t, nil, audit.TicketInvalidated)
-			ev.EndReason = string(reason)
-			fx.audits = append(fx.audits, ev)
+			if reason != terminal.CloseAccountDeleted { // rows cascade with the account
+				ev := s.event(t, nil, audit.TicketInvalidated)
+				ev.EndReason = string(reason)
+				fx.audits = append(fx.audits, ev)
+			}
 			fx.ownerTickets(t.accountID)
 		} else {
 			s.closeLocked(t.guest, reason, &fx)

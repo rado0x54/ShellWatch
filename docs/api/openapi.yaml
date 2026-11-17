@@ -1940,9 +1940,11 @@ paths:
       description: >-
         Creates a single-use ticket granting one guest session on this
         endpoint, admitted only by the normal endpoint-auth approval on the
-        owner's devices (#306). The `token` is returned exactly once; the
-        share link is `<externalUrl>/t#<token>` (the token travels in the URL
-        fragment and never reaches a server log). Every option defaults to the
+        owner's devices (#306). The `token` is returned exactly once, with
+        `shareLink` = `<externalUrl>/t#<token>`: built from
+        `server.externalUrl`, the only origin the guest routes accept, never
+        from the address the owner happens to use (the token travels in the
+        URL fragment and never reaches a server log). Every option defaults to the
         most restrictive value. At most 20 unredeemed tickets per account.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -1970,7 +1972,10 @@ paths:
                   token:
                     type: string
                     description: 32 random bytes, base64url. Stored only as a hash.
-                required: [ticket, token]
+                  shareLink:
+                    type: string
+                    description: The link to hand the guest — `<externalUrl>/t#<token>`.
+                required: [ticket, token, shareLink]
         "400":
           description: An option of the wrong type or outside its bounds
           content:
@@ -2051,8 +2056,9 @@ paths:
         and consumes nothing; an expired or ineligible ticket is spent here
         just as redeem would spend it. No bearer token, no cookie. Same
         `security.allowedNetworks` gate (403), `Origin` check (403
-        `Forbidden`) and per-IP rate limit as redeem — the two share one
-        bucket. Every response carries `Cache-Control: no-store`. Nothing in
+        `Forbidden`) as redeem, and a per-IP rate limit of its own (60 per
+        15 minutes; redeem's is 20). Every response carries
+        `Cache-Control: no-store`. Nothing in
         any response names the endpoint.
       requestBody:
         required: true
@@ -2086,7 +2092,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: The per-IP rate limit (shared with redeemTicket).
+          description: The per-IP rate limit (60 per 15 minutes, separate from redeemTicket's).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

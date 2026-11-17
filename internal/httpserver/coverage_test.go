@@ -105,7 +105,7 @@ func fullHandler(t *testing.T) chi.Router {
 			Tickets:       audit.NewTicketEvents(db, nil),
 		},
 		Transfers:    transfers,
-		Tickets:      &rest.Tickets{Service: tickets},
+		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return "https://sw.example" }},
 		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return externalURL }},
 		GuestHub:     guestHub,
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},

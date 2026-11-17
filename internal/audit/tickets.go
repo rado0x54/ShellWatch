@@ -45,6 +45,13 @@ var TicketEventValues = map[string]bool{
 
 // TicketEvent is one row to record. The option fields snapshot the ticket.
 type TicketEvent struct {
+	// ID and At, when set, are the row's id and time. The ticket service
+	// sets both when the event happens (under its lock), so rows keep the
+	// order of events even when the writes run out of order; unset, Record
+	// stamps the write time.
+	ID string
+	At time.Time
+
 	AccountID        string
 	TicketID         string
 	Event            string
@@ -98,29 +105,35 @@ type TicketEvents struct {
 	// still page in the order they happened.
 	NewID func() string
 
-	idMu    sync.Mutex
+	ids OrderedIDs
+}
+
+// OrderedIDs mints UUIDv7-layout ids whose order follows the clock and,
+// within one millisecond, the call order (12-bit counter in rand_a). The
+// zero value is ready to use.
+type OrderedIDs struct {
+	mu      sync.Mutex
 	lastMs  int64
 	counter uint16
 }
 
-// orderedID returns a UUIDv7-layout id whose order follows the clock and,
-// within one millisecond, the call order (12-bit counter in rand_a).
-func (t *TicketEvents) orderedID(now time.Time) string {
-	t.idMu.Lock()
+// Next returns the next id for an event at now.
+func (g *OrderedIDs) Next(now time.Time) string {
+	g.mu.Lock()
 	ms := now.UnixMilli()
-	if ms <= t.lastMs {
-		ms = t.lastMs
-		t.counter++
-		if t.counter > 0x0fff {
+	if ms <= g.lastMs {
+		ms = g.lastMs
+		g.counter++
+		if g.counter > 0x0fff {
 			ms++
-			t.counter = 0
+			g.counter = 0
 		}
 	} else {
-		t.counter = 0
+		g.counter = 0
 	}
-	t.lastMs = ms
-	counter := t.counter
-	t.idMu.Unlock()
+	g.lastMs = ms
+	counter := g.counter
+	g.mu.Unlock()
 	var b [16]byte
 	_, _ = rand.Read(b[8:])
 	for i := 0; i < 6; i++ {
@@ -143,12 +156,17 @@ func NewTicketEvents(db *sql.DB, clk clock.Clock) *TicketEvents {
 // Record appends one event. Failures are logged, never returned: an audit
 // write must not break a ticket flow (same rule as the other writers).
 func (t *TicketEvents) Record(ev TicketEvent) {
-	now := t.clk.Now()
-	id := ""
-	if t.NewID != nil {
+	now := ev.At
+	if now.IsZero() {
+		now = t.clk.Now()
+	}
+	id := ev.ID
+	switch {
+	case id != "":
+	case t.NewID != nil:
 		id = t.NewID()
-	} else {
-		id = t.orderedID(now)
+	default:
+		id = t.ids.Next(now)
 	}
 	var attempt sql.NullInt64
 	if ev.Attempt > 0 {

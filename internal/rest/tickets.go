@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,6 +28,11 @@ import (
 // Tickets wires the owner's ticket routes.
 type Tickets struct {
 	Service *ticket.Service
+	// ExternalURL yields server.externalUrl. The share link is built from it:
+	// the guest routes accept only that origin, so a link built from the
+	// owner's own address (a LAN IP, an alternate name, the dev server's
+	// port) would be refused.
+	ExternalURL func() string
 }
 
 func (t *Tickets) Mount(r chi.Router) {
@@ -111,7 +117,9 @@ func (t *Tickets) mint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 201, map[string]any{"ticket": minted.Ticket, "token": minted.Token})
+	writeJSON(w, 201, map[string]any{
+		"ticket": minted.Ticket, "token": minted.Token, "shareLink": t.shareLink(minted.Token),
+	})
 }
 
 func (t *Tickets) list(w http.ResponseWriter, r *http.Request) {
@@ -250,4 +258,14 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"lifetimeSeconds":        int(res.Lifetime / time.Second),
 		"agentForward":           res.AgentForward,
 	})
+}
+
+// shareLink is the guest's link: externalUrl's origin, /t, and the token in
+// the fragment (which never reaches a server log or a Referer).
+func (t *Tickets) shareLink(token string) string {
+	base := ""
+	if t.ExternalURL != nil {
+		base = strings.TrimRight(t.ExternalURL(), "/")
+	}
+	return base + "/t#" + token
 }

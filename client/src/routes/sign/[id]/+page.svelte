@@ -8,6 +8,7 @@
   import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
   import { revokeTicket } from "$lib/stores/tickets.js";
+  import { formatTicketDuration } from "$lib/utils/duration.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
     createSignPageController,
@@ -278,11 +279,6 @@
     ctx?.source === "endpoint-auth" && ctx.trigger.kind === "ticket" ? ctx.trigger : null,
   );
 
-  function fmtMinutes(seconds: number): string {
-    if (seconds % 3600 === 0) return `${seconds / 3600} h`;
-    return `${Math.round(seconds / 60)} min`;
-  }
-
   /** End the guest's ticket now, so an unwanted guest cannot keep asking
    * for the rest of the admission window. */
   async function handleRevokeTicket(ticketId: string) {
@@ -478,7 +474,7 @@
             </div>
             <div class="sign-field">
               <span class="sign-label">Session lifetime</span>
-              <span class="sign-value">{fmtMinutes(ticketTrigger.lifetimeSeconds)}</span>
+              <span class="sign-value">{formatTicketDuration(ticketTrigger.lifetimeSeconds)}</span>
             </div>
             <div class="sign-field">
               <span class="sign-label">Agent forwarding</span>

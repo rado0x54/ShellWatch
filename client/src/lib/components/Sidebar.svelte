@@ -222,8 +222,12 @@
                 {#if sess.source === "ticket"}
                   <span
                     class="source-tag"
-                    title={sess.guestAttached ? "Guest is connected" : "Guest is not connected"}
-                    >guest{sess.guestAttached ? "" : " · away"}</span
+                    title={sess.guestAttached === undefined
+                      ? "Guest session is over"
+                      : sess.guestAttached
+                        ? "Guest is connected"
+                        : "Guest is not connected"}
+                    >guest{sess.guestAttached === false ? " · away" : ""}</span
                   >
                 {:else if sess.source === "mcp"}
                   <span class="source-tag" title="Started by an MCP agent">mcp</span>

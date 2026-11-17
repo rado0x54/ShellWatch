@@ -542,7 +542,7 @@ func run() error {
 			MaxSessions:   store.NewAccounts(db).MaxSessions,
 			GuestAttached: tickets.GuestAttached,
 		},
-		Tickets:      &rest.Tickets{Service: tickets},
+		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
 		GuestHub:     guestHub,
 		WSHub:        wsHub,

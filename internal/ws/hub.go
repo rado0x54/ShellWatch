@@ -248,11 +248,14 @@ func (h *Hub) sessionList(c *conn) map[string]any {
 		}
 		if s.Source == terminal.SourceTicket {
 			e.TicketID, e.TicketLabel = s.TicketID, &s.TicketLabel
-			attached := false
+			// Like REST: present only while the guest session is live, so a
+			// client can tell "guest away" (false) from "guest session over"
+			// (absent).
 			if guestAttached != nil {
-				attached, _ = guestAttached(s.SessionID)
+				if attached, ok := guestAttached(s.SessionID); ok {
+					e.GuestAttached = &attached
+				}
 			}
-			e.GuestAttached = &attached
 		}
 		entries = append(entries, e)
 	}

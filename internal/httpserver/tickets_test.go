@@ -202,7 +202,7 @@ func ticketServer(t *testing.T) *ticketRig {
 		Sessions: &rest.Sessions{Manager: mgr, Svc: epSvc, GuestAttached: svc.GuestAttached,
 			MaxSessions: func(context.Context, string) (int, bool) { return rig.maxSess, true }},
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
-		Tickets:      &rest.Tickets{Service: svc},
+		Tickets:      &rest.Tickets{Service: svc, ExternalURL: func() string { return externalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: svc, ExternalURL: func() string { return externalURL }},
 		GuestHub:     guestHub,
 	})
@@ -443,6 +443,11 @@ func TestTicketMintDefaultsAndBounds(t *testing.T) {
 	}
 	if tok, _ := out["token"].(string); len(tok) != 43 {
 		t.Errorf("token %q: want 43 base64url chars (32 bytes)", tok)
+	}
+	// The share link uses externalUrl, the only origin the guest routes
+	// accept — not the address this request came in on.
+	if link, want := out["shareLink"], externalURL+"/t#"+out["token"].(string); link != want {
+		t.Errorf("shareLink %v, want %s", link, want)
 	}
 	for body, want := range map[string]int{
 		`{"redeemTtlSeconds":59}`:    400,

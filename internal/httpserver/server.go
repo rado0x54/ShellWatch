@@ -6,7 +6,6 @@
 package httpserver
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -322,7 +321,12 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 	// so it needs a ceiling — but it is also a user-facing redirect in a normal
 	// login, so the bucket is far wider than DCR's.
 	cimdAuthorize := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
-	guestTicket := ratelimit.New(20, 15*time.Minute, clk)
+	ticketRedeem := func() *ratelimit.Limiter { return ratelimit.New(20, 15*time.Minute, clk) }
+	// Check spends nothing and runs once per page load, so it gets a wider
+	// bucket of its own: guests behind one NAT must not exhaust redeem's
+	// budget just by opening links. (Tokens are 256-bit; a bucket is not
+	// what stops guessing.)
+	ticketCheck := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
 	guestWS := func() *ratelimit.Limiter { return ratelimit.New(120, 15*time.Minute, clk) }
 
 	return []ratelimit.Rule{
@@ -355,9 +359,8 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 		// One-time access tickets (#306): redemption is the only
 		// unauthenticated way to spend a ticket, so a guesser gets a tight
 		// bucket; the guest WebSocket reconnects on reloads, so a wider one.
-		// Check shares redeem's bucket: both take a ticket token.
-		{Method: "POST", Path: "/api/tickets/redeem", Limiter: guestTicket},
-		{Method: "POST", Path: "/api/tickets/check", Limiter: guestTicket},
+		{Method: "POST", Path: "/api/tickets/redeem", Limiter: ticketRedeem()},
+		{Method: "POST", Path: "/api/tickets/check", Limiter: ticketCheck()},
 		{Method: "GET", Path: "/ws/guest", Limiter: guestWS()},
 	}
 }
@@ -419,7 +422,13 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 // deploy is picked up immediately.
 func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 	fileServer := http.FileServerFS(staticFS)
-	csp := &guestCSPCache{}
+	// The guest page's policy hashes index.html's inline scripts; the file
+	// is fixed for the process and externalUrl is static config, so it is
+	// computed once, on the first guest-page request.
+	var (
+		cspOnce sync.Once
+		csp     string
+	)
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
@@ -466,7 +475,8 @@ func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 			// and a strict policy that allows only this origin's scripts plus
 			// the SPA's own inline bootstrap (by hash).
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Security-Policy", csp.get(data, externalURL()))
+			cspOnce.Do(func() { csp = guestPageCSP(data, externalURL()) })
+			w.Header().Set("Content-Security-Policy", csp)
 		}
 		_, _ = w.Write(data)
 	}
@@ -479,29 +489,6 @@ func staticCacheControl(path string) string {
 		return "public, max-age=31536000, immutable"
 	}
 	return "no-cache"
-}
-
-// guestCSPCache keeps the guest page's policy: index.html is fixed for the
-// process, so the policy only changes with externalUrl. Rebuilt when the
-// index or the URL differs from the cached inputs.
-type guestCSPCache struct {
-	mu        sync.Mutex
-	index     []byte
-	extURL    string
-	policy    string
-	populated bool
-}
-
-func (c *guestCSPCache) get(index []byte, externalURL string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.populated || c.extURL != externalURL || !bytes.Equal(c.index, index) {
-		c.index = append(c.index[:0], index...)
-		c.extURL = externalURL
-		c.policy = guestPageCSP(index, externalURL)
-		c.populated = true
-	}
-	return c.policy
 }
 
 // guestPagePath is the one-time access guest page (#306).

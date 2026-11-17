@@ -78,7 +78,7 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
   // Source "ticket" only (#306), omitted otherwise:
   ticketId?: string;
   ticketLabel?: string; // may be ""
-  guestAttached?: boolean; // the guest's browser holds a /ws/guest connection
+  guestAttached?: boolean; // the guest's browser holds a /ws/guest connection; absent once the guest session is over
 }
 ```
 

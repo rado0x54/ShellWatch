@@ -14,7 +14,7 @@
  *     type (ISO string or epoch-ms/epoch-s number): createdAt, updatedAt,
  *     lastActivityAt, lastUsedAt, builtAt, authorizedAt, closedAt, resolvedAt,
  *     expiresAt, client_id_issued_at → "<TS>".
- *   - challenge, challengeId, token, stepUpToken, confirmationCode → "<REDACTED>".
+ *   - challenge, challengeId, token, stepUpToken, confirmationCode, shareLink → "<REDACTED>".
  *   - nextCursor (when non-null) → "<CURSOR>".
  *   - Value patterns anywhere:
  *       sess_<12 hex>                → "sess_<ID>"
@@ -49,6 +49,7 @@ const REDACT_KEYS = new Set([
   "token",
   "stepUpToken",
   "confirmationCode",
+  "shareLink",
 ]);
 
 const SESSION_ID_RE = /^sess_[0-9a-f]{12}$/;

@@ -341,3 +341,65 @@ func TestCloseDoesNotWaitForATerminalClose(t *testing.T) {
 		t.Fatal("revoke waited for the hung terminal close")
 	}
 }
+
+type countNotifier struct {
+	mu               sync.Mutex
+	tickets, session int
+}
+
+func (c *countNotifier) TicketsChanged(string) {
+	c.mu.Lock()
+	c.tickets++
+	c.mu.Unlock()
+}
+
+func (c *countNotifier) SessionsChanged(string) {
+	c.mu.Lock()
+	c.session++
+	c.mu.Unlock()
+}
+
+func (c *countNotifier) counts() (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tickets, c.session
+}
+
+// A guest connection that flaps (detach, reattach, again and again) sends the
+// owner one batched notification, not one per flip; a second tab attaching
+// sends none.
+func TestGuestFlapsAreBatchedForTheOwner(t *testing.T) {
+	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
+	n := &countNotifier{}
+	s := New(Params{
+		Manager: f, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Notifier: n,
+		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
+			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
+		},
+		NewID: func() string { return "tk" },
+	})
+	s.SetPublisher(&pubLog{})
+	t.Cleanup(s.Close)
+	gid := redeemAttached(t, s)
+	<-f.creates
+	time.Sleep(attachNotifyDelay + 200*time.Millisecond) // let anything earlier settle
+	before, _ := n.counts()
+
+	for i := 0; i < 5; i++ {
+		s.Detach(gid)
+		if err := s.Attach(gid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Attach(gid); err != nil { // a second tab
+		t.Fatal(err)
+	}
+	if got, _ := n.counts(); got != before {
+		t.Errorf("notified %d times before the batch delay", got-before)
+	}
+	waitUntil(t, "batched notification", func() bool { got, _ := n.counts(); return got == before+1 })
+	time.Sleep(attachNotifyDelay + 200*time.Millisecond)
+	if got, _ := n.counts(); got != before+1 {
+		t.Errorf("%d notifications for 5 flips and a second tab, want 1", got-before)
+	}
+}

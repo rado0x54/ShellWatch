@@ -16,6 +16,7 @@
       "redeemTtlSeconds": 300,
       "state": "minted"
     },
-    "token": "<REDACTED>"
+    "token": "<REDACTED>",
+    "shareLink": "<REDACTED>"
   }
 }

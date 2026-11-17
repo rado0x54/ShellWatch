@@ -91,18 +91,22 @@ async function errorFrom(res: Response, fallback: string): Promise<Error> {
   }
 }
 
-/** Mint a ticket; returns it with its token (shown exactly once). */
+/**
+ * Mint a ticket; returns it with its token and the share link (shown exactly
+ * once). The server builds the link from its externalUrl: the guest routes
+ * accept only that origin, whatever address this browser uses.
+ */
 export async function mintTicket(
   endpointId: string,
   opts: MintOptions,
-): Promise<{ ticket: Ticket; token: string }> {
+): Promise<{ ticket: Ticket; token: string; shareLink: string }> {
   const res = await apiFetch(`/api/endpoints/${encodeURIComponent(endpointId)}/tickets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(opts),
   });
   if (res.status !== 201) throw await errorFrom(res, "Failed to create the access link");
-  const out = (await res.json()) as { ticket: Ticket; token: string };
+  const out = (await res.json()) as { ticket: Ticket; token: string; shareLink: string };
   // The token is shown exactly once: a failed list refresh must not turn a
   // successful mint into an error (the ticket exists either way).
   void fetchTickets().catch(() => {});
@@ -121,12 +125,6 @@ export async function revokeTicket(id: string): Promise<"revoked" | "ended"> {
   }
   void fetchTickets().catch(() => {});
   return res.ok ? "revoked" : "ended";
-}
-
-/** The share link for a token: the token rides in the fragment, which never
- * reaches a server log or a Referer. */
-export function shareLink(token: string, origin: string = window.location.origin): string {
-  return `${origin}/t#${token}`;
 }
 
 /** Human labels for the owner's view of a ticket's state. */

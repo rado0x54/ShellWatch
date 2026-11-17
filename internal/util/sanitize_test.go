@@ -41,3 +41,22 @@ func TestSanitizeFreeText(t *testing.T) {
 		}
 	}
 }
+
+// Characters that reorder or hide text where a human reads it are stripped
+// from both kinds of client-reported text.
+func TestSanitizeStripsInvisibleAndBidiCharacters(t *testing.T) {
+	in := "fix\u202Eredirp\u202C the\u200B printer\u2066x\u2069\u0085\u2028\uFEFF"
+	want := "fixredirp the printerx"
+	if got := SanitizeFreeText(in, 200); got != want {
+		t.Errorf("SanitizeFreeText = %q, want %q", got, want)
+	}
+	if got := SanitizeClientReported(in); got != want {
+		t.Errorf("SanitizeClientReported = %q, want %q", got, want)
+	}
+	// Ordinary non-Latin text and emoji are kept.
+	for _, ok := range []string{"Печать", "打印机", "🖨 printer"} {
+		if got := SanitizeFreeText(ok, 200); got != ok {
+			t.Errorf("SanitizeFreeText(%q) = %q", ok, got)
+		}
+	}
+}

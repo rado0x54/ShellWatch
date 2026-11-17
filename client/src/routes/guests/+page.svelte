@@ -28,6 +28,7 @@
     type Ticket,
   } from "$lib/stores/tickets.js";
   import { toastError, toastInfo } from "$lib/stores/toasts.js";
+  import { formatTicketDuration } from "$lib/utils/duration.js";
   import { errorMessage } from "$lib/utils/error-message.js";
 
   // Deadlines are server times: count down against the server's clock.
@@ -68,10 +69,6 @@
     if (!iso) return "—";
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString();
-  }
-
-  function minutes(seconds: number): string {
-    return seconds % 3600 === 0 ? `${seconds / 3600} h` : `${Math.round(seconds / 60)} min`;
   }
 
   /** What the active row's state badge says, and its colour. */
@@ -269,7 +266,9 @@
     <dd>{time(t.createdAt)}</dd>
     <dt>Options</dt>
     <dd>
-      link valid {minutes(t.redeemTtlSeconds)} · session {minutes(t.lifetimeSeconds)} · reason
+      link valid {formatTicketDuration(t.redeemTtlSeconds)} · session {formatTicketDuration(
+        t.lifetimeSeconds,
+      )} · reason
       {t.reasonRequired ? "required" : "optional"} · agent forwarding {t.agentForward
         ? "on"
         : "off"}

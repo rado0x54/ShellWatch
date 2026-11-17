@@ -21,8 +21,9 @@ var tsKeys = map[string]bool{
 
 var redactKeys = map[string]bool{
 	"challenge": true, "challengeId": true, "token": true, "stepUpToken": true,
-	// One-time access tickets (#306): random per redemption.
-	"confirmationCode": true,
+	// One-time access tickets (#306): random per redemption; the share link
+	// carries the token.
+	"confirmationCode": true, "shareLink": true,
 }
 
 var (
