@@ -802,8 +802,9 @@ func TestLifetimeDeadline(t *testing.T) {
 	}
 	clk.Advance(time.Millisecond)
 	mgr.SweepDeadlines()
-	if mgr.GetSession(capped.SessionID) != nil || mgr.GetSession(plain.SessionID) == nil {
-		t.Fatal("the deadline closed the wrong session")
+	waitFor(t, func() bool { return mgr.GetSession(capped.SessionID) == nil })
+	if mgr.GetSession(plain.SessionID) == nil {
+		t.Fatal("the deadline closed a session without one")
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -831,5 +832,58 @@ func TestCreateCancelledDuringSetupNeverGoesLive(t *testing.T) {
 	}
 	if _, err := mgr.Create(ctx, ep, "acc", Trigger{Kind: SourceUI}); err == nil {
 		t.Error("a create with an already cancelled context was accepted")
+	}
+}
+
+// A deadline close that hangs (a wedged transport, up to closeJoinTimeout)
+// must not hold up the sweep: the next session's deadline is enforced on the
+// next pass, not after the stuck close gives up.
+func TestDeadlineSweepDoesNotWaitForAStuckClose(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	wedged := &wedgedTransport{events: make(chan Event)}
+	t.Cleanup(func() { close(wedged.events) })
+	n := 0
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		n++
+		if n == 1 {
+			return wedged, nil
+		}
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	mgr.closeJoinTimeout = time.Hour // the stuck close stays stuck for the whole test
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	create := func(life time.Duration) string {
+		t.Helper()
+		s, err := mgr.Create(context.Background(), ep, "acc",
+			Trigger{Kind: SourceTicket, Lifetime: life, LifetimeReason: CloseTicketLifetime})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.SessionID
+	}
+	stuck, next := create(time.Minute), create(2*time.Minute)
+
+	sweep := func() {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { mgr.SweepDeadlines(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("the deadline sweep waited for a stuck close")
+		}
+	}
+	clk.Advance(time.Minute)
+	sweep()
+	clk.Advance(time.Minute)
+	sweep()
+	waitFor(t, func() bool { return mgr.GetSession(next) == nil })
+	if s := mgr.GetSession(stuck); s == nil || s.Status != StatusClosing {
+		t.Fatalf("stuck session %+v, want still closing", s)
+	}
+	if err := mgr.SendInput(stuck, "x"); err == nil {
+		t.Error("input accepted by a session past its deadline")
 	}
 }

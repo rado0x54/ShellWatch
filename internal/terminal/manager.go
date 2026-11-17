@@ -169,6 +169,9 @@ func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
 }
 
 // SweepDeadlines closes open sessions past their Deadline with DeadlineReason.
+// It does not wait for the closes: one stuck in its pump join (up to
+// closeJoinTimeout) must not delay the next deadline. Each Close moves its
+// session to closing at once (input refused, not swept again).
 func (m *Manager) SweepDeadlines() {
 	m.mu.Lock()
 	now := m.clk.Now()
@@ -181,7 +184,9 @@ func (m *Manager) SweepDeadlines() {
 	m.mu.Unlock()
 	for reason, ids := range due {
 		slog.Info("terminal: deadline reached", "sessions", len(ids), "reason", reason)
-		m.closeAll(ids, reason)
+		for _, id := range ids {
+			go m.Close(id, reason)
+		}
 	}
 }
 
