@@ -342,6 +342,32 @@ func (r *ticketRig) dialGuest(t *testing.T, cookie, origin string) (*websocket.C
 	return c, http.StatusSwitchingProtocols
 }
 
+// wantEndedFrame dials /ws/guest with a cookie that has no live guest
+// session: the upgrade succeeds, the only frame is the generic closed
+// status, then a normal close — and nothing is attached.
+func (r *ticketRig) wantEndedFrame(t *testing.T, cookie string) {
+	t.Helper()
+	c, st := r.dialGuest(t, cookie, guestOrigin)
+	if st != http.StatusSwitchingProtocols {
+		t.Fatalf("dial with cookie %q: %d, want 101", cookie, st)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, raw, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read closed frame: %v", err)
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m["type"] != "status" || m["state"] != "closed" ||
+		m["message"] != ticket.MsgEnded || m["serverTime"] == nil {
+		t.Errorf("frame %s", raw)
+	}
+	if _, _, err := c.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Errorf("after the closed frame: %v, want a normal close", err)
+	}
+	r.gate.noAttempt(t)
+}
+
 // readUntil reads guest frames until one matches.
 func readUntil(t *testing.T, c *websocket.Conn, match func(map[string]any) bool) map[string]any {
 	t.Helper()
@@ -712,9 +738,7 @@ func TestTicketAdmissionEndToEnd(t *testing.T) {
 		t.Errorf("closed frame %v", closed)
 	}
 	eventually(t, "terminal session closed", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
-	if _, st := r.dialGuest(t, res.cookie, guestOrigin); st != 404 {
-		t.Errorf("cookie after End: %d, want 404", st)
-	}
+	r.wantEndedFrame(t, res.cookie)
 	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "admitted", "ended:client.guest")
 	// The lifecycle row carries the ticket.
 	var src, tid, reason, closeReason string
@@ -754,7 +778,7 @@ func TestTicketRefusedAskAgainAndAdmissionWindow(t *testing.T) {
 	// Every key skipped: the attempt fails, the guest session survives.
 	r.gate.decisions <- errors.New("All configured authentication methods failed (endpoint 10.1.2.3 root)")
 	refused := readUntil(t, c, statusIs("refused"))
-	if refused["message"] != ticket.MsgNotGranted || refused["remainingSeconds"] == nil || refused["code"] != first["code"] {
+	if refused["message"] != "Access was not granted." || refused["remainingSeconds"] == nil || refused["code"] != first["code"] {
 		t.Errorf("refused frame %v", refused)
 	}
 	raw, _ := json.Marshal(refused)
@@ -787,7 +811,7 @@ func TestTicketRefusedAskAgainAndAdmissionWindow(t *testing.T) {
 	}
 	r.sweep(2 * time.Second)
 	closed := readUntil(t, c, statusIs("closed"))
-	if closed["message"] != ticket.MsgNotGranted {
+	if closed["message"] != ticket.MsgEnded {
 		t.Errorf("closed frame %v", closed)
 	}
 	eventually(t, "attempt cancelled", func() bool { return r.gate.cancelledCount() == 1 })
@@ -824,7 +848,7 @@ func TestTicketRetryCooldownAndAttemptLimit(t *testing.T) {
 		readUntil(t, c, statusIs("pending"))
 	}
 	closed := readUntil(t, c, statusIs("closed"))
-	if closed["message"] != ticket.MsgNotGranted {
+	if closed["message"] != ticket.MsgEnded {
 		t.Errorf("closed after the last attempt: %v", closed)
 	}
 	wantEvents(t, r, ticketID, "minted", "redeemed", "attached",
@@ -926,8 +950,26 @@ func TestTicketOwnerKillClosesGuest(t *testing.T) {
 		t.Fatalf("kill: %d", st)
 	}
 	readUntil(t, c, statusIs("closed"))
-	if _, st := r.dialGuest(t, cookie, guestOrigin); st != 404 {
-		t.Errorf("cookie after kill: %d", st)
+	r.wantEndedFrame(t, cookie)
+}
+
+// #321: a guest session closed while the guest's socket is down. The
+// reconnect is answered with the generic closed frame (not a 404 the page
+// cannot see), and so is a cookie that never existed or none at all.
+func TestTicketReconnectAfterCloseGetsClosedFrame(t *testing.T) {
+	r := ticketServer(t)
+	c, cookie, sid, id := r.admit(t)
+	c.CloseNow()
+	eventually(t, "guest detached", func() bool { return r.svc.List("acc-a")[0].Guest.Connections == 0 })
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Fatalf("revoke: %d", st)
+	}
+	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
+	r.wantEndedFrame(t, cookie)
+	r.wantEndedFrame(t, "never-issued-guest-cookie")
+	r.wantEndedFrame(t, "")
+	if _, st := r.dialGuest(t, "never-issued-guest-cookie", "https://evil.example"); st != 403 {
+		t.Errorf("unknown cookie, wrong origin: %d, want 403", st)
 	}
 }
 
@@ -1184,9 +1226,7 @@ func TestTicketRedeemReplacesCurrentGuest(t *testing.T) {
 		t.Fatalf("replacing redeem: %d %s", res.status, res.raw)
 	}
 	r.gate.noAttempt(t)
-	if _, st := r.dialGuest(t, old.cookie, guestOrigin); st != 404 {
-		t.Errorf("old cookie after replacement: %d", st)
-	}
+	r.wantEndedFrame(t, old.cookie)
 	wantEvents(t, r, firstID, "minted", "redeemed", "ended:client.guest")
 	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
 	readUntil(t, c, statusIs("pending"))

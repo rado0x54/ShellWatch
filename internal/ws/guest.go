@@ -117,6 +117,11 @@ func statusFrame(st ticket.Status) []byte {
 	return out
 }
 
+// closedFrame is a final closed status sent outside the ticket service.
+func closedFrame(msg string) []byte {
+	return statusFrame(ticket.Status{State: ticket.StateClosed, Message: msg, ServerTime: time.Now().UTC().Format(clock.ISOMillis)})
+}
+
 // GuestStatus implements ticket.Publisher.
 func (h *GuestHub) GuestStatus(guestID string, st ticket.Status) {
 	raw := statusFrame(st)
@@ -248,11 +253,6 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 			cookie = ck.Value
 		}
 		guestID, ok := h.svc.GuestByCookie(cookie)
-		if !ok {
-			slog.Info("ws: guest rejected", "sourceIp", ip, "reason", "no live guest session for cookie")
-			apierr.Write(w, http.StatusNotFound, "Not found")
-			return
-		}
 		wsc, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			// The exact-origin check above is authoritative; this pattern only
 			// stops the library's Host comparison from refusing a correct
@@ -264,6 +264,19 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 			return
 		}
 		wsc.SetReadLimit(MaxGuestInboundMessageBytes)
+		if !ok {
+			// Ended, revoked or never existed: indistinguishable, and the
+			// page is told so in a frame (a refused handshake's status is
+			// invisible to a browser, which would keep reconnecting). No
+			// per-cookie state survives a guest session, and an unknown
+			// cookie never reaches Attach.
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			_ = wsc.Write(ctx, websocket.MessageText, closedFrame(ticket.MsgEnded))
+			cancel()
+			_ = wsc.Close(websocket.StatusNormalClosure, "")
+			slog.Info("ws: guest rejected", "sourceIp", ip, "reason", "no live guest session for cookie")
+			return
+		}
 		start := time.Now()
 		err = h.serve(r.Context(), wsc, guestID)
 		slog.Info("ws: guest disconnected", "sourceIp", ip, "dur", time.Since(start).Round(time.Second),
@@ -318,13 +331,11 @@ func (h *GuestHub) serve(ctx context.Context, wsc *websocket.Conn, guestID strin
 	}()
 
 	if err := h.svc.Attach(guestID); err != nil {
-		msg := ticket.MsgNotGranted
+		msg := ticket.MsgEnded
 		if err == ticket.ErrTooManyConnections {
 			msg = "Too many open windows for this session."
 		}
-		c.enqueue(statusFrame(ticket.Status{
-			State: ticket.StateClosed, Message: msg, ServerTime: time.Now().UTC().Format(clock.ISOMillis),
-		}))
+		c.enqueue(closedFrame(msg))
 		c.finish()
 		_, _, rerr := wsc.Read(ctx)
 		return rerr
