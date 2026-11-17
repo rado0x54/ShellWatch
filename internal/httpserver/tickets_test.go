@@ -160,7 +160,7 @@ func ticketServer(t *testing.T) *ticketRig {
 	ticketLog := audit.NewTicketEvents(db, clk)
 	svc := ticket.New(ticket.Params{
 		Manager: mgr, Clock: clk, Audit: ticketLog, Notifier: hub,
-		ResolveEndpoint: epSvc.ActiveRefForAccount,
+		ResolveEndpoint: epSvc.RefForAccount,
 		AccountActive: func(ctx context.Context, id string) (bool, error) {
 			if rig.lookupErr.Load() {
 				return false, errors.New("database is locked")

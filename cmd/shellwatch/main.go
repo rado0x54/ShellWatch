@@ -460,7 +460,7 @@ func run() error {
 	ticketLog := audit.NewTicketEvents(db, clk)
 	tickets := ticket.New(ticket.Params{
 		Ctx: ctx, Manager: manager, Clock: clk, Audit: ticketLog, Notifier: wsHub,
-		ResolveEndpoint: epSvc.ActiveRefForAccount,
+		ResolveEndpoint: epSvc.RefForAccount,
 		AccountActive: func(ctx context.Context, accountID string) (bool, error) {
 			acc, err := accountsStore.Get(ctx, accountID)
 			return err == nil && acc != nil && acc.Enabled, err

@@ -13,7 +13,7 @@ import (
 const clearEndpointHostKey = `-- name: ClearEndpointHostKey :execrows
 UPDATE endpoints SET host_key_type = NULL, host_key = NULL, host_key_fingerprint = NULL,
   host_key_pinned_at = NULL, host_key_pinned_by = NULL, updated_at = ?
-WHERE id = ? AND account_id = ? AND host_key_fingerprint IS NOT NULL
+WHERE id = ? AND account_id = ? AND enabled = 1 AND host_key_fingerprint IS NOT NULL
 `
 
 type ClearEndpointHostKeyParams struct {
@@ -31,7 +31,7 @@ func (q *Queries) ClearEndpointHostKey(ctx context.Context, arg ClearEndpointHos
 }
 
 const deleteEndpointForAccount = `-- name: DeleteEndpointForAccount :execrows
-UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ?
+UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ? AND enabled = 1
 `
 
 type DeleteEndpointForAccountParams struct {
@@ -50,28 +50,10 @@ func (q *Queries) DeleteEndpointForAccount(ctx context.Context, arg DeleteEndpoi
 	return result.RowsAffected()
 }
 
-const getEndpointEnabled = `-- name: GetEndpointEnabled :one
-SELECT enabled FROM endpoints WHERE id = ? AND account_id = ?
-`
-
-type GetEndpointEnabledParams struct {
-	ID        string
-	AccountID string
-}
-
-// Whether an endpoint exists for the account and is not soft-deleted (#306:
-// tickets refuse a deleted endpoint, unlike get-by-id above).
-func (q *Queries) GetEndpointEnabled(ctx context.Context, arg GetEndpointEnabledParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getEndpointEnabled, arg.ID, arg.AccountID)
-	var enabled int64
-	err := row.Scan(&enabled)
-	return enabled, err
-}
-
 const getEndpointForAccount = `-- name: GetEndpointForAccount :one
 SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
   host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
-FROM endpoints WHERE id = ? AND account_id = ?
+FROM endpoints WHERE id = ? AND account_id = ? AND enabled = 1
 `
 
 type GetEndpointForAccountParams struct {
@@ -271,9 +253,9 @@ type ListEndpointsForAccountRow struct {
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Endpoint queries (Phase 3). Every account-owned query takes account_id in
 // SQL (W13). Keep pure ASCII (sqlc offset bug on multi-byte chars).
-// enabled filter matches Node (findAllForAccount, endpoint-repo.ts:87): a
-// soft-deleted endpoint is hidden from lists. Get-by-id deliberately does NOT
-// filter (Node parity: post-delete session create / PUT by id still work).
+// Every account-scoped read and write filters enabled = 1 (#313): a
+// soft-deleted endpoint is gone for lists, get-by-id, updates, host-key
+// changes and a repeat delete alike.
 func (q *Queries) ListEndpointsForAccount(ctx context.Context, accountID string) ([]ListEndpointsForAccountRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEndpointsForAccount, accountID)
 	if err != nil {
@@ -362,7 +344,7 @@ UPDATE endpoints SET
   label = ?3, host = ?1, port = ?2, username = ?4,
   user_verification = ?5, description = ?6,
   agent_forward = ?7, updated_at = ?8
-WHERE id = ?9 AND account_id = ?10
+WHERE id = ?9 AND account_id = ?10 AND enabled = 1
 `
 
 type UpdateEndpointParams struct {

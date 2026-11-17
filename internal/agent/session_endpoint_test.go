@@ -76,12 +76,21 @@ func TestSessionEndpointMutations(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("delete: ok=%v err=%v", ok, err)
 	}
-	// Soft delete (Node parity): hidden from the list, but get-by-id still
-	// resolves — endpoint-repo.ts filters enabled only in findAllForAccount.
+	// Soft delete (#313): the row stays for history, but the endpoint is gone
+	// for every by-id path — get, update, repeat delete and session create.
 	if eps, _ := sess.ListEndpoints(ctx); len(eps) != 0 {
 		t.Errorf("deleted endpoint still listed: %+v", eps)
 	}
-	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep == nil {
-		t.Error("get-by-id must still resolve a soft-deleted endpoint (Node parity)")
+	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep != nil {
+		t.Errorf("get-by-id resolved a soft-deleted endpoint: %+v", ep)
+	}
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{Label: &label}); ok || err != nil {
+		t.Errorf("update of deleted endpoint: ok=%v err=%v", ok, err)
+	}
+	if ok, err := sess.DeleteEndpoint(ctx, "ep1"); ok || err != nil {
+		t.Errorf("repeat delete: ok=%v err=%v", ok, err)
+	}
+	if s, err := sess.CreateSession(ctx, "ep1", ""); s != nil || err == nil || err.Error() != "unknown endpoint: ep1" {
+		t.Errorf("create session on deleted endpoint: sess=%v err=%v", s, err)
 	}
 }
