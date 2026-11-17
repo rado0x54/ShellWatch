@@ -48,7 +48,6 @@ describe("redeemTicket", () => {
         new Response(
           JSON.stringify({
             confirmationCode: "4F7K",
-            attachDeadline: "2026-01-01T00:00:30.000Z",
             admissionWindowSeconds: 300,
             lifetimeSeconds: 900,
             agentForward: false,
@@ -194,11 +193,10 @@ describe("GuestSocket", () => {
     ws.onmessage?.({ data: JSON.stringify({ type: "sessions:changed", sessions: [] }) });
     s.input("ls\r");
     s.resize(80, 24);
-    s.retry();
     s.end();
     expect(statuses).toEqual(["pending", "open"]);
     expect(output).toEqual(["hi"]);
-    expect(ws.sent.map((m) => JSON.parse(m).type)).toEqual(["input", "resize", "retry", "end"]);
+    expect(ws.sent.map((m) => JSON.parse(m).type)).toEqual(["input", "resize", "end"]);
     ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "closed", message: "x" }) });
     ws.close();
     expect(drop).not.toHaveBeenCalled(); // a final closed status is not a drop

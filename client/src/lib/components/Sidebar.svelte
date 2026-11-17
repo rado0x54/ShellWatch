@@ -36,10 +36,9 @@
     openConnectDialog("connect");
   }
 
-  /** Live guests (anything not unused or ended): the Guest access count. */
-  const liveGuests = $derived(
-    $tickets.filter((t) => t.state !== "minted" && t.state !== "closed").length,
-  );
+  /** Live guests (every listed ticket that is not an unused link): the
+   * Guest access count. */
+  const liveGuests = $derived($tickets.filter((t) => t.state !== "minted").length);
 
   async function handleClose(sessionId: string) {
     try {

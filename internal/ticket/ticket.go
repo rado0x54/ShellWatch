@@ -3,10 +3,11 @@
 // (#306). A logged-in owner mints a ticket for one endpoint; an untrusted
 // browser redeems it (reason first), attaches the guest WebSocket, and waits
 // while the normal endpoint-auth approval decides admission on the owner's
-// trusted device. Every transition, limit and deadline of a ticket and its
-// guest session goes through this service — handlers and the terminal
-// Manager make no lifecycle decisions of their own — and every ending runs
-// the one close path (closeLocked).
+// trusted device. One guest session is one terminal session. Every
+// transition and deadline of a ticket and its guest session goes through
+// this service — except the session lifetime, a hard deadline the terminal
+// Manager enforces (Trigger.Lifetime) — and every ending runs the one close
+// path (closeLocked).
 //
 // Tickets and guest sessions are process memory (like transfer-link tokens,
 // #263): the token and the guest cookie are kept only as SHA-256 hashes, and
@@ -37,7 +38,7 @@ import (
 const (
 	// AttachWindow bounds redeemed -> first guest WebSocket attach.
 	AttachWindow = 30 * time.Second
-	// AdmissionWindow bounds first attach -> admitted, across all attempts.
+	// AdmissionWindow bounds first attach -> admitted.
 	AdmissionWindow = 5 * time.Minute
 	// ReconnectGrace is how long a guest session survives with no guest
 	// connection attached.
@@ -46,18 +47,6 @@ const (
 	MaxOutstanding = 20
 	// MaxConnections caps guest WebSocket connections per guest session.
 	MaxConnections = 8
-	// MaxAttempts caps admission attempts per guest session (the first one
-	// plus "Ask again"). Each attempt prompts the owner and dials the
-	// endpoint, so a ticket holder must not be able to repeat it at will.
-	// When the last one is refused, the guest session closes.
-	MaxAttempts = 3
-	// RetryCooldown is the minimum wait after a refusal before "Ask again".
-	RetryCooldown = 15 * time.Second
-	// ClosedRetention and MaxClosedPerAccount bound how long, and how many,
-	// closed guest sessions stay in the owner's list (the same limits as the
-	// Manager's ended terminal sessions); the audit log keeps them for good.
-	ClosedRetention     = 5 * time.Minute
-	MaxClosedPerAccount = 10
 	// ReasonMaxLen caps the guest's reason (characters, after sanitizing).
 	ReasonMaxLen = 200
 	// LabelMaxLen caps a ticket label (characters).
@@ -84,9 +73,13 @@ const CookieName = "__Host-sw_guest"
 // codeAlphabet has no look-alikes (no 0/O, 1/I).
 const codeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
-// MsgEnded is the one closed text a guest sees, whatever ended its session
-// (the real reason is in the owner's audit log).
-const MsgEnded = "The session has ended."
+// The closed texts a guest sees: MsgNotGranted when the session ended before
+// admission (denied, failed, timed out, revoked), MsgEnded after it. The real
+// reason is in the owner's audit log.
+const (
+	MsgNotGranted = "Access was not granted."
+	MsgEnded      = "The session has ended."
+)
 
 var (
 	// ErrNotFound is the uniform redeem failure: unknown, used, expired,
@@ -108,10 +101,6 @@ var (
 	// request, a database error). The ticket is left untouched, so the
 	// guest can simply try again.
 	ErrUnavailable = errors.New("temporarily unavailable")
-	// ErrAlreadyEnded: revoke of a ticket whose guest session already
-	// ended. Nothing changes; the ticket leaves the list on its own
-	// (ClosedRetention), and the audit already has its end.
-	ErrAlreadyEnded = errors.New("ticket already ended")
 )
 
 // OptionError is a mint option outside its bounds.
@@ -119,12 +108,12 @@ type OptionError struct{ Msg string }
 
 func (e *OptionError) Error() string { return e.Msg }
 
-// Guest states (wire values).
+// Guest states (wire values). A ticket leaves the owner's list once its
+// guest session is closed; closed is only ever sent to the guest.
 const (
 	StateMinted   = "minted"
 	StateRedeemed = "redeemed"
 	StatePending  = "pending"
-	StateRefused  = "refused"
 	StateOpen     = "open"
 	StateClosed   = "closed"
 )
@@ -133,19 +122,13 @@ const (
 // It never carries endpoint label, address, user or a server error text.
 type Status struct {
 	State string `json:"state"`
-	// Code is the confirmation code (pending, refused).
+	// Code is the confirmation code (pending).
 	Code string `json:"code,omitempty"`
-	// AdmissionDeadline (pending, refused) and RemainingSeconds (refused):
-	// how long the guest may still ask.
+	// AdmissionDeadline (pending): when the owner's approval window ends.
 	AdmissionDeadline string `json:"admissionDeadline,omitempty"`
-	RemainingSeconds  *int   `json:"remainingSeconds,omitempty"`
 	// LifetimeDeadline (open): the hard end of the session.
 	LifetimeDeadline string `json:"lifetimeDeadline,omitempty"`
-	// RetryAt (refused): when "Ask again" is accepted; AttemptsLeft
-	// (refused): how many more attempts the guest has.
-	RetryAt      string `json:"retryAt,omitempty"`
-	AttemptsLeft *int   `json:"attemptsLeft,omitempty"`
-	// Message is a fixed generic text (refused, closed).
+	// Message is a fixed generic text (closed).
 	Message string `json:"message,omitempty"`
 	// ServerTime is the server's clock when the frame was built. The guest
 	// device's clock may be wrong, so the page counts the deadlines down
@@ -187,7 +170,7 @@ type Sessions interface {
 
 // Params configure the service.
 type Params struct {
-	// Ctx is the server's lifetime; attempts derive from it (never from a
+	// Ctx is the server's lifetime; connects derive from it (never from a
 	// request context). Close cancels the derived context.
 	Ctx      context.Context
 	Manager  Sessions
@@ -228,10 +211,6 @@ type ticket struct {
 	createdAt time.Time
 	expiresAt time.Time
 	guest     *guest
-	// endedAt / endReason: set when the guest session closed; the ticket
-	// then stays listed (state closed) until the retention limits drop it.
-	endedAt   time.Time
-	endReason terminal.CloseReason
 }
 
 type guest struct {
@@ -254,11 +233,12 @@ type guest struct {
 	conns         int
 	graceDeadline time.Time // zero while attached (or before the first attach)
 
-	attempt        int
-	retryAt        time.Time // when "Ask again" is allowed (refused only)
-	attemptSession string
-	attemptCancel  context.CancelFunc
-	sessionID      string // the admitted terminal session
+	// sessionID is the guest's one terminal session (pre-assigned at the
+	// first attach); admitted once state is open.
+	sessionID string
+	// cancel aborts the connect while it is still in Open (before the
+	// Manager registered the session, where Close cannot reach it yet).
+	cancel context.CancelFunc
 }
 
 // Service is the ticket lifecycle owner.
@@ -276,10 +256,12 @@ type Service struct {
 	cancel        context.CancelFunc
 	unsub         func()
 
-	mu        sync.Mutex
-	pub       Publisher
-	tickets   map[string]*ticket
-	byToken   map[[32]byte]*ticket
+	mu      sync.Mutex
+	pub     Publisher
+	tickets map[string]*ticket
+	byToken map[[32]byte]*ticket
+	// guests, byCookie and bySession hold live guest sessions only: the
+	// close path removes a guest from all three under the lock.
 	guests    map[string]*guest
 	byCookie  map[[32]byte]*guest
 	bySession map[string]*guest
@@ -321,12 +303,12 @@ func (s *Service) SetPublisher(pub Publisher) {
 type closeReq struct {
 	sessionID string
 	reason    terminal.CloseReason
+	cancel    context.CancelFunc
 }
 
 type effects struct {
 	audits   []audit.TicketEvent
 	closes   []closeReq
-	cancels  []context.CancelFunc
 	tickets  map[string]bool // accounts whose ticket list changed
 	sessions map[string]bool // accounts whose session list changed
 }
@@ -345,13 +327,10 @@ func (fx *effects) ownerSessions(accountID string) {
 	fx.sessions[accountID] = true
 }
 
-// apply runs the deferred effects. async closes terminal sessions on their
-// own goroutines — required inside a Manager status hook, where a
-// synchronous Close would join a pump that has not started yet.
+// apply runs the deferred effects. Terminal sessions close on their own
+// goroutines — required inside a Manager status hook, where a synchronous
+// Close would join a pump that has not started yet.
 func (s *Service) apply(fx *effects) {
-	for _, c := range fx.cancels {
-		c()
-	}
 	// Audit rows and owner notifications first: they are quick and must not
 	// wait behind a terminal close. A close can block for seconds (a wedged
 	// transport, up to the Manager's join timeout), so each one runs on its
@@ -370,7 +349,14 @@ func (s *Service) apply(fx *effects) {
 		}
 	}
 	for _, c := range fx.closes {
-		go s.p.Manager.Close(c.sessionID, c.reason)
+		go func() {
+			// Close first, so an opening session is closed with this reason;
+			// cancel then stops a connect the Manager has not registered yet.
+			s.p.Manager.Close(c.sessionID, c.reason)
+			if c.cancel != nil {
+				c.cancel()
+			}
+		}()
 	}
 }
 
@@ -389,8 +375,7 @@ func (s *Service) event(t *ticket, g *guest, name string) audit.TicketEvent {
 	if g != nil {
 		ev.Channel = string(g.channel)
 		ev.Reason, ev.SourceIP, ev.UserAgent, ev.ConfirmationCode = g.reason, g.sourceIP, g.userAgent, g.code
-		ev.Attempt = g.attempt
-		ev.SessionID = g.attemptSession
+		ev.SessionID = g.sessionID
 	}
 	return ev
 }
@@ -490,9 +475,6 @@ type View struct {
 	AgentForward     bool       `json:"agentForward"`
 	State            string     `json:"state"`
 	Guest            *GuestView `json:"guest"`
-	// EndedAt / EndReason: set once the guest session closed (state closed).
-	EndedAt   *string `json:"endedAt"`
-	EndReason *string `json:"endReason"`
 }
 
 // GuestView is the guest-session half of a View.
@@ -507,7 +489,6 @@ type GuestView struct {
 	AdmissionDeadline *string `json:"admissionDeadline"`
 	LifetimeDeadline  *string `json:"lifetimeDeadline"`
 	SessionID         *string `json:"sessionId"`
-	Attempt           int     `json:"attempt"`
 	Attached          bool    `json:"attached"`
 	Connections       int     `json:"connections"`
 }
@@ -535,27 +516,19 @@ func (s *Service) viewLocked(t *ticket) View {
 			State: g.state, Channel: string(g.channel), ConfirmationCode: g.code, Reason: g.reason,
 			SourceIP: g.sourceIP, UserAgent: g.userAgent, RedeemedAt: iso(g.redeemedAt),
 			AdmissionDeadline: isoPtr(g.admissionDeadline), LifetimeDeadline: isoPtr(g.lifetimeDeadline),
-			Attempt: g.attempt, Attached: g.conns > 0, Connections: g.conns,
+			Attached: g.conns > 0, Connections: g.conns,
 		}
 		if g.sessionID != "" {
 			sid := g.sessionID
 			gv.SessionID = &sid
-		} else if g.attemptSession != "" && g.state == StatePending {
-			sid := g.attemptSession
-			gv.SessionID = &sid
 		}
 		v.Guest = gv
-	}
-	if !t.endedAt.IsZero() {
-		v.EndedAt = isoPtr(t.endedAt)
-		why := string(t.endReason)
-		v.EndReason = &why
 	}
 	return v
 }
 
-// List returns the account's tickets — unredeemed, with a live guest
-// session, or with a recently closed one (ClosedRetention) — oldest first.
+// List returns the account's tickets — unredeemed or with a live guest
+// session — oldest first. Ended ones are in the ticket audit.
 func (s *Service) List(accountID string) []View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -577,8 +550,7 @@ func (s *Service) List(accountID string) []View {
 
 // Revoke ends a live ticket: an unredeemed one is deleted, a redeemed one
 // goes through the close path. ErrNotFound when the ticket is not the
-// account's (or no longer listed); ErrAlreadyEnded when its guest session
-// already ended — nothing is removed then.
+// account's or is no longer listed (its guest session already ended).
 func (s *Service) Revoke(accountID, ticketID string) error {
 	var fx effects
 	s.mu.Lock()
@@ -586,11 +558,6 @@ func (s *Service) Revoke(accountID, ticketID string) error {
 	if !ok || t.accountID != accountID {
 		s.mu.Unlock()
 		return ErrNotFound
-	}
-	if !t.endedAt.IsZero() {
-		s.mu.Unlock()
-		slog.Info("ticket: revoke ignored", "account", accountID, "ticket", ticketID, "reason", "already ended")
-		return ErrAlreadyEnded
 	}
 	fx.audits = append(fx.audits, s.event(t, t.guest, audit.TicketRevoked))
 	if t.guest == nil {
@@ -603,33 +570,6 @@ func (s *Service) Revoke(accountID, ticketID string) error {
 	s.apply(&fx)
 	slog.Info("ticket: revoked", "account", accountID, "ticket", ticketID)
 	return nil
-}
-
-// retainClosedLocked keeps a ticket whose guest session just closed in the
-// owner's list for ClosedRetention, dropping the account's oldest closed
-// ones beyond MaxClosedPerAccount.
-func (s *Service) retainClosedLocked(t *ticket, reason terminal.CloseReason) {
-	t.endedAt = s.clk.Now()
-	t.endReason = reason
-	var closed []*ticket
-	for _, o := range s.tickets {
-		if o.accountID == t.accountID && !o.endedAt.IsZero() {
-			closed = append(closed, o)
-		}
-	}
-	if over := len(closed) - MaxClosedPerAccount; over > 0 {
-		slices.SortFunc(closed, func(a, b *ticket) int { return a.endedAt.Compare(b.endedAt) })
-		for _, o := range closed[:over] {
-			s.dropClosedLocked(o, "evicted")
-		}
-	}
-}
-
-// dropClosedLocked removes an ended ticket from the owner's list and logs
-// why (expired, evicted, endpoint or account removed).
-func (s *Service) dropClosedLocked(t *ticket, why string) {
-	s.dropTicketLocked(t)
-	slog.Info("ticket: removed from list", "account", t.accountID, "ticket", t.id, "reason", why)
 }
 
 func (s *Service) dropTicketLocked(t *ticket) {
@@ -664,7 +604,6 @@ type Redeemed struct {
 	Cookie           string
 	CookieMaxAge     time.Duration
 	ConfirmationCode string
-	AttachDeadline   time.Time
 	AdmissionWindow  time.Duration
 	Lifetime         time.Duration
 	ReasonRequired   bool
@@ -677,22 +616,11 @@ func (s *Service) HasLiveGuestForEndpoint(accountID, endpointID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, g := range s.guests {
-		if g.state != StateClosed && g.t.accountID == accountID && g.t.endpointID == endpointID {
+		if g.t.accountID == accountID && g.t.endpointID == endpointID {
 			return true
 		}
 	}
 	return false
-}
-
-// HasLiveGuest reports whether cookie names a live guest session.
-func (s *Service) HasLiveGuest(cookie string) bool {
-	if cookie == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	g, ok := s.byCookie[hash(cookie)]
-	return ok && g.state != StateClosed
 }
 
 // Checked is what a guest page may learn about a usable ticket before
@@ -733,39 +661,36 @@ func (s *Service) usable(ctx context.Context, token, op, sourceIP string) (*tick
 		slog.Info(rejected, "reason", "unknown or already used ticket", "sourceIp", sourceIP)
 		return nil, Options{}, ErrNotFound
 	}
-	if !s.clk.Now().Before(snapshot.expiresAt) {
-		s.invalidate(t, audit.TicketExpired, "expired")
-		slog.Info(rejected, "ticket", t.id, "reason", "expired", "sourceIp", sourceIP)
+	gone := func(event, why string) (*ticket, Options, error) {
+		s.invalidate(t, event, why)
+		slog.Info(rejected, "ticket", t.id, "reason", why, "sourceIp", sourceIP)
 		return nil, Options{}, ErrNotFound
+	}
+	unavailable := func(check string, err error) (*ticket, Options, error) {
+		slog.Warn("ticket: eligibility check failed", "op", op, "ticket", t.id, "check", check,
+			"sourceIp", sourceIP, "err", err)
+		return nil, Options{}, ErrUnavailable
+	}
+	if !s.clk.Now().Before(snapshot.expiresAt) {
+		return gone(audit.TicketExpired, "expired")
 	}
 	if s.p.AccountActive != nil {
 		active, err := s.p.AccountActive(ctx, snapshot.accountID)
 		if err != nil {
-			slog.Warn("ticket: eligibility check failed", "op", op, "ticket", t.id, "check", "account",
-				"sourceIp", sourceIP, "err", err)
-			return nil, Options{}, ErrUnavailable
+			return unavailable("account", err)
 		}
 		if !active {
-			s.invalidate(t, audit.TicketInvalidated, "account removed or disabled")
-			slog.Info(rejected, "ticket", t.id, "reason", "account removed or disabled", "sourceIp", sourceIP)
-			return nil, Options{}, ErrNotFound
+			return gone(audit.TicketInvalidated, "account removed or disabled")
 		}
 	}
 	ref, err := s.p.ResolveEndpoint(ctx, snapshot.endpointID, snapshot.accountID)
-	if err != nil {
-		slog.Warn("ticket: eligibility check failed", "op", op, "ticket", t.id, "check", "endpoint",
-			"sourceIp", sourceIP, "err", err)
-		return nil, Options{}, ErrUnavailable
-	}
-	if ref == nil {
-		s.invalidate(t, audit.TicketInvalidated, "endpoint removed or disabled")
-		slog.Info(rejected, "ticket", t.id, "reason", "endpoint removed or disabled", "sourceIp", sourceIP)
-		return nil, Options{}, ErrNotFound
-	}
-	if ref.Target() != snapshot.target {
-		s.invalidate(t, audit.TicketInvalidated, "endpoint target changed")
-		slog.Info(rejected, "ticket", t.id, "reason", "endpoint target changed", "sourceIp", sourceIP)
-		return nil, Options{}, ErrNotFound
+	switch {
+	case err != nil:
+		return unavailable("endpoint", err)
+	case ref == nil:
+		return gone(audit.TicketInvalidated, "endpoint removed or disabled")
+	case ref.Target() != snapshot.target:
+		return gone(audit.TicketInvalidated, "endpoint target changed")
 	}
 	return t, snapshot.opts, nil
 }
@@ -775,7 +700,7 @@ func (s *Service) usable(ctx context.Context, token, op, sourceIP string) (*tick
 func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) {
 	// Early exit before any lookup; repeated under the lock below, where it
 	// is authoritative.
-	if !p.ReplaceCurrent && s.HasLiveGuest(p.Cookie) {
+	if _, live := s.GuestByCookie(p.Cookie); live && !p.ReplaceCurrent {
 		slog.Info("ticket: redeem rejected", "reason", "browser holds a live guest session", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrLiveGuest
 	}
@@ -833,7 +758,7 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	// drops after the attach window.)
 	var replaced *guest
 	if p.Cookie != "" {
-		if old, ok := s.byCookie[hash(p.Cookie)]; ok && old.state != StateClosed {
+		if old, ok := s.byCookie[hash(p.Cookie)]; ok {
 			if !p.ReplaceCurrent {
 				s.mu.Unlock()
 				slog.Info("ticket: redeem rejected", "reason", "browser holds a live guest session", "sourceIp", p.SourceIP)
@@ -859,8 +784,8 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	return Redeemed{
 		Cookie:           cookie,
 		CookieMaxAge:     AttachWindow + AdmissionWindow + opts.Lifetime + ReconnectGrace,
-		ConfirmationCode: g.code, AttachDeadline: g.attachDeadline,
-		AdmissionWindow: AdmissionWindow, Lifetime: opts.Lifetime,
+		ConfirmationCode: g.code,
+		AdmissionWindow:  AdmissionWindow, Lifetime: opts.Lifetime,
 		ReasonRequired: opts.ReasonRequired, AgentForward: opts.AgentForward,
 	}, nil
 }
@@ -873,13 +798,22 @@ func (s *Service) invalidate(t *ticket, event, why string) {
 		s.mu.Unlock()
 		return
 	}
-	s.dropTicketLocked(t)
-	ev := s.event(t, nil, event)
-	ev.EndReason = why
-	fx.audits = append(fx.audits, ev)
-	fx.ownerTickets(t.accountID)
+	s.spendLocked(t, event, why, &fx)
 	s.mu.Unlock()
 	s.apply(&fx)
+}
+
+// spendLocked drops an unredeemed ticket and records why (expired,
+// invalidated). An account deletion records nothing: the account's audit
+// rows go with it.
+func (s *Service) spendLocked(t *ticket, event, why string, fx *effects) {
+	s.dropTicketLocked(t)
+	if why != string(terminal.CloseAccountDeleted) {
+		ev := s.event(t, nil, event)
+		ev.EndReason = why
+		fx.audits = append(fx.audits, ev)
+	}
+	fx.ownerTickets(t.accountID)
 }
 
 // --- guest connections ------------------------------------------------------
@@ -892,7 +826,7 @@ func (s *Service) GuestByCookie(cookie string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.byCookie[hash(cookie)]
-	if !ok || g.state == StateClosed {
+	if !ok {
 		return "", false
 	}
 	return g.id, true
@@ -900,12 +834,12 @@ func (s *Service) GuestByCookie(cookie string) (string, bool) {
 
 // Attach registers one guest connection (the caller registered it with the
 // publisher first, so the status sent here reaches it). The first attach
-// opens the admission window and starts the first attempt.
+// opens the admission window and starts the one connect.
 func (s *Service) Attach(guestID string) error {
 	var fx effects
 	s.mu.Lock()
 	g, ok := s.guests[guestID]
-	if !ok || g.state == StateClosed {
+	if !ok {
 		s.mu.Unlock()
 		return ErrGone
 	}
@@ -929,7 +863,7 @@ func (s *Service) Attach(guestID string) error {
 		g.admissionDeadline = s.clk.Now().Add(AdmissionWindow)
 		fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketAttached))
 		slog.Info("ticket: attached", "ticket", g.t.id, "account", g.t.accountID)
-		s.startAttemptLocked(g, &fx)
+		s.connectLocked(g, &fx)
 		fx.ownerTickets(g.t.accountID)
 	} else {
 		reattached := wasDetached && g.conns == 1
@@ -958,7 +892,7 @@ func (s *Service) Detach(guestID string) {
 	var fx effects
 	s.mu.Lock()
 	g, ok := s.guests[guestID]
-	if !ok || g.state == StateClosed || g.conns == 0 {
+	if !ok || g.conns == 0 {
 		s.mu.Unlock()
 		return
 	}
@@ -1017,54 +951,19 @@ func (s *Service) End(guestID string) {
 	s.closeByID(guestID, terminal.CloseClientGuest)
 }
 
-// Retry starts a new attempt — accepted only in refused, inside the
-// admission window.
-func (s *Service) Retry(guestID string) {
-	var fx effects
-	s.mu.Lock()
-	g, ok := s.guests[guestID]
-	now := s.clk.Now()
-	if !ok || g.state != StateRefused {
-		s.mu.Unlock()
-		return
-	}
-	if reason, expired := expiredLocked(g, now); expired {
-		s.closeLocked(g, reason, &fx)
-		s.mu.Unlock()
-		s.apply(&fx)
-		return
-	}
-	if now.Before(g.retryAt) {
-		// The page knows retryAt and keeps the button disabled until then;
-		// only a script sends this early. Drop it quietly: no Info log and no
-		// status resend per frame, so repeating it costs nothing.
-		ticketID := g.t.id
-		s.mu.Unlock()
-		slog.Debug("ticket: retry ignored", "ticket", ticketID, "reason", "cooldown")
-		return
-	}
-	fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketRetried))
-	s.startAttemptLocked(g, &fx)
-	fx.ownerTickets(g.t.accountID)
-	ticketID, attempt := g.t.id, g.attempt
-	s.mu.Unlock()
-	s.apply(&fx)
-	slog.Info("ticket: retry", "ticket", ticketID, "attempt", attempt)
-}
-
 // GuestAttached reports, for a terminal session admitted by a ticket,
 // whether the guest is currently attached (ok=false for any other session).
 func (s *Service) GuestAttached(sessionID string) (attached, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, found := s.bySession[sessionID]
-	if !found || g.state == StateClosed {
+	if !found {
 		return false, false
 	}
 	return g.conns > 0, true
 }
 
-// --- attempts -------------------------------------------------------------
+// --- admission --------------------------------------------------------------
 
 func (s *Service) publishStatusLocked(g *guest) {
 	if s.pub == nil {
@@ -1082,133 +981,70 @@ func (s *Service) statusLocked(g *guest) Status {
 		if !g.admissionDeadline.IsZero() {
 			st.AdmissionDeadline = iso(g.admissionDeadline)
 		}
-	case StateRefused:
-		st.Code = g.code
-		st.AdmissionDeadline = iso(g.admissionDeadline)
-		left := int(g.admissionDeadline.Sub(s.clk.Now()).Seconds())
-		if left < 0 {
-			left = 0
-		}
-		st.RemainingSeconds = &left
-		st.RetryAt = iso(g.retryAt)
-		attemptsLeft := MaxAttempts - g.attempt
-		st.AttemptsLeft = &attemptsLeft
-		st.Message = "Access was not granted."
 	case StateOpen:
 		st.LifetimeDeadline = iso(g.lifetimeDeadline)
 	}
 	return st
 }
 
-// startAttemptLocked launches one Manager.Create for the guest session (on
-// its own goroutine, bounded by the admission window via the close path).
-func (s *Service) startAttemptLocked(g *guest, fx *effects) {
-	g.attempt++
-	n := g.attempt
-	sid := terminal.GenerateSessionID()
-	// Superseded attempts stay mapped until their closed event or the
-	// guest's close, so a late event from one is recognized (and a stale
-	// open is closed) instead of slipping past as an unknown session.
-	g.attemptSession = sid
-	s.bySession[sid] = g
+// connectLocked starts the guest session's one Manager.Create (on its own
+// goroutine; the admission window bounds it through the close path). The
+// session id is assigned here so the status hook recognizes the session,
+// including the closed broadcast of a create that fails.
+func (s *Service) connectLocked(g *guest, fx *effects) {
+	g.sessionID = terminal.GenerateSessionID()
+	s.bySession[g.sessionID] = g
 	ctx, cancel := context.WithCancel(s.ctx)
-	g.attemptCancel = cancel
+	g.cancel = cancel
 	g.state = StatePending
 	s.publishStatusLocked(g)
 	t := g.t
 	trigger := terminal.Trigger{
-		Kind: terminal.SourceTicket, SourceIP: g.sourceIP, Reason: g.reason, SessionID: sid,
+		Kind: terminal.SourceTicket, SourceIP: g.sourceIP, Reason: g.reason, SessionID: g.sessionID,
+		Lifetime: t.opts.Lifetime, LifetimeReason: terminal.CloseTicketLifetime,
 		Ticket: &terminal.TicketTrigger{
 			TicketID: t.id, Label: t.opts.Label, Channel: g.channel, UserAgent: g.userAgent,
 			ConfirmationCode: g.code, AgentForward: t.opts.AgentForward, Target: t.target,
 			LifetimeSeconds: int(t.opts.Lifetime / time.Second),
 		},
 	}
-	go s.runAttempt(ctx, attemptParams{
-		guestID: g.id, n: n, accountID: t.accountID, endpointID: t.endpointID, trigger: trigger,
-	})
+	go s.connect(ctx, g.id, t.accountID, t.endpointID, trigger)
 }
 
-// attemptParams describe one admission attempt (runAttempt).
-type attemptParams struct {
-	guestID string
-	// n is the attempt number; events of a superseded attempt are ignored.
-	n                     int
-	accountID, endpointID string
-	trigger               terminal.Trigger
-}
-
-func (s *Service) runAttempt(ctx context.Context, a attemptParams) {
-	sess, err := s.p.Open(ctx, a.accountID, a.endpointID, a.trigger)
-	if errors.Is(err, endpointsvc.ErrEndpointNotFound) {
-		// Removed or disabled since redemption: it cannot be admitted.
-		s.closeByID(a.guestID, terminal.CloseEndpointRemoved)
+// connect runs the one Manager.Create. Success needs nothing more: the
+// status hook admitted the guest (or, when the guest was gone or late,
+// closed the session through the close path). A failure ends the guest
+// session, unless something else ended it first.
+func (s *Service) connect(ctx context.Context, guestID, accountID, endpointID string, trigger terminal.Trigger) {
+	_, err := s.p.Open(ctx, accountID, endpointID, trigger)
+	if err == nil {
 		return
 	}
-	if errors.Is(err, endpointsvc.ErrTargetChanged) {
-		// The endpoint points elsewhere now; the ticket was not for it.
-		s.closeByID(a.guestID, terminal.CloseTicketRevoked)
-		return
+	reason := terminal.CloseTicketNotAdmitted
+	switch {
+	case errors.Is(err, endpointsvc.ErrEndpointNotFound):
+		reason = terminal.CloseEndpointRemoved // removed or disabled since redemption
+	case errors.Is(err, endpointsvc.ErrTargetChanged):
+		reason = terminal.CloseTicketRevoked // the ticket was not for the new target
 	}
-	if err != nil {
-		s.attemptFailed(a.guestID, a.n, err.Error())
-		return
-	}
-	// Backstop: a session that went live for a guest session that is gone,
-	// or for an attempt that is no longer current, must not stay open.
-	s.mu.Lock()
-	g, ok := s.guests[a.guestID]
-	live := ok && g.state == StateOpen && g.sessionID == sess.SessionID
-	s.mu.Unlock()
-	if !live {
-		s.p.Manager.Close(sess.SessionID, terminal.CloseTicketNotAdmitted)
-	}
-}
-
-// attemptFailed moves the guest to refused when attempt n is still the
-// current, unadmitted one (idempotent: the Manager's closed broadcast for a
-// failed create usually got here first).
-func (s *Service) attemptFailed(guestID string, n int, why string) {
 	var fx effects
 	s.mu.Lock()
 	g, ok := s.guests[guestID]
-	if !ok || g.attempt != n || g.state != StatePending {
+	if !ok || g.state != StatePending {
 		s.mu.Unlock()
 		return
 	}
-	s.refuseLocked(g, why, &fx)
+	ev := s.event(g.t, g, audit.TicketAttemptFailed)
+	ev.EndReason = err.Error()
+	fx.audits = append(fx.audits, ev)
+	slog.Info("ticket: connect failed", "ticket", g.t.id, "session", g.sessionID, "reason", err.Error())
+	s.closeLocked(g, reason, &fx)
 	s.mu.Unlock()
 	s.apply(&fx)
 }
 
-func (s *Service) refuseLocked(g *guest, why string, fx *effects) {
-	if g.attemptCancel != nil {
-		fx.cancels = append(fx.cancels, g.attemptCancel)
-		g.attemptCancel = nil
-	}
-	ev := s.event(g.t, g, audit.TicketAttemptFailed)
-	ev.EndReason = why
-	fx.audits = append(fx.audits, ev)
-	slog.Info("ticket: attempt failed", "ticket", g.t.id, "attempt", g.attempt, "reason", why)
-	// Truncated to the millisecond the frame carries, so the advertised
-	// retryAt is exactly the enforced one.
-	retryAt := s.clk.Now().Add(RetryCooldown).Truncate(time.Millisecond)
-	if g.attempt >= MaxAttempts || !retryAt.Before(g.admissionDeadline) {
-		// No attempt left, or none that could start before the admission
-		// window ends: nothing more the guest can do.
-		g.attemptSession = ""
-		s.closeLocked(g, terminal.CloseTicketNotAdmitted, fx)
-		return
-	}
-	g.state = StateRefused
-	g.retryAt = retryAt
-	fx.ownerTickets(g.t.accountID)
-	s.publishStatusLocked(g)
-}
-
 // onStatus is the Manager status hook: admission, and the end of an
-// attempt or of an admitted session. Events of an attempt that is no longer
-// current are ignored.
+// admitted session.
 func (s *Service) onStatus(ev terminal.StatusEvent) {
 	var fx effects
 	s.mu.Lock()
@@ -1217,54 +1053,40 @@ func (s *Service) onStatus(ev terminal.StatusEvent) {
 		s.mu.Unlock()
 		return
 	}
-	current := g.attemptSession == ev.SessionID
 	switch ev.Status {
 	case terminal.StatusOpen:
-		if current && g.state == StatePending {
-			now := s.clk.Now()
-			if reason, expired := expiredLocked(g, now); expired {
-				// Approved after the admission window closed: no admission.
-				// The close path also closes the session that just went live.
-				s.closeLocked(g, reason, &fx)
-				break
-			}
-			g.state = StateOpen
-			g.sessionID = ev.SessionID
-			g.openedAt = now
-			g.lifetimeDeadline = now.Add(g.t.opts.Lifetime)
-			s.publishStatusLocked(g)
-			if s.pub != nil {
-				s.pub.GuestOpen(g.id, g.sessionID)
-			}
-			fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketAdmitted))
-			fx.ownerTickets(g.t.accountID)
-			fx.ownerSessions(g.t.accountID)
-			slog.Info("ticket: admitted", "ticket", g.t.id, "account", g.t.accountID,
-				"session", ev.SessionID, "attempt", g.attempt)
-		} else {
-			// A stale attempt went live after all: it must not stay open.
-			delete(s.bySession, ev.SessionID)
-			fx.closes = append(fx.closes, closeReq{ev.SessionID, terminal.CloseTicketNotAdmitted})
-		}
-	case terminal.StatusClosed, terminal.StatusError:
-		if !current {
-			delete(s.bySession, ev.SessionID)
+		if g.state != StatePending {
 			break
 		}
-		switch g.state {
-		case StateOpen:
+		now := s.clk.Now()
+		if reason, expired := expiredLocked(g, now); expired {
+			// Approved after the admission window closed: no admission.
+			// The close path also closes the session that just went live.
+			s.closeLocked(g, reason, &fx)
+			break
+		}
+		g.state = StateOpen
+		g.openedAt = now
+		g.lifetimeDeadline = ev.Deadline
+		s.publishStatusLocked(g)
+		if s.pub != nil {
+			s.pub.GuestOpen(g.id, g.sessionID)
+		}
+		fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketAdmitted))
+		fx.ownerTickets(g.t.accountID)
+		fx.ownerSessions(g.t.accountID)
+		slog.Info("ticket: admitted", "ticket", g.t.id, "account", g.t.accountID, "session", ev.SessionID)
+	case terminal.StatusClosed, terminal.StatusError:
+		// A pending session that never went live: Manager.Create broadcasts
+		// this closed (transport-error) just before it returns the real error
+		// to connect, which records it. Closing here would audit every
+		// failure as transport-error and hide an owner's denial.
+		if g.state == StateOpen {
 			reason := ev.Reason
 			if reason == "" {
 				reason = terminal.CloseServerHangup
 			}
-			g.attemptSession = "" // the terminal session is already ending
 			s.closeLocked(g, reason, &fx)
-		case StatePending:
-			// A pending attempt's session never went live: Manager.Create
-			// broadcasts this closed (transport-error) just before it
-			// returns the real error to runAttempt, which records it via
-			// attemptFailed. Refusing here would audit every failure as
-			// transport-error and hide an owner's denial.
 		}
 	}
 	s.mu.Unlock()
@@ -1297,34 +1119,31 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 	}
 	prev := g.state
 	g.state = StateClosed
-	// A closed guest session stays listed for a while: it must not claim
-	// connections (the sockets are being closed now).
 	g.conns = 0
 	g.graceDeadline = time.Time{}
-	if g.attemptCancel != nil {
-		fx.cancels = append(fx.cancels, g.attemptCancel)
-		g.attemptCancel = nil
+	if prev == StatePending || prev == StateOpen {
+		// The one close of the guest's terminal session. A session that has
+		// already ended (a failed connect, a Manager-side close) makes this a
+		// no-op, so the first reason stands.
+		fx.closes = append(fx.closes, closeReq{g.sessionID, reason, g.cancel})
+		g.cancel = nil
 	}
-	if g.attemptSession != "" && (prev == StatePending || prev == StateOpen) {
-		fx.closes = append(fx.closes, closeReq{g.attemptSession, reason})
-	}
-	for sid, owner := range s.bySession {
-		if owner == g {
-			delete(s.bySession, sid)
-		}
-	}
+	delete(s.bySession, g.sessionID)
 	delete(s.byCookie, g.cookieHash)
 	delete(s.guests, g.id)
-	s.retainClosedLocked(g.t, reason)
+	s.dropTicketLocked(g.t)
 
 	if s.pub != nil {
-		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: MsgEnded, ServerTime: iso(s.clk.Now())})
+		msg := MsgEnded
+		if prev != StateOpen {
+			msg = MsgNotGranted
+		}
+		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: msg, ServerTime: iso(s.clk.Now())})
 	}
 	now := s.clk.Now()
 	ev := s.event(g.t, g, audit.TicketEnded)
 	ev.EndReason = string(reason)
-	if g.sessionID != "" {
-		ev.SessionID = g.sessionID
+	if !g.openedAt.IsZero() {
 		d := now.Sub(g.openedAt).Milliseconds()
 		ev.DurationMs = &d
 	}
@@ -1371,17 +1190,10 @@ func (s *Service) RevokeStaleForEndpoint(accountID, endpointID, target string) {
 	s.mu.Lock()
 	n := 0
 	for _, t := range s.tickets {
-		if t.accountID == accountID && t.endpointID == endpointID && t.target != target &&
-			t.guest == nil && t.endedAt.IsZero() {
-			s.dropTicketLocked(t)
-			ev := s.event(t, nil, audit.TicketInvalidated)
-			ev.EndReason = "endpoint target changed"
-			fx.audits = append(fx.audits, ev)
+		if t.accountID == accountID && t.endpointID == endpointID && t.target != target && t.guest == nil {
+			s.spendLocked(t, audit.TicketInvalidated, "endpoint target changed", &fx)
 			n++
 		}
-	}
-	if n > 0 {
-		fx.ownerTickets(accountID)
 	}
 	s.mu.Unlock()
 	s.apply(&fx)
@@ -1397,21 +1209,8 @@ func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseR
 		if !match(t) {
 			continue
 		}
-		if !t.endedAt.IsZero() {
-			// Already closed: its account or endpoint is gone, so it leaves
-			// the list now.
-			s.dropClosedLocked(t, string(reason))
-			fx.ownerTickets(t.accountID)
-			continue
-		}
 		if t.guest == nil {
-			s.dropTicketLocked(t)
-			if reason != terminal.CloseAccountDeleted { // rows cascade with the account
-				ev := s.event(t, nil, audit.TicketInvalidated)
-				ev.EndReason = string(reason)
-				fx.audits = append(fx.audits, ev)
-			}
-			fx.ownerTickets(t.accountID)
+			s.spendLocked(t, audit.TicketInvalidated, string(reason), &fx)
 		} else {
 			s.closeLocked(t.guest, reason, &fx)
 		}
@@ -1420,25 +1219,17 @@ func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseR
 	s.apply(&fx)
 }
 
-// Sweep enforces every deadline: redeem TTL, attach window, admission
-// window, session lifetime, reconnect grace. The janitor calls it; tests
-// call it after advancing a fake clock.
+// Sweep enforces the ticket's deadlines: redeem TTL, attach window,
+// admission window, reconnect grace. The session lifetime is the Manager's
+// (Trigger.Lifetime). The janitor calls it; tests call it after advancing a
+// fake clock.
 func (s *Service) Sweep() {
 	var fx effects
 	now := s.clk.Now()
 	s.mu.Lock()
 	for _, t := range s.tickets {
-		if !t.endedAt.IsZero() && now.Sub(t.endedAt) >= ClosedRetention {
-			s.dropClosedLocked(t, "expired")
-			fx.ownerTickets(t.accountID)
-			continue
-		}
 		if t.guest == nil && !now.Before(t.expiresAt) {
-			s.dropTicketLocked(t)
-			ev := s.event(t, nil, audit.TicketExpired)
-			ev.EndReason = "expired" // the same shape as the check/redeem path
-			fx.audits = append(fx.audits, ev)
-			fx.ownerTickets(t.accountID)
+			s.spendLocked(t, audit.TicketExpired, "expired", &fx) // the check/redeem path's shape
 			slog.Info("ticket: expired", "ticket", t.id, "account", t.accountID)
 		}
 	}
@@ -1453,17 +1244,15 @@ func (s *Service) Sweep() {
 
 // expiredLocked reports whether a guest session is past one of its
 // deadlines, and the close reason. The janitor enforces it periodically;
-// every transition that would extend access (an attach, an admission, a
-// retry) checks it first, so access never outlives a deadline just because
+// every transition that would extend access (an attach, an admission)
+// checks it first, so access never outlives a deadline just because
 // the janitor has not run yet.
 func expiredLocked(g *guest, now time.Time) (terminal.CloseReason, bool) {
 	switch {
 	case g.state == StateRedeemed && g.admissionDeadline.IsZero() && !now.Before(g.attachDeadline):
 		return terminal.CloseTicketUnattached, true
-	case (g.state == StatePending || g.state == StateRefused) && !now.Before(g.admissionDeadline):
+	case g.state == StatePending && !now.Before(g.admissionDeadline):
 		return terminal.CloseTicketNotAdmitted, true
-	case g.state == StateOpen && !now.Before(g.lifetimeDeadline):
-		return terminal.CloseTicketLifetime, true
 	case g.conns == 0 && !g.graceDeadline.IsZero() && !now.Before(g.graceDeadline):
 		return terminal.CloseGuestDisconnected, true
 	}
@@ -1490,7 +1279,7 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	s.closed = true
 	for _, t := range s.tickets {
-		if t.guest != nil && t.endedAt.IsZero() {
+		if t.guest != nil {
 			s.closeLocked(t.guest, terminal.CloseShutdown, &fx)
 		}
 		s.dropTicketLocked(t)

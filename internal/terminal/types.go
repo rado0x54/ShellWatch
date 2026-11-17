@@ -87,6 +87,10 @@ type Session struct {
 	TicketID      string
 	TicketLabel   string
 	TicketChannel TicketChannel
+	// Deadline is the hard end of an open session (zero when none) and
+	// DeadlineReason the close reason it ends with (Trigger.Lifetime).
+	Deadline       time.Time
+	DeadlineReason CloseReason
 }
 
 // Trigger carries create-time metadata (EndpointAuthTrigger subset).
@@ -98,9 +102,14 @@ type Trigger struct {
 	MCPClientName string
 	MCPClientVer  string
 	// SessionID pre-assigns the session id (optional): the ticket service
-	// must recognize its attempt's status events, including the closed
+	// must recognize its session's status events, including the closed
 	// broadcast of a failed create that never returns a session.
 	SessionID string
+	// Lifetime > 0 is a hard cap counted from when the session goes open
+	// (Session.Deadline); the Manager's janitor closes it then with
+	// LifetimeReason.
+	Lifetime       time.Duration
+	LifetimeReason CloseReason
 	// Ticket is set for source ticket (#306): what the approval prompt shows.
 	Ticket *TicketTrigger
 	// MaxActive > 0 refuses the create with a *LimitError when the account

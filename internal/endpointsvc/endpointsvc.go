@@ -60,9 +60,8 @@ type Service struct {
 	// Audit records host-key-cleared events (*audit.Writer). nil-able.
 	Audit HostKeyAuditor
 	// LiveGuest reports a live guest session for the endpoint, including one
-	// with no terminal session right now (waiting to attach, or refused and
-	// allowed to ask again): it may still dial the endpoint, so it blocks a
-	// delete like an open session. nil-able.
+	// with no terminal session yet (waiting to attach): it may still dial
+	// the endpoint, so it blocks a delete like an open session. nil-able.
 	LiveGuest func(accountID, endpointID string) bool
 	// OnDeleted runs after a delete, so the endpoint's outstanding tickets
 	// end with it (#306). nil-able.

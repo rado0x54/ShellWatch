@@ -7,7 +7,9 @@
 import { writable } from "svelte/store";
 import { apiFetch } from "../api.js";
 
-export type TicketState = "minted" | "redeemed" | "pending" | "refused" | "open" | "closed";
+/** A ticket is listed until its guest session ends; ended ones are in the
+ * ticket audit (`fetchTicketEvents`). */
+export type TicketState = "minted" | "redeemed" | "pending" | "open";
 
 export interface TicketGuest {
   state: Exclude<TicketState, "minted">;
@@ -20,7 +22,6 @@ export interface TicketGuest {
   admissionDeadline: string | null;
   lifetimeDeadline: string | null;
   sessionId: string | null;
-  attempt: number;
   attached: boolean;
   connections: number;
 }
@@ -37,10 +38,6 @@ export interface Ticket {
   agentForward: boolean;
   state: TicketState;
   guest: TicketGuest | null;
-  /** Set once the guest session closed (state "closed"); the ticket stays
-   * listed for 5 minutes. */
-  endedAt: string | null;
-  endReason: string | null;
 }
 
 export interface MintOptions {
@@ -121,35 +118,16 @@ export async function mintTicket(
 }
 
 /**
- * Revoke a live ticket (ends its guest session). "ended" when the guest
- * session had already ended or the ticket is gone: nothing changed, and an
- * ended ticket leaves the list on its own after 5 minutes.
+ * Revoke a live ticket (ends its guest session). "ended" when the ticket is
+ * gone (404): its guest session had already ended, nothing changed.
  */
 export async function revokeTicket(id: string): Promise<"revoked" | "ended"> {
   const res = await apiFetch(`/api/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 404 && res.status !== 409) {
+  if (!res.ok && res.status !== 404) {
     throw await errorFrom(res, "Failed to revoke the ticket");
   }
   void fetchTickets().catch(() => {});
   return res.ok ? "revoked" : "ended";
-}
-
-/** Human labels for the owner's view of a ticket's state. */
-export function ticketStateLabel(t: Ticket): string {
-  switch (t.state) {
-    case "minted":
-      return "not used yet";
-    case "redeemed":
-      return "opened, connecting";
-    case "pending":
-      return "waiting for approval";
-    case "refused":
-      return "not admitted (guest may ask again)";
-    case "open":
-      return t.guest?.attached ? "guest connected" : "guest disconnected";
-    case "closed":
-      return `ended: ${endReasonLabel(t.endReason)}`;
-  }
 }
 
 /** Why a guest session ended, for people (the raw reason is the fallback). */
@@ -185,18 +163,11 @@ export function endReasonLabel(reason: string | null): string {
   }
 }
 
-/** The guest-access page's three groups, newest first within each. */
-export function groupTickets(list: Ticket[]): {
-  active: Ticket[];
-  invites: Ticket[];
-  ended: Ticket[];
-} {
+/** The guest-access page's live groups, newest first within each. */
+export function groupTickets(list: Ticket[]): { active: Ticket[]; invites: Ticket[] } {
   const newest = (a: Ticket, b: Ticket) => b.createdAt.localeCompare(a.createdAt);
   return {
-    active: list.filter((t) => t.state !== "minted" && t.state !== "closed").sort(newest),
+    active: list.filter((t) => t.state !== "minted").sort(newest),
     invites: list.filter((t) => t.state === "minted").sort(newest),
-    ended: list
-      .filter((t) => t.state === "closed")
-      .sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? "")),
   };
 }

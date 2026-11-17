@@ -3,7 +3,6 @@
   "body": {
     "admissionWindowSeconds": 300,
     "agentForward": false,
-    "attachDeadline": "<TS>",
     "confirmationCode": "<REDACTED>",
     "lifetimeSeconds": 900
   }

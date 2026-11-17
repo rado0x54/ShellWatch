@@ -14,12 +14,7 @@ import {
   type TicketState,
 } from "./tickets.js";
 
-function ticket(
-  id: string,
-  state: TicketState,
-  createdAt: string,
-  endedAt: string | null = null,
-): Ticket {
+function ticket(id: string, state: TicketState, createdAt: string): Ticket {
   return {
     id,
     endpointId: "ep",
@@ -32,8 +27,6 @@ function ticket(
     agentForward: false,
     state,
     guest: null,
-    endedAt,
-    endReason: endedAt ? "client.guest" : null,
   };
 }
 
@@ -52,18 +45,15 @@ describe("tickets store", () => {
     });
   });
 
-  it("groups the guest-access page: active, unused links, recently ended (newest first)", () => {
+  it("groups the guest-access page: active and unused links (newest first)", () => {
     const g = groupTickets([
       ticket("m1", "minted", "2026-01-01T00:00:01Z"),
       ticket("o1", "open", "2026-01-01T00:00:02Z"),
       ticket("p1", "pending", "2026-01-01T00:00:03Z"),
       ticket("m2", "minted", "2026-01-01T00:00:04Z"),
-      ticket("c1", "closed", "2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z"),
-      ticket("c2", "closed", "2026-01-01T00:00:00Z", "2026-01-01T00:02:00Z"),
     ]);
     expect(g.active.map((t) => t.id)).toEqual(["p1", "o1"]);
     expect(g.invites.map((t) => t.id)).toEqual(["m2", "m1"]);
-    expect(g.ended.map((t) => t.id)).toEqual(["c2", "c1"]);
   });
 
   it("names end reasons for people and falls back to the raw reason", () => {
@@ -79,7 +69,7 @@ describe("tickets store", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "revoked" }), { status: 200 }))
       .mockResolvedValueOnce(list())
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: "Ticket already ended" }), { status: 409 }),
+        new Response(JSON.stringify({ error: "Ticket not found" }), { status: 404 }),
       )
       .mockResolvedValueOnce(list());
     expect(await revokeTicket("a")).toBe("revoked");

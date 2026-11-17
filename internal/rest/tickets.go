@@ -19,7 +19,6 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
-	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/ticket"
@@ -142,11 +141,7 @@ func (t *Tickets) revoke(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid id encoding")
 		return
 	}
-	switch err := t.Service.Revoke(accountID(r), id); {
-	case errors.Is(err, ticket.ErrAlreadyEnded):
-		writeErr(w, 409, "Ticket already ended")
-		return
-	case err != nil:
+	if err := t.Service.Revoke(accountID(r), id); err != nil {
 		writeErr(w, 404, "Ticket not found")
 		return
 	}
@@ -248,7 +243,6 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"confirmationCode":       res.ConfirmationCode,
-		"attachDeadline":         res.AttachDeadline.UTC().Format(clock.ISOMillis),
 		"admissionWindowSeconds": int(res.AdmissionWindow / time.Second),
 		"lifetimeSeconds":        int(res.Lifetime / time.Second),
 		"agentForward":           res.AgentForward,

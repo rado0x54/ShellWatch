@@ -11,7 +11,6 @@
 /** What the redeem call answers on 202. */
 export interface Redeemed {
   confirmationCode: string;
-  attachDeadline: string;
   admissionWindowSeconds: number;
   lifetimeSeconds: number;
   agentForward: boolean;
@@ -30,18 +29,13 @@ export type RedeemResult =
   | {
       ok: true;
       redeemed: Redeemed;
-      /** Server clock minus this device's clock (from the `Date` header; 0
-       * when it is missing). */
+      /** Server minus device clock, from the `Date` header (0 if missing). */
       clockOffsetMs: number;
     }
   | { ok: false; failure: RedeemFailure };
 
-/**
- * How far the server's clock is ahead of this device's (ms; negative when
- * behind). The guest device's clock may be wrong, so deadlines from the server
- * are counted down against `Date.now() + offset`. An unparsable server time
- * gives 0 (trust the local clock rather than invent an offset).
- */
+/** How far the server's clock is ahead of this device's (ms): server deadlines
+ * count down against `Date.now() + offset`. Unparsable gives 0. */
 export function clockOffsetMs(serverTime: string | null | undefined, localNow: number): number {
   if (!serverTime) return 0;
   const t = Date.parse(serverTime);
@@ -60,11 +54,8 @@ export const REDEEM_FAILURE_TEXT: Record<RedeemFailure, string> = {
   error: "Something went wrong. Try again.",
 };
 
-/**
- * Read the ticket token from the URL fragment and remove it from the address
- * bar before anything else happens, so it is not kept in history and does not
- * survive a reload.
- */
+/** Read the ticket token from the URL fragment and remove it from the address
+ * bar at once (not kept in history, gone on reload). */
 export function takeTokenFromLocation(
   loc: Pick<Location, "hash" | "pathname" | "search">,
   hist: Pick<History, "replaceState">,
@@ -79,12 +70,9 @@ export type CheckResult =
   | { ok: true; reasonRequired: boolean }
   | { ok: false; failure: RedeemFailure };
 
-/**
- * POST /api/tickets/check — whether the link can still be redeemed, without
- * spending it (so an invalid link is shown before the guest types a reason).
- * Only a definite answer (404, 403) is a failure the page acts on; anything
- * else is "error", and the page falls back to the form.
- */
+/** POST /api/tickets/check — whether the link can still be redeemed, without
+ * spending it. Only 404/403 are definite; anything else is "error" (the page
+ * falls back to the form). */
 export async function checkTicket(
   token: string,
   fetchFn: typeof fetch = fetch,
@@ -168,13 +156,9 @@ export async function redeemTicket(
 
 /** A guest WS `status` frame. */
 export interface GuestStatus {
-  state: "pending" | "refused" | "open" | "closed";
+  state: "pending" | "open" | "closed";
   code?: string;
   admissionDeadline?: string;
-  remainingSeconds?: number;
-  /** refused: when "Ask again" is accepted, and how many attempts remain. */
-  retryAt?: string;
-  attemptsLeft?: number;
   lifetimeDeadline?: string;
   message?: string;
   /** The server's clock when the frame was built (ISO 8601). */
@@ -197,7 +181,7 @@ type SocketCtor = new (url: string) => WebSocket;
 
 /**
  * The guest WebSocket. The connection is the attachment: there are no
- * attach or detach messages. Client → server: input, resize, end, retry.
+ * attach or detach messages. Client → server: input, resize, end.
  */
 export class GuestSocket {
   private ws: WebSocket | null = null;
@@ -244,10 +228,6 @@ export class GuestSocket {
 
   resize(cols: number, rows: number): void {
     this.send({ type: "resize", cols, rows });
-  }
-
-  retry(): void {
-    this.send({ type: "retry" });
   }
 
   end(): void {

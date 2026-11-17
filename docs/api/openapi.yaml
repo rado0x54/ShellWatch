@@ -494,8 +494,9 @@ components:
         The owner's view of a one-time access ticket and, once redeemed, its
         guest session (#306). Tickets live in process memory: a restart
         invalidates them. Listed while the ticket is unredeemed or its guest
-        session is live, then for 5 minutes as `closed` (at most 10 per
-        account); afterwards only the audit log has it.
+        session is live; once the guest session ends the ticket leaves the
+        list at once and only the audit log (`GET /api/audit/tickets`) has
+        it.
       properties:
         id: { type: string }
         endpointId: { type: string }
@@ -519,27 +520,14 @@ components:
             false no forwarding channel is opened whatever the endpoint says.
         state:
           type: string
-          enum: [minted, redeemed, pending, refused, open, closed]
+          enum: [minted, redeemed, pending, open]
           description: >-
             `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket
-            not attached yet; `pending` — an admission attempt is running (sign
-            prompts are open); `refused` — the last attempt was not approved,
-            the guest may ask again inside the admission window; `open` —
-            admitted; `closed` — the guest session ended (`endReason`). A
-            closed ticket stays listed for 5 minutes, at most 10 per account.
+            not attached yet; `pending` — the guest session's one connect is
+            running (sign prompts are open); `open` — admitted. A denial, a
+            failed connect or the end of the admission window ends the guest
+            session; the owner mints a new ticket.
         guest: { $ref: "#/components/schemas/TicketGuestView" }
-        endedAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: When the guest session closed (state `closed` only).
-        endReason:
-          type: string
-          nullable: true
-          description: >-
-            Why the guest session closed (a terminal close reason, e.g.
-            `client.guest`, `ticket-revoked`, `ticket-lifetime`); state
-            `closed` only.
       required:
         [
           id,
@@ -553,8 +541,6 @@ components:
           agentForward,
           state,
           guest,
-          endedAt,
-          endReason,
         ]
 
     TicketGuestView:
@@ -562,7 +548,7 @@ components:
       nullable: true
       description: Null until the ticket is redeemed.
       properties:
-        state: { type: string, enum: [redeemed, pending, refused, open, closed] }
+        state: { type: string, enum: [redeemed, pending, open] }
         channel: { type: string, enum: [web], description: "`ssh` follows with #307." }
         confirmationCode:
           type: string
@@ -586,8 +572,9 @@ components:
         sessionId:
           type: string
           nullable: true
-          description: The admitted terminal session, or the running attempt's.
-        attempt: { type: integer, description: Number of admission attempts so far. }
+          description: >-
+            The guest's one terminal session: set on the first attach
+            (connecting while `pending`, admitted once `open`).
         attached: { type: boolean, description: At least one guest connection is open. }
         connections: { type: integer }
       required:
@@ -602,7 +589,6 @@ components:
           admissionDeadline,
           lifetimeDeadline,
           sessionId,
-          attempt,
           attached,
           connections,
         ]
@@ -629,9 +615,10 @@ components:
         event:
           type: string
           description: >-
-            minted | redeemed | attached | attempt-failed | retried | admitted |
-            detached | reattached | ended | revoked | expired | invalidated.
-            Not enum-constrained.
+            minted | redeemed | attached | attempt-failed | admitted | detached |
+            reattached | ended | revoked | expired | invalidated. Not
+            enum-constrained (rows written before #327 may also read
+            `retried`).
           example: minted
         createdAt: { type: string, format: date-time }
         endpointId: { type: string }
@@ -646,7 +633,12 @@ components:
         userAgent: { type: string, nullable: true, description: Self-reported. }
         confirmationCode: { type: string, nullable: true }
         sessionId: { type: string, nullable: true }
-        attempt: { type: integer, nullable: true }
+        attempt:
+          type: integer
+          nullable: true
+          description: >-
+            Always null since #327 (one connect per guest session); rows
+            written before carry the admission attempt number.
         endReason:
           type: string
           nullable: true
@@ -1867,7 +1859,7 @@ paths:
           description: >-
             Endpoint has active sessions — opening or open sessions of any
             source (UI, MCP, one-time access guest), or a guest session still
-            waiting for approval or allowed to ask again. Ended (closed or
+            waiting to attach or for approval. Ended (closed or
             errored) sessions do not count. A successful delete revokes the
             endpoint's outstanding tickets.
           content:
@@ -2006,7 +1998,7 @@ paths:
     get:
       operationId: listTickets
       tags: [tickets]
-      summary: List the account's tickets and guest sessions (live and recently closed)
+      summary: List the account's unredeemed tickets and live guest sessions
       parameters:
         - name: endpointId
           in: query
@@ -2035,8 +2027,7 @@ paths:
         session is closed or its setup cancelled, open sign prompts are
         cancelled, the guest cookie stops working and the guest's WebSocket
         receives the final `closed` status. A ticket whose guest session
-        already ended (`closed`) answers 409 and stays listed until it
-        expires (5 minutes).
+        already ended is no longer listed and answers 404.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -2049,11 +2040,6 @@ paths:
                 properties: { status: { type: string, enum: [revoked] } }
                 required: [status]
         "404": { $ref: "#/components/responses/NotFound" }
-        "409":
-          description: The ticket's guest session already ended; nothing changed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
   /api/tickets/check:
     post:
       operationId: checkTicket
@@ -2171,23 +2157,12 @@ paths:
                   confirmationCode:
                     type: string
                     description: 4 characters from an alphabet without look-alikes.
-                  attachDeadline:
-                    type: string
-                    format: date-time
-                    description: The guest WebSocket must attach by then (30 s).
                   admissionWindowSeconds:
                     type: integer
                     description: How long, from the first attach, the guest may wait to be admitted.
                   lifetimeSeconds: { type: integer }
                   agentForward: { type: boolean }
-                required:
-                  [
-                    confirmationCode,
-                    attachDeadline,
-                    admissionWindowSeconds,
-                    lifetimeSeconds,
-                    agentForward,
-                  ]
+                required: [confirmationCode, admissionWindowSeconds, lifetimeSeconds, agentForward]
         "400":
           description: The ticket requires a reason and none was given (not consumed)
           content:
@@ -2218,7 +2193,8 @@ paths:
           description: >-
             The per-IP rate limit. There is no separate guest cap: a guest's
             session counts against the owner's `max_sessions` when it
-            connects, and a guest refused there sees an ended attempt.
+            connects, and a guest refused there is not granted access (its
+            guest session ends).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

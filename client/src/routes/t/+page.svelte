@@ -1,15 +1,12 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  // One-time access guest page (#306). Opened on an untrusted browser from a
-  // link the owner shared: `/t#<token>`. The guest states a reason, redeems
-  // the ticket, and waits while the owner approves on a trusted device. It
-  // ends up with a terminal on one endpoint and nothing else.
-  //
-  // This page is a public path: the root layout skips the authenticated
-  // bootstrap here (no token refresh, no OAuth redirect, no /ws, no fetches).
-  // It never reads the SPA's stored tokens, never sends Authorization and
-  // stores nothing; the HttpOnly guest cookie is its only credential. It has
-  // no client-side links into the app.
+  // One-time access guest page (#306), opened on an untrusted browser from
+  // the owner's link `/t#<token>`: the guest states a reason, redeems the
+  // ticket and waits for the owner's approval, then gets a terminal on one
+  // endpoint and nothing else. A public path: the root layout skips the
+  // authenticated bootstrap. It never reads the SPA's stored tokens, never
+  // sends Authorization, stores nothing and links nowhere into the app; the
+  // HttpOnly guest cookie is its only credential.
   import { onDestroy, onMount } from "svelte";
   import GuestTerminal from "$lib/components/GuestTerminal.svelte";
   import {
@@ -35,7 +32,6 @@
     | "redeeming"
     | "connecting"
     | "pending"
-    | "refused"
     | "open"
     | "ended"
     | "invalid";
@@ -49,8 +45,6 @@
   let failure = $state<RedeemFailure | null>(null);
   let code = $state("");
   let admissionDeadline = $state<number | null>(null);
-  let retryAt = $state<number | null>(null);
-  let attemptsLeft = $state<number | null>(null);
   let lifetimeDeadline = $state<number | null>(null);
   let endedMessage = $state("");
   /** Shown when a second link was pasted during a live session. */
@@ -72,15 +66,11 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const secondsLeft = (deadline: number | null): number =>
-    // Rounded up: a countdown (and the Ask again button) never reaches 0
-    // before the deadline itself.
+    // Rounded up: a countdown never reaches 0 before the deadline itself.
     deadline === null ? 0 : Math.max(0, Math.ceil((deadline - now) / 1000));
 
-  function fmt(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
-  }
+  const fmt = (seconds: number): string =>
+    `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   function onStatus(st: GuestStatus): void {
     if (st.serverTime) {
@@ -98,20 +88,8 @@
     dropSince = null;
     if (st.code) code = st.code;
     if (st.admissionDeadline) admissionDeadline = Date.parse(st.admissionDeadline);
-    switch (st.state) {
-      case "pending":
-        phase = "pending";
-        break;
-      case "refused":
-        retryAt = st.retryAt ? Date.parse(st.retryAt) : null;
-        attemptsLeft = st.attemptsLeft ?? null;
-        phase = "refused";
-        break;
-      case "open":
-        if (st.lifetimeDeadline) lifetimeDeadline = Date.parse(st.lifetimeDeadline);
-        phase = "open";
-        break;
-    }
+    if (st.lifetimeDeadline) lifetimeDeadline = Date.parse(st.lifetimeDeadline);
+    phase = st.state;
   }
 
   function showEnding(e: Ending): void {
@@ -187,21 +165,6 @@
     connect();
   }
 
-  /** 409: the server ends this browser's current guest session in the same
-   * step that redeems this link (no reconnect to the old session, so the
-   * owner is not prompted for it). */
-  function endCurrentAndContinue(): void {
-    void redeem(true);
-  }
-
-  function askAgain(): void {
-    socket?.retry();
-  }
-
-  function endSession(): void {
-    socket?.end();
-  }
-
   onMount(() => {
     ticker = setInterval(() => (now = serverNow()), 1000);
     // A new link typed or pasted into a tab already on /t changes only the
@@ -212,7 +175,7 @@
   });
 
   /** Phases with a live guest session in this tab (or one being set up). */
-  const LIVE: Phase[] = ["redeeming", "connecting", "pending", "refused", "open"];
+  const LIVE: Phase[] = ["redeeming", "connecting", "pending", "open"];
 
   function onHashChange(): void {
     const t = takeTokenFromLocation(window.location, window.history);
@@ -240,20 +203,9 @@
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     heldOutput.length = 0;
-    token = "";
-    reason = "";
-    reasonRequired = null;
-    failure = null;
-    code = "";
-    admissionDeadline = null;
-    retryAt = null;
-    attemptsLeft = null;
-    lifetimeDeadline = null;
-    endedMessage = "";
-    linkNotice = "";
-    reconnecting = false;
-    dropSince = null;
-    sawStatus = false;
+    token = reason = code = endedMessage = linkNotice = "";
+    reasonRequired = failure = admissionDeadline = lifetimeDeadline = dropSince = null;
+    reconnecting = sawStatus = false;
     if (t === null) {
       // No link in the address bar: a reload of a live guest session (the
       // cookie reattaches), or nothing to do here.
@@ -276,19 +228,11 @@
     const mine = run;
     const res = await checkTicket(token);
     if (mine !== run) return; // a newer link replaced this one meanwhile
-    if (res.ok) {
-      reasonRequired = res.reasonRequired;
-      phase = "form";
-      return;
-    }
-    if (res.failure === "not-found" || res.failure === "forbidden") {
-      failure = res.failure;
-      phase = "invalid";
-      return;
-    }
-    // Could not tell (network, rate limit, server busy): show the form;
-    // redeem gives the definite answer.
-    phase = "form";
+    if (res.ok) reasonRequired = res.reasonRequired;
+    else if (res.failure === "not-found" || res.failure === "forbidden") failure = res.failure;
+    // Anything else could not tell (network, rate limit, server busy): show
+    // the form; redeem gives the definite answer.
+    phase = failure ? "invalid" : "form";
   }
 
   onDestroy(() => {
@@ -305,6 +249,15 @@
   <meta name="robots" content="noindex" />
 </svelte:head>
 
+{#snippet notice()}
+  {#if linkNotice}
+    <p class="link-notice" role="status">
+      {linkNotice}
+      <button type="button" class="btn btn-ghost" onclick={() => (linkNotice = "")}>OK</button>
+    </p>
+  {/if}
+{/snippet}
+
 {#if phase === "open"}
   <div class="guest-shell">
     <header class="guest-bar">
@@ -317,14 +270,11 @@
           Ends in {fmt(secondsLeft(lifetimeDeadline))}
         {/if}
       </span>
-      <button type="button" class="btn btn-secondary" onclick={endSession}>End session</button>
+      <button type="button" class="btn btn-secondary" onclick={() => socket?.end()}
+        >End session</button
+      >
     </header>
-    {#if linkNotice}
-      <p class="link-notice" role="status">
-        {linkNotice}
-        <button type="button" class="btn btn-ghost" onclick={() => (linkNotice = "")}>OK</button>
-      </p>
-    {/if}
+    {@render notice()}
     <div class="guest-term">
       <GuestTerminal
         bind:this={term}
@@ -337,12 +287,7 @@
   <main class="guest-page">
     <div class="guest-card">
       <h1>Guest access</h1>
-      {#if linkNotice}
-        <p class="link-notice" role="status">
-          {linkNotice}
-          <button type="button" class="btn btn-ghost" onclick={() => (linkNotice = "")}>OK</button>
-        </p>
-      {/if}
+      {@render notice()}
 
       {#if phase === "loading" || phase === "redeeming" || phase === "connecting"}
         <p class="muted">{reconnecting ? "Reconnecting…" : "Please wait…"}</p>
@@ -369,7 +314,9 @@
             <p class="error" role="alert">{REDEEM_FAILURE_TEXT[failure]}</p>
           {/if}
           {#if failure === "live-session"}
-            <button type="button" class="btn btn-warn" onclick={endCurrentAndContinue}>
+            <!-- 409: the server ends this browser's current guest session in the
+              same step that redeems this link (the owner is not prompted for it). -->
+            <button type="button" class="btn btn-warn" onclick={() => void redeem(true)}>
               End the current session and use this link
             </button>
           {:else}
@@ -379,27 +326,14 @@
         <p class="fineprint">
           Everything you type and see is visible to the owner, who can end the session at any time.
         </p>
-      {:else if phase === "pending" || phase === "refused"}
+      {:else if phase === "pending"}
         <p>Tell the person who shared the link this code:</p>
         <p class="code" aria-label="Confirmation code">{code}</p>
-        {#if phase === "pending"}
-          <p class="muted">Waiting for approval… {fmt(secondsLeft(admissionDeadline))} left.</p>
-        {:else}
-          <p class="error" role="alert">Access was not granted.</p>
-          {@const wait = secondsLeft(retryAt)}
-          <p class="muted">
-            You can ask again for {fmt(secondsLeft(admissionDeadline))}{attemptsLeft !== null
-              ? ` (${attemptsLeft} ${attemptsLeft === 1 ? "try" : "tries"} left)`
-              : ""}.
-          </p>
-          <button type="button" class="btn btn-primary" onclick={askAgain} disabled={wait > 0}>
-            {wait > 0 ? `Ask again in ${fmt(wait)}` : "Ask again"}
-          </button>
-        {/if}
+        <p class="muted">Waiting for approval… {fmt(secondsLeft(admissionDeadline))} left.</p>
         {#if reconnecting}
           <p class="muted">Reconnecting…</p>
         {/if}
-        <button type="button" class="btn btn-ghost" onclick={endSession}>Cancel</button>
+        <button type="button" class="btn btn-ghost" onclick={() => socket?.end()}>Cancel</button>
       {:else if phase === "ended"}
         <p>{endedMessage}</p>
         <p class="muted">You can close this window.</p>

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 // Ticket event log (#306): one row per lifecycle event of a one-time access
 // ticket and its guest session — minted, redeemed, attached, attempt-failed,
-// retried, admitted, detached, reattached, ended (with the end reason),
-// revoked, expired, invalidated. Account-scoped and append-only like the
+// admitted, detached, reattached, ended (with the end reason), revoked,
+// expired, invalidated. Account-scoped and append-only like the
 // other audit tables; read through GET /api/audit/tickets. Neither the
 // ticket token nor the guest cookie is ever written here.
 package audit
@@ -26,7 +26,6 @@ const (
 	TicketRedeemed      = "redeemed"
 	TicketAttached      = "attached"
 	TicketAttemptFailed = "attempt-failed"
-	TicketRetried       = "retried"
 	TicketAdmitted      = "admitted"
 	TicketDetached      = "detached"
 	TicketReattached    = "reattached"
@@ -39,7 +38,7 @@ const (
 // TicketEventValues are the accepted `event` filter values.
 var TicketEventValues = map[string]bool{
 	TicketMinted: true, TicketRedeemed: true, TicketAttached: true, TicketAttemptFailed: true,
-	TicketRetried: true, TicketAdmitted: true, TicketDetached: true, TicketReattached: true,
+	TicketAdmitted: true, TicketDetached: true, TicketReattached: true,
 	TicketEnded: true, TicketRevoked: true, TicketExpired: true, TicketInvalidated: true,
 }
 
@@ -67,7 +66,6 @@ type TicketEvent struct {
 	UserAgent        string
 	ConfirmationCode string
 	SessionID        string
-	Attempt          int
 	EndReason        string
 	DurationMs       *int64
 }
@@ -168,10 +166,6 @@ func (t *TicketEvents) Record(ev TicketEvent) {
 	default:
 		id = t.ids.Next(now)
 	}
-	var attempt sql.NullInt64
-	if ev.Attempt > 0 {
-		attempt = sql.NullInt64{Int64: int64(ev.Attempt), Valid: true}
-	}
 	var dur sql.NullInt64
 	if ev.DurationMs != nil {
 		dur = sql.NullInt64{Int64: *ev.DurationMs, Valid: true}
@@ -183,7 +177,9 @@ func (t *TicketEvents) Record(ev TicketEvent) {
 		nz(ev.TicketLabel), nz(ev.Channel), ev.RedeemTTLSeconds, ev.LifetimeSeconds,
 		boolInt(ev.ReasonRequired), boolInt(ev.AgentForward),
 		nz(ev.Reason), nz(ev.SourceIP), nz(ev.UserAgent), nz(ev.ConfirmationCode),
-		nz(ev.SessionID), attempt, nz(ev.EndReason), dur)
+		// attempt stays NULL: one connect per guest session since #327; the
+		// column keeps the rows written before.
+		nz(ev.SessionID), nil, nz(ev.EndReason), dur)
 	if err != nil {
 		slog.Warn("audit: insert ticket event failed", "ticket", ev.TicketID, "event", ev.Event, "err", err)
 	}

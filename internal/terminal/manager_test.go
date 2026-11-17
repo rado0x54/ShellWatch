@@ -677,9 +677,13 @@ func TestEndedSessionRetentionBounds(t *testing.T) {
 		tr := mocks[len(mocks)-1]
 		mu.Unlock()
 		_ = tr.Close()
+		// Retained, not just closed: the pump stamps endedAt right after the
+		// closed broadcast, and the clock must not move before it does.
 		waitFor(t, func() bool {
-			s := mgr.GetSession(sess.SessionID)
-			return s == nil || s.Status == StatusClosed
+			mgr.mu.Lock()
+			defer mgr.mu.Unlock()
+			mg := mgr.terminals[sess.SessionID]
+			return mg == nil || !mg.endedAt.IsZero()
 		})
 		return sess.SessionID
 	}
@@ -756,5 +760,76 @@ func TestExplicitCloseDoesNotEvictRetained(t *testing.T) {
 		if mgr.GetSession(id) == nil {
 			t.Errorf("retained %s evicted by an explicit close", id)
 		}
+	}
+}
+
+// A session with a Lifetime is closed by SweepDeadlines once that much time
+// has passed since it went open, with its LifetimeReason; one without a
+// Lifetime is left alone.
+func TestLifetimeDeadline(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	var mu sync.Mutex
+	reasons := map[string]CloseReason{}
+	mgr.SubscribeStatus(func(ev StatusEvent) {
+		if ev.Status == StatusClosed {
+			mu.Lock()
+			reasons[ev.SessionID] = ev.Reason
+			mu.Unlock()
+		}
+	})
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	capped, err := mgr.Create(context.Background(), ep, "acc",
+		Trigger{Kind: SourceTicket, Lifetime: time.Minute, LifetimeReason: CloseTicketLifetime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := clk.Now().Add(time.Minute); !capped.Deadline.Equal(want) || !plain.Deadline.IsZero() {
+		t.Fatalf("deadlines %v / %v, want %v / zero", capped.Deadline, plain.Deadline, want)
+	}
+	clk.Advance(time.Minute - time.Millisecond)
+	mgr.SweepDeadlines()
+	if mgr.GetSession(capped.SessionID) == nil {
+		t.Fatal("closed before its deadline")
+	}
+	clk.Advance(time.Millisecond)
+	mgr.SweepDeadlines()
+	if mgr.GetSession(capped.SessionID) != nil || mgr.GetSession(plain.SessionID) == nil {
+		t.Fatal("the deadline closed the wrong session")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reasons[capped.SessionID] != CloseTicketLifetime {
+		t.Errorf("close reason %q, want %q", reasons[capped.SessionID], CloseTicketLifetime)
+	}
+}
+
+// A create whose context is cancelled while it connects (its caller gave
+// up) never goes live, even when the factory ignores the cancellation.
+func TestCreateCancelledDuringSetupNeverGoesLive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		cancel() // the caller gives up mid-connect; the factory carries on
+		return mock, nil
+	}, clock.Real{}, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	if _, err := mgr.Create(ctx, ep, "acc", Trigger{Kind: SourceUI}); err == nil {
+		t.Fatal("a cancelled create went live")
+	}
+	if len(mgr.ListForAccount("acc")) != 0 {
+		t.Error("the cancelled session is still registered")
+	}
+	if _, err := mgr.Create(ctx, ep, "acc", Trigger{Kind: SourceUI}); err == nil {
+		t.Error("a create with an already cancelled context was accepted")
 	}
 }
