@@ -48,7 +48,7 @@ const TypeUnauthenticatedEndpoint = "unauthenticated-endpoint"
 // TypeSessionConnectFailed is any other failed SSH connect, whatever the
 // trigger (UI click or MCP agent) — the agent-triggered ones have no other
 // human-visible surface. Payload: {endpointId, endpointLabel,
-// endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason,
+// endpointAddress, trigger, mcpClientName, mcpClientVersion, reason,
 // sourceIp, error}.
 const TypeSessionConnectFailed = "session-connect-failed"
 

@@ -219,9 +219,9 @@
               <dt>MCP client</dt>
               <dd>{row.mcpClientName}{row.mcpClientVersion ? ` ${row.mcpClientVersion}` : ""}</dd>
             {/if}
-            {#if row.mcpReason}
-              <dt>MCP reason</dt>
-              <dd>{row.mcpReason}</dd>
+            {#if row.reason}
+              <dt>Reason</dt>
+              <dd>{row.reason}</dd>
             {/if}
             {#if row.clientHostname || row.clientOs || row.clientVersion}
               <dt>Agent client</dt>

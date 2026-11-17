@@ -38,7 +38,7 @@ func auditServer(t *testing.T) *httptest.Server {
 
 	// Session-lifecycle rows (ascending created_at, as the Node suite seeds).
 	db.ExecContext(ctx, `INSERT INTO audit_session_lifecycle (session_id,account_id,endpoint_id,source,status,created_at,source_ip) VALUES ('sess_000000000001',?,'audit-endpoint-1','ui','open','2026-01-01T00:00:01.000Z','203.0.113.1')`, auditAccount)
-	db.ExecContext(ctx, `INSERT INTO audit_session_lifecycle (session_id,account_id,endpoint_id,source,status,created_at,closed_at,duration_ms,mcp_reason,mcp_client_name,close_reason) VALUES ('sess_000000000002',?,'audit-endpoint-2','mcp','closed','2026-01-01T00:00:02.000Z','2026-01-01T00:00:05.000Z',3000,'deploy hotfix','codex','client.mcp')`, auditAccount)
+	db.ExecContext(ctx, `INSERT INTO audit_session_lifecycle (session_id,account_id,endpoint_id,source,status,created_at,closed_at,duration_ms,reason,mcp_client_name,close_reason) VALUES ('sess_000000000002',?,'audit-endpoint-2','mcp','closed','2026-01-01T00:00:02.000Z','2026-01-01T00:00:05.000Z',3000,'deploy hotfix','codex','client.mcp')`, auditAccount)
 	db.ExecContext(ctx, `INSERT INTO audit_session_lifecycle (session_id,account_id,endpoint_id,source,status,created_at,close_reason) VALUES ('sess_000000000003',?,'audit-endpoint-3','ssh','error','2026-01-01T00:00:03.000Z','transport-error')`, auditAccount)
 
 	// Signing-request rows.

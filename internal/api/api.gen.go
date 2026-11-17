@@ -1286,7 +1286,7 @@ type Notification struct {
 	// Title Short headline sized for a toast.
 	Title string `json:"title"`
 
-	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); unauthenticated-endpoint (#311, severity error) — a connection was refused because the server accepted SSH "none" authentication, so no key was asked for and no human approved it; there is no action to resolve (payload: endpointId, endpointLabel, endpointAddress, remoteUser, trigger, mcpClientName, sourceIp, auditId of the unauthenticated-endpoint audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); unauthenticated-endpoint (#311, severity error) — a connection was refused because the server accepted SSH "none" authentication, so no key was asked for and no human approved it; there is no action to resolve (payload: endpointId, endpointLabel, endpointAddress, remoteUser, trigger, mcpClientName, sourceIp, auditId of the unauthenticated-endpoint audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, reason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
 	Type string `json:"type"`
 }
 
@@ -1435,9 +1435,8 @@ type SessionLifecycleRow struct {
 	EndpointId       *string `json:"endpointId,omitempty"`
 	McpClientName    *string `json:"mcpClientName,omitempty"`
 	McpClientVersion *string `json:"mcpClientVersion,omitempty"`
-	McpReason        *string `json:"mcpReason,omitempty"`
 
-	// Reason The guest's self-reported reason (source `ticket`). MCP sessions keep theirs in `mcpReason`.
+	// Reason The trigger's self-reported reason (unverified): an MCP agent's (source `mcp`) or a one-time access guest's (source `ticket`, #306); `source` tells which (#319).
 	Reason    *string                    `json:"reason,omitempty"`
 	SessionId *string                    `json:"sessionId,omitempty"`
 	Source    *SessionLifecycleRowSource `json:"source,omitempty"`
@@ -1490,11 +1489,13 @@ type SigningRequestRow struct {
 	LatencyMs               *int                      `json:"latencyMs,omitempty"`
 	McpClientName           *string                   `json:"mcpClientName,omitempty"`
 	McpClientVersion        *string                   `json:"mcpClientVersion,omitempty"`
-	McpReason               *string                   `json:"mcpReason,omitempty"`
 	Outcome                 *SigningRequestRowOutcome `json:"outcome,omitempty"`
 	PasskeyLabel            *string                   `json:"passkeyLabel,omitempty"`
-	ResolvedAt              *string                   `json:"resolvedAt,omitempty"`
-	SessionId               *string                   `json:"sessionId,omitempty"`
+
+	// Reason The trigger's self-reported reason (unverified, #319): an MCP agent's (mcpClientName is set) or a one-time access guest's (#306).
+	Reason     *string `json:"reason,omitempty"`
+	ResolvedAt *string `json:"resolvedAt,omitempty"`
+	SessionId  *string `json:"sessionId,omitempty"`
 
 	// Source endpoint-admin is used by host-key-cleared rows (#241).
 	Source   *SigningRequestRowSource `json:"source,omitempty"`
@@ -1557,12 +1558,11 @@ type TerminalSession struct {
 	LastActivityAt   string  `json:"lastActivityAt"`
 	McpClientName    *string `json:"mcpClientName,omitempty"`
 	McpClientVersion *string `json:"mcpClientVersion,omitempty"`
-	McpReason        *string `json:"mcpReason,omitempty"`
 
 	// OwnerClientId OAuth client_id that owns the session (mcp source only; omitted for ui sessions). MCP session visibility is scoped to (account, ownerClientId) — #243.
 	OwnerClientId *string `json:"ownerClientId,omitempty"`
 
-	// Reason Source `ticket` only (#306) — the guest's self-reported reason for access (unverified).
+	// Reason The trigger's self-reported reason (unverified): an MCP agent's (source `mcp`) or a one-time access guest's (source `ticket`, #306); `source` tells which (#319).
 	Reason *string `json:"reason,omitempty"`
 
 	// SessionId Example: sess_a1b2c3d4e5f6

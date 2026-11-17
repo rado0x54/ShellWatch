@@ -46,7 +46,7 @@ func (h *Sessions) toSessionDTO(s terminal.Session) api.TerminalSession {
 	dto := toSessionDTO(s)
 	if s.Source == terminal.SourceTicket {
 		label := s.TicketLabel
-		dto.TicketId, dto.TicketLabel, dto.Reason = strPtrIf(s.TicketID), &label, strPtrIf(s.Reason)
+		dto.TicketId, dto.TicketLabel = strPtrIf(s.TicketID), &label
 		if h.GuestAttached != nil {
 			if attached, ok := h.GuestAttached(s.SessionID); ok {
 				dto.GuestAttached = &attached
@@ -65,7 +65,7 @@ func toSessionDTO(s terminal.Session) api.TerminalSession {
 		CloseReason:      strPtrIf(string(s.CloseReason)),
 		SourceIp:         strPtrIf(s.SourceIP),
 		OwnerClientId:    strPtrIf(s.OwnerClientID),
-		McpReason:        strPtrIf(s.MCPReason),
+		Reason:           strPtrIf(s.Reason),
 		McpClientName:    strPtrIf(s.MCPClientName),
 		McpClientVersion: strPtrIf(s.MCPClientVer),
 	}

@@ -198,7 +198,7 @@ gracefully — render title/detail, no typed action):
     trigger: string; // "ui" | "mcp" | "ssh"
     mcpClientName: string; // "" outside MCP
     mcpClientVersion: string;
-    mcpReason: string;
+    reason: string; // the trigger's self-reported reason (#319)
     sourceIp: string;
     error: string; // the full error chain the requester also received
   }
@@ -262,8 +262,8 @@ trigger: {
 }
 ```
 
-The signing audit row records the reason in its `mcpReason` column (the
-generic trigger reason).
+The signing audit row records the reason in its `reason` field (the generic
+trigger reason, #319).
 
 The `sign:request` toast payload for such an action carries an extra `ticket`
 object. When it is present, the SPA's toast names the guest request and shows

@@ -220,7 +220,7 @@ func run() error {
 				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
 				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
 				Fingerprint: ev.ObservedFingerprint, PriorFingerprint: ev.PinnedFingerprint,
-				SourceIP: ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
+				SourceIP: ev.Trigger.SourceIP, TriggerReason: ev.Trigger.Reason,
 				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
 			})
 			n := notifSvc.Publish(context.Background(), notify.PublishParams{
@@ -264,7 +264,7 @@ func run() error {
 				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
 				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
 				Fingerprint: ev.HostKeyFingerprint,
-				SourceIP:    ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
+				SourceIP:    ev.Trigger.SourceIP, TriggerReason: ev.Trigger.Reason,
 				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
 			})
 			n := notifSvc.Publish(context.Background(), notify.PublishParams{
@@ -338,7 +338,7 @@ func run() error {
 						"trigger":          fp.Trigger.Kind,
 						"mcpClientName":    fp.Trigger.MCPClientName,
 						"mcpClientVersion": fp.Trigger.MCPClientVer,
-						"mcpReason":        fp.Trigger.Reason,
+						"reason":           fp.Trigger.Reason,
 						"sourceIp":         fp.Trigger.SourceIP,
 						"error":            err.Error(),
 					},

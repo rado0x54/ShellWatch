@@ -43,7 +43,7 @@
           "error": "Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
           "mcpClientName": "codex",
           "mcpClientVersion": "1.2.3",
-          "mcpReason": "deploy hotfix",
+          "reason": "deploy hotfix",
           "sourceIp": "203.0.113.1",
           "trigger": "mcp"
         },

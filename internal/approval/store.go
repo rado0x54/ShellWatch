@@ -58,13 +58,14 @@ type Context struct {
 	// HostKey is set on endpoint-auth actions (#241).
 	HostKey *HostKeyInfo `json:"-"`
 	// Trigger metadata (endpoint-auth).
-	TriggerKind   string `json:"-"`
-	MCPReason     string `json:"-"`
+	TriggerKind string `json:"-"`
+	// Reason is the trigger's self-reported reason (MCP agent or ticket
+	// guest — TriggerKind tells which, #319).
+	Reason        string `json:"-"`
 	MCPClientName string `json:"-"`
 	MCPClientVer  string `json:"-"`
 	// Ticket is set when TriggerKind is "ticket" (#306): the guest's
-	// redemption context. Reason rides in MCPReason (the generic trigger
-	// reason) so the audit column stays one.
+	// redemption context.
 	Ticket *TicketContext `json:"-"`
 }
 
@@ -103,10 +104,10 @@ func (c Context) MarshalJSON() ([]byte, error) {
 		if c.SourceIP != "" {
 			tr["sourceIp"] = c.SourceIP
 		}
+		if (c.TriggerKind == "mcp" || c.TriggerKind == "ticket") && c.Reason != "" {
+			tr["reason"] = c.Reason
+		}
 		if c.TriggerKind == "mcp" {
-			if c.MCPReason != "" {
-				tr["reason"] = c.MCPReason
-			}
 			if c.MCPClientName != "" {
 				tr["mcpClientName"] = c.MCPClientName
 			}
@@ -115,9 +116,6 @@ func (c Context) MarshalJSON() ([]byte, error) {
 			}
 		}
 		if c.TriggerKind == "ticket" {
-			if c.MCPReason != "" {
-				tr["reason"] = c.MCPReason
-			}
 			if t := c.Ticket; t != nil {
 				tr["ticketId"] = t.TicketID
 				tr["ticketLabel"] = t.Label

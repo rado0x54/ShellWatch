@@ -78,7 +78,7 @@ func TestPasskeyFactoryBuildsApprovalGatedSigners(t *testing.T) {
 		if a == nil {
 			return
 		}
-		if a.Context.Source != "endpoint-auth" || a.Context.MCPReason != "deploy" {
+		if a.Context.Source != "endpoint-auth" || a.Context.Reason != "deploy" {
 			return
 		}
 		rawData, _ := base64.StdEncoding.DecodeString(a.Challenge)

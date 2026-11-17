@@ -73,10 +73,10 @@ func TestMigrateAdoptsNodeDatabase(t *testing.T) {
 	}
 	// Goose stamped the baseline (1), then ran the post-baseline migrations on
 	// the adopted store (host-key pinning is 2, notifications 3, the OAuth
-	// client registration log 4, the file-transfer log 5, passkey priority 6, the none-auth audit type 7, the ticket audit 8).
+	// client registration log 4, the file-transfer log 5, passkey priority 6, the none-auth audit type 7, the ticket audit 8, the generic trigger reason 9).
 	// Bump this alongside new migrations.
 	var v int
-	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 8 {
+	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&v); err != nil || v != 9 {
 		t.Fatalf("goose stamp: v=%d err=%v", v, err)
 	}
 	// The adopted Node store gained the host-key columns.

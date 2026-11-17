@@ -46,8 +46,8 @@ func (c *WSChannel) Notify(a *Action, deepLink string) {
 		tk := map[string]any{
 			"ticketId": t.TicketID, "ticketLabel": t.Label, "confirmationCode": t.ConfirmationCode,
 		}
-		if a.Context.MCPReason != "" {
-			tk["reason"] = a.Context.MCPReason
+		if a.Context.Reason != "" {
+			tk["reason"] = a.Context.Reason
 		}
 		if a.Context.SourceIP != "" {
 			tk["sourceIp"] = a.Context.SourceIP

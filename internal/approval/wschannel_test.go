@@ -60,8 +60,8 @@ func TestWSChannelNotifyTicket(t *testing.T) {
 	ch.Notify(&Action{
 		ID: "act3", AccountID: "acc", Type: TypeKeyApprove, KeyLabel: "k",
 		Context: Context{Source: "endpoint-auth", TriggerKind: "ticket", SourceIP: "203.0.113.7",
-			MCPReason: "fix the printer",
-			Ticket:    &TicketContext{TicketID: "tk1", Label: "Printer", ConfirmationCode: "AB2C"}},
+			Reason: "fix the printer",
+			Ticket: &TicketContext{TicketID: "tk1", Label: "Printer", ConfirmationCode: "AB2C"}},
 	}, "https://x/sign/act3")
 	tk, ok := cap.last["ticket"].(map[string]any)
 	if !ok {
