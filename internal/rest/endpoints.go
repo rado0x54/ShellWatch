@@ -207,7 +207,7 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	_, err := e.Svc.Delete(r.Context(), id, accountID(r))
+	ok, err := e.Svc.Delete(r.Context(), id, accountID(r))
 	switch {
 	case errors.Is(err, endpointsvc.ErrDemoReadOnly):
 		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
@@ -217,6 +217,9 @@ func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	case err != nil:
 		writeErr(w, 400, err.Error())
+		return
+	case !ok:
+		writeErr(w, 404, "Endpoint not found")
 		return
 	}
 	writeJSON(w, 200, api.StatusDeleted{Status: api.Deleted})

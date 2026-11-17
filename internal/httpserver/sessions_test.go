@@ -36,6 +36,7 @@ func sessionsServer(t *testing.T) (*httptest.Server, *terminal.MockTransport) {
 	ctx := context.Background()
 	db.ExecContext(ctx, `INSERT INTO accounts (id,name,max_sessions,created_at,updated_at) VALUES ('acc','A',5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 	db.ExecContext(ctx, `INSERT INTO endpoints (id,account_id,label,host,port,username,user_verification,agent_forward,enabled,created_at,updated_at) VALUES ('e1','acc','E','h',22,'u','required',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	db.ExecContext(ctx, `INSERT INTO endpoints (id,account_id,label,host,port,username,user_verification,agent_forward,enabled,created_at,updated_at) VALUES ('e-deleted','acc','D','h',22,'u','required',1,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 
 	mock := terminal.NewMockTransport()
 	mgr := terminal.NewManager(
@@ -64,6 +65,9 @@ func sessionsServer(t *testing.T) (*httptest.Server, *terminal.MockTransport) {
 func TestSessionsCreate404Golden(t *testing.T) {
 	ts, _ := sessionsServer(t)
 	status, body := doJSON(t, ts, "POST", "/api/sessions", `{"endpointId":"nope"}`)
+	assertEnvelope(t, "err-404-session-endpoint", "/api/sessions", status, body)
+	// A soft-deleted endpoint is just as unknown (#313).
+	status, body = doJSON(t, ts, "POST", "/api/sessions", `{"endpointId":"e-deleted"}`)
 	assertEnvelope(t, "err-404-session-endpoint", "/api/sessions", status, body)
 }
 
