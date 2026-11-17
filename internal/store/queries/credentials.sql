@@ -34,16 +34,40 @@ UPDATE webauthn_credentials SET counter = ?, last_used_at = ? WHERE id = ?;
 SELECT id, state, revoked FROM webauthn_credentials
 WHERE id = ? AND account_id = ?;
 
--- name: SetCredentialState :exec
-UPDATE webauthn_credentials SET state = ? WHERE id = ?;
+-- name: ActivateCredential :exec
+-- Activation appends: max(priority) + 1 of the account, in the same
+-- statement as the state change (#308).
+UPDATE webauthn_credentials SET state = 'active', priority = (
+  SELECT COALESCE(MAX(w.priority), -1) + 1 FROM webauthn_credentials AS w
+  WHERE w.account_id = webauthn_credentials.account_id
+)
+WHERE webauthn_credentials.id = ?;
+
+-- name: AppendCredentialPriority :exec
+UPDATE webauthn_credentials SET priority = (
+  SELECT COALESCE(MAX(w.priority), -1) + 1 FROM webauthn_credentials AS w
+  WHERE w.account_id = webauthn_credentials.account_id
+)
+WHERE webauthn_credentials.id = ?;
+
+-- name: SetCredentialPriority :exec
+UPDATE webauthn_credentials SET priority = ? WHERE id = ? AND account_id = ?;
 
 -- name: ListActiveCredentialsForAuth :many
 SELECT id, credential_id, public_key_openssh, label FROM webauthn_credentials
+WHERE account_id = ? AND revoked = 0 AND state = 'active'
+ORDER BY priority, created_at, id;
+
+-- name: ListActiveCredentialRowIDs :many
+SELECT id FROM webauthn_credentials
 WHERE account_id = ? AND revoked = 0 AND state = 'active';
 
 -- name: ListCredentialsForAccountFull :many
-SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at
-FROM webauthn_credentials WHERE account_id = ?;
+-- Active passkeys first in priority order, then pending/revoked (NULL
+-- priority) by creation.
+SELECT id, credential_id, public_key, public_key_openssh, label, revoked, state, created_at, last_used_at, priority
+FROM webauthn_credentials WHERE account_id = ?
+ORDER BY priority IS NULL, priority, created_at, id;
 
 -- name: UpdateCredentialLabel :exec
 UPDATE webauthn_credentials SET label = ? WHERE id = ? AND account_id = ?;
@@ -52,7 +76,7 @@ UPDATE webauthn_credentials SET label = ? WHERE id = ? AND account_id = ?;
 SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE account_id = ? AND label = ? AND id != ?) AS has_conflict;
 
 -- name: RevokeCredentialByID :exec
-UPDATE webauthn_credentials SET revoked = 1 WHERE id = ?;
+UPDATE webauthn_credentials SET revoked = 1, priority = NULL WHERE id = ?;
 
 -- name: CountActiveCredentials :one
 SELECT COUNT(*) AS n FROM webauthn_credentials WHERE account_id = ? AND revoked = 0 AND state = 'active';

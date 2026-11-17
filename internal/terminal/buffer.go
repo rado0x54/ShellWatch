@@ -11,7 +11,12 @@ import (
 	"sync"
 )
 
-const defaultMaxSize = 1024 * 1024 // 1 MiB
+// defaultMaxSize bounds each session's buffered output. 256 KiB is roughly
+// 2,000-3,000 lines of plain shell output (more than the browser terminal's
+// 1,000-line scrollback that a reattach replays into) or several full-screen
+// redraws of a TUI. Agents read incrementally and long-poll, so they rarely
+// need more; past the cap the oldest bytes go and offsets jump accordingly.
+const defaultMaxSize = 256 * 1024
 
 // OutputBuffer is a thread-safe byte ring with a monotonic base offset.
 type OutputBuffer struct {
@@ -37,6 +42,12 @@ func (b *OutputBuffer) Append(data []byte) {
 		excess := len(b.buf) - b.maxSize
 		b.buf = b.buf[excess:]
 		b.baseOffset += int64(excess)
+		// Trimming by reslicing keeps the old backing array. Normally
+		// append's growth keeps it within about twice the cap; a single
+		// oversized append can leave it far larger, so copy out then.
+		if cap(b.buf) > 2*b.maxSize {
+			b.buf = append(make([]byte, 0, b.maxSize), b.buf...)
+		}
 	}
 }
 

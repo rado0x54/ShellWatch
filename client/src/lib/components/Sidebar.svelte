@@ -3,15 +3,16 @@
   import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import { resolvePath } from "$lib/utils/resolve-path.js";
   import { page } from "$app/state";
   import Identicon from "$lib/components/Identicon.svelte";
   import Wordmark from "$lib/components/Wordmark.svelte";
   import { account } from "$lib/stores/account.js";
+  import { openConnectDialog } from "$lib/stores/connect-dialog.js";
   import { endpoints } from "$lib/stores/endpoints.js";
-  import { formatEndpointAddress } from "$lib/utils/endpoint-address.js";
-  import { ApiError } from "$lib/api.js";
-  import { closeSession, createSession } from "$lib/stores/sessions-api.js";
-  import { toastError, toastRequestError } from "$lib/stores/toasts.js";
+  import { closeSession } from "$lib/stores/sessions-api.js";
+  import { revokeTicket, tickets } from "$lib/stores/tickets.js";
+  import { toastError } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import { logout } from "$lib/stores/webauthn.js";
   import { sessions, wsReleaseControl, wsTakeControl } from "$lib/stores/ws.js";
@@ -28,22 +29,16 @@
     currentPath.startsWith("/session/") ? currentPath.split("/session/")[1] : null,
   );
 
-  async function handleConnect(endpointId: string) {
-    try {
-      const session = await createSession(endpointId);
-      await goto(resolve(`/session/${session.sessionId}`));
-      onMobileClose?.();
-    } catch (err) {
-      console.error("Failed to create session:", err);
-      // A failure the server also published as a notification (#252) dedupes
-      // against the pushed toast by id — and still surfaces here when the WS
-      // alert was lost to a disconnect.
-      toastRequestError(
-        `Failed to create session: ${errorMessage(err)}`,
-        err instanceof ApiError ? err.notificationId : undefined,
-      );
-    }
+  // Connect opens the endpoint picker (with Share access per endpoint); on
+  // mobile the drawer closes so the dialog is not behind it.
+  function openConnect() {
+    onMobileClose?.();
+    openConnectDialog("connect");
   }
+
+  /** Live guests (every listed ticket that is not an unused link): the
+   * Guest access count. */
+  const liveGuests = $derived($tickets.filter((t) => t.state !== "minted").length);
 
   async function handleClose(sessionId: string) {
     try {
@@ -51,6 +46,21 @@
     } catch (err) {
       console.error("Failed to close session:", err);
       toastError(`Failed to close session: ${errorMessage(err)}`);
+    }
+  }
+
+  // A live guest session (#306) is ended by revoking its ticket: one owner
+  // action that also ends the guest's access, not just this terminal
+  // session. One that already ended (an errored session still listed) is
+  // closed like any other session.
+  async function handleCloseGuest(sessionId: string, ticketId: string, status: string) {
+    try {
+      const ended =
+        status === "error" || status === "closed" || (await revokeTicket(ticketId)) === "ended";
+      if (ended) await closeSession(sessionId);
+    } catch (err) {
+      console.error("Failed to end guest access:", err);
+      toastError(`Failed to end guest access: ${errorMessage(err)}`);
     }
   }
 
@@ -65,7 +75,8 @@
   }
 
   async function navTo(path: import("$app/types").Pathname) {
-    await goto(resolve(path));
+    // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolvePath calls resolve()
+    await goto(resolvePath(path));
     onMobileClose?.();
   }
 
@@ -157,25 +168,22 @@
     <span class="sidebar-wordmark"><Wordmark /></span>
   </div>
 
-  <div class="sidebar-section">
-    <h2>Endpoints</h2>
-    <ul>
-      {#each $endpoints as ep (ep.id)}
-        <li>
-          <div class="endpoint-item">
-            <div class="endpoint-info">
-              <span class="endpoint-label" title={formatEndpointAddress(ep)}>{ep.label}</span>
-              {#if ep.isDemo}
-                <span class="badge badge-demo" title="Operator-curated demo endpoint">demo</span>
-              {/if}
-            </div>
-            <button type="button" class="btn btn-primary" onclick={() => handleConnect(ep.id)}
-              >Connect</button
-            >
-          </div>
-        </li>
-      {/each}
-    </ul>
+  <div class="sidebar-connect">
+    <button type="button" class="btn btn-primary connect-btn" onclick={openConnect}>
+      <svg
+        viewBox="0 0 16 16"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        aria-hidden="true"
+      >
+        <path d="M8 3v10M3 8h10" />
+      </svg>
+      Connect
+    </button>
   </div>
 
   <div class="sidebar-section">
@@ -194,6 +202,8 @@
           <div
             class="session-item"
             class:active={isActive}
+            class:source-mcp={sess.source === "mcp"}
+            class:source-ticket={sess.source === "ticket"}
             onclick={(e) => {
               if ((e.target as HTMLElement).tagName !== "BUTTON") {
                 handleSessionClick(sess.sessionId);
@@ -207,7 +217,23 @@
                   <span class="badge badge-observer">observer</span>
                 {/if}
               </span>
-              <span class="session-detail">{sess.sessionId} ({sess.source})</span>
+              <span class="session-detail">
+                {#if sess.source === "ticket"}
+                  <span
+                    class="source-tag"
+                    title={sess.guestAttached === undefined
+                      ? "Guest session is over"
+                      : sess.guestAttached
+                        ? "Guest is connected"
+                        : "Guest is not connected"}
+                    >guest{sess.guestAttached === false ? " · away" : ""}</span
+                  >
+                {:else if sess.source === "mcp"}
+                  <span class="source-tag" title="Started by an MCP agent">mcp</span>
+                {/if}
+                {sess.sessionId}
+                {#if sess.source !== "ticket" && sess.source !== "mcp"}({sess.source}){/if}
+              </span>
             </div>
             <div class="session-actions">
               {#if isObserver}
@@ -263,9 +289,12 @@
               <button
                 type="button"
                 class="btn btn-secondary btn-icon"
-                aria-label="Close session"
-                title="Close session"
-                onclick={() => handleClose(sess.sessionId)}
+                aria-label={sess.ticketId ? "Revoke guest access" : "Close session"}
+                title={sess.ticketId ? "Revoke guest access" : "Close session"}
+                onclick={() =>
+                  sess.ticketId
+                    ? handleCloseGuest(sess.sessionId, sess.ticketId, sess.status)
+                    : handleClose(sess.sessionId)}
               >
                 <svg
                   viewBox="0 0 16 16"
@@ -295,6 +324,17 @@
       onclick={() => navTo("/observer")}
     >
       Observer Mode
+    </button>
+    <button
+      type="button"
+      class="btn-nav"
+      class:active={currentPath.startsWith("/guests")}
+      onclick={() => navTo("/guests")}
+    >
+      Guest access
+      {#if liveGuests > 0}
+        <span class="nav-count" aria-label="{liveGuests} live">{liveGuests}</span>
+      {/if}
     </button>
     <button
       type="button"
@@ -487,48 +527,18 @@
     font-family: var(--font-mono);
   }
 
-  .endpoint-item {
-    display: flex;
-    justify-content: space-between;
+  .sidebar-connect {
+    padding: 0 var(--space-4) var(--space-2);
+  }
+
+  .connect-btn {
+    width: 100%;
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
+    justify-content: center;
+    gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
-    background: transparent;
-    position: relative;
-  }
-
-  .endpoint-item:hover {
-    background: var(--surface-container);
-  }
-
-  .endpoint-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .endpoint-label {
-    font-weight: 600;
     font-size: var(--body-md);
-    color: var(--on-surface);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Reuse the global signal-chip convention (.badge + .badge-demo) below the
-     label rather than inline, so a long label still fits the full sidebar
-     width before ellipsizing. align-self pins the chip to the left edge of
-     the column; margin-left/0 drops the global .badge inline-spacing default. */
-  .endpoint-info :global(.badge) {
-    margin-left: 0;
-    align-self: flex-start;
-  }
-
-  .endpoint-item > :global(.btn) {
-    flex-shrink: 0;
   }
 
   .session-item {
@@ -550,7 +560,8 @@
     background: var(--surface-container-high);
   }
 
-  /* Power Rail — 2px vertical primary strip on active row */
+  /* Power Rail — 2px vertical strip on the active row: primary for your own
+     sessions, the source accent for MCP and guest ones. */
   .session-item.active::before {
     content: "";
     position: absolute;
@@ -558,8 +569,18 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--primary);
-    box-shadow: 0 0 12px rgba(105, 246, 184, 0.6);
+    background: var(--source-accent, var(--primary));
+    box-shadow: 0 0 12px color-mix(in srgb, var(--source-accent, var(--primary)) 60%, transparent);
+  }
+
+  /* MCP and guest sessions always show a dimmer rail in their accent. */
+  .session-item.source-mcp,
+  .session-item.source-ticket {
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--source-accent) 55%, transparent);
+  }
+
+  .session-detail .source-tag {
+    margin-right: 0.5ch;
   }
 
   .session-info {
@@ -648,6 +669,15 @@
   .btn-nav.active {
     color: var(--on-surface);
     background: var(--surface-container-high);
+  }
+
+  .nav-count {
+    margin-left: var(--space-2);
+    padding: 0 0.4rem;
+    font-family: var(--font-mono);
+    font-size: var(--label-sm);
+    color: var(--on-primary, #000);
+    background: var(--primary);
   }
 
   .btn-nav.active::before {

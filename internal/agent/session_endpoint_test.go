@@ -22,10 +22,10 @@ func TestSessionEndpointMutations(t *testing.T) {
 	ctx := context.Background()
 	db.ExecContext(ctx, `INSERT INTO accounts (id,name,created_at,updated_at) VALUES ('acc','A','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 
-	sess := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc", ClientID: "client-1", SourceIP: "1.2.3.4", MaxOwned: 5})
+	sess := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc", ClientID: "client-1", SourceIP: "1.2.3.4"})
 
 	// Create.
-	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
+	if err := sess.CreateEndpoint(ctx, "ep1", testPatch("Box", "h", "u")); err != nil {
 		t.Fatal(err)
 	}
 	ep, _ := sess.GetEndpoint(ctx, "ep1")
@@ -35,7 +35,7 @@ func TestSessionEndpointMutations(t *testing.T) {
 
 	// Update (partial patch merges).
 	label, port, fwd := "Renamed", int64(2222), true
-	ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{Label: &label, Port: &port, AgentForward: &fwd})
+	ok, err := sess.UpdateEndpoint(ctx, "ep1", endpointsvc.EndpointPatch{Label: &label, Port: &port, AgentForward: &fwd})
 	if err != nil || !ok {
 		t.Fatalf("update: ok=%v err=%v", ok, err)
 	}
@@ -46,7 +46,7 @@ func TestSessionEndpointMutations(t *testing.T) {
 
 	// Full editability: userVerification and description are patchable too.
 	uv, desc := "discouraged", "jump host"
-	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{UserVerification: &uv, Description: &desc, DescriptionSet: true}); err != nil || !ok {
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", endpointsvc.EndpointPatch{UserVerification: &uv, Description: &desc, DescriptionSet: true}); err != nil || !ok {
 		t.Fatalf("uv/desc update: ok=%v err=%v", ok, err)
 	}
 	ep, _ = sess.GetEndpoint(ctx, "ep1")
@@ -54,7 +54,7 @@ func TestSessionEndpointMutations(t *testing.T) {
 		t.Fatalf("uv/desc merge wrong: %+v", ep)
 	}
 	// DescriptionSet with nil clears; unset leaves it alone.
-	if ok, err := sess.UpdateEndpoint(ctx, "ep1", EndpointPatch{DescriptionSet: true}); err != nil || !ok {
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", endpointsvc.EndpointPatch{DescriptionSet: true}); err != nil || !ok {
 		t.Fatalf("desc clear: ok=%v err=%v", ok, err)
 	}
 	if ep, _ = sess.GetEndpoint(ctx, "ep1"); ep.Description != nil {
@@ -62,11 +62,11 @@ func TestSessionEndpointMutations(t *testing.T) {
 	}
 
 	// Update a missing endpoint -> false.
-	if ok, _ := sess.UpdateEndpoint(ctx, "nope", EndpointPatch{Label: &label}); ok {
+	if ok, _ := sess.UpdateEndpoint(ctx, "nope", endpointsvc.EndpointPatch{Label: &label}); ok {
 		t.Error("update of missing endpoint should return false")
 	}
 	// Cross-account isolation: another account can't touch ep1.
-	other := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc2", ClientID: "client-1", MaxOwned: 5})
+	other := New(Params{Deps: Deps{Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}}, AccountID: "acc2", ClientID: "client-1"})
 	if ok, _ := other.DeleteEndpoint(ctx, "ep1"); ok {
 		t.Error("cross-account delete should not match")
 	}
@@ -76,12 +76,21 @@ func TestSessionEndpointMutations(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("delete: ok=%v err=%v", ok, err)
 	}
-	// Soft delete (Node parity): hidden from the list, but get-by-id still
-	// resolves — endpoint-repo.ts filters enabled only in findAllForAccount.
+	// Soft delete (#313): the row stays for history, but the endpoint is gone
+	// for every by-id path — get, update, repeat delete and session create.
 	if eps, _ := sess.ListEndpoints(ctx); len(eps) != 0 {
 		t.Errorf("deleted endpoint still listed: %+v", eps)
 	}
-	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep == nil {
-		t.Error("get-by-id must still resolve a soft-deleted endpoint (Node parity)")
+	if ep, _ := sess.GetEndpoint(ctx, "ep1"); ep != nil {
+		t.Errorf("get-by-id resolved a soft-deleted endpoint: %+v", ep)
+	}
+	if ok, err := sess.UpdateEndpoint(ctx, "ep1", endpointsvc.EndpointPatch{Label: &label}); ok || err != nil {
+		t.Errorf("update of deleted endpoint: ok=%v err=%v", ok, err)
+	}
+	if ok, err := sess.DeleteEndpoint(ctx, "ep1"); ok || err != nil {
+		t.Errorf("repeat delete: ok=%v err=%v", ok, err)
+	}
+	if s, err := sess.CreateSession(ctx, "ep1", ""); s != nil || err == nil || err.Error() != "unknown endpoint: ep1" {
+		t.Errorf("create session on deleted endpoint: sess=%v err=%v", s, err)
 	}
 }

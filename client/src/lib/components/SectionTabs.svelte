@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { resolve } from "$app/paths";
+  import { resolvePath } from "$lib/utils/resolve-path.js";
   import { page } from "$app/state";
 
   type Pathname = import("$app/types").Pathname;
@@ -27,7 +27,8 @@
     // only types Pathname for compile-time safety, the runtime contract is
     // "any string the router knows about". The `tabs` prop is the source of
     // truth: every <option value> here was rendered from tab.path.
-    goto(resolve(target.value as Pathname));
+    // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolvePath calls resolve()
+    goto(resolvePath(target.value as Pathname));
   }
 </script>
 
@@ -44,7 +45,9 @@
         type="button"
         class="tab"
         class:active={currentPath === tab.path}
-        onclick={() => goto(resolve(tab.path))}
+        onclick={() =>
+          // eslint-disable-next-line svelte/no-navigation-without-resolve -- resolvePath calls resolve()
+          goto(resolvePath(tab.path))}
       >
         {tab.label}
       </button>

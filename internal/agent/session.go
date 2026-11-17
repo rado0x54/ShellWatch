@@ -10,30 +10,20 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/util"
 )
 
-// HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
-// nil skips auditing — tests).
-type HostKeyAuditor interface {
-	RecordHostKeyEvent(ev audit.HostKeyEvent) string
-}
-
 // Deps are the collaborators an AgentSession needs.
 type Deps struct {
 	Manager *terminal.Manager
 	Svc     *endpointsvc.Service
-	// Audit records the host-key-cleared event when an MCP endpoint update
-	// changes host/port (#241); may be nil.
-	Audit HostKeyAuditor
 }
 
 // Session scopes one request's terminal-session access to an OAuth client on
@@ -44,7 +34,6 @@ type Session struct {
 	accountID string
 	clientID  string
 	sourceIP  string
-	maxOwned  int
 
 	clientName string
 	clientVer  string
@@ -59,18 +48,11 @@ type Params struct {
 	// are visible.
 	ClientID string
 	SourceIP string
-	// MaxOwned caps this client's concurrent live sessions: negative means
-	// "unresolved, use the default 5"; an explicit 0 blocks all creation
-	// (a stored max_sessions of 0 must not silently upgrade to 5).
-	MaxOwned int
 }
 
 // New builds an AgentSession for one request.
 func New(p Params) *Session {
-	if p.MaxOwned < 0 {
-		p.MaxOwned = 5
-	}
-	return &Session{deps: p.Deps, accountID: p.AccountID, clientID: p.ClientID, sourceIP: p.SourceIP, maxOwned: p.MaxOwned}
+	return &Session{deps: p.Deps, accountID: p.AccountID, clientID: p.ClientID, sourceIP: p.SourceIP}
 }
 
 // SetClientInfo records the MCP client's advertised name/version (sanitized).
@@ -130,111 +112,37 @@ func (s *Session) GetEndpoint(ctx context.Context, id string) (*store.Endpoint, 
 
 // CreateEndpoint creates an account-scoped endpoint (MCP path — the caller
 // supplies the id, unlike REST which mints one).
-func (s *Session) CreateEndpoint(ctx context.Context, ep store.Endpoint) error {
-	ep.AccountID = s.accountID
-	return s.deps.Svc.Endpoints.Create(ctx, ep)
+func (s *Session) CreateEndpoint(ctx context.Context, id string, p endpointsvc.EndpointPatch) error {
+	return s.deps.Svc.Create(ctx, endpointsvc.CreateParams{ID: id, AccountID: s.accountID, Patch: p})
 }
 
-// EndpointPatch is a typed partial endpoint update; nil fields keep the
-// stored value. Description carries an explicit set flag so a JSON null can
-// clear it.
-type EndpointPatch struct {
-	Label            *string
-	Host             *string
-	Port             *int64
-	Username         *string
-	UserVerification *string
-	AgentForward     *bool
-	Description      *string // applied only when DescriptionSet; nil clears
-	DescriptionSet   bool
-}
-
-// UpdateEndpoint read-merges a typed patch into an account-scoped endpoint and
-// writes it back. Returns false when no endpoint matched. Wire-shape decoding
-// and field validation (userVerification enum, description cap) happen at the
-// caller (internal/mcp).
-func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointPatch) (bool, error) {
-	existing, err := s.deps.Svc.Endpoints.GetForAccount(ctx, id, s.accountID)
-	if err != nil || existing == nil {
-		return false, err
-	}
-	merged := *existing
-	if patch.Label != nil {
-		merged.Label = *patch.Label
-	}
-	if patch.Host != nil {
-		merged.Host = *patch.Host
-	}
-	if patch.Port != nil {
-		merged.Port = *patch.Port
-	}
-	if patch.Username != nil {
-		merged.Username = *patch.Username
-	}
-	if patch.UserVerification != nil {
-		merged.UserVerification = *patch.UserVerification
-	}
-	if patch.AgentForward != nil {
-		merged.AgentForward = *patch.AgentForward
-	}
-	if patch.DescriptionSet {
-		merged.Description = patch.Description
-	}
-	ok, err := s.deps.Svc.Endpoints.Update(ctx, merged)
-	// The store cleared the pinned host key atomically when host/port changed
-	// (#241): the agent cannot carry a pin over to a new address. Audit it —
-	// this is the only way MCP can touch a pin, and it must leave a trace.
-	if ok && err == nil && s.deps.Audit != nil && existing.HostKey != nil &&
-		(existing.Host != merged.Host || existing.Port != merged.Port) {
-		s.deps.Audit.RecordHostKeyEvent(audit.HostKeyEvent{
-			Type: "host-key-cleared", Source: "endpoint-admin",
-			AccountID: existing.AccountID, EndpointID: existing.ID, EndpointLabel: existing.Label,
-			EndpointAddress:  existing.Username + "@" + existing.Host + ":" + strconv.FormatInt(existing.Port, 10),
-			Fingerprint:      existing.HostKey.Fingerprint,
-			Reason:           "endpoint host/port updated via MCP",
-			MCPClientName:    s.clientName,
-			MCPClientVersion: s.clientVer,
-			SourceIP:         s.sourceIP,
-		})
-	}
-	return ok, err
+// UpdateEndpoint patches an account-scoped endpoint. Returns false when no
+// endpoint matched.
+func (s *Session) UpdateEndpoint(ctx context.Context, id string, p endpointsvc.EndpointPatch) (bool, error) {
+	return s.deps.Svc.Update(ctx, endpointsvc.UpdateParams{ID: id, AccountID: s.accountID, Patch: p, By: endpointsvc.Actor{
+		Via: "MCP", MCPClientName: s.clientName, MCPClientVersion: s.clientVer, SourceIP: s.sourceIP,
+	}})
 }
 
 // DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing
 // matched.
 func (s *Session) DeleteEndpoint(ctx context.Context, id string) (bool, error) {
-	return s.deps.Svc.Endpoints.Delete(ctx, id, s.accountID)
+	return s.deps.Svc.Delete(ctx, id, s.accountID)
 }
 
-// CreateSession opens a session against an endpoint owned by the account. A
-// foreign/unknown id always returns "Unknown endpoint" (no cross-account
-// probing / spurious approval prompts).
+// CreateSession opens a session against an endpoint owned by the account,
+// under the account-wide max_sessions. A foreign/unknown id always returns
+// "unknown endpoint" (no cross-account probing / spurious approval prompts).
 func (s *Session) CreateSession(ctx context.Context, endpointID, reason string) (*terminal.Session, error) {
-	ep, err := s.deps.Svc.RefForAccount(ctx, endpointID, s.accountID)
-	if err != nil {
-		return nil, err
-	}
-	if ep == nil {
-		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
-	}
-	// The cap counts only LIVE sessions owned by this client: dead-but-retained
-	// (post-mortem closed/error) sessions stay readable via read_output but do
-	// not starve the cap.
-	live := 0
-	for _, sess := range s.deps.Manager.ListSessions() {
-		if s.ownsSession(&sess) && sess.Status != terminal.StatusClosed && sess.Status != terminal.StatusError {
-			live++
-		}
-	}
-	if live >= s.maxOwned {
-		return nil, fmt.Errorf("maximum concurrent sessions (%d) reached", s.maxOwned)
-	}
-
-	return s.deps.Manager.Create(ctx, *ep, s.accountID, terminal.Trigger{
+	sess, err := s.deps.Svc.Open(ctx, s.accountID, endpointID, terminal.Trigger{
 		Kind: terminal.SourceMCP, Reason: reason, SourceIP: s.sourceIP,
 		OwnerClientID: s.clientID,
 		MCPClientName: s.clientName, MCPClientVer: s.clientVer,
 	})
+	if errors.Is(err, endpointsvc.ErrEndpointNotFound) {
+		return nil, fmt.Errorf("unknown endpoint: %s", endpointID)
+	}
+	return sess, err
 }
 
 // ListSessions returns this client's owned sessions (live and retained

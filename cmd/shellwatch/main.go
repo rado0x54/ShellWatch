@@ -42,6 +42,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/ticket"
 	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -219,7 +220,7 @@ func run() error {
 				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
 				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
 				Fingerprint: ev.ObservedFingerprint, PriorFingerprint: ev.PinnedFingerprint,
-				SourceIP: ev.Trigger.SourceIP, MCPReason: ev.Trigger.Reason,
+				SourceIP: ev.Trigger.SourceIP, TriggerReason: ev.Trigger.Reason,
 				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
 			})
 			n := notifSvc.Publish(context.Background(), notify.PublishParams{
@@ -251,6 +252,48 @@ func run() error {
 			}
 			return n.ID
 		},
+		// None-auth refusal (#311): the server accepted the connection without
+		// asking for a key, so Connect closed it before opening any channel.
+		// Nothing was approved or denied — audit it, publish one error-severity
+		// notification (notification:new to every tab) and push it. The
+		// refusal itself never depends on this bookkeeping: a failed audit
+		// write or publish only loses the id the error would carry.
+		OnUnauthenticatedEndpoint: func(ev sshx.UnauthenticatedEndpointEvent) string {
+			auditID := auditWriter.RecordHostKeyEvent(audit.HostKeyEvent{
+				Type: "unauthenticated-endpoint", Source: "endpoint-auth",
+				AccountID: ev.AccountID, EndpointID: ev.EndpointID,
+				EndpointLabel: ev.EndpointLabel, EndpointAddress: ev.EndpointAddress,
+				Fingerprint: ev.HostKeyFingerprint,
+				SourceIP:    ev.Trigger.SourceIP, TriggerReason: ev.Trigger.Reason,
+				MCPClientName: ev.Trigger.MCPClientName, MCPClientVersion: ev.Trigger.MCPClientVer,
+			})
+			n := notifSvc.Publish(context.Background(), notify.PublishParams{
+				AccountID: ev.AccountID,
+				Type:      notify.TypeUnauthenticatedEndpoint,
+				Severity:  notify.SeverityError,
+				Title:     "Connection refused: no authentication",
+				Detail: fmt.Sprintf("%q (%s) accepted SSH access as %s without a key. "+
+					"ShellWatch does not open sessions on such servers. Check the server's SSH configuration.",
+					ev.EndpointLabel, ev.EndpointAddress, ev.RemoteUser),
+				Payload: map[string]any{
+					"endpointId":      ev.EndpointID,
+					"endpointLabel":   ev.EndpointLabel,
+					"endpointAddress": ev.EndpointAddress,
+					"remoteUser":      ev.RemoteUser,
+					"trigger":         ev.Trigger.Kind,
+					"mcpClientName":   ev.Trigger.MCPClientName,
+					"sourceIp":        ev.Trigger.SourceIP,
+					"auditId":         auditID,
+				},
+			})
+			if pushChannel != nil {
+				pushChannel.NotifyUnauthenticatedEndpoint(push.UnauthenticatedEndpoint{
+					AccountID: ev.AccountID, EndpointLabel: ev.EndpointLabel,
+					EndpointAddress: ev.EndpointAddress, RemoteUser: ev.RemoteUser,
+				})
+			}
+			return n.ID
+		},
 		// Dead terminal connection -> cancel its stranded sign prompts and
 		// clear the toasts (#91). signBroker resolves lazily like BrokerFunc.
 		OnConnectionEnded: func(connID, reason string) {
@@ -264,15 +307,18 @@ func run() error {
 	})
 	// Every failed connect — UI click or MCP agent — lands in the notification
 	// log (#252): the agent-triggered ones have no other human-visible surface.
-	// Events a more specific producer already published (host-key mismatch)
-	// arrive as NotifiedError and are not double-logged; everything else is
-	// published here and tagged the same way, so the HTTP error body carries
-	// the notification id and the toast dedupes by identity.
+	// Events a more specific producer already published (host-key mismatch,
+	// none-auth refusal) arrive as NotifiedError and are not double-logged;
+	// everything else is published here and tagged the same way, so the HTTP
+	// error body carries the notification id and the toast dedupes by
+	// identity. A none-auth refusal is never re-published as
+	// session-connect-failed, even when its own publish failed (#311).
 	factory := func(ctx context.Context, fp terminal.FactoryParams) (terminal.Transport, error) {
 		transport, err := passkeyFactory(ctx, fp)
 		if err != nil {
 			var already *sshx.NotifiedError
-			if !errors.As(err, &already) {
+			var unauth *sshx.UnauthenticatedEndpointError
+			if !errors.As(err, &already) && !errors.As(err, &unauth) {
 				addr := fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port)
 				source := string(fp.Trigger.Kind)
 				if fp.Trigger.MCPClientName != "" {
@@ -292,7 +338,7 @@ func run() error {
 						"trigger":          fp.Trigger.Kind,
 						"mcpClientName":    fp.Trigger.MCPClientName,
 						"mcpClientVersion": fp.Trigger.MCPClientVer,
-						"mcpReason":        fp.Trigger.Reason,
+						"reason":           fp.Trigger.Reason,
 						"sourceIp":         fp.Trigger.SourceIP,
 						"error":            err.Error(),
 					},
@@ -401,13 +447,50 @@ func run() error {
 	wsHub.SetFileSnapshot(transfers.SnapshotTo)
 	go transfers.RunJanitor(ctx, 10*time.Second)
 
+	// One-time access tickets (#306): the ticket service owns every ticket
+	// and guest-session transition; the guest hub is its WebSocket side,
+	// kept apart from the account hub so no account-level frame can reach a
+	// guest. Tickets are process memory — a restart invalidates them.
+	if strings.HasPrefix(strings.ToLower(cfg.Server.ExternalURL), "http://") && cfg.Server.TrustProxy != false {
+		slog.Warn("config: server.externalUrl is http:// while server.trustProxy is set — "+
+			"this usually means a production deployment with a dev URL; guest ticket redemption "+
+			"checks Origin against externalUrl and will refuse every browser", "externalUrl", cfg.Server.ExternalURL)
+	}
+	accountsStore := store.NewAccounts(db)
+	ticketLog := audit.NewTicketEvents(db, clk)
+	tickets := ticket.New(ticket.Params{
+		Ctx: ctx, Manager: manager, Clock: clk, Audit: ticketLog, Notifier: wsHub,
+		ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open,
+		AccountActive: func(ctx context.Context, accountID string) (bool, error) {
+			acc, err := accountsStore.Get(ctx, accountID)
+			return err == nil && acc != nil && acc.Enabled, err
+		},
+		NewID: newUUID,
+	})
+	defer tickets.Close()
+	// Endpoint delete (REST and MCP alike) is refused while sessions or
+	// guests are active, and revokes the endpoint's tickets afterwards.
+	epSvc.Sessions = manager
+	epSvc.MaxSessions = accountsStore.MaxSessions
+	epSvc.Audit = auditWriter
+	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
+	epSvc.OnDeleted = tickets.CloseForEndpoint
+	epSvc.OnTargetChanged = tickets.RevokeStaleForEndpoint
+	wsHub.EnableGuests(ws.GuestParams{
+		Service:     tickets,
+		ExternalURL: func() string { return cfg.Server.ExternalURL },
+	})
+	tickets.SetPublisher(wsHub)
+	sessionViews := terminal.SessionViews{GuestAttached: tickets.GuestAttached}
+	wsHub.SetSessionViews(sessionViews)
+	go tickets.RunJanitor(ctx, time.Second)
+
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
-		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
+		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc},
 		Keys:           store.NewSSHKeys(db),
 		Version:        buildInfo.Display,
 		NotifyDebounce: time.Duration(cfg.Notifications.Mcp.DebounceMs) * time.Millisecond,
-		MaxOwned:       store.NewAccounts(db).MaxSessions,
 		Transfers:      transfers,
 	}
 
@@ -416,6 +499,7 @@ func run() error {
 	// its Hydra login/consent sessions so live grants die with the account.
 	// Fired by the admin DELETE route — the only way an account is deleted.
 	accountDeleted := func(accountID string) {
+		tickets.CloseForAccount(accountID, terminal.CloseAccountDeleted)
 		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
 			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
 		}
@@ -449,22 +533,23 @@ func run() error {
 			return has
 		},
 		Endpoints: &rest.Endpoints{
-			Svc:      epSvc,
-			Sessions: manager,
-			NewID:    newUUID,
-			StepUp:   webauthnDeps.StepUp,
-			Audit:    auditWriter,
+			Svc:    epSvc,
+			NewID:  newUUID,
+			StepUp: webauthnDeps.StepUp,
 		},
 		Sessions: &rest.Sessions{
-			Manager:     manager,
-			Svc:         epSvc,
-			MaxSessions: store.NewAccounts(db).MaxSessions,
+			Manager: manager,
+			Svc:     epSvc,
+			Views:   sessionViews,
 		},
-		WSHub:       wsHub,
-		MCP:         mcpDeps,
-		Actions:     &rest.Actions{Store: actionStore},
-		ClientLog:   oauthClientLog,
-		CimdRootCAs: cimdRootCAs,
+		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
+		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
+		GuestWS:      wsHub.GuestHandler(),
+		WSHub:        wsHub,
+		MCP:          mcpDeps,
+		Actions:      &rest.Actions{Store: actionStore},
+		ClientLog:    oauthClientLog,
+		CimdRootCAs:  cimdRootCAs,
 		Audit: &rest.Audit{
 			Sessions:     audit.NewSessions(db),
 			Signings:     audit.NewSignings(db),
@@ -473,6 +558,7 @@ func run() error {
 			IsAdmin:      store.NewAccounts(db),
 
 			FileTransfers: fileTransferLog,
+			Tickets:       ticketLog,
 		},
 		Transfers: transfers,
 		Accounts: &rest.Accounts{

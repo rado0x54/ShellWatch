@@ -134,8 +134,8 @@ func (e *Endpoints) Update(ctx context.Context, ep Endpoint) (bool, error) {
 	return n > 0, err
 }
 
-// Delete soft-deletes an endpoint (enabled=0, Node parity); returns false
-// when nothing matched.
+// Delete soft-deletes an endpoint (enabled=0); returns false when nothing
+// matched (unknown, not owned, or already deleted).
 func (e *Endpoints) Delete(ctx context.Context, id, accountID string) (bool, error) {
 	n, err := gen.New(e.db).DeleteEndpointForAccount(ctx, gen.DeleteEndpointForAccountParams{
 		UpdatedAt: e.clk.Now().UTC().Format(isoMillis), ID: id, AccountID: accountID,

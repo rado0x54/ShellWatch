@@ -77,6 +77,7 @@ var goldenCoverage = map[string]coverage{
 	// --- Passkey credentials + invites ---
 	"getPasskeyStatus":                goldened("passkey-status"),
 	"listPasskeys":                    goldened("credentials-list"),
+	"reorderPasskeys":                 goldened("credentials-order"),
 	"confirmPasskey":                  goldened("credential-confirm"),
 	"updatePasskeyLabel":              goldened("credential-label"),
 	"revokePasskey":                   goldened("credential-revoke"),
@@ -127,6 +128,14 @@ var goldenCoverage = map[string]coverage{
 		"(uniform 404, IP allowlist, no-store, token redaction)."),
 	"downloadTransfer": excluded("Binary response body behind a single-use token; see uploadTransfer. " +
 		"Characterized by internal/transfer/link_test.go (byte-identical download, shrink/grow observation)."),
+
+	// --- One-time access tickets (#306) ---
+	"mintTicket":       goldened("ticket-mint"),
+	"listTickets":      goldened("ticket-list"),
+	"revokeTicket":     goldened("ticket-revoke"),
+	"redeemTicket":     goldened("ticket-redeem", "ticket-redeem-not-found"),
+	"checkTicket":      goldened("ticket-check", "ticket-check-not-found"),
+	"listAuditTickets": goldened("audit-tickets", "audit-tickets-invalid-event"),
 
 	// --- Pending actions + push ---
 	"getAction":              goldened("action-get"),

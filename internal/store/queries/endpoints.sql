@@ -3,9 +3,9 @@
 -- SQL (W13). Keep pure ASCII (sqlc offset bug on multi-byte chars).
 
 -- name: ListEndpointsForAccount :many
--- enabled filter matches Node (findAllForAccount, endpoint-repo.ts:87): a
--- soft-deleted endpoint is hidden from lists. Get-by-id deliberately does NOT
--- filter (Node parity: post-delete session create / PUT by id still work).
+-- Every account-scoped read and write filters enabled = 1 (#313): a
+-- soft-deleted endpoint is gone for lists, get-by-id, updates, host-key
+-- changes and a repeat delete alike.
 SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
   host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
 FROM endpoints WHERE account_id = ? AND enabled = 1 ORDER BY created_at, id;
@@ -13,7 +13,7 @@ FROM endpoints WHERE account_id = ? AND enabled = 1 ORDER BY created_at, id;
 -- name: GetEndpointForAccount :one
 SELECT id, account_id, label, host, port, username, user_verification, description, agent_forward,
   host_key_type, host_key_fingerprint, host_key_pinned_at, host_key_pinned_by
-FROM endpoints WHERE id = ? AND account_id = ?;
+FROM endpoints WHERE id = ? AND account_id = ? AND enabled = 1;
 
 -- name: InsertEndpoint :exec
 INSERT INTO endpoints (
@@ -24,7 +24,7 @@ INSERT INTO endpoints (
 -- name: DeleteEndpointForAccount :execrows
 -- Soft delete (endpoint-repo.ts:146-152): history keeps its endpoint rows and
 -- a shared-data-dir cutover can't resurrect Node-era deletions.
-UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ?;
+UPDATE endpoints SET enabled = 0, updated_at = ? WHERE id = ? AND account_id = ? AND enabled = 1;
 
 -- name: GetShowDemoEndpoints :one
 SELECT show_demo_endpoints FROM accounts WHERE id = ?;
@@ -43,7 +43,7 @@ UPDATE endpoints SET
   label = sqlc.arg(label), host = sqlc.arg(host), port = sqlc.arg(port), username = sqlc.arg(username),
   user_verification = sqlc.arg(user_verification), description = sqlc.arg(description),
   agent_forward = sqlc.arg(agent_forward), updated_at = sqlc.arg(updated_at)
-WHERE id = sqlc.arg(id) AND account_id = sqlc.arg(account_id);
+WHERE id = sqlc.arg(id) AND account_id = sqlc.arg(account_id) AND enabled = 1;
 
 -- name: GetEndpointHostKey :one
 -- Connection-time pin lookup (#241). By id only: the endpoint was already
@@ -65,7 +65,7 @@ WHERE id = ? AND host_key_fingerprint IS NULL AND host = ? AND port = ?;
 -- name: ClearEndpointHostKey :execrows
 UPDATE endpoints SET host_key_type = NULL, host_key = NULL, host_key_fingerprint = NULL,
   host_key_pinned_at = NULL, host_key_pinned_by = NULL, updated_at = ?
-WHERE id = ? AND account_id = ? AND host_key_fingerprint IS NOT NULL;
+WHERE id = ? AND account_id = ? AND enabled = 1 AND host_key_fingerprint IS NOT NULL;
 
 -- name: ListEndpointsByAddress :many
 -- Config-file pin provisioning (#241): seedAdminEndpoints carry no stable id,

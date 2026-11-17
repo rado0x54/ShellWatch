@@ -12,13 +12,15 @@
         "closedAt": null,
         "durationMs": null,
         "sourceIp": "203.0.113.1",
-        "mcpReason": null,
+        "reason": null,
         "mcpClientName": null,
         "mcpClientVersion": null,
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": null
+        "closeReason": null,
+        "ticketId": null,
+        "ticketLabel": null
       }
     ],
     "nextCursor": null

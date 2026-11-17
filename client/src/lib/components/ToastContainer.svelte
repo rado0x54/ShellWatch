@@ -1,16 +1,23 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  import { apiFetch } from "$lib/api.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import Modal from "$lib/components/Modal.svelte";
-  import { toasts, removeToast, toastError, type SignRequestAction } from "$lib/stores/toasts.js";
+  import {
+    toasts,
+    removeToast,
+    toastError,
+    toastInfo,
+    type SignRequestAction,
+  } from "$lib/stores/toasts.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
     approveAction,
-    performSignCeremony,
-    resolveAction,
     sessionIdFromRedirect,
+    signOrAutoSkip,
+    skipAction,
+    skipResultMessage,
+    SkipFailedError,
     sourceLabels,
     type ResolveResponse,
   } from "$lib/utils/webauthn-sign.js";
@@ -49,17 +56,33 @@
   }
 
   async function handleAction(action: SignRequestAction, toastId: string) {
+    // A guest admission (#306) is approved on /sign only, where the owner
+    // compares the confirmation code; the toast never approves one.
+    if (action.ticket) return handleDetails(action.actionId, toastId);
     activeActionId = action.actionId;
     let response: ResolveResponse;
     try {
       if (action.actionType === "webauthn-sign") {
-        const result = await performSignCeremony(action);
-        response = await resolveAction(action.actionId, result);
+        const outcome = await signOrAutoSkip(action.actionId, action);
+        if (outcome.kind === "auto-skipped") {
+          // The ceremony was cancelled / no matching passkey here (#308):
+          // skipped like the Skip button would; the user stays where they are.
+          removeToast(toastId);
+          toastInfo(skipResultMessage(outcome.skip, "auto", action.passkeyLabel));
+          return;
+        }
+        response = outcome.response;
       } else {
         response = await approveAction(action.actionId);
       }
       removeToast(toastId);
     } catch (err) {
+      if (err instanceof SkipFailedError) {
+        // Nothing was skipped: the prompt stays.
+        console.error(err);
+        toastError(err.message);
+        return;
+      }
       const verb = action.actionType === "key-approve" ? "Approval" : "Signing";
       console.error(`${verb} failed:`, err);
       toastError(`${verb} failed: ${errorMessage(err)}`);
@@ -79,17 +102,23 @@
     await goto(resolve("/sign/[id]", { id: actionId }));
   }
 
-  async function handleDeny(actionId: string, toastId: string) {
+  // Skip drops this one key; the next key the server accepts arrives as a new
+  // request (#308). The user stays on their current page.
+  async function handleSkip(action: SignRequestAction, toastId: string) {
+    activeActionId = action.actionId;
     try {
-      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
-      if (!res.ok) {
-        toastError(`Failed to deny action: ${await res.text()}`);
+      const skip = await skipAction(action.actionId);
+      removeToast(toastId);
+      if (skip.kind === "ended") {
+        toastInfo(skipResultMessage(skip, "manual", undefined));
       }
     } catch (err) {
-      console.error("Failed to deny action:", err);
-      toastError(`Failed to deny action: ${errorMessage(err)}`);
+      // Nothing was skipped: the prompt stays.
+      console.error(err);
+      toastError(errorMessage(err));
+    } finally {
+      activeActionId = null;
     }
-    removeToast(toastId);
   }
 </script>
 
@@ -100,12 +129,49 @@
         {#if toast.variant === "sign-request" && toast.action}
           {@const isProcessing = activeActionId === toast.action.actionId}
           {@const isKeyApprove = toast.action.actionType === "key-approve"}
+          {@const ticket = toast.action.ticket}
           <div class="toast-header">
-            <span class="toast-icon">{isKeyApprove ? "🔐" : "🔑"}</span>
+            <span class="toast-icon">{ticket ? "🎟️" : isKeyApprove ? "🔐" : "🔑"}</span>
             <span class="toast-title">
-              {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
+              {ticket
+                ? "Guest Access Request"
+                : isKeyApprove
+                  ? "SSH Key Approval Request"
+                  : "Passkey Signature Request"}
             </span>
           </div>
+          {#if ticket}
+            <div class="toast-hostkey-banner">
+              Approving gives a <strong>one-time access guest</strong> a shell on this endpoint. Review
+              it and compare the code with the guest before you approve.
+            </div>
+            <div class="toast-body">
+              <div class="toast-field">
+                <span class="toast-label">Code</span>
+                <span class="toast-value toast-mono toast-code">{ticket.confirmationCode}</span>
+              </div>
+              {#if ticket.ticketLabel}
+                <div class="toast-field">
+                  <span class="toast-label">Ticket</span>
+                  <span class="toast-value">{ticket.ticketLabel}</span>
+                </div>
+              {/if}
+              {#if ticket.reason}
+                <div class="toast-field">
+                  <span class="toast-label">Reason</span>
+                  <span class="toast-value"
+                    >“{ticket.reason}” <span class="toast-muted">(stated by the guest)</span></span
+                  >
+                </div>
+              {/if}
+              {#if ticket.sourceIp}
+                <div class="toast-field">
+                  <span class="toast-label">From</span>
+                  <span class="toast-value toast-mono">{ticket.sourceIp}</span>
+                </div>
+              {/if}
+            </div>
+          {/if}
           {#if toast.action.hostKey?.status === "new"}
             <div class="toast-hostkey-banner">
               First connection to this host — approving will <strong>pin</strong> its key
@@ -162,34 +228,48 @@
             {/if}
           </div>
           <div class="toast-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              onclick={() => handleDetails(toast.action!.actionId, toast.id)}
-              disabled={isProcessing}
-            >
-              Details
-            </button>
+            {#if !ticket}
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onclick={() => handleDetails(toast.action!.actionId, toast.id)}
+                disabled={isProcessing}
+              >
+                Details
+              </button>
+            {/if}
             <button
               type="button"
               class="btn btn-secondary"
-              onclick={() => handleDeny(toast.action!.actionId, toast.id)}
+              onclick={() => handleSkip(toast.action!, toast.id)}
               disabled={isProcessing}
+              title="Don't use this key; the next matching key may be offered"
             >
-              Deny
+              Skip
             </button>
-            <button
-              type="button"
-              class="btn btn-primary"
-              onclick={() => handleAction(toast.action!, toast.id)}
-              disabled={isProcessing}
-            >
-              {#if isProcessing}
-                {isKeyApprove ? "Approving..." : "Signing..."}
-              {:else}
-                {isKeyApprove ? "Approve" : "Sign"}
-              {/if}
-            </button>
+            {#if ticket}
+              <button
+                type="button"
+                class="btn btn-primary"
+                onclick={() => handleDetails(toast.action!.actionId, toast.id)}
+                disabled={isProcessing}
+              >
+                Review
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="btn btn-primary"
+                onclick={() => handleAction(toast.action!, toast.id)}
+                disabled={isProcessing}
+              >
+                {#if isProcessing}
+                  {isKeyApprove ? "Approving..." : "Signing..."}
+                {:else}
+                  {isKeyApprove ? "Approve" : "Sign"}
+                {/if}
+              </button>
+            {/if}
           </div>
         {:else}
           <div class="toast-simple">
@@ -359,6 +439,12 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+
+  .toast-code {
+    font-size: 1.1rem;
+    letter-spacing: 0.2em;
+    color: var(--primary);
   }
 
   .toast-hostkey-banner {

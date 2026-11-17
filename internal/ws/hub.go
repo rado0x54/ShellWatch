@@ -38,6 +38,51 @@ type Hub struct {
 	// must hold back live terminal:file frames while deliver runs, so no
 	// frame is lost between the snapshot and the attach. nil -> none.
 	fileSnapshot func(sessionID string, deliver func(frames []any))
+
+	// views builds the session-list rows (shared with REST).
+	views terminal.SessionViews
+
+	// guests enables /ws/guest (#328); zero -> no guest route.
+	guests GuestParams
+}
+
+// snapshot copies the connections matching keep (nil -> all), so fan-out
+// runs without the hub lock.
+func (h *Hub) snapshot(keep func(*conn) bool) []*conn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		if keep == nil || keep(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// owner selects an account's own connections (never a guest's).
+func owner(accountID string) func(*conn) bool {
+	return func(c *conn) bool { return c.ownedBy(accountID) }
+}
+
+// SetSessionViews wires the session view shared with REST (set once at the
+// composition root).
+func (h *Hub) SetSessionViews(v terminal.SessionViews) {
+	h.mu.Lock()
+	h.views = v
+	h.mu.Unlock()
+}
+
+// TicketsChanged tells the account's browsers to refetch GET /api/tickets
+// (#306).
+func (h *Hub) TicketsChanged(accountID string) {
+	h.SendToAccount(accountID, map[string]any{"type": "tickets:changed"})
+}
+
+// SessionsChanged re-sends the account's session list (a guest attached or
+// detached, #306).
+func (h *Hub) SessionsChanged(accountID string) {
+	h.onRegistered("", accountID)
 }
 
 // SetFileSnapshot wires the file-transfer snapshot source (set once at the
@@ -48,21 +93,16 @@ func (h *Hub) SetFileSnapshot(fn func(sessionID string, deliver func(frames []an
 	h.mu.Unlock()
 }
 
-// SendToSession delivers a server message to every connection currently
-// attached to a session (terminal:file fan-out, #263). Attach is
-// account-checked, so this is account-scoped by construction.
+// SendToSession delivers a server message to every account connection
+// currently attached to a session (terminal:file fan-out, #263). Attach is
+// account-checked; a guest is attached to its session too, so it is
+// excluded explicitly (#328).
 func (h *Hub) SendToSession(sessionID string, msg any) {
 	raw, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
+	for _, c := range h.snapshot(func(c *conn) bool { return !c.isGuest() }) {
 		if c.isAttached(sessionID) {
 			c.enqueue(raw)
 		}
@@ -100,15 +140,7 @@ func (h *Hub) Close() {
 // lists a session still connecting (status opening), so a browser approving
 // its SSH signature can open the session's page right away (#273).
 func (h *Hub) onRegistered(_, accountID string) {
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		if c.accountID == accountID {
-			conns = append(conns, c)
-		}
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
+	for _, c := range h.snapshot(owner(accountID)) {
 		c.send(h.sessionList(c))
 	}
 }
@@ -118,16 +150,18 @@ func (h *Hub) onRegistered(_, accountID string) {
 // broadcast and the delete (the broadcast must come first so the tail drain
 // can read the buffer), and such a connection would otherwise stay attached
 // forever without a terminal:closed. closeSession no-ops when not attached.
-func (h *Hub) onRemoved(sessionID string) {
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
-		if c.isAttached(sessionID) { // cheap prefilter: don't take flushMu on bystanders
-			c.closeSession(h.mgr, sessionID)
+// For a silent removal (expiry, eviction) it also resends the owning
+// account's connections their session list.
+func (h *Hub) onRemoved(ev terminal.RemovedEvent) {
+	for _, c := range h.snapshot(nil) {
+		if c.isAttached(ev.SessionID) { // cheap prefilter: don't take flushMu on bystanders
+			c.closeSession(h.mgr, ev.SessionID)
+		}
+		// A silent removal (a retained ended session expired or evicted) is
+		// a list change nothing else announces: an errored session is listed
+		// until then. Only the owning account's connections need the list.
+		if ev.Reason.Silent() && c.ownedBy(ev.AccountID) {
+			c.send(h.sessionList(c))
 		}
 	}
 }
@@ -139,15 +173,7 @@ func (h *Hub) SendToAccount(accountID string, msg any) {
 	if err != nil {
 		return
 	}
-	h.mu.Lock()
-	targets := make([]*conn, 0)
-	for c := range h.conns {
-		if c.accountID == accountID {
-			targets = append(targets, c)
-		}
-	}
-	h.mu.Unlock()
-	for _, c := range targets {
+	for _, c := range h.snapshot(owner(accountID)) {
 		c.enqueue(raw)
 	}
 }
@@ -165,33 +191,24 @@ func (h *Hub) remove(c *conn) {
 }
 
 // onStatusChange broadcasts an account-scoped sessions:changed to every
-// connection, plus terminal:closed to connections attached to a now-closed
-// session (the Node onClose behavior). Low-frequency, so not coalesced.
+// account connection, plus terminal:closed to connections attached to a
+// now-closed session (the Node onClose behavior; guests included). Low-
+// frequency, so not coalesced.
 func (h *Hub) onStatusChange(ev terminal.StatusEvent) {
 	terminalState := ev.Status == terminal.StatusClosed || ev.Status == terminal.StatusError
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
+	for _, c := range h.snapshot(nil) {
 		if terminalState {
 			c.closeSession(h.mgr, ev.SessionID)
 		}
-		c.send(h.sessionList(c))
+		if !c.isGuest() {
+			c.send(h.sessionList(c))
+		}
 	}
 }
 
 // onOutput delivers the coalesced delta to attached connections.
 func (h *Hub) onOutput(sessionID string, _ int64) {
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
+	for _, c := range h.snapshot(nil) {
 		if c.isAttached(sessionID) {
 			c.flushOutput(h.mgr, sessionID)
 		}
@@ -202,15 +219,15 @@ func (h *Hub) onOutput(sessionID string, _ int64) {
 // (buildSessionList in ws-message-router.ts).
 func (h *Hub) sessionList(c *conn) map[string]any {
 	entries := make([]sessionListEntry, 0)
+	h.mu.Lock()
+	views := h.views
+	h.mu.Unlock()
 	for _, s := range h.mgr.ListForAccount(c.accountID) {
 		mode := "observer"
 		if c.hasControl(s.SessionID) {
 			mode = "control"
 		}
-		entries = append(entries, sessionListEntry{
-			SessionID: s.SessionID, EndpointID: s.EndpointID, Status: string(s.Status),
-			CreatedAt: s.CreatedAt.UTC().Format(isoMillis), Source: string(s.Source), Mode: mode,
-		})
+		entries = append(entries, sessionListEntry{SessionView: views.View(s), Mode: mode})
 	}
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }

@@ -14,7 +14,7 @@
  *     type (ISO string or epoch-ms/epoch-s number): createdAt, updatedAt,
  *     lastActivityAt, lastUsedAt, builtAt, authorizedAt, closedAt, resolvedAt,
  *     expiresAt, client_id_issued_at → "<TS>".
- *   - challenge, challengeId, token, stepUpToken → "<REDACTED>".
+ *   - challenge, challengeId, token, stepUpToken, confirmationCode, shareLink → "<REDACTED>".
  *   - nextCursor (when non-null) → "<CURSOR>".
  *   - Value patterns anywhere:
  *       sess_<12 hex>                → "sess_<ID>"
@@ -43,7 +43,14 @@ const TS_KEYS = new Set([
   // DCR (RFC 7591): epoch-SECONDS number, not ISO — folded by key, not pattern.
   "client_id_issued_at",
 ]);
-const REDACT_KEYS = new Set(["challenge", "challengeId", "token", "stepUpToken"]);
+const REDACT_KEYS = new Set([
+  "challenge",
+  "challengeId",
+  "token",
+  "stepUpToken",
+  "confirmationCode",
+  "shareLink",
+]);
 
 const SESSION_ID_RE = /^sess_[0-9a-f]{12}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

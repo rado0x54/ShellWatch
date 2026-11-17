@@ -6,13 +6,16 @@
 package httpserver
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -88,6 +91,11 @@ type Params struct {
 	Push         *rest.Push
 	// Transfers mounts the file-transfer link route (#263; nil-able).
 	Transfers *transfer.Service
+	// Tickets mounts the owner ticket routes; TicketRedeem and GuestWS the
+	// two gate-exempt guest routes (#306). nil-able.
+	Tickets      *rest.Tickets
+	TicketRedeem *rest.TicketRedeem
+	GuestWS      http.Handler
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -266,12 +274,29 @@ func New(p Params) http.Handler {
 			p.Transfers.Handle(w, r, chi.URLParam(r, "token"))
 		})))
 	}
+	if p.Tickets != nil {
+		p.Tickets.Mount(r)
+	}
+	if p.TicketRedeem != nil || p.GuestWS != nil {
+		// The two guest routes (#306). Their own credential is the ticket
+		// (redeem body) or the guest cookie (handshake); both sit behind the
+		// same CIDR allowlist as every other surface without a bearer token,
+		// and the handlers check Origin themselves.
+		ipGate := auth.NewIPChecker(p.Config.Security.AllowedNetworks).Middleware
+		if p.TicketRedeem != nil {
+			r.Method(http.MethodPost, "/api/tickets/redeem", ipGate(p.TicketRedeem))
+			r.Method(http.MethodPost, "/api/tickets/check", ipGate(http.HandlerFunc(p.TicketRedeem.Check)))
+		}
+		if p.GuestWS != nil {
+			r.Method(http.MethodGet, "/ws/guest", ipGate(p.GuestWS))
+		}
+	}
 	if p.AgentProxy != nil && agentProxy {
 		r.Get("/agent-proxy", p.AgentProxy.Handler())
 	}
 
 	// SPA: exact static files, fallback to index.html for client routes.
-	r.NotFound(spaHandler(p.StaticFS))
+	r.NotFound(spaHandler(p.StaticFS, externalURL))
 	return r
 }
 
@@ -295,6 +320,13 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 	// so it needs a ceiling — but it is also a user-facing redirect in a normal
 	// login, so the bucket is far wider than DCR's.
 	cimdAuthorize := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
+	ticketRedeem := func() *ratelimit.Limiter { return ratelimit.New(20, 15*time.Minute, clk) }
+	// Check spends nothing and runs once per page load, so it gets a wider
+	// bucket of its own: guests behind one NAT must not exhaust redeem's
+	// budget just by opening links. (Tokens are 256-bit; a bucket is not
+	// what stops guessing.)
+	ticketCheck := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
+	guestWS := func() *ratelimit.Limiter { return ratelimit.New(120, 15*time.Minute, clk) }
 
 	return []ratelimit.Rule{
 		// selfRegister bucket (self-register.ts).
@@ -323,6 +355,12 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 		{Method: "POST", Path: "/api/hydra/register", Limiter: dcr()},
 		// CIMD authorization front door: fixed 60/15min.
 		{Method: "GET", Path: "/api/hydra/authorize", Limiter: cimdAuthorize()},
+		// One-time access tickets (#306): redemption is the only
+		// unauthenticated way to spend a ticket, so a guesser gets a tight
+		// bucket; the guest WebSocket reconnects on reloads, so a wider one.
+		{Method: "POST", Path: "/api/tickets/redeem", Limiter: ticketRedeem()},
+		{Method: "POST", Path: "/api/tickets/check", Limiter: ticketCheck()},
+		{Method: "GET", Path: "/ws/guest", Limiter: guestWS()},
 	}
 }
 
@@ -381,7 +419,7 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 // _app/immutable/, so those are cached forever; every other static path
 // (index.html, service-worker.js, favicon, manifest) must revalidate so a new
 // deploy is picked up immediately.
-func spaHandler(staticFS fs.FS) http.HandlerFunc {
+func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 	fileServer := http.FileServerFS(staticFS)
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
@@ -420,9 +458,21 @@ func spaHandler(staticFS fs.FS) http.HandlerFunc {
 		defer index.Close()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		if data, err := io.ReadAll(index); err == nil {
-			_, _ = w.Write(data)
+		data, err := io.ReadAll(index)
+		if err != nil {
+			return
 		}
+		if isGuestPagePath(r.URL.Path) {
+			// The guest page (#306) runs on an untrusted device: no caching,
+			// and a strict policy that allows only this origin's scripts plus
+			// the SPA's own inline bootstrap (by hash).
+			w.Header().Set("Cache-Control", "no-store")
+			// The policy hashes the index.html just read, per request: under
+			// -static-dir a client rebuild changes the inline bootstrap
+			// without a restart, and a stale hash would blank the page.
+			w.Header().Set("Content-Security-Policy", guestPageCSP(data, externalURL()))
+		}
+		_, _ = w.Write(data)
 	}
 }
 
@@ -433,4 +483,48 @@ func staticCacheControl(path string) string {
 		return "public, max-age=31536000, immutable"
 	}
 	return "no-cache"
+}
+
+// guestPagePath is the one-time access guest page (#306).
+const guestPagePath = "/t"
+
+// isGuestPagePath matches the guest page with and without a trailing slash,
+// the same two spellings the client routes to it (client/src/lib/guest/paths.ts):
+// both must get the guest page's headers.
+func isGuestPagePath(p string) bool {
+	return p == guestPagePath || p == guestPagePath+"/"
+}
+
+var inlineScriptRe = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// guestPageCSP builds the guest page's Content-Security-Policy: scripts from
+// this origin plus the hashes of index.html's inline scripts, connections
+// only to this origin (fetch and the guest WebSocket), no framing, no
+// plugins, no forms posted anywhere. Inline styles stay allowed: xterm.js
+// positions its layers with style attributes.
+func guestPageCSP(index []byte, externalURL string) string {
+	scripts := []string{"'self'"}
+	for _, m := range inlineScriptRe.FindAllSubmatch(index, -1) {
+		sum := sha256.Sum256(m[1])
+		scripts = append(scripts, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	connect := []string{"'self'"}
+	if origin, ok := auth.NormalizeOrigin(externalURL, false); ok {
+		// Older engines do not let 'self' cover ws(s): name it explicitly.
+		connect = append(connect, "ws"+strings.TrimPrefix(origin, "http"))
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src " + strings.Join(scripts, " "),
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"connect-src " + strings.Join(connect, " "),
+		"worker-src 'none'",
+		"manifest-src 'self'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'none'",
+		"frame-ancestors 'none'",
+	}, "; ")
 }

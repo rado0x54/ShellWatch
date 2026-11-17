@@ -39,10 +39,16 @@ const (
 // pinnedFingerprint, auditId}.
 const TypeHostKeyMismatch = "host-key-mismatch"
 
+// TypeUnauthenticatedEndpoint is a connection refused because the server
+// accepted SSH "none" authentication — no key was asked for, so no human
+// approved it (#311). Severity error. Payload: {endpointId, endpointLabel,
+// endpointAddress, remoteUser, trigger, mcpClientName, sourceIp, auditId}.
+const TypeUnauthenticatedEndpoint = "unauthenticated-endpoint"
+
 // TypeSessionConnectFailed is any other failed SSH connect, whatever the
 // trigger (UI click or MCP agent) — the agent-triggered ones have no other
 // human-visible surface. Payload: {endpointId, endpointLabel,
-// endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason,
+// endpointAddress, trigger, mcpClientName, mcpClientVersion, reason,
 // sourceIp, error}.
 const TypeSessionConnectFailed = "session-connect-failed"
 

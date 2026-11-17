@@ -34,6 +34,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/rest"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/ticket"
 	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -77,13 +78,16 @@ func fullHandler(t *testing.T) chi.Router {
 
 	transfers := transfer.New(transfer.Params{Manager: manager})
 	t.Cleanup(transfers.Close)
+	tickets := ticket.New(ticket.Params{Manager: manager, ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open, NewID: func() string { return "id" }})
+	t.Cleanup(tickets.Close)
+	hub.EnableGuests(ws.GuestParams{Service: tickets, ExternalURL: func() string { return externalURL }})
 
 	h := New(Params{
 		Config: cfg, Resolve: auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
 		StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WebAuthn: waDeps, HydraAdmin: fake, HasPasskeys: func() bool { return true },
-		Endpoints: &rest.Endpoints{Svc: epSvc, Sessions: manager, NewID: func() string { return "id" }, StepUp: stepUp},
-		Sessions:  &rest.Sessions{Manager: manager, Svc: epSvc, MaxSessions: func(context.Context, string) (int, bool) { return 5, true }},
+		Endpoints: &rest.Endpoints{Svc: withSessions(epSvc, manager), NewID: func() string { return "id" }, StepUp: stepUp},
+		Sessions:  &rest.Sessions{Manager: manager, Svc: epSvc},
 		WSHub:     hub,
 		MCP:       &mcp.Deps{AgentDeps: agent.Deps{Manager: manager, Svc: epSvc}, Keys: store.NewSSHKeys(db)},
 		Actions:   &rest.Actions{Store: actionStore},
@@ -97,8 +101,12 @@ func fullHandler(t *testing.T) chi.Router {
 			IsAdmin:      fakeAdminCheck{},
 
 			FileTransfers: audit.NewFileTransfers(db, nil),
+			Tickets:       audit.NewTicketEvents(db, nil),
 		},
 		Transfers:    transfers,
+		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return "https://sw.example" }},
+		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return externalURL }},
+		GuestWS:      hub.GuestHandler(),
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},
 		Accounts:     &rest.Accounts{Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc, Now: func() string { return "" }},
 		Credentials:  &rest.Credentials{Store: credStore, Admin: fake, StepUp: stepUp},
@@ -167,4 +175,10 @@ func TestRouteCoverageAgainstSpec(t *testing.T) {
 		t.Errorf("%d spec operation(s) have no mounted Go route:\n  %s",
 			len(missing), strings.Join(missing, "\n  "))
 	}
+}
+
+// withSessions wires the endpoint-delete active-session guard.
+func withSessions(svc *endpointsvc.Service, sessions endpointsvc.SessionManager) *endpointsvc.Service {
+	svc.Sessions = sessions
+	return svc
 }

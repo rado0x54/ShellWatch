@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
+import type { TerminalMode, TerminalTransport } from "../terminal/transport.js";
 import type { FileTransferEvent } from "./file-transfers.js";
+import { fetchTickets } from "./tickets.js";
 import type { AppNotification } from "./notifications.js";
 import {
   addToast,
@@ -10,6 +12,7 @@ import {
   toastNotification,
   type SignRequestAction,
   type SignRequestHostKey,
+  type SignRequestTicket,
 } from "./toasts.js";
 
 /** Sentinel WS subprotocol carrying the bearer token; mirror of server bearer-gate.ts. */
@@ -18,7 +21,7 @@ const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
 /** Delay before a reconnect attempt after a drop. */
 const RECONNECT_DELAY_MS = 2000;
 
-export type SessionMode = "control" | "observer";
+export type SessionMode = TerminalMode;
 
 export interface SessionListEntry {
   sessionId: string;
@@ -27,6 +30,10 @@ export interface SessionListEntry {
   createdAt: string;
   source: string;
   mode: SessionMode;
+  /** Guest sessions (source "ticket", #306) only. */
+  ticketId?: string;
+  ticketLabel?: string;
+  guestAttached?: boolean;
 }
 
 type SignRequestMessage = {
@@ -39,6 +46,8 @@ type SignRequestMessage = {
   endpointAddress?: string;
   // host-key pinning (#241): set on endpoint-auth actions
   hostKey?: SignRequestHostKey;
+  // one-time access guest (#306): set when approving admits a ticket guest
+  ticket?: SignRequestTicket;
   // webauthn-sign fields
   passkeyLabel?: string;
   credentialId?: string;
@@ -68,6 +77,8 @@ type ServerMessage =
   | SignRequestMessage
   | { type: "sign:resolved"; actionId: string }
   | NotificationMessage
+  // A one-time access ticket or its guest session changed (#306).
+  | { type: "tickets:changed" }
   | { type: "error"; message: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
@@ -80,6 +91,8 @@ export const sessions = writable<SessionListEntry[]>([]);
 export const wsConnected = writable(false);
 
 let ws: WebSocket | null = null;
+/** Whether a socket was open before: a later open is a reconnect. */
+let openedBefore = false;
 const handlers = new Set<MessageHandler>();
 const lastOffsetBySession = new Map<string, number>();
 /** Sessions some view is attached to (#271). Attachment is per-connection
@@ -105,6 +118,7 @@ function buildActionFromMessage(msg: SignRequestMessage): SignRequestAction {
     endpointLabel: msg.endpointLabel,
     endpointAddress: msg.endpointAddress,
     hostKey: msg.hostKey,
+    ticket: msg.ticket,
   };
 
   if (msg.actionType === "key-approve") {
@@ -160,6 +174,11 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   ws.onopen = () => {
     for (const sessionId of attachedSessions) sendAttach(sessionId);
     wsConnected.set(true);
+    // tickets:changed sent while the socket was down is lost: catch up.
+    // (Sessions need no refetch: the server sends sessions:changed on
+    // every connect.)
+    if (openedBefore) void fetchTickets().catch(() => {});
+    openedBefore = true;
   };
 
   ws.onmessage = (event) => {
@@ -181,8 +200,9 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
       }
 
       if (msg.type === "sign:request") {
-        const message =
-          msg.actionType === "key-approve"
+        const message = msg.ticket
+          ? "Guest access requested"
+          : msg.actionType === "key-approve"
             ? "SSH key approval requested"
             : "Passkey signature requested";
         addToast({
@@ -194,6 +214,10 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
 
       if (msg.type === "sign:resolved") {
         clearAction(msg.actionId);
+      }
+
+      if (msg.type === "tickets:changed") {
+        void fetchTickets().catch(() => {});
       }
 
       if (msg.type === "notification:new") {
@@ -260,4 +284,28 @@ export function wsTakeControl(sessionId: string): void {
 
 export function wsReleaseControl(sessionId: string): void {
   wsSend({ type: "terminal:release-control", sessionId });
+}
+
+/** The owner socket as a Terminal transport for one session (#328): attach
+ * with a full replay on subscribe (a fresh xterm has no backlog, so a stale
+ * offset from an earlier mount must not give an empty attach), detach on
+ * stop. */
+export function ownerTransport(sessionId: string): TerminalTransport {
+  return {
+    subscribe(sink) {
+      const off = onWsMessage((msg) => {
+        if (!("sessionId" in msg) || msg.sessionId !== sessionId) return;
+        if (msg.type === "terminal:output") sink.output(msg.data, msg.reset === true);
+        else if (msg.type === "terminal:closed") sink.closed();
+        else if (msg.type === "terminal:mode") sink.mode?.(msg.mode);
+      });
+      wsAttach(sessionId, { fresh: true });
+      return () => {
+        wsDetach(sessionId);
+        off();
+      };
+    },
+    sendInput: (data) => wsSendInput(sessionId, data),
+    sendResize: (cols, rows) => wsSendResize(sessionId, cols, rows),
+  };
 }

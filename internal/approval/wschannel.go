@@ -39,6 +39,21 @@ func (c *WSChannel) Notify(a *Action, deepLink string) {
 		// approval will pin the presented key.
 		payload["hostKey"] = a.Context.HostKey
 	}
+	if t := a.Context.Ticket; a.Context.TriggerKind == "ticket" && t != nil {
+		// One-time access guest (#306): the toast must not look like an
+		// ordinary connection prompt. It names the guest request and the
+		// confirmation code, and it sends the owner to /sign to approve.
+		tk := map[string]any{
+			"ticketId": t.TicketID, "ticketLabel": t.Label, "confirmationCode": t.ConfirmationCode,
+		}
+		if a.Context.Reason != "" {
+			tk["reason"] = a.Context.Reason
+		}
+		if a.Context.SourceIP != "" {
+			tk["sourceIp"] = a.Context.SourceIP
+		}
+		payload["ticket"] = tk
+	}
 	switch a.Type {
 	case TypeWebAuthnSign:
 		payload["passkeyLabel"] = a.PasskeyLabel

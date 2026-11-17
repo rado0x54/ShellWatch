@@ -60,14 +60,7 @@ func (h *Hub) attach(c *conn, msg *clientMessage) {
 		marshalFrame(map[string]any{"type": "terminal:mode", "sessionId": msg.SessionID, "mode": mode}),
 	}
 	if len(buffered.Data) > 0 || buffered.Reset {
-		out := map[string]any{
-			"type": "terminal:output", "sessionId": msg.SessionID,
-			"data": string(buffered.Data), "offset": buffered.Offset,
-		}
-		if buffered.Reset {
-			out["reset"] = true
-		}
-		frames = append(frames, marshalFrame(out))
+		frames = append(frames, marshalFrame(outputFrame(msg.SessionID, buffered.Data, buffered.Offset, buffered.Reset)))
 	}
 	c.attachWithCatchUp(msg.SessionID, control, buffered.Offset, frames)
 	// Unfinished file transfers of this session (#263), so a reconnecting

@@ -57,7 +57,7 @@ func notificationsServer(t *testing.T) *httptest.Server {
 		Payload: map[string]any{
 			"endpointId": "audit-endpoint-2", "endpointLabel": "Demo",
 			"endpointAddress": "openclaw@172.28.0.117:22", "trigger": "mcp",
-			"mcpClientName": "codex", "mcpClientVersion": "1.2.3", "mcpReason": "deploy hotfix",
+			"mcpClientName": "codex", "mcpClientVersion": "1.2.3", "reason": "deploy hotfix",
 			"sourceIp": "203.0.113.1",
 			"error":    "Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
 		},
@@ -66,6 +66,18 @@ func notificationsServer(t *testing.T) *httptest.Server {
 	svc.Publish(ctx, notify.PublishParams{
 		AccountID: auditAccount, Type: "future-kind", Severity: "info",
 		Title: "A kind this client version does not know",
+	})
+	clk.Advance(time.Second)
+	svc.Publish(ctx, notify.PublishParams{
+		AccountID: auditAccount, Type: notify.TypeUnauthenticatedEndpoint, Severity: "error",
+		Title:  "Connection refused: no authentication",
+		Detail: `"Open Box" (deploy@open-01:22) accepted SSH access as deploy without a key. ShellWatch does not open sessions on such servers. Check the server's SSH configuration.`,
+		Payload: map[string]any{
+			"endpointId": "audit-endpoint-3", "endpointLabel": "Open Box",
+			"endpointAddress": "deploy@open-01:22", "remoteUser": "deploy",
+			"trigger": "mcp", "mcpClientName": "codex", "sourceIp": "",
+			"auditId": "act_0000000000000000000010",
+		},
 	})
 
 	cfg := &config.Config{}

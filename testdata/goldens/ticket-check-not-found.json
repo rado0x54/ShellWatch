@@ -1,0 +1,6 @@
+{
+  "status": 404,
+  "body": {
+    "error": "Not found"
+  }
+}

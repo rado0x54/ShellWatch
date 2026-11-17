@@ -1,21 +1,32 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  import { apiFetch } from "$lib/api.js";
   import { beginLogin } from "$lib/oauth.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
-  import { onMount } from "svelte";
   import type { PageProps } from "./$types";
   import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
+  import { revokeTicket } from "$lib/stores/tickets.js";
+  import { formatTicketDuration } from "$lib/utils/duration.js";
+  import { errorMessage } from "$lib/utils/error-message.js";
+  import {
+    createSignPageController,
+    fetchSignAction,
+    freshSignPageState,
+    type SignPageState,
+  } from "$lib/utils/sign-page.js";
   import {
     approveAction,
-    performSignCeremony,
-    resolveAction,
     sessionIdFromRedirect,
+    signOrAutoSkip,
+    skipAction,
+    skipResultMessage,
+    SkipFailedError,
     sourceLabels,
     triggerKindLabels,
+    type ResolveResponse,
+    type SkipResult,
   } from "$lib/utils/webauthn-sign.js";
 
   const actionId = $derived((page.params as PageProps["params"]).id);
@@ -28,6 +39,20 @@
         sourceIp: string;
         mcpClientName?: string;
         mcpClientVersion?: string;
+      }
+    | {
+        // A guest redeeming a one-time access ticket (#306). Reason and
+        // userAgent are self-reported by the guest.
+        kind: "ticket";
+        sourceIp: string;
+        reason?: string;
+        ticketId: string;
+        ticketLabel: string;
+        channel: string;
+        userAgent?: string;
+        confirmationCode: string;
+        agentForward: boolean;
+        lifetimeSeconds: number;
       };
 
   type SignContext =
@@ -73,102 +98,125 @@
     keyFingerprint?: string;
   }
 
-  let action = $state<ActionData | null>(null);
-  let loading = $state(true);
+  let st = $state<SignPageState<ActionData>>(freshSignPageState(""));
   let processing = $state(false);
-  let error = $state<string | null>(null);
-  let resultStatus = $state<string | null>(null);
-  let parentSessionTail = $state<string | null>(null);
+  // Revoke-ticket button state (#306). Per action: reset with the rest of the
+  // page state when the id changes, so revoking ticket A never shows ticket
+  // B's button as revoked.
+  let revoking = $state(false);
+  let revoked = $state(false);
 
-  const isKeyApprove = $derived(action?.type === "key-approve");
-
-  onMount(async () => {
-    try {
-      const res = await apiFetch(`/api/actions/${actionId}`);
-      if (res.status === 401) {
-        await beginLogin(`/sign/${actionId}`);
-        return;
-      }
-      if (!res.ok) {
-        error = "Action not found";
-        return;
-      }
-      action = await res.json();
-
-      // For agent-forwarding requests, surface what's happening in the parent
-      // session so the approver can see the command that triggered the forward
-      // (e.g. `git push`, nested `ssh`). Best-effort — if the fetch fails we
-      // just hide the preview rather than blocking approval.
-      if (action && action.context.source === "agent-forwarding") {
-        try {
-          const tailRes = await apiFetch(
-            `/api/sessions/${action.context.sessionId}/tail?limit=2000`,
-          );
-          if (tailRes.ok) {
-            const body = (await tailRes.json()) as { data?: string };
-            parentSessionTail = body.data ?? "";
-          }
-        } catch {
-          // ignore — preview is non-essential
-        }
-      }
-    } catch {
-      error = "Failed to load action";
-    } finally {
-      loading = false;
-    }
+  // Load whenever the id changes, not just on mount (#308 §4): navigating
+  // /sign/A -> /sign/B reuses this component, and onMount would leave A's
+  // state under B's URL. The controller resets first and drops stale loads.
+  const controller = createSignPageController<ActionData>(fetchSignAction, (next) => {
+    st = next;
+    processing = false;
+    revoking = false;
+    revoked = false;
+    if (next.needsLogin) void beginLogin(`/sign/${next.actionId}`);
+  });
+  $effect(() => {
+    controller.load(actionId);
+    // Leaving the page (or switching ids) invalidates in-flight handlers, so
+    // a late response never navigates a user who has moved on.
+    return () => controller.leave();
   });
 
+  const action = $derived(st.action);
+  const isKeyApprove = $derived(action?.type === "key-approve");
+
+  /** Still the visit that started a handler (the user may have navigated). */
+  function stillOn(visit: number): boolean {
+    return controller.visit() === visit;
+  }
+
+  // After a skip the page stays put and shows the end state; the next key's
+  // request, if any, arrives as a normal toast. An automatic skip also gets an
+  // info toast saying why — the user didn't press anything.
+  interface AfterSkipParams {
+    id: string;
+    /** controller.visit() captured when the handler started. */
+    visit: number;
+    skip: SkipResult;
+    mode: "manual" | "auto";
+    /** Passkey label for the automatic-skip toast. */
+    label?: string;
+  }
+
+  function afterSkip({ id, visit, skip, mode, label }: AfterSkipParams) {
+    clearAction(id);
+    if (mode === "auto") toastInfo(skipResultMessage(skip, mode, label));
+    if (stillOn(visit)) st.resultStatus = skip.kind === "skipped" ? "denied" : skip.status;
+  }
+
   async function handleAction() {
-    if (!action) return;
+    const a = st.action;
+    if (!a) return;
+    const id = st.actionId;
+    const visit = controller.visit();
     processing = true;
-    error = null;
+    st.error = null;
 
     try {
-      let response;
-      if (action.type === "key-approve") {
-        response = await approveAction(actionId);
+      let response: ResolveResponse;
+      if (a.type === "key-approve") {
+        response = await approveAction(id);
       } else {
-        const result = await performSignCeremony({
-          credentialId: action.credentialId as string,
-          challenge: action.challenge as string,
-          rpId: action.rpId as string,
-          userVerification: action.userVerification,
+        const outcome = await signOrAutoSkip(id, {
+          credentialId: a.credentialId as string,
+          challenge: a.challenge as string,
+          rpId: a.rpId as string,
+          userVerification: a.userVerification,
         });
-        response = await resolveAction(actionId, result);
+        if (outcome.kind === "auto-skipped") {
+          // Cancelled ceremony / passkey not on this device: skipped.
+          afterSkip({ id, visit, skip: outcome.skip, mode: "auto", label: a.passkeyLabel });
+          return;
+        }
+        response = outcome.response;
       }
-      resultStatus = "completed";
-      clearAction(actionId);
-      toastInfo(isKeyApprove ? "Key usage approved" : "Signature completed successfully");
+      clearAction(id);
+      toastInfo(
+        a.type === "key-approve" ? "Key usage approved" : "Signature completed successfully",
+      );
+      if (!stillOn(visit)) return;
+      st.resultStatus = "completed";
       // Land on the session the approval was for — same as approving from
       // the toast (#273). In-app navigation, no reload: the socket and any
       // follow-up prompt (a passkey after a key approval) survive.
       const sessionId = sessionIdFromRedirect(response.redirectTo);
       if (sessionId) await goto(resolve("/session/[id]", { id: sessionId }));
     } catch (err) {
-      error = (err as Error).message;
-      toastError(`${isKeyApprove ? "Approval" : "Signing"} failed: ${error}`);
+      // A failed resolve, a server error or a failed automatic skip: nothing
+      // was skipped, the prompt stays.
+      const msg =
+        err instanceof SkipFailedError
+          ? err.message
+          : `${a.type === "key-approve" ? "Approval" : "Signing"} failed: ${errorMessage(err)}`;
+      toastError(msg);
+      if (stillOn(visit)) st.error = errorMessage(err);
     } finally {
-      processing = false;
+      if (stillOn(visit)) processing = false;
     }
   }
 
-  async function handleDeny() {
-    if (!action) return;
+  async function handleSkip() {
+    const a = st.action;
+    if (!a) return;
+    const id = st.actionId;
+    const visit = controller.visit();
+    processing = true;
+    st.error = null;
     try {
-      const res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
-      if (res.ok) {
-        // The server reports the store-asserted outcome: "denied", or
-        // "expired" when the action lapsed just before the deny landed.
-        const body = await res.json().catch(() => ({}));
-        resultStatus = body.status === "expired" ? "expired" : "denied";
-        clearAction(actionId);
-      } else {
-        const body = await res.json().catch(() => ({ error: "Unknown error" }));
-        error = body.error ?? "Failed to deny";
-      }
+      const skip = await skipAction(id);
+      afterSkip({ id, visit, skip, mode: "manual" });
     } catch (err) {
-      error = (err as Error).message;
+      // Nothing was skipped: stay on the page and show why.
+      toastError(errorMessage(err));
+      if (stillOn(visit)) st.error = errorMessage(err);
+    } finally {
+      if (stillOn(visit)) processing = false;
     }
   }
 
@@ -177,7 +225,10 @@
   }
 
   const ctx = $derived(action?.context);
-  const displayStatus = $derived(resultStatus ?? action?.status);
+  const displayStatus = $derived(st.resultStatus ?? action?.status);
+  const loading = $derived(st.loading);
+  const error = $derived(st.error);
+  const parentSessionTail = $derived(st.parentSessionTail);
 
   /**
    * Client-reported fields grouped in the "self-reported" box.
@@ -200,6 +251,12 @@
       if (ctx.clientHostname) items.push({ label: "Hostname", value: ctx.clientHostname });
       if (ctx.clientOs) items.push({ label: "OS", value: ctx.clientOs, mono: true });
       if (ctx.clientVersion) items.push({ label: "Version", value: ctx.clientVersion, mono: true });
+    } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "ticket") {
+      // The guest typed the reason and its browser sent the user agent:
+      // context, not identity.
+      items.push({ label: "Reason", value: ctx.trigger.reason || "(none given)" });
+      if (ctx.trigger.userAgent)
+        items.push({ label: "User agent", value: ctx.trigger.userAgent, mono: true });
     } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "mcp") {
       // Reason is asserted by the agent — same trust boundary as clientInfo,
       // so it belongs in the self-reported box rather than the verified fields.
@@ -216,6 +273,30 @@
     return items;
   });
   const isTerminal = $derived(displayStatus !== "pending");
+
+  /** The ticket trigger, when a guest is asking for admission (#306). */
+  const ticketTrigger = $derived(
+    ctx?.source === "endpoint-auth" && ctx.trigger.kind === "ticket" ? ctx.trigger : null,
+  );
+
+  /** End the guest's ticket now, so an unwanted guest cannot keep asking
+   * for the rest of the admission window. */
+  async function handleRevokeTicket(ticketId: string) {
+    if (revoking) return;
+    const visit = controller.visit();
+    revoking = true;
+    try {
+      await revokeTicket(ticketId);
+      // The toast reports the revocation wherever the user is now; the button
+      // state belongs to the action it was pressed on.
+      if (stillOn(visit)) revoked = true;
+      toastInfo("Ticket revoked — the guest's access has ended");
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      if (stillOn(visit)) revoking = false;
+    }
+  }
 </script>
 
 <div class="sign-page">
@@ -239,7 +320,7 @@
         {#if displayStatus === "completed"}
           {isKeyApprove ? "Key Usage Approved" : "Signature Complete"}
         {:else if displayStatus === "denied"}
-          Request Denied
+          Key Skipped
         {:else if displayStatus === "expired"}
           Request Expired
         {:else}
@@ -252,7 +333,7 @@
             ? "The SSH key usage was approved successfully."
             : "The passkey signature was completed successfully."}
         {:else if displayStatus === "denied"}
-          This request was denied.
+          This key was skipped.
         {:else if displayStatus === "expired"}
           This request expired before it could be completed.
         {:else}
@@ -373,6 +454,44 @@
         </details>
       {/if}
 
+      {#if ticketTrigger}
+        <div class="sign-ticket" role="group" aria-label="One-time access ticket">
+          <div class="sign-ticket-code">
+            <span class="sign-label">Confirmation code</span>
+            <span class="sign-ticket-code-value">{ticketTrigger.confirmationCode}</span>
+            <span class="sign-muted">
+              Approve only if the guest told you this code over a channel you trust.
+            </span>
+          </div>
+          <div class="sign-fields">
+            <div class="sign-field">
+              <span class="sign-label">Ticket</span>
+              <span class="sign-value">{ticketTrigger.ticketLabel || "(no label)"}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Channel</span>
+              <span class="sign-value">{ticketTrigger.channel}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Session lifetime</span>
+              <span class="sign-value">{formatTicketDuration(ticketTrigger.lifetimeSeconds)}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Agent forwarding</span>
+              <span class="sign-value">{ticketTrigger.agentForward ? "on" : "off"}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            disabled={revoking || revoked}
+            onclick={() => handleRevokeTicket(ticketTrigger.ticketId)}
+          >
+            {revoked ? "Ticket revoked" : revoking ? "Revoking…" : "Revoke ticket"}
+          </button>
+        </div>
+      {/if}
+
       {#if reportedItems.length > 0}
         <div class="sign-reported" role="group" aria-labelledby="reported-heading">
           <div class="sign-reported-header" id="reported-heading">
@@ -395,8 +514,12 @@
       {/if}
 
       <div class="sign-actions">
-        <button type="button" class="btn btn-secondary" onclick={handleDeny} disabled={processing}
-          >Deny</button
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={handleSkip}
+          disabled={processing}
+          title="Don't use this key; the next matching key may be offered">Skip</button
         >
         <button type="button" class="btn btn-primary" onclick={handleAction} disabled={processing}>
           {#if processing}
@@ -527,6 +650,28 @@
     height: 14rem;
     overflow: hidden;
     border-radius: 4px;
+  }
+
+  .sign-ticket {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    background: var(--surface-container);
+  }
+
+  .sign-ticket-code {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .sign-ticket-code-value {
+    font-family: var(--font-mono);
+    font-size: 2rem;
+    letter-spacing: 0.3em;
+    color: var(--primary);
   }
 
   .sign-reported {

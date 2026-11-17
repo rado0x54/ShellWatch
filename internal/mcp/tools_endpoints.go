@@ -10,24 +10,23 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/rado0x54/shellwatch/internal/agent"
-	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 	"github.com/rado0x54/shellwatch/internal/store"
 )
 
-const demoReadOnlyErr = "Demo endpoints are read-only"
+const createRequiredErr = "id, data.label, data.host, data.username are required"
 
 // endpointPatchFromWire converts the tool's raw data object into a typed
-// patch, validating field types, the userVerification enum, and the
-// description cap (the zod-equivalent layer; Node validates in the tool
-// schema). Returns a non-empty message when a field is invalid.
-func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
-	var p agent.EndpointPatch
+// patch, checking field types (the zod-equivalent layer); the endpoint
+// service checks values. Returns a non-empty message when a field is invalid.
+func endpointPatchFromWire(data map[string]any) (endpointsvc.EndpointPatch, string) {
+	var p endpointsvc.EndpointPatch
 	strField := func(key string, dst **string) string {
 		v, ok := data[key]
 		if !ok {
@@ -49,6 +48,9 @@ func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
 	if msg := strField("username", &p.Username); msg != "" {
 		return p, msg
 	}
+	if msg := strField("userVerification", &p.UserVerification); msg != "" {
+		return p, "data.userVerification must be one of: " + strings.Join(endpointsvc.UserVerificationValues, ", ")
+	}
 	if v, ok := data["port"]; ok {
 		n, isNum := v.(float64) // JSON numbers decode as float64
 		if !isNum {
@@ -56,13 +58,6 @@ func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
 		}
 		port := int64(n)
 		p.Port = &port
-	}
-	if v, ok := data["userVerification"]; ok {
-		s, isStr := v.(string)
-		if !isStr || !endpointsvc.IsUserVerification(s) {
-			return p, "data.userVerification must be one of: " + strings.Join(endpointsvc.UserVerificationValues, ", ")
-		}
-		p.UserVerification = &s
 	}
 	if v, ok := data["agentForward"]; ok {
 		b, isBool := v.(bool)
@@ -75,8 +70,8 @@ func endpointPatchFromWire(data map[string]any) (agent.EndpointPatch, string) {
 		p.DescriptionSet = true
 		if v != nil {
 			s, isStr := v.(string)
-			if !isStr || len(s) > endpointsvc.DescriptionMaxLen {
-				return p, "data.description must be a string up to 1000 characters (pass null to clear)"
+			if !isStr {
+				return p, "data.description must be a string up to 1000 characters"
 			}
 			p.Description = &s
 		}
@@ -89,6 +84,18 @@ func strOrEmpty(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// endpointErr maps an endpoint-service error to the tool's wording.
+func endpointErr(err error) *mcpsdk.CallToolResult {
+	var fe *endpointsvc.FieldError
+	switch {
+	case errors.As(err, &fe):
+		return errResult("data." + fe.Msg)
+	case errors.Is(err, endpointsvc.ErrLabelHostRequired):
+		return errResult(createRequiredErr)
+	}
+	return errResult(err.Error())
 }
 
 func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
@@ -158,40 +165,19 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 			}
 			return jsonResult(endpointFull(*ep))
 		case "create":
-			if demo.IsID(args.ID) {
-				return errResult(demoReadOnlyErr), nil
-			}
 			patch, msg := endpointPatchFromWire(args.Data)
 			if msg != "" {
 				return errResult(msg), nil
 			}
-			if args.ID == "" || strOrEmpty(patch.Label) == "" || strOrEmpty(patch.Host) == "" || strOrEmpty(patch.Username) == "" {
-				return errResult("id, data.label, data.host, data.username are required"), nil
+			// MCP requires username (REST defaults it); converging is #325.
+			if args.ID == "" || strOrEmpty(patch.Username) == "" {
+				return errResult(createRequiredErr), nil
 			}
-			// Defaults match the Node repo (endpoint-repo.ts create):
-			// userVerification "required", agentForward true, port 22.
-			ep := store.Endpoint{
-				ID: args.ID, Label: *patch.Label, Host: *patch.Host, Port: 22,
-				Username: *patch.Username, UserVerification: "required", AgentForward: true,
-				Description: patch.Description,
-			}
-			if patch.Port != nil {
-				ep.Port = *patch.Port
-			}
-			if patch.UserVerification != nil {
-				ep.UserVerification = *patch.UserVerification
-			}
-			if patch.AgentForward != nil {
-				ep.AgentForward = *patch.AgentForward
-			}
-			if err := as.CreateEndpoint(ctx, ep); err != nil {
-				return errResult(err.Error()), nil
+			if err := as.CreateEndpoint(ctx, args.ID, patch); err != nil {
+				return endpointErr(err), nil
 			}
 			return jsonResult(map[string]any{"status": "created", "id": args.ID})
 		case "update":
-			if demo.IsID(args.ID) {
-				return errResult(demoReadOnlyErr), nil
-			}
 			if args.ID == "" || args.Data == nil {
 				return errResult("id and data are required"), nil
 			}
@@ -201,20 +187,17 @@ func registerEndpointTools(srv *mcpsdk.Server, as *agent.Session) {
 			}
 			ok, err := as.UpdateEndpoint(ctx, args.ID, patch)
 			if err != nil {
-				return errResult(err.Error()), nil
+				return endpointErr(err), nil
 			}
 			if !ok {
 				return errResult("Endpoint not found: " + args.ID), nil
 			}
 			return jsonResult(map[string]any{"status": "updated", "id": args.ID})
 		case "delete":
-			if demo.IsID(args.ID) {
-				return errResult(demoReadOnlyErr), nil
-			}
 			if args.ID == "" {
 				return errResult("id is required"), nil
 			}
-			ok, err := as.DeleteEndpoint(ctx, args.ID)
+			ok, err := as.DeleteEndpoint(ctx, args.ID) // demo ids: ErrDemoReadOnly
 			if err != nil {
 				return errResult(err.Error()), nil
 			}

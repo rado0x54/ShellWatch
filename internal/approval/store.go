@@ -58,10 +58,27 @@ type Context struct {
 	// HostKey is set on endpoint-auth actions (#241).
 	HostKey *HostKeyInfo `json:"-"`
 	// Trigger metadata (endpoint-auth).
-	TriggerKind   string `json:"-"`
-	MCPReason     string `json:"-"`
+	TriggerKind string `json:"-"`
+	// Reason is the trigger's self-reported reason (MCP agent or ticket
+	// guest — TriggerKind tells which, #319).
+	Reason        string `json:"-"`
 	MCPClientName string `json:"-"`
 	MCPClientVer  string `json:"-"`
+	// Ticket is set when TriggerKind is "ticket" (#306): the guest's
+	// redemption context.
+	Ticket *TicketContext `json:"-"`
+}
+
+// TicketContext is what an endpoint-auth prompt raised for a ticket guest
+// shows (#306). UserAgent and the trigger reason are self-reported.
+type TicketContext struct {
+	TicketID         string
+	Label            string
+	Channel          string
+	UserAgent        string
+	ConfirmationCode string
+	AgentForward     bool
+	LifetimeSeconds  int
 }
 
 // MarshalJSON emits the source-discriminated wire shape (SignRequestContext):
@@ -87,15 +104,28 @@ func (c Context) MarshalJSON() ([]byte, error) {
 		if c.SourceIP != "" {
 			tr["sourceIp"] = c.SourceIP
 		}
+		if (c.TriggerKind == "mcp" || c.TriggerKind == "ticket") && c.Reason != "" {
+			tr["reason"] = c.Reason
+		}
 		if c.TriggerKind == "mcp" {
-			if c.MCPReason != "" {
-				tr["reason"] = c.MCPReason
-			}
 			if c.MCPClientName != "" {
 				tr["mcpClientName"] = c.MCPClientName
 			}
 			if c.MCPClientVer != "" {
 				tr["mcpClientVersion"] = c.MCPClientVer
+			}
+		}
+		if c.TriggerKind == "ticket" {
+			if t := c.Ticket; t != nil {
+				tr["ticketId"] = t.TicketID
+				tr["ticketLabel"] = t.Label
+				tr["channel"] = t.Channel
+				if t.UserAgent != "" {
+					tr["userAgent"] = t.UserAgent
+				}
+				tr["confirmationCode"] = t.ConfirmationCode
+				tr["agentForward"] = t.AgentForward
+				tr["lifetimeSeconds"] = t.LifetimeSeconds
 			}
 		}
 		m["trigger"] = tr

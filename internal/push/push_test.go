@@ -72,14 +72,14 @@ func TestChannelDeliversPayloadAndPrunesExpired(t *testing.T) {
 	var mu sync.Mutex
 	var payloads []string
 	ch := NewChannel(subs, Vapid{Subject: "mailto:x@y", PublicKey: "pub", PrivateKey: "priv"})
-	ch.send = func(_ context.Context, message []byte, s *webpush.Subscription, _ *webpush.Options) (int, error) {
+	ch.send = func(_ context.Context, message []byte, s *webpush.Subscription, _ *webpush.Options) (int, string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		payloads = append(payloads, string(message))
 		if s.Endpoint == "https://fcm.googleapis.com/send/dead" {
-			return 410, nil
+			return 410, "", nil
 		}
-		return 201, nil
+		return 201, "", nil
 	}
 
 	action := &approval.Action{
@@ -120,5 +120,82 @@ func TestChannelDeliversPayloadAndPrunesExpired(t *testing.T) {
 	}
 	if len(remaining) != 1 || remaining[0].Endpoint != "https://fcm.googleapis.com/send/live" {
 		t.Fatalf("prune mismatch: %+v", remaining)
+	}
+}
+
+// TestNewChannelNormalizesVapidSubject pins what reaches webpush-go: it
+// prepends "mailto:" to any non-https subscriber, so the documented
+// "mailto:…" form must arrive stripped or Apple rejects the JWT (#301).
+func TestNewChannelNormalizesVapidSubject(t *testing.T) {
+	subs := pushStore(t)
+	ctx := context.Background()
+	if _, err := subs.Upsert(ctx, "acc", "https://web.push.apple.com/x", "p", "a", "id1"); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ subject, want string }{
+		{"mailto:admin@example.com", "admin@example.com"},
+		{"admin@example.com", "admin@example.com"},
+		{"https://shellwatch.example.com", "https://shellwatch.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.subject, func(t *testing.T) {
+			ch := NewChannel(subs, Vapid{Subject: tc.subject, PublicKey: "pub", PrivateKey: "priv"})
+			var got string
+			ch.send = func(_ context.Context, _ []byte, _ *webpush.Subscription, o *webpush.Options) (int, string, error) {
+				got = o.Subscriber
+				return 201, "", nil
+			}
+			ch.sendToAccount(ctx, "acc", []byte("{}"), "test")
+			if got != tc.want {
+				t.Errorf("Options.Subscriber = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRefusalReason(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{`{"reason":"BadJwtToken"}`, "BadJwtToken"}, // Apple
+		{"authorization header must be specified.\n", "authorization header must be specified."},
+		{`{"code":403,"errno":109,"error":"Forbidden"}`, `{"code":403,"errno":109,"error":"Forbidden"}`},
+		{"  multi\n line \t text ", "multi line text"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := refusalReason([]byte(tc.body)); got != tc.want {
+			t.Errorf("refusalReason(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
+// The none-auth refusal push (#311) opens the Notifications tab: there is no
+// action to resolve, so no actionId and no /sign/:id link.
+func TestNotifyUnauthenticatedEndpointPayload(t *testing.T) {
+	subs := pushStore(t)
+	if _, err := subs.Upsert(context.Background(), "acc", "https://fcm.googleapis.com/send/live", "p", "a", "id1"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	ch := NewChannel(subs, Vapid{Subject: "mailto:x@y", PublicKey: "pub", PrivateKey: "priv"})
+	ch.send = func(_ context.Context, message []byte, _ *webpush.Subscription, _ *webpush.Options) (int, string, error) {
+		got <- string(message)
+		return 201, "", nil
+	}
+	ch.NotifyUnauthenticatedEndpoint(UnauthenticatedEndpoint{
+		AccountID: "acc", EndpointLabel: "Open Box", EndpointAddress: "deploy@h:22", RemoteUser: "deploy",
+	})
+	var raw string
+	select {
+	case raw = <-got:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no push sent")
+	}
+	var p map[string]any
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p["title"] != "Connection refused: no authentication" || p["deepLink"] != "/audit/notifications" ||
+		p["actionType"] != "unauthenticated-endpoint" || p["actionId"] != "" {
+		t.Errorf("payload: %s", raw)
 	}
 }

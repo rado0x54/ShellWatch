@@ -126,6 +126,14 @@ Per-action success payload (JSON in the text block):
 - `delete` → `{ status: "deleted", id }`
 
 Demo endpoints (`demo:*`) are read-only: create/update/delete return `isError`.
+`delete` is refused (`isError`, "Cannot delete endpoint with active sessions")
+while the endpoint has active sessions of any source — UI, MCP or a one-time
+access guest, including a guest still waiting for approval; ended sessions do
+not count. A successful delete revokes the endpoint's outstanding tickets. MCP
+has no way to force it (REST behaves the same). An `update` never touches
+running sessions. Tickets are bound to the target (`username@host:port`) they
+were minted for: after a `host`, `port` or `username` change, unredeemed ones
+are revoked and a redeemed guest that has not connected yet is refused.
 
 ### `shellwatch_create_session`
 
@@ -133,6 +141,12 @@ Input: `{ endpointId: string; reason: string /* ≤500, non-empty, trimmed */ }`
 `reason` is shown to the human approver. Success →
 `{ sessionId, endpointId, status }`. _(No `createdAt`/`source` — narrower than the
 REST/WS session object.)_
+
+The session limit is the account's `max_sessions` (default 20), counted
+account-wide: every opening or open session of the account, whether the UI,
+any MCP client or a one-time access guest opened it. Over the limit the tool
+returns `isError` with `Maximum concurrent sessions (N) reached`. Ended
+sessions do not count.
 
 Host-key errors (#241, Go only) surface as the usual `isError` text:
 
@@ -169,6 +183,12 @@ call blocks until some arrives, the session reaches a terminal state, or
 `data`). Values outside 0–30000 are an `isError` result.
 _(Note: `hasMore` here vs. WS `terminal:output`'s `reset` flag — different
 buffer-boundary signals for the same ring buffer.)_
+
+Each session buffers its most recent **256 KiB** of output; older bytes are
+dropped and offsets keep counting, so a reader that falls further behind
+skips ahead. A session that ended on its own (remote exit, hangup, error)
+stays readable for **5 minutes**, and an account keeps at most its **10**
+most recent ended sessions (the oldest is dropped when another ends).
 
 ### `shellwatch_close_session`
 

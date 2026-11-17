@@ -12,13 +12,15 @@
         "closedAt": null,
         "durationMs": null,
         "sourceIp": null,
-        "mcpReason": null,
+        "reason": null,
         "mcpClientName": null,
         "mcpClientVersion": null,
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": "transport-error"
+        "closeReason": "transport-error",
+        "ticketId": null,
+        "ticketLabel": null
       },
       {
         "sessionId": "sess_<ID>",
@@ -30,13 +32,15 @@
         "closedAt": "<TS>",
         "durationMs": 3000,
         "sourceIp": null,
-        "mcpReason": "deploy hotfix",
+        "reason": "deploy hotfix",
         "mcpClientName": "codex",
         "mcpClientVersion": null,
         "clientHostname": null,
         "clientOs": null,
         "clientVersion": null,
-        "closeReason": "client.mcp"
+        "closeReason": "client.mcp",
+        "ticketId": null,
+        "ticketLabel": null
       }
     ],
     "nextCursor": "<CURSOR>"

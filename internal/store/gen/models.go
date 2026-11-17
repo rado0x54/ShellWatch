@@ -34,13 +34,15 @@ type AuditSessionLifecycle struct {
 	ClosedAt         sql.NullString
 	DurationMs       sql.NullInt64
 	SourceIp         sql.NullString
-	McpReason        sql.NullString
 	McpClientName    sql.NullString
 	McpClientVersion sql.NullString
 	ClientHostname   sql.NullString
 	ClientOs         sql.NullString
 	ClientVersion    sql.NullString
 	CloseReason      sql.NullString
+	TicketID         sql.NullString
+	TicketLabel      sql.NullString
+	Reason           sql.NullString
 }
 
 type AuditSigningRequest struct {
@@ -56,7 +58,7 @@ type AuditSigningRequest struct {
 	EndpointLabel           sql.NullString
 	EndpointAddress         sql.NullString
 	SessionID               sql.NullString
-	McpReason               sql.NullString
+	Reason                  sql.NullString
 	McpClientName           sql.NullString
 	McpClientVersion        sql.NullString
 	ClientHostname          sql.NullString
@@ -72,6 +74,29 @@ type AuditSigningRequest struct {
 	HostKeyFingerprint      sql.NullString
 	HostKeyPriorFingerprint sql.NullString
 	HostKeyPinned           sql.NullInt64
+}
+
+type AuditTicketEvent struct {
+	ID               string
+	AccountID        string
+	TicketID         string
+	Event            string
+	CreatedAt        string
+	EndpointID       string
+	TicketLabel      sql.NullString
+	Channel          sql.NullString
+	RedeemTtlSeconds int64
+	LifetimeSeconds  int64
+	ReasonRequired   int64
+	AgentForward     int64
+	Reason           sql.NullString
+	SourceIp         sql.NullString
+	UserAgent        sql.NullString
+	ConfirmationCode sql.NullString
+	SessionID        sql.NullString
+	Attempt          sql.NullInt64
+	EndReason        sql.NullString
+	DurationMs       sql.NullInt64
 }
 
 type Endpoint struct {
@@ -181,4 +206,5 @@ type WebauthnCredential struct {
 	CreatedAt        string
 	LastUsedAt       sql.NullString
 	State            string
+	Priority         sql.NullInt64
 }

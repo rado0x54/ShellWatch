@@ -250,9 +250,10 @@ func (e PendingActionViewUserVerification) Valid() bool {
 
 // Defines values for SessionLifecycleRowSource.
 const (
-	SessionLifecycleRowSourceMcp SessionLifecycleRowSource = "mcp"
-	SessionLifecycleRowSourceSsh SessionLifecycleRowSource = "ssh"
-	SessionLifecycleRowSourceUi  SessionLifecycleRowSource = "ui"
+	SessionLifecycleRowSourceMcp    SessionLifecycleRowSource = "mcp"
+	SessionLifecycleRowSourceSsh    SessionLifecycleRowSource = "ssh"
+	SessionLifecycleRowSourceTicket SessionLifecycleRowSource = "ticket"
+	SessionLifecycleRowSourceUi     SessionLifecycleRowSource = "ui"
 )
 
 // Valid indicates whether the value is a known member of the SessionLifecycleRowSource enum.
@@ -261,6 +262,8 @@ func (e SessionLifecycleRowSource) Valid() bool {
 	case SessionLifecycleRowSourceMcp:
 		return true
 	case SessionLifecycleRowSourceSsh:
+		return true
+	case SessionLifecycleRowSourceTicket:
 		return true
 	case SessionLifecycleRowSourceUi:
 		return true
@@ -412,9 +415,10 @@ func (e StepUpErrorCode) Valid() bool {
 
 // Defines values for TerminalSource.
 const (
-	TerminalSourceMcp TerminalSource = "mcp"
-	TerminalSourceSsh TerminalSource = "ssh"
-	TerminalSourceUi  TerminalSource = "ui"
+	TerminalSourceMcp    TerminalSource = "mcp"
+	TerminalSourceSsh    TerminalSource = "ssh"
+	TerminalSourceTicket TerminalSource = "ticket"
+	TerminalSourceUi     TerminalSource = "ui"
 )
 
 // Valid indicates whether the value is a known member of the TerminalSource enum.
@@ -423,6 +427,8 @@ func (e TerminalSource) Valid() bool {
 	case TerminalSourceMcp:
 		return true
 	case TerminalSourceSsh:
+		return true
+	case TerminalSourceTicket:
 		return true
 	case TerminalSourceUi:
 		return true
@@ -452,6 +458,66 @@ func (e TerminalStatus) Valid() bool {
 	case TerminalStatusOpen:
 		return true
 	case TerminalStatusOpening:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TicketGuestViewChannel.
+const (
+	Web TicketGuestViewChannel = "web"
+)
+
+// Valid indicates whether the value is a known member of the TicketGuestViewChannel enum.
+func (e TicketGuestViewChannel) Valid() bool {
+	switch e {
+	case Web:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TicketGuestViewState.
+const (
+	TicketGuestViewStateOpen     TicketGuestViewState = "open"
+	TicketGuestViewStatePending  TicketGuestViewState = "pending"
+	TicketGuestViewStateRedeemed TicketGuestViewState = "redeemed"
+)
+
+// Valid indicates whether the value is a known member of the TicketGuestViewState enum.
+func (e TicketGuestViewState) Valid() bool {
+	switch e {
+	case TicketGuestViewStateOpen:
+		return true
+	case TicketGuestViewStatePending:
+		return true
+	case TicketGuestViewStateRedeemed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TicketViewState.
+const (
+	TicketViewStateMinted   TicketViewState = "minted"
+	TicketViewStateOpen     TicketViewState = "open"
+	TicketViewStatePending  TicketViewState = "pending"
+	TicketViewStateRedeemed TicketViewState = "redeemed"
+)
+
+// Valid indicates whether the value is a known member of the TicketViewState enum.
+func (e TicketViewState) Valid() bool {
+	switch e {
+	case TicketViewStateMinted:
+		return true
+	case TicketViewStateOpen:
+		return true
+	case TicketViewStatePending:
+		return true
+	case TicketViewStateRedeemed:
 		return true
 	default:
 		return false
@@ -863,6 +929,21 @@ func (e CloseSession200JSONResponseBodyStatus) Valid() bool {
 	}
 }
 
+// Defines values for RevokeTicket200JSONResponseBodyStatus.
+const (
+	RevokeTicket200JSONResponseBodyStatusRevoked RevokeTicket200JSONResponseBodyStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the RevokeTicket200JSONResponseBodyStatus enum.
+func (e RevokeTicket200JSONResponseBodyStatus) Valid() bool {
+	switch e {
+	case RevokeTicket200JSONResponseBodyStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConfirmPasskey200JSONResponseBodyStatus.
 const (
 	ConfirmPasskey200JSONResponseBodyStatusActive ConfirmPasskey200JSONResponseBodyStatus = "active"
@@ -1098,7 +1179,7 @@ type EndpointHostKey struct {
 type Error struct {
 	Error string `json:"error"`
 
-	// NotificationId Present when the failure was also published to the account's notification log (#252), e.g. a session create refused by a host-key mismatch. Clients deduplicate their error display against the notification:new WebSocket message by this id instead of matching error text.
+	// NotificationId Present when the failure was also published to the account's notification log (#252), e.g. a session create refused by a host-key mismatch or by an endpoint accepting SSH "none" authentication (#311). Clients deduplicate their error display against the notification:new WebSocket message by this id instead of matching error text.
 	NotificationId       *string                `json:"notificationId,omitempty"`
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
@@ -1193,7 +1274,7 @@ type Notification struct {
 	// Title Short headline sized for a toast.
 	Title string `json:"title"`
 
-	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, mcpReason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
+	// Type Notification kind; payload shape is typed per kind. Known kinds: host-key-mismatch — a dial was refused before authentication because the server presented a key that differs from the pin (payload: endpointId, endpointLabel, endpointAddress, keyType, observedFingerprint, pinnedFingerprint, auditId of the host-key-mismatch audit row); unauthenticated-endpoint (#311, severity error) — a connection was refused because the server accepted SSH "none" authentication, so no key was asked for and no human approved it; there is no action to resolve (payload: endpointId, endpointLabel, endpointAddress, remoteUser, trigger, mcpClientName, sourceIp, auditId of the unauthenticated-endpoint audit row); session-connect-failed — any other failed SSH connect, whatever the trigger (payload: endpointId, endpointLabel, endpointAddress, trigger, mcpClientName, mcpClientVersion, reason, sourceIp, error); file-transfer-failed — an out-of-band file transfer ended failed or expired, including one interrupted by a server restart, or a finished upload (status may be completed or cancelled) whose staging cleanup a restart cut short (payload: transferId, sessionId, endpointId, direction, path, status, error, bytes, commitOutcome, cleanup, stagingPath, mcpClientName). Clients must ignore unknown kinds gracefully (render title/detail, no typed action).
 	Type string `json:"type"`
 }
 
@@ -1250,6 +1331,26 @@ type OAuthClientRegistrationOrigin string
 type OAuthClientRegistrationPage struct {
 	NextCursor *string                   `json:"nextCursor"`
 	Rows       []OAuthClientRegistration `json:"rows"`
+}
+
+// PasskeyList defines model for PasskeyList.
+type PasskeyList struct {
+	Credentials *[]struct {
+		Algorithm           *string `json:"algorithm,omitempty"`
+		AuthorizedKeysEntry *string `json:"authorizedKeysEntry,omitempty"`
+		CreatedAt           *string `json:"createdAt,omitempty"`
+		CredentialId        *string `json:"credentialId,omitempty"`
+		Fingerprint         *string `json:"fingerprint,omitempty"`
+		Id                  *string `json:"id,omitempty"`
+		Label               *string `json:"label,omitempty"`
+		LastUsedAt          *string `json:"lastUsedAt,omitempty"`
+
+		// Priority Position in the SSH signing order (lower = tried first). Null for pending and revoked credentials. Gaps are possible; only the relative order matters.
+		Priority *int    `json:"priority,omitempty"`
+		Revoked  *bool   `json:"revoked,omitempty"`
+		State    *string `json:"state,omitempty"`
+	} `json:"credentials,omitempty"`
+	SshdConfig *string `json:"sshdConfig,omitempty"`
 }
 
 // PendingActionView Client-safe projection of a pending signing action (resolve/reject omitted). Discriminated on `type`.
@@ -1311,22 +1412,28 @@ type SessionLifecyclePage struct {
 
 // SessionLifecycleRow defines model for SessionLifecycleRow.
 type SessionLifecycleRow struct {
-	AccountId        *string                    `json:"accountId,omitempty"`
-	ClientHostname   *string                    `json:"clientHostname,omitempty"`
-	ClientOs         *string                    `json:"clientOs,omitempty"`
-	ClientVersion    *string                    `json:"clientVersion,omitempty"`
-	CloseReason      *string                    `json:"closeReason,omitempty"`
-	ClosedAt         *string                    `json:"closedAt,omitempty"`
-	CreatedAt        *string                    `json:"createdAt,omitempty"`
-	DurationMs       *int                       `json:"durationMs,omitempty"`
-	EndpointId       *string                    `json:"endpointId,omitempty"`
-	McpClientName    *string                    `json:"mcpClientName,omitempty"`
-	McpClientVersion *string                    `json:"mcpClientVersion,omitempty"`
-	McpReason        *string                    `json:"mcpReason,omitempty"`
-	SessionId        *string                    `json:"sessionId,omitempty"`
-	Source           *SessionLifecycleRowSource `json:"source,omitempty"`
-	SourceIp         *string                    `json:"sourceIp,omitempty"`
-	Status           *SessionLifecycleRowStatus `json:"status,omitempty"`
+	AccountId        *string `json:"accountId,omitempty"`
+	ClientHostname   *string `json:"clientHostname,omitempty"`
+	ClientOs         *string `json:"clientOs,omitempty"`
+	ClientVersion    *string `json:"clientVersion,omitempty"`
+	CloseReason      *string `json:"closeReason,omitempty"`
+	ClosedAt         *string `json:"closedAt,omitempty"`
+	CreatedAt        *string `json:"createdAt,omitempty"`
+	DurationMs       *int    `json:"durationMs,omitempty"`
+	EndpointId       *string `json:"endpointId,omitempty"`
+	McpClientName    *string `json:"mcpClientName,omitempty"`
+	McpClientVersion *string `json:"mcpClientVersion,omitempty"`
+
+	// Reason The trigger's self-reported reason (unverified): an MCP agent's (source `mcp`) or a one-time access guest's (source `ticket`, #306); `source` tells which (#319).
+	Reason    *string                    `json:"reason,omitempty"`
+	SessionId *string                    `json:"sessionId,omitempty"`
+	Source    *SessionLifecycleRowSource `json:"source,omitempty"`
+	SourceIp  *string                    `json:"sourceIp,omitempty"`
+	Status    *SessionLifecycleRowStatus `json:"status,omitempty"`
+
+	// TicketId Source `ticket` only (#306).
+	TicketId    *string `json:"ticketId,omitempty"`
+	TicketLabel *string `json:"ticketLabel,omitempty"`
 }
 
 // SessionLifecycleRowSource defines model for SessionLifecycleRow.Source.
@@ -1370,17 +1477,19 @@ type SigningRequestRow struct {
 	LatencyMs               *int                      `json:"latencyMs,omitempty"`
 	McpClientName           *string                   `json:"mcpClientName,omitempty"`
 	McpClientVersion        *string                   `json:"mcpClientVersion,omitempty"`
-	McpReason               *string                   `json:"mcpReason,omitempty"`
 	Outcome                 *SigningRequestRowOutcome `json:"outcome,omitempty"`
 	PasskeyLabel            *string                   `json:"passkeyLabel,omitempty"`
-	ResolvedAt              *string                   `json:"resolvedAt,omitempty"`
-	SessionId               *string                   `json:"sessionId,omitempty"`
+
+	// Reason The trigger's self-reported reason (unverified, #319): an MCP agent's (mcpClientName is set) or a one-time access guest's (#306).
+	Reason     *string `json:"reason,omitempty"`
+	ResolvedAt *string `json:"resolvedAt,omitempty"`
+	SessionId  *string `json:"sessionId,omitempty"`
 
 	// Source endpoint-admin is used by host-key-cleared rows (#241).
 	Source   *SigningRequestRowSource `json:"source,omitempty"`
 	SourceIp *string                  `json:"sourceIp,omitempty"`
 
-	// Type webauthn-sign | key-approve, plus the host-key event types (#241): host-key-mismatch (a connection aborted before authentication because the presented key differed from the pin; outcome is "denied") and host-key-cleared (a pin removed — host/port change or a human forgetting the key; outcome stays null).
+	// Type webauthn-sign | key-approve, plus the host-key event types (#241): host-key-mismatch (a connection aborted before authentication because the presented key differed from the pin; outcome is "denied") and host-key-cleared (a pin removed — host/port change or a human forgetting the key; outcome stays null); and unauthenticated-endpoint (#311: a connection refused because the server accepted SSH "none" authentication; source endpoint-auth, outcome "denied", hostKeyFingerprint is the observed key; no pending action ever existed).
 	Type             *string `json:"type,omitempty"`
 	UserVerification *string `json:"userVerification,omitempty"`
 }
@@ -1427,30 +1536,155 @@ type StepUpErrorCode string
 
 // TerminalSession Returned verbatim by POST /api/sessions and inside GET /api/sessions. Mirrors src/terminal/types.ts TerminalSession (Date fields serialize to ISO-8601 strings over the wire).
 type TerminalSession struct {
-	AccountId        string  `json:"accountId"`
-	CloseReason      *string `json:"closeReason,omitempty"`
-	CreatedAt        string  `json:"createdAt"`
-	EndpointId       string  `json:"endpointId"`
+	AccountId   string  `json:"accountId"`
+	CloseReason *string `json:"closeReason,omitempty"`
+	CreatedAt   string  `json:"createdAt"`
+	EndpointId  string  `json:"endpointId"`
+
+	// GuestAttached Source `ticket` only (#306) — whether the guest's browser currently holds a guest WebSocket. Omitted once the guest session is over.
+	GuestAttached    *bool   `json:"guestAttached,omitempty"`
 	LastActivityAt   string  `json:"lastActivityAt"`
 	McpClientName    *string `json:"mcpClientName,omitempty"`
 	McpClientVersion *string `json:"mcpClientVersion,omitempty"`
-	McpReason        *string `json:"mcpReason,omitempty"`
 
 	// OwnerClientId OAuth client_id that owns the session (mcp source only; omitted for ui sessions). MCP session visibility is scoped to (account, ownerClientId) — #243.
 	OwnerClientId *string `json:"ownerClientId,omitempty"`
 
+	// Reason The trigger's self-reported reason (unverified): an MCP agent's (source `mcp`) or a one-time access guest's (source `ticket`, #306); `source` tells which (#319).
+	Reason *string `json:"reason,omitempty"`
+
 	// SessionId Example: sess_a1b2c3d4e5f6
-	SessionId string         `json:"sessionId"`
-	Source    TerminalSource `json:"source"`
-	SourceIp  *string        `json:"sourceIp,omitempty"`
-	Status    TerminalStatus `json:"status"`
+	SessionId string `json:"sessionId"`
+
+	// Source `ticket` is a guest session admitted through a one-time access ticket (#306).
+	Source   TerminalSource `json:"source"`
+	SourceIp *string        `json:"sourceIp,omitempty"`
+	Status   TerminalStatus `json:"status"`
+
+	// TicketId Source `ticket` only (#306) — the ticket that admitted the guest.
+	TicketId *string `json:"ticketId,omitempty"`
+
+	// TicketLabel Source `ticket` only (#306); may be empty.
+	TicketLabel *string `json:"ticketLabel,omitempty"`
 }
 
-// TerminalSource defines model for TerminalSource.
+// TerminalSource `ticket` is a guest session admitted through a one-time access ticket (#306).
 type TerminalSource string
 
 // TerminalStatus defines model for TerminalStatus.
 type TerminalStatus string
+
+// TicketEventPage defines model for TicketEventPage.
+type TicketEventPage struct {
+	NextCursor *string          `json:"nextCursor"`
+	Rows       []TicketEventRow `json:"rows"`
+}
+
+// TicketEventRow One event of a ticket's life (#306). The ticket's options are snapshotted on every row. The ticket token and the guest cookie are never recorded.
+type TicketEventRow struct {
+	AccountId    string `json:"accountId"`
+	AgentForward bool   `json:"agentForward"`
+
+	// Attempt Always null since #327 (one connect per guest session); rows written before carry the admission attempt number.
+	Attempt *int `json:"attempt"`
+
+	// Channel `web` once redeemed.
+	Channel          *string `json:"channel"`
+	ConfirmationCode *string `json:"confirmationCode"`
+	CreatedAt        string  `json:"createdAt"`
+
+	// DurationMs `ended` after admission: admission to end.
+	DurationMs *int `json:"durationMs"`
+
+	// EndReason `ended`: the end reason (client.guest, guest-disconnected, ticket-lifetime, ticket-not-admitted, ticket-unattached, ticket-revoked, endpoint-removed, account-deleted, shutdown, or a terminal close reason such as client.ui / idle-timeout / server-hangup). `attempt-failed` / `invalidated`: why.
+	EndReason  *string `json:"endReason"`
+	EndpointId string  `json:"endpointId"`
+
+	// Event minted | redeemed | attached | attempt-failed | admitted | detached | reattached | ended | revoked | expired | invalidated. Not enum-constrained (rows written before #327 may also read `retried`).
+	//
+	// Example: minted
+	Event           string `json:"event"`
+	Id              string `json:"id"`
+	LifetimeSeconds int    `json:"lifetimeSeconds"`
+
+	// Reason Self-reported by the guest.
+	Reason           *string `json:"reason"`
+	ReasonRequired   bool    `json:"reasonRequired"`
+	RedeemTtlSeconds int     `json:"redeemTtlSeconds"`
+	SessionId        *string `json:"sessionId"`
+	SourceIp         *string `json:"sourceIp"`
+	TicketId         string  `json:"ticketId"`
+	TicketLabel      *string `json:"ticketLabel"`
+
+	// UserAgent Self-reported.
+	UserAgent *string `json:"userAgent"`
+}
+
+// TicketGuestView Null until the ticket is redeemed.
+type TicketGuestView struct {
+	// AdmissionDeadline Set on the first guest attach (admission window).
+	AdmissionDeadline *string `json:"admissionDeadline"`
+
+	// Attached At least one guest connection is open.
+	Attached bool `json:"attached"`
+
+	// Channel `ssh` follows with #307.
+	Channel TicketGuestViewChannel `json:"channel"`
+
+	// ConfirmationCode 4 characters, shown on the guest's waiting screen and on the approval prompt.
+	ConfirmationCode string `json:"confirmationCode"`
+	Connections      int    `json:"connections"`
+
+	// LifetimeDeadline Set on admission.
+	LifetimeDeadline *string `json:"lifetimeDeadline"`
+
+	// Reason Self-reported by the guest.
+	Reason     string `json:"reason"`
+	RedeemedAt string `json:"redeemedAt"`
+
+	// SessionId The guest's one terminal session: set on the first attach (connecting while `pending`, admitted once `open`).
+	SessionId *string              `json:"sessionId"`
+	SourceIp  string               `json:"sourceIp"`
+	State     TicketGuestViewState `json:"state"`
+
+	// UserAgent Self-reported by the guest browser.
+	UserAgent string `json:"userAgent"`
+}
+
+// TicketGuestViewChannel `ssh` follows with #307.
+type TicketGuestViewChannel string
+
+// TicketGuestViewState defines model for TicketGuestView.State.
+type TicketGuestViewState string
+
+// TicketView The owner's view of a one-time access ticket and, once redeemed, its guest session (#306). Tickets live in process memory: a restart invalidates them. Listed while the ticket is unredeemed or its guest session is live; once the guest session ends the ticket leaves the list at once and only the audit log (`GET /api/audit/tickets`) has it.
+type TicketView struct {
+	// AgentForward When true the endpoint's own agentForward setting is honoured; when false no forwarding channel is opened whatever the endpoint says.
+	AgentForward bool   `json:"agentForward"`
+	CreatedAt    string `json:"createdAt"`
+	EndpointId   string `json:"endpointId"`
+
+	// ExpiresAt End of the redeem TTL.
+	ExpiresAt string `json:"expiresAt"`
+
+	// Guest Null until the ticket is redeemed.
+	Guest *TicketGuestView `json:"guest"`
+	Id    string           `json:"id"`
+
+	// Label May be empty.
+	Label string `json:"label"`
+
+	// LifetimeSeconds Hard cap on the guest session, counted from admission.
+	LifetimeSeconds  int  `json:"lifetimeSeconds"`
+	ReasonRequired   bool `json:"reasonRequired"`
+	RedeemTtlSeconds int  `json:"redeemTtlSeconds"`
+
+	// State `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — the guest session's one connect is running (sign prompts are open); `open` — admitted. A denial, a failed connect or the end of the admission window ends the guest session; the owner mints a new ticket.
+	State TicketViewState `json:"state"`
+}
+
+// TicketViewState `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — the guest session's one connect is running (sign prompts are open); `open` — admitted. A denial, a failed connect or the end of the admission window ends the guest session; the owner mints a new ticket.
+type TicketViewState string
 
 // TransferResult Outcome body of a transfer link request (upload always; download only when it failed before the response body started). Same shape as the shellwatch_transfer_file `status` result.
 type TransferResult struct {
@@ -1606,6 +1840,19 @@ type ListAuditSigningsParamsSource string
 // ListAuditSigningsParamsOutcome defines parameters for ListAuditSignings.
 type ListAuditSigningsParamsOutcome string
 
+// ListAuditTicketsParams defines parameters for ListAuditTickets.
+type ListAuditTicketsParams struct {
+	// TicketId Only events of this ticket.
+	TicketId *string `form:"ticketId,omitempty" json:"ticketId,omitempty"`
+
+	// Event A TicketEventRow event; any other value is a 400.
+	Event  *string `form:"event,omitempty" json:"event,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Page size. Clamped server-side: non-finite or ≤0 → 50; values above 500 → 500. Default 50, max 500.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // UpdateCurrentAccountJSONBody defines parameters for UpdateCurrentAccount.
 type UpdateCurrentAccountJSONBody struct {
 	Name              *string `json:"name,omitempty"`
@@ -1694,6 +1941,15 @@ type PinEndpointHostKeyParams struct {
 	XShellWatchStepUpToken StepUpTokenHeader `json:"X-ShellWatch-StepUp-Token"`
 }
 
+// MintTicketJSONBody defines parameters for MintTicket.
+type MintTicketJSONBody struct {
+	AgentForward     *bool   `json:"agentForward,omitempty"`
+	Label            *string `json:"label,omitempty"`
+	LifetimeSeconds  *int    `json:"lifetimeSeconds,omitempty"`
+	ReasonRequired   *bool   `json:"reasonRequired,omitempty"`
+	RedeemTtlSeconds *int    `json:"redeemTtlSeconds,omitempty"`
+}
+
 // AuthorizeOauthClientParams defines parameters for AuthorizeOauthClient.
 type AuthorizeOauthClientParams struct {
 	// ClientId An `https://` URL is resolved as a Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document-02 §3: https, a path component, no userinfo, no query, no fragment, no dot segments, at most 255 characters). Anything else is passed through to Hydra.
@@ -1775,6 +2031,35 @@ type CloseSession200JSONResponseBodyStatus string
 // GetSessionTailParams defines parameters for GetSessionTail.
 type GetSessionTailParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListTicketsParams defines parameters for ListTickets.
+type ListTicketsParams struct {
+	// EndpointId Only tickets for this endpoint.
+	EndpointId *string `form:"endpointId,omitempty" json:"endpointId,omitempty"`
+}
+
+// CheckTicketJSONBody defines parameters for CheckTicket.
+type CheckTicketJSONBody struct {
+	Token string `json:"token"`
+}
+
+// RedeemTicketJSONBody defines parameters for RedeemTicket.
+type RedeemTicketJSONBody struct {
+	// Reason Why the guest wants access. Control characters are stripped and it is capped at 200 characters. Required (non-empty) when the ticket says so.
+	Reason *string `json:"reason,omitempty"`
+
+	// ReplaceCurrent End this browser's current guest session (named by its guest cookie) in the same step that consumes the ticket, instead of answering 409. The old session is not attached for it, so it raises no owner prompt.
+	ReplaceCurrent *bool  `json:"replaceCurrent,omitempty"`
+	Token          string `json:"token"`
+}
+
+// RevokeTicket200JSONResponseBodyStatus defines parameters for RevokeTicket.
+type RevokeTicket200JSONResponseBodyStatus string
+
+// ReorderPasskeysJSONBody defines parameters for ReorderPasskeys.
+type ReorderPasskeysJSONBody struct {
+	Ids []string `json:"ids"`
 }
 
 // ConfirmPasskeyParams defines parameters for ConfirmPasskey.
@@ -1868,6 +2153,9 @@ type UpdateEndpointJSONRequestBody UpdateEndpointJSONBody
 // PinEndpointHostKeyJSONRequestBody defines body for PinEndpointHostKey for application/json ContentType.
 type PinEndpointHostKeyJSONRequestBody PinEndpointHostKeyJSONBody
 
+// MintTicketJSONRequestBody defines body for MintTicket for application/json ContentType.
+type MintTicketJSONRequestBody MintTicketJSONBody
+
 // FinishHydraLoginJSONRequestBody defines body for FinishHydraLogin for application/json ContentType.
 type FinishHydraLoginJSONRequestBody FinishHydraLoginJSONBody
 
@@ -1888,6 +2176,15 @@ type CreatePushSubscriptionJSONRequestBody CreatePushSubscriptionJSONBody
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody CreateSessionJSONBody
+
+// CheckTicketJSONRequestBody defines body for CheckTicket for application/json ContentType.
+type CheckTicketJSONRequestBody CheckTicketJSONBody
+
+// RedeemTicketJSONRequestBody defines body for RedeemTicket for application/json ContentType.
+type RedeemTicketJSONRequestBody RedeemTicketJSONBody
+
+// ReorderPasskeysJSONRequestBody defines body for ReorderPasskeys for application/json ContentType.
+type ReorderPasskeysJSONRequestBody ReorderPasskeysJSONBody
 
 // UpdatePasskeyLabelJSONRequestBody defines body for UpdatePasskeyLabel for application/json ContentType.
 type UpdatePasskeyLabelJSONRequestBody UpdatePasskeyLabelJSONBody

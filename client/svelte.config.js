@@ -16,6 +16,12 @@ const config = {
     alias: {
       $lib: "src/lib",
     },
+    // Registered manually by the root layout's authenticated bootstrap: the
+    // one-time access guest page (/t, #306) must never install the worker or
+    // its precache on an untrusted browser.
+    serviceWorker: {
+      register: false,
+    },
   },
 };
 

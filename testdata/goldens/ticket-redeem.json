@@ -1,0 +1,9 @@
+{
+  "status": 202,
+  "body": {
+    "admissionWindowSeconds": 300,
+    "agentForward": false,
+    "confirmationCode": "<REDACTED>",
+    "lifetimeSeconds": 900
+  }
+}

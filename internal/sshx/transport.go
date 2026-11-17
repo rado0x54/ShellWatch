@@ -138,6 +138,10 @@ type ConnectParams struct {
 	// signers so the approval that authorizes the sign can pin the key.
 	// Connect allocates one when nil (callers without approval-driven pinning).
 	HostKeyState *HostKeyState
+	// AccountID and SourceIP only annotate log lines (e.g. the none-auth
+	// refusal, #311); they play no part in the dial.
+	AccountID string
+	SourceIP  string
 
 	hooks connectHooks
 }
@@ -262,10 +266,33 @@ func Connect(ctx context.Context, p ConnectParams) (terminal.Transport, error) {
 	// mid-life. keyAuth cannot extend it any more either; auth has returned.
 	_ = conn.SetDeadline(time.Time{})
 
+	// Refuse servers that accepted "none" authentication (#311). x/crypto
+	// always tries "none" before any key; a server that accepts it completes
+	// the handshake without ever asking a signer, so no human was in the
+	// loop. This runs before the provisional-host-key backstop and before
+	// ssh.NewClient, so no channel (session, PTY, SFTP, agent forwarding) is
+	// ever opened and no host key is pinned.
+	//
+	// Invariant this relies on: every signer handed to Connect is
+	// approval-gated (file keys and passkeys both go through the broker), so
+	// "a signer produced a signature" means "a human approved". This check
+	// does not itself prove approval — a future signer that bypasses the
+	// broker needs its own guard.
+	if !keys.signatureProduced() {
+		sshConn.Close()
+		conn.Close()
+		_, observed, _ := state.Snapshot()
+		slog.Warn("sshx: connection refused, server accepted none auth",
+			"endpoint", p.EndpointID, "account", p.AccountID, "sourceIp", p.SourceIP)
+		return nil, fmt.Errorf("SSH connection to %s refused: %w", addr, &UnauthenticatedEndpointError{
+			EndpointID: p.EndpointID, HostKeyType: observed.Type, HostKeyFingerprint: observed.Fingerprint,
+		})
+	}
+
 	// Fail closed (#241): a provisionally accepted host key must never yield
-	// an established session without a human approval having pinned it. This
-	// covers servers accepting "none" auth and any future auth path that
-	// bypasses the approval broker.
+	// an established session without a human approval having pinned it. The
+	// none-auth refusal above already catches the common case; this stays as
+	// the backstop for any future auth path that bypasses the approval broker.
 	if st, observed, pinned := state.Snapshot(); st == HostKeyNew && !pinned {
 		sshConn.Close()
 		conn.Close()

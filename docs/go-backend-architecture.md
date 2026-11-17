@@ -262,7 +262,7 @@ edges that need text (JSON frames), not in the buffer. The Node tail
 heuristic for mid-escape truncation is reimplemented on bytes.
 
 This changes offset _arithmetic_ for multi-byte output (see §7 item K for the
-parity ruling). Capacity stays 1 MiB.
+parity ruling). Capacity is 256 KiB per session (#314; was 1 MiB).
 
 ### 5.4 Ephemeral state (`internal/ephemeral`, `internal/clock`) (W4, W5)
 

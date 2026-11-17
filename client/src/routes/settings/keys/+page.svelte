@@ -11,11 +11,16 @@
     credentials,
     fetchActiveInvite,
     fetchCredentials,
+    isOrderedPasskey,
     performStepUp,
     renamePasskey,
+    ReorderError,
+    reorderPasskeys,
     startPasskeyRegistration,
     type PasskeyInvite,
+    type WebAuthnCredential,
   } from "$lib/stores/webauthn.js";
+  import { moveItem, sameOrder } from "$lib/utils/reorder.js";
   import Modal from "$lib/components/Modal.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SettingsList from "$lib/components/SettingsList.svelte";
@@ -301,6 +306,90 @@
     if (e.key === "Escape") cancelRename();
   }
 
+  // --- Priority order (#308) -------------------------------------------
+  // Active passkeys form an ordered list (top = tried first for SSH signing);
+  // pending and revoked ones are listed below it, outside the order. The
+  // server returns active passkeys first, in priority order.
+  //
+  // `localOrder` overrides the store's order while a drag is in progress or
+  // a save is in flight; null means "follow the store". A failed save just
+  // drops it, which puts the rows back where the server has them.
+  let localOrder = $state<string[] | null>(null);
+  let dragId = $state<string | null>(null);
+  let dragStartOrder: string[] = [];
+  let savingOrder = $state(false);
+
+  const orderedPasskeys = $derived.by((): WebAuthnCredential[] => {
+    const active = $credentials.filter(isOrderedPasskey);
+    if (!localOrder) return active;
+    const byId = new Map(active.map((c) => [c.id, c]));
+    const out = localOrder.flatMap((id) => byId.get(id) ?? []);
+    // Anything activated meanwhile that the local order doesn't know yet.
+    for (const c of active) if (!localOrder.includes(c.id)) out.push(c);
+    return out;
+  });
+  const otherPasskeys = $derived($credentials.filter((c) => !isOrderedPasskey(c)));
+
+  async function commitOrder(next: string[], prev: string[]) {
+    if (sameOrder(next, prev)) {
+      localOrder = null;
+      return;
+    }
+    localOrder = next;
+    savingOrder = true;
+    try {
+      await reorderPasskeys(next);
+    } catch (err) {
+      toastError(`Could not save passkey order: ${errorMessage(err)}`);
+      // Raced an activation / revocation: reload, the user retries.
+      if (err instanceof ReorderError && err.stale) await fetchCredentials().catch(() => {});
+    } finally {
+      localOrder = null;
+      savingOrder = false;
+    }
+  }
+
+  // Pointer-based drag on the handle: one code path for mouse, pen and touch
+  // (HTML5 drag-and-drop doesn't fire for touch). The row under the pointer
+  // swaps in live; the order is saved on release.
+  //
+  // The pointer is captured on the <ol>, not the handle: reordering moves the
+  // keyed rows in the DOM, and a moved (briefly detached) handle would lose
+  // capture, so the release would never arrive. A lost capture on the list
+  // still ends the drag (saves), so dragId can't get stuck.
+  let orderListEl = $state<HTMLOListElement | null>(null);
+
+  function handleDragStart(e: PointerEvent, id: string) {
+    if (savingOrder || !orderListEl || (e.pointerType === "mouse" && e.button !== 0)) return;
+    e.preventDefault();
+    orderListEl.setPointerCapture(e.pointerId);
+    dragStartOrder = orderedPasskeys.map((c) => c.id);
+    localOrder = dragStartOrder.slice();
+    dragId = id;
+  }
+
+  function handleDragMove(e: PointerEvent) {
+    if (!dragId || !localOrder) return;
+    const over = document
+      .elementFromPoint(e.clientX, e.clientY)
+      ?.closest<HTMLElement>("[data-passkey-id]")?.dataset.passkeyId;
+    if (!over || over === dragId) return;
+    const to = localOrder.indexOf(over);
+    if (to < 0) return;
+    localOrder = moveItem(localOrder, localOrder.indexOf(dragId), to);
+  }
+
+  function handleDragEnd() {
+    if (!dragId || !localOrder) return;
+    dragId = null;
+    void commitOrder(localOrder, dragStartOrder);
+  }
+
+  function handleDragCancel() {
+    dragId = null;
+    localOrder = null;
+  }
+
   function shortFingerprint(fp: string | null): string {
     if (!fp) return "—";
     return fp.length > 20 ? `${fp.slice(0, 20)}...` : fp;
@@ -315,76 +404,112 @@
 <section>
   <!-- Passkeys -->
   <h2>Passkeys</h2>
+  {#snippet passkeyRow(pk: WebAuthnCredential, ordered: boolean)}
+    <SettingsRow>
+      {#snippet primary()}
+        {#if ordered}
+          <!-- Pointer-only grip (mouse + touch); reordering has no keyboard
+               path by design (#308), so it stays out of the tab order and
+               the accessibility tree. -->
+          <span
+            class="order-handle"
+            class:busy={savingOrder}
+            aria-hidden="true"
+            title="Drag to reorder"
+            onpointerdown={(e) => handleDragStart(e, pk.id)}>⠿</span
+          >
+        {/if}
+        {#if editingId === pk.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="text"
+            class="inline-rename"
+            bind:value={editLabel}
+            onkeydown={handleRenameKeydown}
+            onblur={cancelRename}
+            autofocus
+          />
+        {:else}
+          <button
+            type="button"
+            class="row-label label-btn"
+            class:revoked={pk.revoked}
+            title="Rename"
+            disabled={pk.revoked}
+            onclick={() => startRename(pk.id, pk.label)}>{pk.label}</button
+          >
+        {/if}
+        {#if pk.revoked}
+          <span class="badge badge-unavailable">revoked</span>
+        {:else if pk.state === "pending_confirmation"}
+          <span class="badge badge-pending">pending confirmation</span>
+        {:else}
+          <span class="badge badge-available">active</span>
+        {/if}
+        <span class="meta-mono">{pk.algorithm}</span>
+      {/snippet}
+      {#snippet secondary()}
+        <span title={pk.fingerprint ?? ""}>{shortFingerprint(pk.fingerprint)}</span>
+        <span class="row-dot">·</span>created {formatDate(pk.createdAt)}
+        <span class="row-dot">·</span>last used {formatDate(pk.lastUsedAt)}
+      {/snippet}
+      {#snippet actions()}
+        {#if pk.authorizedKeysEntry && !pk.revoked && pk.state === "active"}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            title="Copy SSH public key"
+            onclick={(e) =>
+              copyKey(
+                `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
+                e.currentTarget as HTMLButtonElement,
+              )}>Copy SSH PubKey</button
+          >
+        {/if}
+        {#if !pk.revoked && pk.state === "pending_confirmation"}
+          <button
+            type="button"
+            class="btn btn-primary"
+            disabled={confirmingId === pk.id}
+            onclick={() => openConfirmModal(pk.id)}
+            >{confirmingId === pk.id ? "Confirming..." : "Confirm"}</button
+          >
+        {/if}
+        {#if !pk.revoked}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            disabled={revoking}
+            onclick={() => openRevokePasskey(pk.id)}>Revoke</button
+          >
+        {/if}
+      {/snippet}
+    </SettingsRow>
+  {/snippet}
+
+  {#if orderedPasskeys.length > 1}
+    <p class="order-hint">
+      SSH sign-in tries your passkeys top to bottom. Drag the handle to reorder.
+    </p>
+  {/if}
   <SettingsList empty={$credentials.length === 0} emptyText="No passkeys registered">
-    {#each $credentials as pk (pk.id)}
-      <SettingsRow>
-        {#snippet primary()}
-          {#if editingId === pk.id}
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              type="text"
-              class="inline-rename"
-              bind:value={editLabel}
-              onkeydown={handleRenameKeydown}
-              onblur={cancelRename}
-              autofocus
-            />
-          {:else}
-            <button
-              type="button"
-              class="row-label label-btn"
-              class:revoked={pk.revoked}
-              title="Rename"
-              disabled={pk.revoked}
-              onclick={() => startRename(pk.id, pk.label)}>{pk.label}</button
-            >
-          {/if}
-          {#if pk.revoked}
-            <span class="badge badge-unavailable">revoked</span>
-          {:else if pk.state === "pending_confirmation"}
-            <span class="badge badge-pending">pending confirmation</span>
-          {:else}
-            <span class="badge badge-available">active</span>
-          {/if}
-          <span class="meta-mono">{pk.algorithm}</span>
-        {/snippet}
-        {#snippet secondary()}
-          <span title={pk.fingerprint ?? ""}>{shortFingerprint(pk.fingerprint)}</span>
-          <span class="row-dot">·</span>created {formatDate(pk.createdAt)}
-          <span class="row-dot">·</span>last used {formatDate(pk.lastUsedAt)}
-        {/snippet}
-        {#snippet actions()}
-          {#if pk.authorizedKeysEntry && !pk.revoked && pk.state === "active"}
-            <button
-              type="button"
-              class="btn btn-secondary"
-              title="Copy SSH public key"
-              onclick={(e) =>
-                copyKey(
-                  `${pk.authorizedKeysEntry} ${sshComment(pk.label)}`,
-                  e.currentTarget as HTMLButtonElement,
-                )}>Copy SSH PubKey</button
-            >
-          {/if}
-          {#if !pk.revoked && pk.state === "pending_confirmation"}
-            <button
-              type="button"
-              class="btn btn-primary"
-              disabled={confirmingId === pk.id}
-              onclick={() => openConfirmModal(pk.id)}
-              >{confirmingId === pk.id ? "Confirming..." : "Confirm"}</button
-            >
-          {/if}
-          {#if !pk.revoked}
-            <button
-              type="button"
-              class="btn btn-secondary"
-              disabled={revoking}
-              onclick={() => openRevokePasskey(pk.id)}>Revoke</button
-            >
-          {/if}
-        {/snippet}
-      </SettingsRow>
+    <ol
+      class="order-list"
+      aria-label="Passkey priority order"
+      bind:this={orderListEl}
+      onpointermove={handleDragMove}
+      onpointerup={handleDragEnd}
+      onpointercancel={handleDragCancel}
+      onlostpointercapture={handleDragEnd}
+    >
+      {#each orderedPasskeys as pk (pk.id)}
+        <li class="order-item" class:dragging={dragId === pk.id} data-passkey-id={pk.id}>
+          {@render passkeyRow(pk, true)}
+        </li>
+      {/each}
+    </ol>
+    {#each otherPasskeys as pk (pk.id)}
+      {@render passkeyRow(pk, false)}
     {/each}
   </SettingsList>
 
@@ -903,6 +1028,62 @@
     color: var(--on-surface);
     font: inherit;
     font-size: var(--body-md);
+  }
+
+  .order-hint {
+    font-size: var(--label-md);
+    color: var(--text-muted);
+    margin: 0 0 var(--space-3);
+  }
+
+  .order-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .order-item.dragging {
+    opacity: 0.6;
+    outline: 1px dashed var(--primary);
+  }
+
+  .order-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--on-surface-variant);
+    cursor: grab;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: var(--space-1) var(--space-2);
+    /* The handle owns touch gestures, so dragging it doesn't scroll, and a
+       long press doesn't select text or open the iOS callout. */
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  .order-handle:active {
+    cursor: grabbing;
+  }
+
+  /* A save is in flight: handleDragStart ignores new drags until it lands. */
+  .order-handle.busy {
+    cursor: progress;
+    opacity: 0.5;
+  }
+
+  /* Touch: a finger-sized target. */
+  @media (pointer: coarse) {
+    .order-handle {
+      min-width: 44px;
+      min-height: 44px;
+      font-size: 1.35rem;
+    }
   }
 
   .inline-rename:focus {

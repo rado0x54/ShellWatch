@@ -68,7 +68,7 @@ func mcpServer(t *testing.T) *httptest.Server {
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		MCP: &mcp.Deps{
-			AgentDeps: agent.Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil)}},
+			AgentDeps: agent.Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{}), Demo: demo.NewService(nil), Sessions: mgr}},
 			Keys:      store.NewSSHKeys(db),
 		},
 	})

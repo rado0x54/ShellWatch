@@ -7,7 +7,6 @@ package rest
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"sort"
 
 	"github.com/go-chi/chi/v5"
@@ -104,7 +103,7 @@ func (a *AuthSessions) revoke(w http.ResponseWriter, r *http.Request) {
 	//
 	// The error branch is defence in depth only: net/http answers a malformed
 	// escape with its own 400 before routing, so a handler never sees one.
-	clientID, err := url.PathUnescape(chi.URLParam(r, "clientId"))
+	clientID, err := pathParam(r, "clientId")
 	if err != nil {
 		writeErr(w, 400, "invalid clientId encoding")
 		return

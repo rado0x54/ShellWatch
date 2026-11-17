@@ -47,3 +47,12 @@ overrides:
   minimatch: ^11.0.1
 onlyBuiltDependencies:
   - esbuild
+auditConfig:
+  ignoreGhsas:
+    # @sveltejs/kit <3.1.1 (high: remote-function `form` parsing DoS; moderate: private
+    # `query.batch` collision). Fixed only in kit 3.1.1, a major migration tracked in #318.
+    # Not exploitable here: the client is a static SPA
+    # (adapter-static, no SSR, no server runtime) and uses no remote functions. Remove these
+    # entries with the upgrade.
+    - GHSA-3r8g-jcqq-3p5j
+    - GHSA-6cf5-gc4q-fm3x

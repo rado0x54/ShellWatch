@@ -38,16 +38,16 @@ Rules live in [`internal/golden/golden.go`](../../internal/golden/golden.go)
 and, for the e2e suite, [`e2e/lib/golden.ts`](../../e2e/lib/golden.ts) — keep
 the two sets identical:
 
-| Placeholder     | Source                                                |
-| --------------- | ----------------------------------------------------- |
-| `<TS>`          | timestamp keys + any ISO-8601 value                   |
-| `sess_<ID>`     | `sess_<12 hex>` session ids                           |
-| `<UUID>`        | bare UUIDs (e.g. server-generated endpoint id)        |
-| `<CURSOR>`      | opaque audit `nextCursor`                             |
-| `<REDACTED>`    | `challenge` / `challengeId` / `token` / `stepUpToken` |
-| `<FINGERPRINT>` | `SHA256:…` key fingerprints                           |
-| `<PORT>`        | a `port` field equal to a per-run ssh/app port        |
-| `<BASE_URL>`    | the live server origin inside a string                |
+| Placeholder     | Source                                                                     |
+| --------------- | -------------------------------------------------------------------------- |
+| `<TS>`          | timestamp keys + any ISO-8601 value                                        |
+| `sess_<ID>`     | `sess_<12 hex>` session ids                                                |
+| `<UUID>`        | bare UUIDs (e.g. server-generated endpoint id)                             |
+| `<CURSOR>`      | opaque audit `nextCursor`                                                  |
+| `<REDACTED>`    | `challenge` / `challengeId` / `token` / `stepUpToken` / `confirmationCode` |
+| `<FINGERPRINT>` | `SHA256:…` key fingerprints                                                |
+| `<PORT>`        | a `port` field equal to a per-run ssh/app port                             |
+| `<BASE_URL>`    | the live server origin inside a string                                     |
 
 Discovery suites additionally pin `externalUrl` to a fixed host so those bodies
 are stable independent of the listen port.

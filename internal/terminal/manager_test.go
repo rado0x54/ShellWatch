@@ -3,6 +3,7 @@ package terminal
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,8 +89,8 @@ func TestManagerSessionLimitHelper(t *testing.T) {
 	m, _ := mockManager(t)
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
 	m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
-	if ids := m.EndpointIDsForAccount("acc"); len(ids) != 1 || ids[0] != "e1" {
-		t.Fatalf("endpoint ids: %v", ids)
+	if !m.HasActiveSession("acc", "e1") || m.HasActiveSession("acc", "e2") || m.HasActiveSession("other", "e1") {
+		t.Fatal("HasActiveSession scoping")
 	}
 	if len(m.ListForAccount("other")) != 0 {
 		t.Error("account scoping leaked")
@@ -128,11 +129,12 @@ func TestTerminalStateRetention(t *testing.T) {
 	if got := mgr.ListForAccount("acc"); len(got) != 0 {
 		t.Fatalf("closed session in account list: %+v", got)
 	}
-	// Explicit Close on an already-closed session is a no-op (Node close()
-	// early-return): the post-mortem record survives.
+	// Explicit Close on an already-closed session is a no-op: the retained
+	// record survives until the retention limits remove it (removing it here
+	// could clear the buffer while its closed broadcast is still draining).
 	mgr.Close(sess.SessionID, CloseClientUI)
 	if mgr.GetSession(sess.SessionID) == nil {
-		t.Fatal("post-mortem session dropped by no-op Close")
+		t.Fatal("retained session dropped by a no-op Close")
 	}
 
 	// Errored sessions stay VISIBLE in lists (status filter is closed-only).
@@ -474,7 +476,7 @@ func TestDestroyBoundsWedgedClosesConcurrently(t *testing.T) {
 func TestRemovedHookFiresOnceUnderCloseRemoveRace(t *testing.T) {
 	mgr, _ := mockManager(t)
 	var fires atomic.Int32
-	unsubRemoved := mgr.SubscribeRemoved(func(string) { fires.Add(1) })
+	unsubRemoved := mgr.SubscribeRemoved(func(RemovedEvent) { fires.Add(1) })
 	defer unsubRemoved()
 	// The pump broadcasts Closed while Close is parked on the join; purging
 	// the account from inside that broadcast deletes the session before Close
@@ -506,7 +508,7 @@ func TestRemovedHookFiresOnceUnderCloseRemoveRace(t *testing.T) {
 func TestRemovedHookFires(t *testing.T) {
 	mgr, _ := mockManager(t)
 	var removed []string
-	unsub := mgr.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	unsub := mgr.SubscribeRemoved(func(ev RemovedEvent) { removed = append(removed, ev.SessionID) })
 	defer unsub()
 
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
@@ -524,7 +526,7 @@ func TestRemovedHookFires(t *testing.T) {
 	t.Cleanup(func() { _ = mock2.Close() })
 	mgr2 := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock2, nil }, clock.Real{}, 0)
 	removed = nil
-	unsub2 := mgr2.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	unsub2 := mgr2.SubscribeRemoved(func(ev RemovedEvent) { removed = append(removed, ev.SessionID) })
 	defer unsub2()
 	sess2, err := mgr2.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
 	if err != nil {
@@ -647,5 +649,295 @@ func TestResizeUnknownSessionErrors(t *testing.T) {
 	mgr, _ := mockManager(t)
 	if err := mgr.Resize("nope", 80, 24); err == nil {
 		t.Error("resize of an unknown session must fail")
+	}
+}
+
+// Ended sessions are retained for EndedRetention and at most
+// MaxEndedPerAccount per account (oldest dropped first); they never count
+// as active.
+func TestEndedSessionRetentionBounds(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var mu sync.Mutex
+	var mocks []*MockTransport
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		mu.Lock()
+		mocks = append(mocks, tr)
+		mu.Unlock()
+		return tr, nil
+	}, clk, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	hangUp := func() string {
+		t.Helper()
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		tr := mocks[len(mocks)-1]
+		mu.Unlock()
+		_ = tr.Close()
+		// Retained, not just closed: the pump stamps endedAt right after the
+		// closed broadcast, and the clock must not move before it does.
+		waitFor(t, func() bool {
+			mgr.mu.Lock()
+			defer mgr.mu.Unlock()
+			mg := mgr.terminals[sess.SessionID]
+			return mg == nil || !mg.endedAt.IsZero()
+		})
+		return sess.SessionID
+	}
+
+	first := hangUp()
+	if mgr.HasActiveSession("acc", "ep") {
+		t.Error("an ended session counts as active")
+	}
+	clk.Advance(EndedRetention - time.Second)
+	mgr.SweepEnded()
+	if mgr.GetSession(first) == nil {
+		t.Fatal("dropped before the retention elapsed")
+	}
+	clk.Advance(time.Second)
+	mgr.SweepEnded()
+	if mgr.GetSession(first) != nil {
+		t.Fatal("kept past the retention")
+	}
+
+	// The count cap: the 11th ended session drops the oldest.
+	var ids []string
+	for i := 0; i < MaxEndedPerAccount+1; i++ {
+		clk.Advance(time.Second)
+		ids = append(ids, hangUp())
+	}
+	if mgr.GetSession(ids[0]) != nil {
+		t.Error("oldest ended session kept beyond the cap")
+	}
+	for _, id := range ids[1:] {
+		if mgr.GetSession(id) == nil {
+			t.Errorf("ended session %s dropped within the cap", id)
+		}
+	}
+}
+
+// Only sessions that ended on their own are retained: explicitly closed ones
+// are removed and never count toward MaxEndedPerAccount, so closing sessions
+// does not evict retained ones.
+func TestExplicitCloseDoesNotEvictRetained(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var mu sync.Mutex
+	var last *MockTransport
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		mu.Lock()
+		last = tr
+		mu.Unlock()
+		return tr, nil
+	}, clk, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	var retained []string
+	for i := 0; i < MaxEndedPerAccount; i++ {
+		clk.Advance(time.Second)
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		tr := last
+		mu.Unlock()
+		_ = tr.Close()
+		waitFor(t, func() bool {
+			s := mgr.GetSession(sess.SessionID)
+			return s != nil && s.Status == StatusClosed
+		})
+		retained = append(retained, sess.SessionID)
+	}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close(sess.SessionID, CloseClientUI)
+	for _, id := range retained {
+		if mgr.GetSession(id) == nil {
+			t.Errorf("retained %s evicted by an explicit close", id)
+		}
+	}
+}
+
+// A session with a Lifetime is closed by SweepDeadlines once that much time
+// has passed since it went open, with its LifetimeReason; one without a
+// Lifetime is left alone.
+func TestLifetimeDeadline(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	var mu sync.Mutex
+	reasons := map[string]CloseReason{}
+	mgr.SubscribeStatus(func(ev StatusEvent) {
+		if ev.Status == StatusClosed {
+			mu.Lock()
+			reasons[ev.SessionID] = ev.Reason
+			mu.Unlock()
+		}
+	})
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	capped, err := mgr.Create(context.Background(), ep, "acc",
+		Trigger{Kind: SourceTicket, Lifetime: time.Minute, LifetimeReason: CloseTicketLifetime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := clk.Now().Add(time.Minute); !capped.Deadline.Equal(want) || !plain.Deadline.IsZero() {
+		t.Fatalf("deadlines %v / %v, want %v / zero", capped.Deadline, plain.Deadline, want)
+	}
+	clk.Advance(time.Minute - time.Millisecond)
+	mgr.SweepDeadlines()
+	if mgr.GetSession(capped.SessionID) == nil {
+		t.Fatal("closed before its deadline")
+	}
+	clk.Advance(time.Millisecond)
+	mgr.SweepDeadlines()
+	waitFor(t, func() bool { return mgr.GetSession(capped.SessionID) == nil })
+	if mgr.GetSession(plain.SessionID) == nil {
+		t.Fatal("the deadline closed a session without one")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reasons[capped.SessionID] != CloseTicketLifetime {
+		t.Errorf("close reason %q, want %q", reasons[capped.SessionID], CloseTicketLifetime)
+	}
+}
+
+// A create whose context is cancelled while it connects (its caller gave
+// up) never goes live, even when the factory ignores the cancellation.
+func TestCreateCancelledDuringSetupNeverGoesLive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	mock := NewMockTransport()
+	t.Cleanup(func() { _ = mock.Close() })
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		cancel() // the caller gives up mid-connect; the factory carries on
+		return mock, nil
+	}, clock.Real{}, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	if _, err := mgr.Create(ctx, ep, "acc", Trigger{Kind: SourceUI}); err == nil {
+		t.Fatal("a cancelled create went live")
+	}
+	if len(mgr.ListForAccount("acc")) != 0 {
+		t.Error("the cancelled session is still registered")
+	}
+	if _, err := mgr.Create(ctx, ep, "acc", Trigger{Kind: SourceUI}); err == nil {
+		t.Error("a create with an already cancelled context was accepted")
+	}
+}
+
+// A deadline close that hangs (a wedged transport, up to closeJoinTimeout)
+// must not hold up the sweep: the next session's deadline is enforced on the
+// next pass, not after the stuck close gives up.
+func TestDeadlineSweepDoesNotWaitForAStuckClose(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	wedged := &wedgedTransport{events: make(chan Event)}
+	t.Cleanup(func() { close(wedged.events) })
+	n := 0
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		n++
+		if n == 1 {
+			return wedged, nil
+		}
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	mgr.closeJoinTimeout = time.Hour // the stuck close stays stuck for the whole test
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	create := func(life time.Duration) string {
+		t.Helper()
+		s, err := mgr.Create(context.Background(), ep, "acc",
+			Trigger{Kind: SourceTicket, Lifetime: life, LifetimeReason: CloseTicketLifetime})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.SessionID
+	}
+	stuck, next := create(time.Minute), create(2*time.Minute)
+
+	sweep := func() {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { mgr.SweepDeadlines(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("the deadline sweep waited for a stuck close")
+		}
+	}
+	clk.Advance(time.Minute)
+	sweep()
+	clk.Advance(time.Minute)
+	sweep()
+	waitFor(t, func() bool { return mgr.GetSession(next) == nil })
+	if s := mgr.GetSession(stuck); s == nil || s.Status != StatusClosing {
+		t.Fatalf("stuck session %+v, want still closing", s)
+	}
+	if err := mgr.SendInput(stuck, "x"); err == nil {
+		t.Error("input accepted by a session past its deadline")
+	}
+}
+
+// The idle sweep waits for its closes; a stuck one (a wedged transport) must
+// not hold up lifetime deadlines, which run on their own loop.
+func TestStuckIdleCloseDoesNotDelayDeadlines(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	wedged := &wedgedTransport{events: make(chan Event)}
+	n := 0
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		n++
+		if n == 1 {
+			return wedged, nil
+		}
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	mgr.closeJoinTimeout = time.Hour // the stuck close stays stuck
+	mgr.deadlineInterval = 5 * time.Millisecond
+	mgr.SetIdleTimeout(90 * time.Second)
+	var mu sync.Mutex
+	reasons := map[string]CloseReason{}
+	mgr.SubscribeStatus(func(ev StatusEvent) {
+		if ev.Status == StatusClosed {
+			mu.Lock()
+			reasons[ev.SessionID] = ev.Reason
+			mu.Unlock()
+		}
+	})
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	idle, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(2 * time.Minute) // idle is past the idle timeout
+	guest, err := mgr.Create(context.Background(), ep, "acc",
+		Trigger{Kind: SourceTicket, Lifetime: time.Minute, LifetimeReason: CloseTicketLifetime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() { cancel(); close(wedged.events) })
+	go mgr.RunIdleJanitor(ctx, 5*time.Millisecond)
+	waitFor(t, func() bool {
+		s := mgr.GetSession(idle.SessionID)
+		return s != nil && s.Status == StatusClosing
+	})
+	clk.Advance(time.Minute) // the guest is past its lifetime, not idle
+	waitFor(t, func() bool { return mgr.GetSession(guest.SessionID) == nil })
+	mu.Lock()
+	defer mu.Unlock()
+	if reasons[guest.SessionID] != CloseTicketLifetime {
+		t.Errorf("guest close reason %q, want %q", reasons[guest.SessionID], CloseTicketLifetime)
 	}
 }

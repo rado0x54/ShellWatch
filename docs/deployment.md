@@ -201,6 +201,32 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > `Mcp-Method` / `Mcp-Name` / `Mcp-Protocol-Version` headers that the server
 > validates.
 
+> **One-time access tickets behind a proxy (#306):** the guest page's three
+> routes, `POST /api/tickets/check`, `POST /api/tickets/redeem` and the
+> `/ws/guest` WebSocket, accept a
+> request only when its `Origin` exactly equals `server.externalUrl`'s origin.
+> The proxy must forward `Origin` unchanged (Caddy's `reverse_proxy` and
+> nginx do by default) and pass WebSocket upgrades for `/ws/guest` like `/ws`.
+> The check never looks at `Host` or the connection's scheme, so a proxy that
+> rewrites `Host` or terminates TLS is fine — but a wrong `externalUrl` refuses
+> every guest with 403 (logs: `ticket: check rejected` / `ticket: redeem rejected` for the REST calls, `ws: guest origin rejected` for the guest WebSocket, with the origin and
+> the expected host). The server warns at startup when `externalUrl` is
+> `http://` while `server.trustProxy` is set.
+>
+> **Ticket redemption requires `server.trustProxy` to cover the reverse
+> proxy.** The `allowedNetworks` gate on the guest routes, the redeem rate
+> limit, the source IP shown on the approval prompt and the audit rows all use
+> the client IP resolved through `trustProxy`. If it doesn't cover the proxy,
+> every guest appears to come from the proxy: the rate limit groups all guests
+> together, the allowlist checks the proxy's address, and the approver sees a
+> meaningless IP. Note that `security.allowedNetworks` (default: localhost
+> only) also gates the guest routes, so a deployment that shares tickets with
+> browsers elsewhere must widen it.
+>
+> Tickets and guest sessions live in process memory: a restart invalidates
+> every outstanding ticket and ends every guest session (the audit log keeps
+> their history).
+
 ### Manual verification
 
 1. **Web UI:** sign in via passkey through the redirect flow; confirm the PWA

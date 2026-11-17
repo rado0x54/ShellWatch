@@ -26,9 +26,12 @@ func NewPushSubs(db *sql.DB, clk clock.Clock) *PushSubs {
 	return &PushSubs{db: db, clk: clk}
 }
 
-// UpsertResult reports the subscription id and whether the endpoint conflicted.
+// UpsertResult reports the subscription id, whether the row was newly
+// created (false when an existing subscription was refreshed), and whether
+// the endpoint conflicted.
 type UpsertResult struct {
 	ID       string
+	Created  bool
 	Conflict bool
 }
 
@@ -47,7 +50,7 @@ func (p *PushSubs) Upsert(ctx context.Context, accountID, endpoint, p256dh, auth
 		}); err != nil {
 			return UpsertResult{}, err
 		}
-		return UpsertResult{ID: newID}, nil
+		return UpsertResult{ID: newID, Created: true}, nil
 	case err != nil:
 		return UpsertResult{}, err
 	}

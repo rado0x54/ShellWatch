@@ -1,0 +1,1614 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+// One-time access tickets (#306) at the router level: mint/list/revoke,
+// redemption (uniform 404, single use under concurrency, reason, capacity,
+// the one-session 409), the guest WebSocket (Origin check, admission,
+// denial, End vs disconnect, several tabs, isolation from the account hub),
+// every deadline on a fake clock, and the audit trail. The SSH side is a
+// gated factory: each connect blocks until the test approves or refuses it,
+// which is what the human's sign prompt does in production.
+package httpserver
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"reflect"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/rado0x54/shellwatch/internal/agent"
+	"github.com/rado0x54/shellwatch/internal/audit"
+	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/buildinfo"
+	"github.com/rado0x54/shellwatch/internal/clock"
+	"github.com/rado0x54/shellwatch/internal/config"
+	"github.com/rado0x54/shellwatch/internal/demo"
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
+	"github.com/rado0x54/shellwatch/internal/ids"
+	"github.com/rado0x54/shellwatch/internal/rest"
+	"github.com/rado0x54/shellwatch/internal/store"
+	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/ticket"
+	wshub "github.com/rado0x54/shellwatch/internal/ws"
+)
+
+// gatedFactory blocks every connect until the test decides it.
+type gatedFactory struct {
+	started   chan terminal.FactoryParams
+	decisions chan error // nil approves
+	mu        sync.Mutex
+	last      *terminal.MockTransport
+	cancelled int
+}
+
+func newGatedFactory() *gatedFactory {
+	return &gatedFactory{started: make(chan terminal.FactoryParams, 32), decisions: make(chan error, 32)}
+}
+
+func (g *gatedFactory) factory(ctx context.Context, fp terminal.FactoryParams) (terminal.Transport, error) {
+	g.started <- fp
+	select {
+	case err := <-g.decisions:
+		if err != nil {
+			return nil, err
+		}
+		tr := terminal.NewMockTransport()
+		g.mu.Lock()
+		g.last = tr
+		g.mu.Unlock()
+		return tr, nil
+	case <-ctx.Done():
+		g.mu.Lock()
+		g.cancelled++
+		g.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+func (g *gatedFactory) waitStarted(t *testing.T) terminal.FactoryParams {
+	t.Helper()
+	select {
+	case fp := <-g.started:
+		return fp
+	case <-time.After(5 * time.Second):
+		t.Fatal("no connect attempt started")
+		return terminal.FactoryParams{}
+	}
+}
+
+func (g *gatedFactory) noAttempt(t *testing.T) {
+	t.Helper()
+	select {
+	case fp := <-g.started:
+		t.Fatalf("unexpected connect attempt: %+v", fp.Trigger)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func (g *gatedFactory) cancelledCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.cancelled
+}
+
+type ticketRig struct {
+	ts      *httptest.Server
+	clk     *clock.Fake
+	mgr     *terminal.Manager
+	svc     *ticket.Service
+	hub     *wshub.Hub
+	gate    *gatedFactory
+	db      *sql.DB
+	maxSess int
+	epSvc   *endpointsvc.Service
+	// demoID is a demo endpoint's id ("demo:…"), visible to every account.
+	demoID string
+	// lookupErr makes the redeem-time account check fail (a database
+	// error), for the transient-failure path.
+	lookupErr atomic.Bool
+}
+
+const guestOrigin = externalURL // "https://shellwatch.example"
+
+func ticketServer(t *testing.T) *ticketRig {
+	t.Helper()
+	db, err := store.Open("sqlite:" + t.TempDir() + "/tickets.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO accounts (id,name,max_sessions,created_at,updated_at) VALUES ('acc-a','A',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO accounts (id,name,max_sessions,created_at,updated_at) VALUES ('acc-b','B',5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO endpoints (id,account_id,label,host,port,username,user_verification,agent_forward,enabled,created_at,updated_at) VALUES ('ep-a','acc-a','Secret Box','10.1.2.3',22,'root','required',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO endpoints (id,account_id,label,host,port,username,user_verification,agent_forward,enabled,created_at,updated_at) VALUES ('ep-b','acc-b','Box B','127.0.0.1',22,'u','required',0,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clk := clock.NewFake(time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC))
+	gate := newGatedFactory()
+	mgr := terminal.NewManager(gate.factory, clk, 0)
+	hub := wshub.NewHub(mgr)
+	t.Cleanup(hub.Close)
+	epStore := store.NewEndpoints(db, clk)
+	epSvc := &endpointsvc.Service{Endpoints: epStore, Demo: demo.NewService([]config.SeedEndpoint{{
+		Label: "Demo", Parsed: config.EndpointAddress{Host: "demo.example", Port: 22, Username: "sw"},
+	}})}
+	rig := &ticketRig{clk: clk, mgr: mgr, hub: hub, gate: gate, db: db, maxSess: 20,
+		demoID: epSvc.Demo.List("acc-a")[0].ID}
+	accounts := store.NewAccounts(db)
+	audit.NewWriter(db, clk).AttachManager(mgr, mgr.GetSession)
+	ticketLog := audit.NewTicketEvents(db, clk)
+	svc := ticket.New(ticket.Params{
+		Manager: mgr, Clock: clk, Audit: ticketLog, Notifier: hub,
+		ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open,
+		AccountActive: func(ctx context.Context, id string) (bool, error) {
+			if rig.lookupErr.Load() {
+				return false, errors.New("database is locked")
+			}
+			a, err := accounts.Get(ctx, id)
+			return err == nil && a != nil && a.Enabled, err
+		},
+		NewID: ids.NewUUID,
+	})
+	t.Cleanup(svc.Close)
+	hub.EnableGuests(wshub.GuestParams{Service: svc, ExternalURL: func() string { return externalURL }})
+	svc.SetPublisher(hub)
+	views := terminal.SessionViews{GuestAttached: svc.GuestAttached}
+	hub.SetSessionViews(views)
+
+	cfg := &config.Config{}
+	cfg.Server.ExternalURL = externalURL
+	cfg.Hydra.PublicURL = "http://localhost:4444"
+	cfg.Security.AllowedNetworks = loopbackOnly
+	principals := map[string]auth.Principal{
+		"ui":   {AccountID: "acc-a", Scopes: []string{"ui"}},
+		"ui-b": {AccountID: "acc-b", Scopes: []string{"ui"}},
+	}
+	resolve := auth.Resolver(func(_ context.Context, tok string) *auth.Principal {
+		if p, ok := principals[tok]; ok {
+			return &p
+		}
+		return nil
+	})
+	rig.svc = svc
+	epSvc.Sessions = mgr
+	epSvc.MaxSessions = func(context.Context, string) (int, bool) { return rig.maxSess, true }
+	epSvc.LiveGuest = svc.HasLiveGuestForEndpoint
+	epSvc.OnDeleted = svc.CloseForEndpoint
+	epSvc.OnTargetChanged = svc.RevokeStaleForEndpoint
+	rig.epSvc = epSvc
+	handler := New(Params{
+		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
+		WSHub:        hub,
+		Endpoints:    &rest.Endpoints{Svc: epSvc, NewID: ids.NewUUID},
+		Sessions:     &rest.Sessions{Manager: mgr, Svc: epSvc, Views: views},
+		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
+		Tickets:      &rest.Tickets{Service: svc, ExternalURL: func() string { return externalURL }},
+		TicketRedeem: &rest.TicketRedeem{Service: svc, ExternalURL: func() string { return externalURL }},
+		GuestWS:      hub.GuestHandler(),
+	})
+	rig.ts = httptest.NewServer(handler)
+	t.Cleanup(rig.ts.Close)
+	return rig
+}
+
+// ownerJSON calls an owner route with a bearer.
+func (r *ticketRig) ownerJSON(t *testing.T, method, path, bearer, body string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(method, r.ts.URL+path, strings.NewReader(body))
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res.StatusCode, out
+}
+
+func (r *ticketRig) mint(t *testing.T, endpointID, body string) (id, token string) {
+	t.Helper()
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints/"+endpointID+"/tickets", "ui", body)
+	if st != 201 {
+		t.Fatalf("mint: %d %v", st, out)
+	}
+	tk := out["ticket"].(map[string]any)
+	return tk["id"].(string), out["token"].(string)
+}
+
+// check calls the guest's non-consuming ticket check.
+func (r *ticketRig) check(t *testing.T, token, origin string) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"token": token})
+	req, _ := http.NewRequest("POST", r.ts.URL+"/api/tickets/check", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("check Cache-Control %q", res.Header.Get("Cache-Control"))
+	}
+	if len(res.Cookies()) != 0 {
+		t.Errorf("check set a cookie")
+	}
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res.StatusCode, out
+}
+
+type redeemResult struct {
+	status int
+	body   map[string]any
+	raw    string
+	cookie string
+	header http.Header
+}
+
+type redeemOpts struct {
+	origin, cookie, bearer string
+	noOrigin               bool
+	replaceCurrent         bool
+}
+
+func (r *ticketRig) redeem(t *testing.T, token, reason string, o redeemOpts) redeemResult {
+	t.Helper()
+	body := map[string]any{"token": token, "reason": reason}
+	if o.replaceCurrent {
+		body["replaceCurrent"] = true
+	}
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", r.ts.URL+"/api/tickets/redeem", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "GuestBrowser/1.0")
+	if !o.noOrigin {
+		origin := o.origin
+		if origin == "" {
+			origin = guestOrigin
+		}
+		req.Header.Set("Origin", origin)
+	}
+	if o.cookie != "" {
+		req.AddCookie(&http.Cookie{Name: ticket.CookieName, Value: o.cookie})
+	}
+	if o.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+o.bearer)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	out := redeemResult{status: res.StatusCode, raw: strings.TrimSpace(string(b)), header: res.Header}
+	_ = json.Unmarshal(b, &out.body)
+	for _, c := range res.Cookies() {
+		if c.Name == ticket.CookieName {
+			out.cookie = c.Value
+			if !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" {
+				t.Errorf("guest cookie attributes: %+v", c)
+			}
+		}
+	}
+	return out
+}
+
+func (r *ticketRig) dialGuest(t *testing.T, cookie, origin string) (*websocket.Conn, int) {
+	t.Helper()
+	h := http.Header{}
+	if origin != "" {
+		h.Set("Origin", origin)
+	}
+	if cookie != "" {
+		h.Set("Cookie", ticket.CookieName+"="+cookie)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, res, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"/ws/guest", &websocket.DialOptions{HTTPHeader: h})
+	if err != nil {
+		if res != nil {
+			return nil, res.StatusCode
+		}
+		t.Fatalf("dial guest: %v", err)
+	}
+	t.Cleanup(func() { c.CloseNow() })
+	return c, http.StatusSwitchingProtocols
+}
+
+// wantEndedFrame dials /ws/guest with a cookie that has no live guest
+// session: the upgrade succeeds, the only frame is the generic closed
+// status, then a normal close — and nothing is attached.
+func (r *ticketRig) wantEndedFrame(t *testing.T, cookie string) {
+	t.Helper()
+	c, st := r.dialGuest(t, cookie, guestOrigin)
+	if st != http.StatusSwitchingProtocols {
+		t.Fatalf("dial with cookie %q: %d, want 101", cookie, st)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, raw, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read closed frame: %v", err)
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m["type"] != "status" || m["state"] != "closed" ||
+		m["message"] != ticket.MsgEnded || m["serverTime"] == nil {
+		t.Errorf("frame %s", raw)
+	}
+	if _, _, err := c.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Errorf("after the closed frame: %v, want a normal close", err)
+	}
+	r.gate.noAttempt(t)
+}
+
+// readUntil reads guest frames until one matches.
+func readUntil(t *testing.T, c *websocket.Conn, match func(map[string]any) bool) map[string]any {
+	t.Helper()
+	for i := 0; i < 50; i++ {
+		msg := readMsg(t, c)
+		if match(msg) {
+			return msg
+		}
+	}
+	t.Fatal("no matching frame")
+	return nil
+}
+
+func statusIs(state string) func(map[string]any) bool {
+	return func(m map[string]any) bool { return m["type"] == "status" && m["state"] == state }
+}
+
+// sweep advances the clock and runs both janitors' deadline passes.
+func (r *ticketRig) sweep(d time.Duration) {
+	r.clk.Advance(d)
+	r.svc.Sweep()
+	r.mgr.SweepDeadlines()
+}
+
+// admit redeems a fresh ticket, attaches, approves, and returns the open
+// guest connection plus the cookie and the session id.
+func (r *ticketRig) admit(t *testing.T) (c *websocket.Conn, cookie, sessionID, ticketID string) {
+	t.Helper()
+	ticketID, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "fix the printer", redeemOpts{})
+	if res.status != 202 {
+		t.Fatalf("redeem: %d %s", res.status, res.raw)
+	}
+	c, _ = r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	fp := r.gate.waitStarted(t)
+	r.gate.decisions <- nil
+	readUntil(t, c, statusIs("open"))
+	return c, res.cookie, fp.SessionID, ticketID
+}
+
+func ticketEvents(t *testing.T, r *ticketRig, ticketID string) []string {
+	t.Helper()
+	page, err := audit.NewTicketEvents(r.db, nil).List(context.Background(), "acc-a", audit.TicketEventFilters{TicketID: ticketID, Limit: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for i := len(page.Rows) - 1; i >= 0; i-- {
+		ev := page.Rows[i].Event
+		if page.Rows[i].EndReason != nil && ev == "ended" {
+			ev += ":" + *page.Rows[i].EndReason
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// wantEvents waits for a ticket's audit trail to equal want.
+func wantEvents(t *testing.T, r *ticketRig, ticketID string, want ...string) {
+	t.Helper()
+	var got []string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got = ticketEvents(t, r, ticketID); strings.Join(got, ",") == strings.Join(want, ",") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("ticket events %v, want %v", got, want)
+}
+
+// --- mint -------------------------------------------------------------------
+
+func TestTicketMintDefaultsAndBounds(t *testing.T) {
+	r := ticketServer(t)
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", ``)
+	if st != 201 {
+		t.Fatalf("mint: %d %v", st, out)
+	}
+	tk := out["ticket"].(map[string]any)
+	for k, want := range map[string]any{
+		"redeemTtlSeconds": float64(300), "lifetimeSeconds": float64(900),
+		"reasonRequired": true, "agentForward": false, "label": "", "state": "minted", "guest": nil,
+	} {
+		if tk[k] != want {
+			t.Errorf("default %s = %v, want %v", k, tk[k], want)
+		}
+	}
+	if tok, _ := out["token"].(string); len(tok) != 43 {
+		t.Errorf("token %q: want 43 base64url chars (32 bytes)", tok)
+	}
+	// The share link uses externalUrl, the only origin the guest routes
+	// accept — not the address this request came in on.
+	if link, want := out["shareLink"], externalURL+"/t#"+out["token"].(string); link != want {
+		t.Errorf("shareLink %v, want %s", link, want)
+	}
+	for body, want := range map[string]int{
+		`{"redeemTtlSeconds":59}`:    400,
+		`{"redeemTtlSeconds":86401}`: 400,
+		`{"lifetimeSeconds":59}`:     400,
+		`{"lifetimeSeconds":28801}`:  400,
+		// Would wrap past int64 nanoseconds to about 60 s if converted first.
+		`{"redeemTtlSeconds":18446744134}`:             400,
+		`{"lifetimeSeconds":18446744134}`:              400,
+		`{"lifetimeSeconds":1e300}`:                    400,
+		`{"lifetimeSeconds":"x"}`:                      400,
+		`{"agentForward":"yes"}`:                       400,
+		`{"redeemTtlSeconds":86400}`:                   201,
+		`{"lifetimeSeconds":28800}`:                    201,
+		`{"label":"Printer fix"}`:                      201,
+		`{"redeemTtlSeconds":60.5}`:                    400,
+		`{"reasonRequired":false}`:                     201,
+		`{"agentForward":true,"x":1}`:                  201,
+		`{"label":7}`:                                  400,
+		`{"lifetimeSeconds":-1}`:                       400,
+		`{"redeemTtlSeconds":0}`:                       400,
+		`{"redeemTtlSeconds":null}`:                    201,
+		`{"lifetimeSeconds":60}`:                       201,
+		`{"redeemTtlSeconds":60}`:                      201,
+		`{"label":"` + strings.Repeat("x", 300) + `"}`: 201,
+	} {
+		if st, out := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", body); st != want {
+			t.Errorf("mint %s: %d %v, want %d", body, st, out, want)
+		}
+	}
+	// Foreign and unknown endpoints are indistinguishable.
+	for _, ep := range []string{"ep-b", "nope"} {
+		if st, _ := r.ownerJSON(t, "POST", "/api/endpoints/"+ep+"/tickets", "ui", `{}`); st != 404 {
+			t.Errorf("mint on %s: %d, want 404", ep, st)
+		}
+	}
+	// 20 outstanding -> the 21st is refused.
+	for len(r.svc.List("acc-a")) < ticket.MaxOutstanding {
+		r.mint(t, "ep-a", `{}`)
+	}
+	if st, out := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", `{}`); st != 409 {
+		t.Errorf("21st ticket: %d %v, want 409", st, out)
+	}
+	// Another account is unaffected, and sees none of acc-a's tickets.
+	if st, out := r.ownerJSON(t, "GET", "/api/tickets", "ui-b", ""); st != 200 || len(out["tickets"].([]any)) != 0 {
+		t.Errorf("acc-b list: %d %v", st, out)
+	}
+	if st, out := r.ownerJSON(t, "GET", "/api/tickets", "ui", ""); st != 200 || len(out["tickets"].([]any)) != 20 {
+		t.Errorf("acc-a list: %d, %d tickets", st, len(out["tickets"].([]any)))
+	}
+	// Owner routes need the bearer; a guest cookie is worthless there.
+	req, _ := http.NewRequest("GET", r.ts.URL+"/api/tickets", nil)
+	req.AddCookie(&http.Cookie{Name: ticket.CookieName, Value: "anything"})
+	if res, _ := http.DefaultClient.Do(req); res.StatusCode != 401 {
+		t.Errorf("cookie on owner route: %d, want 401", res.StatusCode)
+	}
+}
+
+// --- redeem -----------------------------------------------------------------
+
+func TestTicketRedeemUniform404(t *testing.T) {
+	r := ticketServer(t)
+	notFound := `{"error":"Not found"}`
+
+	// Unknown.
+	if res := r.redeem(t, "bogus", "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("unknown: %d %s", res.status, res.raw)
+	}
+	// Used.
+	_, used := r.mint(t, "ep-a", `{}`)
+	if res := r.redeem(t, used, "x", redeemOpts{}); res.status != 202 {
+		t.Fatalf("first redeem: %d %s", res.status, res.raw)
+	}
+	if res := r.redeem(t, used, "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("used: %d %s", res.status, res.raw)
+	}
+	// Revoked.
+	id, revoked := r.mint(t, "ep-a", `{}`)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Fatalf("revoke: %d", st)
+	}
+	if res := r.redeem(t, revoked, "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("revoked: %d %s", res.status, res.raw)
+	}
+	// Expired.
+	_, expired := r.mint(t, "ep-a", `{"redeemTtlSeconds":60}`)
+	r.clk.Advance(61 * time.Second)
+	if res := r.redeem(t, expired, "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("expired: %d %s", res.status, res.raw)
+	}
+	// Endpoint deleted after minting.
+	_, gone := r.mint(t, "ep-a", `{}`)
+	if _, err := r.db.Exec(`UPDATE endpoints SET enabled = 0 WHERE id = 'ep-a'`); err != nil {
+		t.Fatal(err)
+	}
+	if res := r.redeem(t, gone, "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("endpoint gone: %d %s", res.status, res.raw)
+	}
+	if _, err := r.db.Exec(`UPDATE endpoints SET enabled = 1 WHERE id = 'ep-a'`); err != nil {
+		t.Fatal(err)
+	}
+	// Account disabled after minting.
+	_, accGone := r.mint(t, "ep-a", `{}`)
+	_, _ = r.db.Exec(`UPDATE accounts SET enabled = 0 WHERE id = 'acc-a'`)
+	if res := r.redeem(t, accGone, "x", redeemOpts{}); res.status != 404 || res.raw != notFound {
+		t.Errorf("account disabled: %d %s", res.status, res.raw)
+	}
+	_, _ = r.db.Exec(`UPDATE accounts SET enabled = 1 WHERE id = 'acc-a'`)
+	// Every failure is Cache-Control: no-store and names nothing.
+	res := r.redeem(t, "bogus", "x", redeemOpts{})
+	if res.header.Get("Cache-Control") != "no-store" {
+		t.Errorf("Cache-Control = %q", res.header.Get("Cache-Control"))
+	}
+}
+
+func TestTicketConcurrentRedeemExactlyOneWins(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	const n = 16
+	var wg sync.WaitGroup
+	statuses := make(chan int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses <- r.redeem(t, token, "x", redeemOpts{}).status
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	counts := map[int]int{}
+	for s := range statuses {
+		counts[s]++
+	}
+	if counts[202] != 1 || counts[404] != n-1 {
+		t.Errorf("statuses %v, want one 202 and %d 404", counts, n-1)
+	}
+}
+
+func TestTicketRedeemReason(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	// Required: an empty (or whitespace / control-only) reason is refused
+	// and does not consume the ticket.
+	for _, reason := range []string{"", "   ", "\n\t"} {
+		if res := r.redeem(t, token, reason, redeemOpts{}); res.status != 400 {
+			t.Errorf("reason %q: %d %s", reason, res.status, res.raw)
+		}
+	}
+	res := r.redeem(t, token, "printer\x07 is down"+strings.Repeat("!", 400), redeemOpts{})
+	if res.status != 202 {
+		t.Fatalf("redeem: %d %s", res.status, res.raw)
+	}
+	views := r.svc.List("acc-a")
+	got := views[0].Guest.Reason
+	if strings.ContainsRune(got, 7) || len(got) > ticket.ReasonMaxLen || !strings.HasPrefix(got, "printer is down") {
+		t.Errorf("sanitized reason = %q", got)
+	}
+	for _, k := range []string{"confirmationCode", "admissionWindowSeconds", "lifetimeSeconds", "agentForward"} {
+		if _, ok := res.body[k]; !ok {
+			t.Errorf("202 body lacks %s: %v", k, res.body)
+		}
+	}
+	if _, ok := res.body["attachDeadline"]; ok {
+		t.Errorf("202 body still carries attachDeadline: %v", res.body)
+	}
+	code := res.body["confirmationCode"].(string)
+	if len(code) != 4 || strings.ContainsAny(code, "01OI") {
+		t.Errorf("confirmation code %q", code)
+	}
+	// Optional: an empty reason is fine.
+	_, optional := r.mint(t, "ep-a", `{"reasonRequired":false}`)
+	if res := r.redeem(t, optional, "", redeemOpts{}); res.status != 202 {
+		t.Errorf("optional reason: %d %s", res.status, res.raw)
+	}
+}
+
+// Redeeming never connects; without an attach nothing is ever prompted, and
+// the attach window releases the reservation. The ticket stays spent.
+func TestTicketLostRedemptionResponse(t *testing.T) {
+	r := ticketServer(t)
+	id, token := r.mint(t, "ep-a", `{}`)
+	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 202 {
+		t.Fatalf("redeem: %d", res.status)
+	}
+	r.gate.noAttempt(t)
+	r.sweep(29 * time.Second)
+	if len(r.svc.List("acc-a")) != 1 {
+		t.Fatal("guest session dropped before the attach window")
+	}
+	r.sweep(2 * time.Second)
+	if l := r.svc.List("acc-a"); len(l) != 0 {
+		t.Fatalf("after the attach window: %+v", l)
+	}
+	r.gate.noAttempt(t)
+	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 404 {
+		t.Errorf("spent ticket: %d", res.status)
+	}
+	wantEvents(t, r, id, "minted", "redeemed", "ended:ticket-unattached")
+}
+
+// --- admission ---------------------------------------------------------------
+
+func TestTicketAdmissionEndToEnd(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{"label":"Printer fix"}`)
+	res := r.redeem(t, token, "fix the printer", redeemOpts{})
+	if res.status != 202 {
+		t.Fatalf("redeem: %d %s", res.status, res.raw)
+	}
+	code := res.body["confirmationCode"].(string)
+	// No prompt before the guest can see the code.
+	r.gate.noAttempt(t)
+
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	pending := readUntil(t, c, statusIs("pending"))
+	if pending["code"] != code || pending["admissionDeadline"] == nil {
+		t.Errorf("pending frame %v (code %s)", pending, code)
+	}
+	fp := r.gate.waitStarted(t)
+	tr := fp.Trigger
+	if tr.Kind != terminal.SourceTicket || tr.Reason != "fix the printer" || tr.SourceIP != "127.0.0.1" ||
+		tr.Ticket == nil || tr.Ticket.ConfirmationCode != code || tr.TicketLabel != "Printer fix" ||
+		tr.TicketChannel != terminal.TicketChannelWeb || tr.Ticket.UserAgent != "GuestBrowser/1.0" ||
+		tr.TicketID != ticketID || tr.Ticket.LifetimeSeconds != 900 || tr.Ticket.AgentForward {
+		t.Errorf("trigger %+v ticket %+v", tr, tr.Ticket)
+	}
+	// Agent forwarding off by default, whatever the endpoint says.
+	if fp.Endpoint.AgentForward {
+		t.Error("agent forwarding reached the backend with the ticket option off")
+	}
+	// The owner sees the attempt while it waits.
+	_, list := r.ownerJSON(t, "GET", "/api/tickets", "ui", "")
+	tk := list["tickets"].([]any)[0].(map[string]any)
+	if tk["state"] != "pending" || tk["guest"].(map[string]any)["attached"] != true {
+		t.Errorf("owner view while pending: %v", tk)
+	}
+
+	r.gate.decisions <- nil
+	open := readUntil(t, c, statusIs("open"))
+	if open["lifetimeDeadline"] == nil {
+		t.Errorf("open frame %v", open)
+	}
+	// Input reaches the session; output comes back as terminal:output frames
+	// of the guest's session (#328: the /ws protocol).
+	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": fp.SessionID, "data": "hello"})
+	out := readUntil(t, c, func(m map[string]any) bool { return m["type"] == "terminal:output" && m["data"] != "" })
+	if out["data"] != "hello" || out["sessionId"] != fp.SessionID {
+		t.Errorf("output frame %v", out)
+	}
+	writeMsg(t, c, map[string]any{"type": "terminal:resize", "sessionId": fp.SessionID, "cols": 120, "rows": 40})
+
+	// The owner's session list: source ticket, ticket fields, attached.
+	_, sessions := r.ownerJSON(t, "GET", "/api/sessions", "ui", "")
+	s := sessions["sessions"].([]any)[0].(map[string]any)
+	if s["source"] != "ticket" || s["ticketId"] != ticketID || s["ticketLabel"] != "Printer fix" ||
+		s["guestAttached"] != true || s["reason"] != "fix the printer" {
+		t.Errorf("owner session DTO %v", s)
+	}
+
+	// End closes immediately and for good.
+	writeMsg(t, c, map[string]any{"type": "end"})
+	closed := readUntil(t, c, statusIs("closed"))
+	if closed["message"] != ticket.MsgEnded {
+		t.Errorf("closed frame %v", closed)
+	}
+	eventually(t, "terminal session closed", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
+	r.wantEndedFrame(t, res.cookie)
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "admitted", "ended:client.guest")
+	// The lifecycle row carries the ticket.
+	var src, tid, reason, closeReason string
+	eventually(t, "lifecycle close", func() bool {
+		err := r.db.QueryRow(`SELECT source, ticket_id, reason, COALESCE(close_reason,'') FROM audit_session_lifecycle WHERE session_id = ?`, fp.SessionID).
+			Scan(&src, &tid, &reason, &closeReason)
+		return err == nil && closeReason != ""
+	})
+	if src != "ticket" || tid != ticketID || reason != "fix the printer" || closeReason != "client.guest" {
+		t.Errorf("lifecycle row: %s %s %s %s", src, tid, reason, closeReason)
+	}
+}
+
+func TestTicketAgentForwardFollowsEndpointWhenEnabled(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{"agentForward":true}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	r.dialGuest(t, res.cookie, guestOrigin)
+	fp := r.gate.waitStarted(t)
+	if !fp.Endpoint.AgentForward || !fp.Trigger.Ticket.AgentForward {
+		t.Errorf("agent forwarding on + endpoint on: %v / %v", fp.Endpoint.AgentForward, fp.Trigger.Ticket.AgentForward)
+	}
+}
+
+// One connect per guest session: every key skipped ends it with the generic
+// "not granted" text (no endpoint detail), nothing connects again, and the
+// ticket leaves the owner's list. The audit keeps the real failure cause.
+func TestTicketDenialClosesGuestSession(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
+	r.gate.decisions <- errors.New("All configured authentication methods failed (endpoint 10.1.2.3 root)")
+	closed := readUntil(t, c, statusIs("closed"))
+	if closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("closed frame %v", closed)
+	}
+	raw, _ := json.Marshal(closed)
+	for _, leak := range []string{"10.1.2.3", "root", "Secret Box", "authentication"} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("closed frame leaks %q: %s", leak, raw)
+		}
+	}
+	r.gate.noAttempt(t)
+	if n := len(r.svc.List("acc-a")); n != 0 {
+		t.Errorf("%d tickets listed after the denial", n)
+	}
+	r.wantEndedFrame(t, res.cookie)
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "attempt-failed", "ended:ticket-not-admitted")
+	page, err := audit.NewTicketEvents(r.db, nil).List(context.Background(), "acc-a",
+		audit.TicketEventFilters{TicketID: ticketID, Event: audit.TicketAttemptFailed, Limit: 10})
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].EndReason == nil ||
+		!strings.Contains(*page.Rows[0].EndReason, "authentication methods failed") {
+		t.Fatalf("attempt-failed rows: %+v %v", page.Rows, err)
+	}
+}
+
+// The admission window (5 min from the first attach) ends a connect whose
+// prompt is still open: the setup is cancelled and the guest is not granted.
+func TestTicketAdmissionWindow(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	fp := r.gate.waitStarted(t)
+	r.sweep(ticket.AdmissionWindow - time.Second)
+	if n := len(r.svc.List("acc-a")); n != 1 {
+		t.Fatal("closed before the admission window")
+	}
+	r.sweep(2 * time.Second)
+	if closed := readUntil(t, c, statusIs("closed")); closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("closed frame %v", closed)
+	}
+	eventually(t, "connect cancelled", func() bool { return r.gate.cancelledCount() == 1 })
+	eventually(t, "session gone", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "ended:ticket-not-admitted")
+}
+
+func TestTicketRevokeInEveryState(t *testing.T) {
+	r := ticketServer(t)
+	// minted
+	id, _ := r.mint(t, "ep-a", `{}`)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Errorf("revoke minted: %d", st)
+	}
+	// pending (prompt open): revoke cancels the attempt.
+	id, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	r.gate.waitStarted(t)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui-b", ""); st != 404 {
+		t.Errorf("foreign revoke: %d", st)
+	}
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Errorf("revoke pending: %d", st)
+	}
+	readUntil(t, c, statusIs("closed"))
+	eventually(t, "attempt cancelled", func() bool { return r.gate.cancelledCount() == 1 })
+	// open: revoke closes the terminal session.
+	c, _, sid, id := r.admit(t)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Errorf("revoke open: %d", st)
+	}
+	readUntil(t, c, statusIs("closed"))
+	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
+	var reason string
+	eventually(t, "lifecycle close", func() bool {
+		return r.db.QueryRow(`SELECT COALESCE(close_reason,'') FROM audit_session_lifecycle WHERE session_id = ?`, sid).
+			Scan(&reason) == nil && reason != ""
+	})
+	if reason != string(terminal.CloseTicketRevoked) {
+		t.Errorf("terminal close reason %q, want %q", reason, terminal.CloseTicketRevoked)
+	}
+	// An ended ticket is gone from the list: revoking it again is a 404.
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 404 {
+		t.Errorf("revoke of an ended ticket: %d, want 404", st)
+	}
+	if n := len(r.svc.List("acc-a")); n != 0 {
+		t.Errorf("%d tickets listed after every revoke", n)
+	}
+}
+
+// The owner kills the guest's session from the normal session list: the
+// guest session goes with it.
+func TestTicketOwnerKillClosesGuest(t *testing.T) {
+	r := ticketServer(t)
+	c, cookie, sid, _ := r.admit(t)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/sessions/"+sid, "ui", ""); st != 200 {
+		t.Fatalf("kill: %d", st)
+	}
+	readUntil(t, c, statusIs("closed"))
+	r.wantEndedFrame(t, cookie)
+}
+
+// #321: a guest session closed while the guest's socket is down. The
+// reconnect is answered with the generic closed frame (not a 404 the page
+// cannot see), and so is a cookie that never existed or none at all.
+func TestTicketReconnectAfterCloseGetsClosedFrame(t *testing.T) {
+	r := ticketServer(t)
+	c, cookie, sid, id := r.admit(t)
+	c.CloseNow()
+	eventually(t, "guest detached", func() bool { return r.svc.List("acc-a")[0].Guest.Connections == 0 })
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 200 {
+		t.Fatalf("revoke: %d", st)
+	}
+	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
+	r.wantEndedFrame(t, cookie)
+	r.wantEndedFrame(t, "never-issued-guest-cookie")
+	r.wantEndedFrame(t, "")
+	if _, st := r.dialGuest(t, "never-issued-guest-cookie", "https://evil.example"); st != 403 {
+		t.Errorf("unknown cookie, wrong origin: %d, want 403", st)
+	}
+}
+
+// Output the remote side emits right before hanging up (a logout message, a
+// last command's result) reaches the guest before the final closed status.
+func TestTicketGuestGetsTailOutputBeforeClose(t *testing.T) {
+	r := ticketServer(t)
+	c, _, _, _ := r.admit(t)
+	r.gate.mu.Lock()
+	tr := r.gate.last
+	r.gate.mu.Unlock()
+	tr.Push([]byte("logout\r\n"))
+	_ = tr.Close()
+	var out strings.Builder
+	readUntil(t, c, func(m map[string]any) bool {
+		if m["type"] == "terminal:output" {
+			out.WriteString(m["data"].(string))
+		}
+		return m["type"] == "status" && m["state"] == "closed"
+	})
+	if !strings.Contains(out.String(), "logout") {
+		t.Errorf("guest missed the tail output: %q", out.String())
+	}
+}
+
+// Every guest status frame carries the server's clock, so the page can
+// count deadlines down without trusting the guest device's clock.
+func TestTicketStatusCarriesServerTime(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	r.clk.Advance(7 * time.Second)
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	st := readUntil(t, c, statusIs("pending"))
+	if want := r.clk.Now().UTC().Format(clock.ISOMillis); st["serverTime"] != want {
+		t.Errorf("serverTime = %v, want %s", st["serverTime"], want)
+	}
+}
+
+// The lifetime counts from admission and is the Manager's deadline.
+func TestTicketSessionLifetime(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{"lifetimeSeconds":60}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	r.clk.Advance(20 * time.Second) // before admission: not counted
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	fp := r.gate.waitStarted(t)
+	r.clk.Advance(2 * time.Minute)
+	r.gate.decisions <- nil
+	readUntil(t, c, statusIs("open"))
+	r.sweep(59 * time.Second)
+	if r.mgr.GetSession(fp.SessionID) == nil {
+		t.Fatal("closed before the lifetime")
+	}
+	r.sweep(2 * time.Second)
+	if closed := readUntil(t, c, statusIs("closed")); closed["message"] != ticket.MsgEnded {
+		t.Errorf("closed frame %v", closed)
+	}
+	eventually(t, "session closed", func() bool { return r.mgr.GetSession(fp.SessionID) == nil })
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "admitted", "ended:ticket-lifetime")
+}
+
+// --- connections --------------------------------------------------------------
+
+func TestTicketTabsAndReconnectGrace(t *testing.T) {
+	r := ticketServer(t)
+	c1, cookie, sid, ticketID := r.admit(t)
+	// A second tab of the same browser attaches and sees the same output.
+	c2, _ := r.dialGuest(t, cookie, guestOrigin)
+	readUntil(t, c2, statusIs("open"))
+	writeMsg(t, c2, map[string]any{"type": "terminal:input", "sessionId": sid, "data": "from-tab-2"})
+	for _, c := range []*websocket.Conn{c1, c2} {
+		readUntil(t, c, func(m map[string]any) bool {
+			return m["type"] == "terminal:output" && strings.Contains(m["data"].(string), "from-tab-2")
+		})
+	}
+	// Closing one tab does not start the grace.
+	c1.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "one connection left", func() bool {
+		v := r.svc.List("acc-a")
+		return len(v) == 1 && v[0].Guest.Connections == 1
+	})
+	r.sweep(2 * time.Minute)
+	if r.mgr.GetSession(sid) == nil {
+		t.Fatal("closed while a tab was still attached")
+	}
+	// Closing the last one does.
+	c2.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "detached", func() bool {
+		attached, ok := r.svc.GuestAttached(sid)
+		return ok && !attached
+	})
+	_, sessions := r.ownerJSON(t, "GET", "/api/sessions", "ui", "")
+	if s := sessions["sessions"].([]any)[0].(map[string]any); s["guestAttached"] != false {
+		t.Errorf("owner sees guestAttached %v", s["guestAttached"])
+	}
+	// Reattach inside the grace: output caught up (reset + full buffer).
+	r.clk.Advance(30 * time.Second)
+	c3, _ := r.dialGuest(t, cookie, guestOrigin)
+	readUntil(t, c3, statusIs("open"))
+	catchUp := readUntil(t, c3, func(m map[string]any) bool { return m["type"] == "terminal:output" })
+	if catchUp["reset"] != true || !strings.Contains(catchUp["data"].(string), "from-tab-2") {
+		t.Errorf("catch-up frame %v", catchUp)
+	}
+	c3.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "detached again", func() bool { a, ok := r.svc.GuestAttached(sid); return ok && !a })
+	r.sweep(59 * time.Second)
+	if r.mgr.GetSession(sid) == nil {
+		t.Fatal("closed before the grace ran out")
+	}
+	r.sweep(2 * time.Second)
+	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
+	want := "ended:guest-disconnected"
+	eventually(t, "end reason", func() bool {
+		ev := ticketEvents(t, r, ticketID)
+		return len(ev) > 0 && ev[len(ev)-1] == want
+	})
+}
+
+func TestTicketGuestConnectionCap(t *testing.T) {
+	r := ticketServer(t)
+	_, cookie, _, _ := r.admit(t)
+	for i := 1; i < ticket.MaxConnections; i++ {
+		c, _ := r.dialGuest(t, cookie, guestOrigin)
+		readUntil(t, c, statusIs("open"))
+	}
+	c, _ := r.dialGuest(t, cookie, guestOrigin)
+	msg := readUntil(t, c, statusIs("closed"))
+	if msg["message"] == "" {
+		t.Errorf("cap frame %v", msg)
+	}
+	if v := r.svc.List("acc-a"); v[0].Guest.Connections != ticket.MaxConnections || v[0].State != "open" {
+		t.Errorf("after the refused attach: %+v", v[0].Guest)
+	}
+}
+
+// A guest connection shares the hub but not the account's scope (#328):
+// sessions:changed, sign:request, notification:new, terminal:file and the
+// output of any other session never reach it, every non-guest message type
+// is dropped, and input addressed to another session goes nowhere.
+func TestTicketGuestIsolation(t *testing.T) {
+	r := ticketServer(t)
+	c, _, guestSID, _ := r.admit(t)
+	r.gate.mu.Lock()
+	guestTr := r.gate.last
+	r.gate.mu.Unlock()
+
+	// A UI session of the same account, watched by an owner socket.
+	r.gate.decisions <- nil
+	st, created := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`)
+	if st != 200 {
+		t.Fatalf("UI session: %d %v", st, created)
+	}
+	<-r.gate.started
+	otherSID := created["sessionId"].(string)
+	r.gate.mu.Lock()
+	otherTr := r.gate.last
+	r.gate.mu.Unlock()
+	owner := dialOwnerWS(t, r.ts, "ui")
+	writeMsg(t, owner, map[string]any{"type": "terminal:attach", "sessionId": otherSID})
+
+	// Account- and session-scoped frames that must stay with the owner.
+	r.hub.SendToAccount("acc-a", map[string]any{"type": "sign:request", "id": "secret"})
+	r.hub.SendToAccount("acc-a", map[string]any{"type": "notification:new", "notification": map[string]any{}})
+	r.hub.SendToSession(guestSID, map[string]any{"type": "terminal:file", "transferId": "x", "sessionId": guestSID})
+	r.hub.SessionsChanged("acc-a")
+	otherTr.Push([]byte("other-output"))
+	readUntil(t, owner, func(m map[string]any) bool {
+		return m["type"] == "terminal:output" && strings.Contains(m["data"].(string), "other-output")
+	})
+
+	// Messages a guest may not send, and input for a session not its own.
+	for _, m := range []map[string]any{
+		{"type": "terminal:attach", "sessionId": otherSID},
+		{"type": "terminal:take-control", "sessionId": otherSID},
+		{"type": "terminal:close", "sessionId": otherSID},
+		{"type": "terminal:input", "sessionId": otherSID, "data": "smuggled"},
+		{"type": "terminal:resize", "sessionId": otherSID, "cols": 10, "rows": 10},
+	} {
+		writeMsg(t, c, m)
+	}
+	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": guestSID, "data": "marker"})
+	guestTr.Push([]byte("marker"))
+	for {
+		msg := readMsg(t, c)
+		if msg["type"] != "status" && msg["type"] != "terminal:output" {
+			t.Fatalf("guest received %v", msg)
+		}
+		if msg["type"] == "terminal:output" {
+			if msg["sessionId"] != guestSID {
+				t.Fatalf("guest received another session's output: %v", msg)
+			}
+			if strings.Contains(msg["data"].(string), "marker") {
+				break
+			}
+		}
+	}
+	if r.mgr.GetSession(otherSID) == nil {
+		t.Error("guest closed the owner's session")
+	}
+	res, err := r.mgr.ReadOutputFrom(otherSID, nil)
+	if err != nil || strings.Contains(string(res.Data), "smuggled") {
+		t.Errorf("guest input reached another session: %q %v", res.Data, err)
+	}
+}
+
+func dialOwnerWS(t *testing.T, ts *httptest.Server, token string) *websocket.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws",
+		&websocket.DialOptions{Subprotocols: []string{auth.WSBearerSubprotocol, token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.CloseNow() })
+	return c
+}
+
+// --- capacity ---------------------------------------------------------------
+
+// max_sessions counts every active session of the account, any source (#326):
+// a guest, a UI and an MCP session fill a limit of 3, and then every channel
+// is refused with the limit named.
+func TestSessionLimitCountsEverySource(t *testing.T) {
+	r := ticketServer(t)
+	r.maxSess = 3
+	ctx := context.Background()
+	_, first := r.mint(t, "ep-a", `{}`)
+	_, second := r.mint(t, "ep-a", `{}`)
+	c, _ := r.dialGuest(t, r.redeem(t, first, "x", redeemOpts{}).cookie, guestOrigin)
+	r.gate.waitStarted(t)
+	r.gate.decisions <- nil
+	readUntil(t, c, statusIs("open"))
+	r.gate.decisions <- nil
+	if st, out := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`); st != 200 {
+		t.Fatalf("UI session: %d %v", st, out)
+	}
+	<-r.gate.started
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
+	r.gate.decisions <- nil
+	if _, err := mcp.CreateSession(ctx, "ep-a", "why"); err != nil {
+		t.Fatalf("MCP session: %v", err)
+	}
+	<-r.gate.started
+
+	const want = "Maximum concurrent sessions (3) reached"
+	if st, out := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`); st != 429 || out["error"] != want {
+		t.Errorf("UI over the limit: %d %v", st, out)
+	}
+	if _, err := mcp.CreateSession(ctx, "ep-a", "why"); err == nil || err.Error() != want {
+		t.Errorf("MCP over the limit: %v", err)
+	}
+	g, _ := r.dialGuest(t, r.redeem(t, second, "x", redeemOpts{}).cookie, guestOrigin)
+	if closed := readUntil(t, g, statusIs("closed")); closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("guest over the limit: %v", closed)
+	}
+	r.gate.noAttempt(t)
+}
+
+// An endpoint edit leaves running sessions alone; a host, port or username
+// change revokes the endpoint's unredeemed tickets (#326).
+func TestEndpointTargetChangeRevokesUnredeemedTickets(t *testing.T) {
+	r := ticketServer(t)
+	_, label := r.mint(t, "ep-a", `{}`)
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"label":"Renamed"}`); st != 200 {
+		t.Fatalf("label edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, label, "x", redeemOpts{}); res.status != 202 {
+		t.Fatalf("a label edit revoked a ticket: %d %s", res.status, res.raw)
+	}
+	_, token := r.mint(t, "ep-a", `{}`)
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"port":2222}`); st != 200 {
+		t.Fatalf("port edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 404 {
+		t.Errorf("ticket for the old target still redeemable: %d %s", res.status, res.raw)
+	}
+}
+
+// The cleanup after a target change keeps a ticket minted for the new target
+// in the window between storing the change and the cleanup (#332 review).
+func TestTargetChangeKeepsTicketMintedForNewTarget(t *testing.T) {
+	r := ticketServer(t)
+	_, stale := r.mint(t, "ep-a", `{}`)
+	var fresh string
+	revoke := r.epSvc.OnTargetChanged
+	r.epSvc.OnTargetChanged = func(acc, ep, target string) {
+		_, fresh = r.mint(t, "ep-a", `{}`) // lands after the new target is stored
+		revoke(acc, ep, target)
+	}
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"host":"elsewhere.example"}`); st != 200 {
+		t.Fatalf("host edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, fresh, "x", redeemOpts{}); res.status != 202 {
+		t.Errorf("ticket minted for the new target: %d %s", res.status, res.raw)
+	}
+	if res := r.redeem(t, stale, "x", redeemOpts{}); res.status != 404 {
+		t.Errorf("ticket for the old target: %d %s", res.status, res.raw)
+	}
+}
+
+// A ticket is bound to the target it was minted for, not only revoked after
+// an edit: a redemption racing the edit (the new target stored, the revoke
+// hook not yet run) and a guest redeemed before the edit but connecting
+// after it both fail, and nothing dials the new target (#332 review).
+func TestTicketBoundToMintedTarget(t *testing.T) {
+	r := ticketServer(t)
+	_, racing := r.mint(t, "ep-a", `{}`)
+	_, early := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, early, "x", redeemOpts{})
+	if res.status != 202 {
+		t.Fatalf("redeem before the edit: %d %s", res.status, res.raw)
+	}
+	r.epSvc.OnTargetChanged = nil // the window before the revoke runs
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"host":"elsewhere.example"}`); st != 200 {
+		t.Fatalf("host edit: %d %v", st, out)
+	}
+	if got := r.redeem(t, racing, "x", redeemOpts{}); got.status != 404 {
+		t.Errorf("redeem racing the edit: %d %s", got.status, got.raw)
+	}
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("closed"))
+	r.gate.noAttempt(t)
+}
+
+// REST and MCP create through the one endpoint service: the same input is
+// stored identically apart from the id.
+func TestEndpointCreateRESTAndMCPStoreTheSameRow(t *testing.T) {
+	r := ticketServer(t)
+	ctx := context.Background()
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints", "ui",
+		`{"label":"Box","host":"h.example","port":2200,"username":"root","agentForward":false,"description":"jump"}`)
+	if st != 200 {
+		t.Fatalf("REST create: %d %v", st, out)
+	}
+	label, host, user, desc, port, fwd := "Box", "h.example", "root", "jump", int64(2200), false
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
+	if err := mcp.CreateEndpoint(ctx, "mcp-ep", endpointsvc.EndpointPatch{
+		Label: &label, Host: &host, Port: &port, Username: &user, AgentForward: &fwd, Description: &desc, DescriptionSet: true,
+	}); err != nil {
+		t.Fatalf("MCP create: %v", err)
+	}
+	viaREST, _ := mcp.GetEndpoint(ctx, out["id"].(string))
+	viaMCP, _ := mcp.GetEndpoint(ctx, "mcp-ep")
+	if viaREST == nil || viaMCP == nil {
+		t.Fatalf("rows: %v %v", viaREST, viaMCP)
+	}
+	viaMCP.ID = viaREST.ID
+	if !reflect.DeepEqual(*viaREST, *viaMCP) {
+		t.Errorf("REST %+v\nMCP  %+v", *viaREST, *viaMCP)
+	}
+}
+
+// --- browser rules ------------------------------------------------------------
+
+func TestTicketOneGuestSessionPerBrowser(t *testing.T) {
+	r := ticketServer(t)
+	_, first := r.mint(t, "ep-a", `{}`)
+	_, second := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, first, "x", redeemOpts{})
+	if again := r.redeem(t, second, "x", redeemOpts{cookie: res.cookie}); again.status != 409 {
+		t.Fatalf("second redeem in the same browser: %d %s", again.status, again.raw)
+	}
+	// Not consumed: another browser can still redeem it.
+	if other := r.redeem(t, second, "x", redeemOpts{}); other.status != 202 {
+		t.Errorf("second ticket after the 409: %d", other.status)
+	}
+}
+
+// replaceCurrent ends the browser's current guest session in the redeem
+// step itself: the old one, never attached, raises no connect attempt (no
+// owner prompt), its cookie stops working, and the new one proceeds.
+func TestTicketRedeemReplacesCurrentGuest(t *testing.T) {
+	r := ticketServer(t)
+	firstID, first := r.mint(t, "ep-a", `{}`)
+	_, second := r.mint(t, "ep-a", `{}`)
+	old := r.redeem(t, first, "x", redeemOpts{})
+	res := r.redeem(t, second, "x", redeemOpts{cookie: old.cookie, replaceCurrent: true})
+	if res.status != 202 || res.cookie == "" {
+		t.Fatalf("replacing redeem: %d %s", res.status, res.raw)
+	}
+	r.gate.noAttempt(t)
+	r.wantEndedFrame(t, old.cookie)
+	wantEvents(t, r, firstID, "minted", "redeemed", "ended:client.guest")
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
+}
+
+// Check answers without consuming: the same ticket still redeems after it,
+// it reports whether a reason is required, it refuses a foreign Origin, and
+// an expired ticket answers the uniform 404 (and is spent, as redeem would).
+func TestTicketCheckDoesNotConsume(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{"reasonRequired":false}`)
+	for i := 0; i < 2; i++ {
+		if st, out := r.check(t, token, guestOrigin); st != 200 || out["reasonRequired"] != false {
+			t.Fatalf("check %d: %d %v", i, st, out)
+		}
+	}
+	if st, _ := r.check(t, token, "https://evil.example"); st != 403 {
+		t.Errorf("foreign origin: %d", st)
+	}
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 202 {
+		t.Fatalf("redeem after checks: %d %s", res.status, res.raw)
+	}
+	if st, out := r.check(t, "no-such-ticket-token-xxxxxxxx", guestOrigin); st != 404 || out["error"] != "Not found" {
+		t.Errorf("unknown token: %d %v", st, out)
+	}
+	expiredID, expired := r.mint(t, "ep-a", `{"redeemTtlSeconds":60}`)
+	r.clk.Advance(61 * time.Second)
+	if st, _ := r.check(t, expired, guestOrigin); st != 404 {
+		t.Errorf("expired: %d", st)
+	}
+	wantEvents(t, r, expiredID, "minted", "expired")
+}
+
+func TestTicketOriginMatrix(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	bad := []redeemOpts{
+		{origin: "https://demo.shellwatch.example"}, // sibling subdomain
+		{origin: "https://evil.example"},
+		{origin: "null"},
+		{noOrigin: true},
+		{origin: "http://shellwatch.example"}, // scheme
+	}
+	for _, o := range bad {
+		if res := r.redeem(t, token, "x", o); res.status != 403 || res.cookie != "" {
+			t.Errorf("redeem with origin %+v: %d (cookie %v)", o, res.status, res.cookie != "")
+		}
+	}
+	// Default port in the Origin is normalized; the Host httptest sees
+	// (127.0.0.1:port, no TLS) differs from externalUrl, as behind a proxy.
+	res := r.redeem(t, token, "x", redeemOpts{origin: "https://shellwatch.example:443"})
+	if res.status != 202 {
+		t.Fatalf("redeem with correct origin: %d %s", res.status, res.raw)
+	}
+	for _, origin := range []string{"https://demo.shellwatch.example", "https://evil.example", "null", ""} {
+		if _, st := r.dialGuest(t, res.cookie, origin); st != 403 {
+			t.Errorf("guest WS with origin %q: %d, want 403", origin, st)
+		}
+	}
+	r.gate.noAttempt(t) // none of the refused handshakes attached
+	if _, st := r.dialGuest(t, res.cookie, guestOrigin); st != 101 {
+		t.Errorf("guest WS with the right origin: %d", st)
+	}
+}
+
+// Guest routes behave identically with no bearer, a valid bearer, or an
+// invalid one.
+func TestTicketGuestRoutesIgnoreBearer(t *testing.T) {
+	r := ticketServer(t)
+	for _, bearer := range []string{"", "ui", "ui-b", "garbage"} {
+		if res := r.redeem(t, "bogus", "x", redeemOpts{bearer: bearer}); res.status != 404 || res.raw != `{"error":"Not found"}` {
+			t.Errorf("bearer %q, bogus ticket: %d %s", bearer, res.status, res.raw)
+		}
+		_, token := r.mint(t, "ep-a", `{}`)
+		res := r.redeem(t, token, "x", redeemOpts{bearer: bearer})
+		if res.status != 202 {
+			t.Errorf("bearer %q: %d %s", bearer, res.status, res.raw)
+			continue
+		}
+		h := http.Header{"Origin": {guestOrigin}, "Cookie": {ticket.CookieName + "=" + res.cookie}}
+		if bearer != "" {
+			h.Set("Authorization", "Bearer "+bearer)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"/ws/guest", &websocket.DialOptions{HTTPHeader: h})
+		cancel()
+		if err != nil {
+			t.Errorf("bearer %q: guest WS: %v", bearer, err)
+			continue
+		}
+		readUntil(t, c, statusIs("pending"))
+		r.gate.waitStarted(t)
+		writeMsg(t, c, map[string]any{"type": "end"})
+		readUntil(t, c, statusIs("closed"))
+		c.CloseNow()
+	}
+	// The guest cookie means nothing to /ws and /api/*.
+	_, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	req, _ := http.NewRequest("GET", r.ts.URL+"/api/sessions", nil)
+	req.AddCookie(&http.Cookie{Name: ticket.CookieName, Value: res.cookie})
+	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 401 {
+		t.Errorf("guest cookie on /api/sessions: %d", resp.StatusCode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"/ws",
+		&websocket.DialOptions{HTTPHeader: http.Header{"Cookie": {ticket.CookieName + "=" + res.cookie}}})
+	if err == nil || resp == nil || resp.StatusCode != 401 {
+		t.Errorf("guest cookie on /ws: %v %v", err, resp)
+	}
+}
+
+// Endpoint delete is shared by REST and MCP: a live guest session (here a
+// pending one, its prompt still open) blocks it like an open session; once the guest has ended, the delete succeeds and
+// revokes the endpoint's outstanding tickets.
+func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	minted, _ := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
+
+	if st, out := r.ownerJSON(t, "DELETE", "/api/endpoints/ep-a", "ui", ""); st != 409 {
+		t.Fatalf("REST delete with a live guest: %d %v", st, out)
+	}
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c"})
+	if _, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); !errors.Is(err, endpointsvc.ErrActiveSessions) {
+		t.Fatalf("MCP delete with a live guest: %v", err)
+	}
+
+	writeMsg(t, c, map[string]any{"type": "end"})
+	readUntil(t, c, statusIs("closed"))
+	eventually(t, "guest gone", func() bool {
+		return !r.svc.HasLiveGuestForEndpoint("acc-a", "ep-a") && !r.mgr.HasActiveSession("acc-a", "ep-a")
+	})
+	if ok, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); err != nil || !ok {
+		t.Fatalf("MCP delete after the guest ended: %v %v", ok, err)
+	}
+	for _, v := range r.svc.List("acc-a") {
+		if v.ID == minted {
+			t.Error("outstanding ticket survived its endpoint")
+		}
+	}
+}
+
+// --- goldens ----------------------------------------------------------------
+
+func TestTicketGoldens(t *testing.T) {
+	r := ticketServer(t)
+	st, minted := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", `{"label":"Printer fix"}`)
+	assertBodyGolden(t, "ticket-mint", st, minted)
+	id := minted["ticket"].(map[string]any)["id"].(string)
+	token := minted["token"].(string)
+
+	r.clk.Advance(time.Second)
+	st, checked := r.check(t, token, guestOrigin)
+	assertBodyGolden(t, "ticket-check", st, checked)
+	res := r.redeem(t, token, "fix the printer", redeemOpts{})
+	assertBodyGolden(t, "ticket-redeem", res.status, res.body)
+	again := r.redeem(t, token, "x", redeemOpts{})
+	assertBodyGolden(t, "ticket-redeem-not-found", again.status, again.body)
+	st, spent := r.check(t, token, guestOrigin)
+	assertBodyGolden(t, "ticket-check-not-found", st, spent)
+
+	st, list := r.ownerJSON(t, "GET", "/api/tickets", "ui", "")
+	assertBodyGolden(t, "ticket-list", st, list)
+
+	st, revoked := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", "")
+	assertBodyGolden(t, "ticket-revoke", st, revoked)
+
+	// The audit page of a ticket revoked before redemption: one row per
+	// event, each at its own timestamp, so the order is deterministic.
+	r.clk.Advance(time.Second)
+	other, _ := r.mint(t, "ep-a", `{"label":"Spare"}`)
+	r.clk.Advance(time.Second)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+other, "ui", ""); st != 200 {
+		t.Fatalf("revoke: %d", st)
+	}
+	st, page := r.ownerJSON(t, "GET", "/api/audit/tickets?ticketId="+other, "ui", "")
+	assertBodyGolden(t, "audit-tickets", st, page)
+	st, inv := r.ownerJSON(t, "GET", "/api/audit/tickets?event=bogus", "ui", "")
+	assertBodyGolden(t, "audit-tickets-invalid-event", st, inv)
+}
+
+// Neither the ticket token nor the guest cookie ever reaches the log.
+func TestTicketSecretsNeverLogged(t *testing.T) {
+	var buf strings.Builder
+	var mu sync.Mutex
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}), &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	r.gate.waitStarted(t)
+	writeMsg(t, c, map[string]any{"type": "end"})
+	readUntil(t, c, statusIs("closed"))
+	r.redeem(t, token, "x", redeemOpts{origin: "https://evil.example"})
+	mu.Lock()
+	logged := buf.String()
+	mu.Unlock()
+	for name, secret := range map[string]string{"token": token, "cookie": res.cookie} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("%s leaked into the log", name)
+		}
+	}
+	for _, want := range []string{"ticket: minted", "ticket: redeemed", "ticket: attached", "ticket: ended", "ticket: redeem rejected"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log lacks %q", want)
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// /t (and /t/) is served with a strict CSP (scripts from this origin plus the inline
+// bootstrap by hash, no workers) and is never cached.
+func TestGuestPageCSP(t *testing.T) {
+	index := `<html><head><script src="/config.js"></script></head><body><script>start()</script></body></html>`
+	fs := fstest.MapFS{"index.html": {Data: []byte(index)}}
+	h := spaHandler(fs, func() string { return "https://sw.example.com" })
+	for _, path := range []string{"/t", "/t/"} {
+		t.Run(path, func(t *testing.T) {
+			checkGuestPageHeaders(t, h, path)
+		})
+	}
+	// A client rebuild under -static-dir changes the inline bootstrap
+	// without a restart: the policy must hash the file as served now.
+	fs["index.html"] = &fstest.MapFile{Data: []byte(`<html><body><script>start2()</script></body></html>`)}
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest("GET", "/t", nil))
+	sum := sha256.Sum256([]byte("start2()"))
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'") {
+		t.Errorf("CSP after rebuild %q lacks the new bootstrap hash", csp)
+	}
+	// Other SPA routes keep the default headers.
+	for _, path := range []string{"/settings", "/t/x", "/tx"} {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Header().Get("Content-Security-Policy") != "" {
+			t.Errorf("%s got the guest CSP", path)
+		}
+	}
+}
+
+func checkGuestPageHeaders(t *testing.T, h http.HandlerFunc, path string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest("GET", path, nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	sum := sha256.Sum256([]byte("start()"))
+	for _, want := range []string{
+		"script-src 'self' 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'",
+		"connect-src 'self' wss://sw.example.com", "worker-src 'none'", "frame-ancestors 'none'",
+		"object-src 'none'", "base-uri 'none'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP %q lacks %q", csp, want)
+		}
+	}
+	scriptSrc := strings.SplitN(strings.SplitN(csp, "script-src", 2)[1], ";", 2)[0]
+	if strings.Contains(scriptSrc, "unsafe") {
+		t.Errorf("script-src allows unsafe sources: %s", scriptSrc)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("Cache-Control %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+// The gate exemption is method-exact: only POST /api/tickets/redeem and
+// GET /ws/guest skip the bearer gate.
+func TestTicketGateExemptionIsMethodExact(t *testing.T) {
+	r := ticketServer(t)
+	for _, path := range []string{"/api/tickets/redeem", "/api/tickets/check"} {
+		for _, m := range []string{"GET", "DELETE", "PUT"} {
+			if st, _ := r.ownerJSON(t, m, path, "", ""); st != 401 {
+				t.Errorf("%s %s without bearer: %d, want 401", m, path, st)
+			}
+		}
+	}
+}
+
+// A demo endpoint's id contains ":", which the client sends percent-encoded
+// (encodeURIComponent): minting must decode it.
+func TestTicketMintForDemoEndpoint(t *testing.T) {
+	r := ticketServer(t)
+	escaped := strings.ReplaceAll(r.demoID, ":", "%3A")
+	st, out := r.ownerJSON(t, "POST", "/api/endpoints/"+escaped+"/tickets", "ui", ``)
+	if st != 201 {
+		t.Fatalf("mint for %s: %d %v", escaped, st, out)
+	}
+	if got := out["ticket"].(map[string]any)["endpointId"]; got != r.demoID {
+		t.Errorf("endpointId = %v, want %s", got, r.demoID)
+	}
+	tk := out["ticket"].(map[string]any)["id"].(string)
+	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+tk, "ui", ""); st != 200 {
+		t.Errorf("revoke: %d", st)
+	}
+}
+
+// A failed eligibility lookup during redeem (database error, cancelled
+// request) answers 503 and leaves the ticket redeemable; only a definite
+// "account/endpoint gone" spends it.
+func TestTicketRedeemTransientLookupFailureKeepsTicket(t *testing.T) {
+	r := ticketServer(t)
+	_, out := r.ownerJSON(t, "POST", "/api/endpoints/ep-a/tickets", "ui", `{"reasonRequired":false}`)
+	token := out["token"].(string)
+	r.lookupErr.Store(true)
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 503 || res.cookie != "" {
+		t.Fatalf("redeem with failing lookup: %d %s (cookie set: %v)", res.status, res.raw, res.cookie != "")
+	}
+	r.lookupErr.Store(false)
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 202 {
+		t.Fatalf("retry after the failure: %d %s", res.status, res.raw)
+	}
+}

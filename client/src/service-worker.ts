@@ -4,6 +4,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { build, files, version } from "$service-worker";
+import { notificationTarget, serviceWorkerHandles, visibleAppWindow } from "$lib/guest/paths.js";
 
 const CACHE_NAME = `shellwatch-${version}`;
 const ASSETS = [...build, ...files];
@@ -31,14 +32,10 @@ self.addEventListener("activate", (event) => {
 // --- Fetch: cache-first for assets, network for API ---
 
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-
-  // Skip non-GET, API, WebSocket, and MCP requests
-  if (event.request.method !== "GET") return;
-  if (url.pathname.startsWith("/api/")) return;
-  if (url.pathname.startsWith("/ws")) return;
-  if (url.pathname.startsWith("/mcp")) return;
-  if (url.pathname === "/config.js") return;
+  // Skip non-GET, API, WebSocket and MCP requests — and the guest page's
+  // navigation (#306), which always comes from the network: the owner's
+  // installed worker must not serve it from the app shell.
+  if (!serviceWorkerHandles(event.request)) return;
 
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });
@@ -60,9 +57,10 @@ self.addEventListener("push", (event) => {
       // If a ShellWatch tab is already visible on this device, skip the push —
       // the in-page WebSocket toast will handle it. This prevents the triggering
       // device from getting a duplicate notification while other devices still do.
+      // A guest window (/t, #306) has no owner WebSocket and shows no toast,
+      // so it never counts as a ShellWatch tab here.
       const windows = await self.clients.matchAll({ type: "window" });
-      const hasVisibleTab = windows.some((c) => c.visibilityState === "visible");
-      if (hasVisibleTab) return;
+      if (visibleAppWindow(windows)) return;
 
       await self.registration.showNotification(data.title || "ShellWatch", {
         body: data.body || "New sign request",
@@ -84,12 +82,12 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      // Try to focus an existing ShellWatch tab
-      for (const client of clientList) {
-        if (new URL(client.url).origin === self.location.origin && "focus" in client) {
-          client.navigate(deepLink);
-          return client.focus();
-        }
+      // Focus an existing ShellWatch tab — never a guest window (/t, #306):
+      // navigating it would turn the guest page into the owner's sign page.
+      const target = notificationTarget(clientList, self.location.origin);
+      if (target && "focus" in target) {
+        target.navigate(deepLink);
+        return target.focus();
       }
       // No existing tab — open new one
       return self.clients.openWindow(deepLink);

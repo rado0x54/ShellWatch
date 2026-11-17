@@ -22,7 +22,7 @@ type SigningRow struct {
 	EndpointLabel    *string `json:"endpointLabel"`
 	EndpointAddress  *string `json:"endpointAddress"`
 	SessionID        *string `json:"sessionId"`
-	MCPReason        *string `json:"mcpReason"`
+	Reason           *string `json:"reason"` // the trigger's self-reported reason (mcp or ticket)
 	MCPClientName    *string `json:"mcpClientName"`
 	MCPClientVersion *string `json:"mcpClientVersion"`
 	ClientHostname   *string `json:"clientHostname"`
@@ -58,25 +58,25 @@ func NewSignings(db *sql.DB) *Signings { return &Signings{db: db} }
 
 const signingColumns = `id, account_id, type, source, created_at, resolved_at, outcome,
 	latency_ms, source_ip, endpoint_label, endpoint_address, session_id,
-	mcp_reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
+	reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
 	credential_id, passkey_label, user_verification, key_label, key_fingerprint, cancel_reason,
 	endpoint_id, host_key_fingerprint, host_key_prior_fingerprint, host_key_pinned`
 
 func scanSigning(sc interface{ Scan(...any) error }) (SigningRow, error) {
 	var r SigningRow
-	var resolvedAt, outcome, sourceIP, epLabel, epAddr, sessID, mcpReason, mcpName, mcpVer,
+	var resolvedAt, outcome, sourceIP, epLabel, epAddr, sessID, reason, mcpName, mcpVer,
 		cHost, cOS, cVer, credID, passLabel, uv, keyLabel, keyFp, cancel,
 		epID, hkFp, hkPrior sql.NullString
 	var latency, hkPinned sql.NullInt64
 	if err := sc.Scan(&r.ID, &r.AccountID, &r.Type, &r.Source, &r.CreatedAt, &resolvedAt, &outcome,
-		&latency, &sourceIP, &epLabel, &epAddr, &sessID, &mcpReason, &mcpName, &mcpVer,
+		&latency, &sourceIP, &epLabel, &epAddr, &sessID, &reason, &mcpName, &mcpVer,
 		&cHost, &cOS, &cVer, &credID, &passLabel, &uv, &keyLabel, &keyFp, &cancel,
 		&epID, &hkFp, &hkPrior, &hkPinned); err != nil {
 		return SigningRow{}, err
 	}
 	r.ResolvedAt, r.Outcome, r.LatencyMs = ns(resolvedAt), ns(outcome), ni(latency)
 	r.SourceIP, r.EndpointLabel, r.EndpointAddress, r.SessionID = ns(sourceIP), ns(epLabel), ns(epAddr), ns(sessID)
-	r.MCPReason, r.MCPClientName, r.MCPClientVersion = ns(mcpReason), ns(mcpName), ns(mcpVer)
+	r.Reason, r.MCPClientName, r.MCPClientVersion = ns(reason), ns(mcpName), ns(mcpVer)
 	r.ClientHostname, r.ClientOS, r.ClientVersion = ns(cHost), ns(cOS), ns(cVer)
 	r.CredentialID, r.PasskeyLabel, r.UserVerification = ns(credID), ns(passLabel), ns(uv)
 	r.KeyLabel, r.KeyFingerprint, r.CancelReason = ns(keyLabel), ns(keyFp), ns(cancel)

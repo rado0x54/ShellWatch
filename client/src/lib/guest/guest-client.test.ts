@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
+import {
+  checkTicket,
+  clockOffsetMs,
+  GuestSocket,
+  redeemTicket,
+  takeTokenFromLocation,
+} from "./guest-client.js";
+
+const TOKEN = "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5";
+
+describe("takeTokenFromLocation", () => {
+  it("reads the fragment token and removes it from the address bar first", () => {
+    const replaceState = vi.fn();
+    const token = takeTokenFromLocation(
+      { hash: `#${TOKEN}`, pathname: "/t", search: "" },
+      { replaceState },
+    );
+    expect(token).toBe(TOKEN);
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/t");
+  });
+
+  it("returns null without a fragment and leaves history alone", () => {
+    const replaceState = vi.fn();
+    expect(takeTokenFromLocation({ hash: "", pathname: "/t", search: "" }, { replaceState })).toBe(
+      null,
+    );
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+
+  it("strips and rejects a malformed fragment", () => {
+    const replaceState = vi.fn();
+    expect(
+      takeTokenFromLocation({ hash: "#<script>", pathname: "/t", search: "" }, { replaceState }),
+    ).toBe("");
+    expect(replaceState).toHaveBeenCalled();
+  });
+});
+
+describe("redeemTicket", () => {
+  it("posts token and reason with same-origin cookies and no Authorization", async () => {
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            confirmationCode: "4F7K",
+            admissionWindowSeconds: 300,
+            lifetimeSeconds: 900,
+            agentForward: false,
+          }),
+          { status: 202 },
+        ),
+    );
+    const res = await redeemTicket(TOKEN, "printer", fetchFn as unknown as typeof fetch);
+    expect(res).toMatchObject({ ok: true, redeemed: { confirmationCode: "4F7K" } });
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/tickets/redeem");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("same-origin");
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+    expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN, reason: "printer" });
+  });
+
+  it("asks the server to replace this browser's guest session only when told to", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 404 }));
+    await redeemTicket(TOKEN, "r", fetchFn as unknown as typeof fetch, true);
+    await redeemTicket(TOKEN, "r", fetchFn as unknown as typeof fetch);
+    const bodies = (fetchFn.mock.calls as unknown as [string, RequestInit][]).map(([, init]) =>
+      JSON.parse(String(init.body)),
+    );
+    expect(bodies).toEqual([
+      { token: TOKEN, reason: "r", replaceCurrent: true },
+      { token: TOKEN, reason: "r" },
+    ]);
+  });
+
+  it.each([
+    [400, "reason-required"],
+    [403, "forbidden"],
+    [404, "not-found"],
+    [409, "live-session"],
+    [429, "busy"],
+    [500, "error"],
+    [503, "error"],
+  ])("maps %i to %s without reading the server's text", async (status, failure) => {
+    const fetchFn = vi.fn(
+      async () => new Response(JSON.stringify({ error: "secret detail" }), { status }),
+    );
+    expect(await redeemTicket(TOKEN, "", fetchFn as unknown as typeof fetch)).toEqual({
+      ok: false,
+      failure,
+    });
+  });
+});
+
+describe("checkTicket", () => {
+  it("asks without credentials and reports whether a reason is required", async () => {
+    const fetchFn = vi.fn(
+      async () => new Response(JSON.stringify({ reasonRequired: false }), { status: 200 }),
+    );
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: true,
+      reasonRequired: false,
+    });
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/tickets/check");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+    expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN });
+  });
+
+  it.each([
+    [404, "not-found"],
+    [403, "forbidden"],
+    [429, "error"],
+    [503, "error"],
+  ])("maps %i to %s", async (status, failure) => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status }));
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: false,
+      failure,
+    });
+  });
+
+  it("treats a network failure as undecided", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new TypeError("offline");
+    });
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: false,
+      failure: "error",
+    });
+  });
+});
+
+describe("clockOffsetMs", () => {
+  const local = Date.parse("2026-01-01T12:00:00.000Z");
+  it("is server minus local, so a device clock running late still counts down correctly", () => {
+    expect(clockOffsetMs("2026-01-01T12:05:00.000Z", local)).toBe(5 * 60_000);
+    expect(clockOffsetMs("2026-01-01T11:59:00.000Z", local)).toBe(-60_000);
+  });
+  it("accepts an HTTP Date header", () => {
+    expect(clockOffsetMs("Thu, 01 Jan 2026 12:00:10 GMT", local)).toBe(10_000);
+  });
+  it("falls back to 0 when the server time is missing or unparsable", () => {
+    expect(clockOffsetMs(undefined, local)).toBe(0);
+    expect(clockOffsetMs(null, local)).toBe(0);
+    expect(clockOffsetMs("nonsense", local)).toBe(0);
+  });
+});
+
+class FakeSocket {
+  static last: FakeSocket | null = null;
+  readyState = 1;
+  sent: string[] = [];
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  constructor(
+    public url: string,
+    public protocols?: string | string[],
+  ) {
+    FakeSocket.last = this;
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    this.onclose?.();
+  }
+}
+
+describe("GuestSocket", () => {
+  const ctor = FakeSocket as unknown as new (url: string) => WebSocket;
+  const output = (data: string, reset = false) =>
+    JSON.stringify({
+      type: "terminal:output",
+      sessionId: "sess_1",
+      data,
+      offset: 0,
+      ...(reset ? { reset: true } : {}),
+    });
+
+  it("connects /ws/guest without a subprotocol and speaks the /ws terminal frames", () => {
+    const statuses: string[] = [];
+    const drop = vi.fn();
+    const s = new GuestSocket(
+      { onStatus: (st) => statuses.push(st.state), onDrop: drop },
+      { protocol: "https:", host: "sw.example.com" },
+      ctor,
+    );
+    s.connect();
+    const ws = FakeSocket.last!;
+    expect(ws.url).toBe("wss://sw.example.com/ws/guest");
+    expect(ws.protocols).toBeUndefined();
+    const got: string[] = [];
+    let closed = 0;
+    s.subscribe({ output: (d) => got.push(d), closed: () => closed++ });
+    // Before the session id is known, input is not sent and the size waits.
+    s.sendInput("early");
+    s.sendResize(80, 24);
+    ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "pending", code: "4F7K" }) });
+    ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "open" }) });
+    ws.onmessage?.({ data: output("hi", true) });
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "terminal:output", sessionId: "other", data: "x", offset: 1 }),
+    });
+    ws.onmessage?.({ data: JSON.stringify({ type: "sessions:changed", sessions: [] }) });
+    s.sendInput("ls\r");
+    s.end();
+    ws.onmessage?.({ data: JSON.stringify({ type: "terminal:closed", sessionId: "sess_1" }) });
+    expect(statuses).toEqual(["pending", "open"]);
+    expect(got).toEqual(["hi"]);
+    expect(closed).toBe(1);
+    expect(ws.sent.map((m) => JSON.parse(m))).toEqual([
+      { type: "terminal:resize", sessionId: "sess_1", cols: 80, rows: 24 },
+      { type: "terminal:input", sessionId: "sess_1", data: "ls\r" },
+      { type: "end" },
+    ]);
+    ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "closed", message: "x" }) });
+    ws.close();
+    expect(drop).not.toHaveBeenCalled(); // a final closed status is not a drop
+  });
+
+  it("holds output until the terminal subscribes; a reset replaces what is held", () => {
+    const s = new GuestSocket(
+      { onStatus: () => {}, onDrop: () => {} },
+      { protocol: "http:", host: "h" },
+      ctor,
+    );
+    s.connect();
+    const ws = FakeSocket.last!;
+    ws.onmessage?.({ data: output("stale") });
+    ws.onmessage?.({ data: output("fresh", true) });
+    ws.onmessage?.({ data: output("+delta") });
+    const got: Array<[string, boolean]> = [];
+    const stop = s.subscribe({ output: (d, r) => got.push([d, r]), closed: () => {} });
+    expect(got).toEqual([
+      ["fresh", true],
+      ["+delta", false],
+    ]);
+    stop();
+    ws.onmessage?.({ data: output("later") });
+    expect(got).toHaveLength(2);
+  });
+
+  it("reports a drop when the socket closes without a final status, and reconnects", () => {
+    const drop = vi.fn();
+    const s = new GuestSocket(
+      { onStatus: () => {}, onDrop: drop },
+      { protocol: "http:", host: "localhost:3001" },
+      ctor,
+    );
+    s.connect();
+    expect(FakeSocket.last!.url).toBe("ws://localhost:3001/ws/guest");
+    FakeSocket.last!.close();
+    expect(drop).toHaveBeenCalledOnce();
+    s.connect();
+    expect(FakeSocket.last!.url).toBe("ws://localhost:3001/ws/guest");
+  });
+});
+
+// The guest page behaves the same in a logged-in browser: nothing it loads
+// can reach the SPA's stored tokens, the bearer-carrying fetch wrapper or the
+// owner WebSocket. Pinned on the import graph of the page and its modules.
+describe("guest page isolation", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const files = [
+    join(here, "guest-client.ts"),
+    join(here, "paths.ts"),
+    join(here, "../components/Terminal.svelte"),
+    join(here, "../terminal/transport.ts"),
+    join(here, "../terminal/theme.ts"),
+    join(here, "../../routes/t/+page.svelte"),
+  ];
+  it.each(files)("%s imports no token, API-wrapper or owner-socket module", (file) => {
+    const src = readFileSync(file, "utf8");
+    for (const forbidden of [
+      "oauth",
+      "/api.js",
+      "stores/ws",
+      "stores/",
+      "localStorage",
+      "sessionStorage",
+      "Authorization",
+      "navigator.serviceWorker",
+    ]) {
+      const hits = src
+        .split("\n")
+        .filter(
+          (l) => l.includes(forbidden) && !l.trim().startsWith("//") && !l.trim().startsWith("*"),
+        );
+      expect(hits, `${forbidden} in ${file}`).toEqual([]);
+    }
+  });
+});

@@ -5,6 +5,7 @@
   import SettingsRow from "$lib/components/SettingsRow.svelte";
   import {
     fetchSigningsPage,
+    signingOutcomeLabel as outcomeLabel,
     type SigningRequestRow,
     type SigningsFilters,
   } from "$lib/stores/audit.js";
@@ -101,7 +102,11 @@
 
   function actionTarget(row: SigningRequestRow): string {
     if (row.type === "webauthn-sign") return row.passkeyLabel ?? row.credentialId ?? "passkey";
-    if (row.type === "host-key-mismatch" || row.type === "host-key-cleared") {
+    if (
+      row.type === "host-key-mismatch" ||
+      row.type === "host-key-cleared" ||
+      row.type === "unauthenticated-endpoint"
+    ) {
       return row.endpointLabel ?? row.hostKeyFingerprint ?? "host key";
     }
     return row.keyLabel ?? row.keyFingerprint ?? "key";
@@ -125,7 +130,7 @@
       <select id="outcome-filter" bind:value={outcome} onchange={onFilterChange}>
         <option value="">All outcomes</option>
         <option value="approved">Approved</option>
-        <option value="denied">Denied</option>
+        <option value="denied">Skipped / blocked</option>
         <option value="expired">Expired</option>
         <option value="cancelled">Cancelled</option>
       </select>
@@ -170,7 +175,9 @@
           <span class="badge badge-type">{row.type}</span>
           <span class="badge badge-source">{row.source}</span>
           {#if row.outcome}
-            <span class="badge badge-outcome badge-outcome-{row.outcome}">{row.outcome}</span>
+            <span class="badge badge-outcome badge-outcome-{row.outcome}"
+              >{outcomeLabel(row.type, row.outcome)}</span
+            >
           {:else}
             <span class="badge badge-outcome badge-outcome-pending">pending</span>
           {/if}
@@ -212,9 +219,9 @@
               <dt>MCP client</dt>
               <dd>{row.mcpClientName}{row.mcpClientVersion ? ` ${row.mcpClientVersion}` : ""}</dd>
             {/if}
-            {#if row.mcpReason}
-              <dt>MCP reason</dt>
-              <dd>{row.mcpReason}</dd>
+            {#if row.reason}
+              <dt>Reason</dt>
+              <dd>{row.reason}</dd>
             {/if}
             {#if row.clientHostname || row.clientOs || row.clientVersion}
               <dt>Agent client</dt>
@@ -249,6 +256,13 @@
                 <dt>Pinned host key</dt>
                 <dd><code>{row.hostKeyPriorFingerprint}</code></dd>
               {/if}
+              {#if row.hostKeyFingerprint}
+                <dt>Presented host key</dt>
+                <dd><code>{row.hostKeyFingerprint}</code></dd>
+              {/if}
+            {:else if row.type === "unauthenticated-endpoint"}
+              <dt>Refusal</dt>
+              <dd>The endpoint accepted the connection without authentication (SSH "none")</dd>
               {#if row.hostKeyFingerprint}
                 <dt>Presented host key</dt>
                 <dd><code>{row.hostKeyFingerprint}</code></dd>

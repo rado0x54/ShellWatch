@@ -36,7 +36,7 @@ func TestOpenMigrateQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAccount: %v", err)
 	}
-	if acc.Name != "Test" || acc.Enabled != 1 || acc.MaxSessions != 5 || acc.ShowDemoEndpoints != 1 {
+	if acc.Name != "Test" || acc.Enabled != 1 || acc.MaxSessions != 20 || acc.ShowDemoEndpoints != 1 {
 		t.Fatalf("unexpected defaults: %+v", acc)
 	}
 

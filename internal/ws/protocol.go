@@ -3,7 +3,11 @@
 // frozen by docs/api/websocket-protocol.md and the ws-* goldens.
 package ws
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/rado0x54/shellwatch/internal/terminal"
+)
 
 // clientMessage is a parsed inbound frame (only the fields any handler reads).
 type clientMessage struct {
@@ -25,13 +29,10 @@ func parseClientMessage(raw []byte) *clientMessage {
 	return &m
 }
 
-// sessionListEntry is one row of sessions:changed (SessionListEntry). source
-// is a bare string on the wire (contract item H, preserved).
+// sessionListEntry is one row of sessions:changed (SessionListEntry): the
+// session view shared with REST plus this connection's mode. source is a
+// bare string on the wire (contract item H, preserved).
 type sessionListEntry struct {
-	SessionID  string `json:"sessionId"`
-	EndpointID string `json:"endpointId"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"createdAt"`
-	Source     string `json:"source"`
-	Mode       string `json:"mode"`
+	terminal.SessionView
+	Mode string `json:"mode"`
 }

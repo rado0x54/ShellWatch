@@ -48,6 +48,11 @@ func endpointsServer(t *testing.T) (*httptest.Server, *webauthn.StepUpStore) {
 		 VALUES ('test-server','acc','Test Server','127.0.0.1',?,'testuser','required',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, seedPort); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO endpoints (id, account_id, label, host, port, username, user_verification, agent_forward, enabled, host_key_fingerprint, created_at, updated_at)
+		 VALUES ('deleted-server','acc','Gone','127.0.0.1',22,'testuser','required',0,0,'SHA256:pinned','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
@@ -131,6 +136,9 @@ func TestEndpointsValidationMatrix(t *testing.T) {
 		{`{"label":"  ","host":"h"}`, 400, "label and host are required"},
 		{`{"label":"L","host":"h","userVerification":"bogus"}`, 400, "userVerification must be one of: required, preferred, discouraged"},
 		{`{"label":"L","host":"h","agentForward":"yes"}`, 400, "agentForward must be a boolean"},
+		{`{"label":"L","host":"h","agentForward":null}`, 400, "agentForward must be a boolean"},
+		{`{"label":"L","host":"h","description":5}`, 400, "description must be a string up to 1000 characters"},
+		{`{"label":"L","host":"h","description":"` + strings.Repeat("x", 1001) + `"}`, 400, "description must be a string up to 1000 characters"},
 	}
 	for _, tc := range cases {
 		status, body := doJSON(t, ts, "POST", "/api/endpoints", tc.body)
@@ -258,5 +266,33 @@ func TestEndpointUpdateHostPortClearsPin(t *testing.T) {
 	_, list = doJSON(t, ts, "GET", "/api/endpoints", "")
 	if hk := list["endpoints"].([]any)[0].(map[string]any)["hostKey"]; hk != nil {
 		t.Fatalf("host change must clear the pin, still: %v", hk)
+	}
+}
+
+// A soft-deleted endpoint is not found by id (#313): no edit, no host-key
+// change, and a repeat delete is a 404 instead of a success.
+func TestSoftDeletedEndpointNotFound(t *testing.T) {
+	ts, stepUp := endpointsServer(t)
+	const path = "/api/endpoints/deleted-server"
+	if status, body := doJSON(t, ts, "PUT", path, `{"label":"Back"}`); status != 400 || body["error"] != "Endpoint not found" {
+		t.Errorf("update: status=%d body=%v", status, body)
+	}
+	stepUp.Mint("tok-pin", "acc", webauthn.ActionPinHostKey)
+	if status, body := doJSONStepUp(t, ts, "PUT", path+"/host-key", `{"publicKey":"`+testHostKeyLine+`"}`, "tok-pin"); status != 400 || body["error"] != "Endpoint not found" {
+		t.Errorf("pin: status=%d body=%v", status, body)
+	}
+	stepUp.Mint("tok-del", "acc", webauthn.ActionResetHostKey)
+	if status, body := doJSONStepUp(t, ts, "DELETE", path+"/host-key", "", "tok-del"); status != 400 || body["error"] != "Endpoint not found" {
+		t.Errorf("forget host key: status=%d body=%v", status, body)
+	}
+	if status, body := doJSON(t, ts, "DELETE", path, ""); status != 404 || body["error"] != "Endpoint not found" {
+		t.Errorf("repeat delete: status=%d body=%v", status, body)
+	}
+	// The first delete of a live endpoint still succeeds; the second is a 404.
+	if status, _ := doJSON(t, ts, "DELETE", "/api/endpoints/test-server", ""); status != 200 {
+		t.Errorf("delete: status=%d", status)
+	}
+	if status, _ := doJSON(t, ts, "DELETE", "/api/endpoints/test-server", ""); status != 404 {
+		t.Errorf("second delete: status=%d", status)
 	}
 }

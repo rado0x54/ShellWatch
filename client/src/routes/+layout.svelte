@@ -1,17 +1,28 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { dev } from "$app/environment";
+  import { afterNavigate, beforeNavigate } from "$app/navigation";
   import { page } from "$app/state";
   import "../app.css";
+  import ConnectDialog from "$lib/components/ConnectDialog.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import Wordmark from "$lib/components/Wordmark.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
   import { initBuildInfoFromWindow } from "$lib/stores/build-info.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
+  import { get } from "svelte/store";
+  import {
+    closeConnectDialog,
+    connectDialog,
+    connectDialogSharing,
+  } from "$lib/stores/connect-dialog.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
+  import { fetchTickets } from "$lib/stores/tickets.js";
   import { beginLogin, isAuthenticated } from "$lib/oauth.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
+  import { crossesGuestBoundary, isUnauthPath } from "$lib/guest/paths.js";
 
   let { children } = $props();
 
@@ -19,16 +30,31 @@
   let mobileMenuOpen = $state(false);
   let sessionModes = $state<Record<string, string>>({});
 
-  // Public, no-token routes that render fullscreen (no sidebar) and skip the
-  // auth-gated bootstrap below. There's no SPA /login anymore — Hydra owns the
-  // login UI, so an unauthenticated user is sent straight into the OAuth flow.
-  function isUnauthPath(path: string): boolean {
-    return (
-      path.endsWith("/register") ||
-      path.includes("/passkey-invite/") ||
-      path.includes("/auth/callback")
-    );
-  }
+  // Public, no-token routes (isUnauthPath) render fullscreen (no sidebar) and
+  // skip the auth-gated bootstrap below. There's no SPA /login anymore — Hydra
+  // owns the login UI, so an unauthenticated user is sent straight into the
+  // OAuth flow. The guest page /t (#306) is one of them.
+
+  // The guest page never shares a document with the app (#306): this
+  // bootstrap runs once per document, so a client-side move into /t would
+  // keep the owner's WebSocket and stores alive, and a move out of it would
+  // skip the bootstrap. Any navigation that crosses the boundary, in either
+  // direction — also one started while the bootstrap below is still waiting
+  // — becomes a full document load.
+  beforeNavigate((nav) => {
+    if (nav.willUnload || !nav.from || !nav.to) return;
+    if (nav.to.url.origin !== window.location.origin) return;
+    if (!crossesGuestBoundary(nav.from.url.pathname, nav.to.url.pathname)) return;
+    nav.cancel();
+    window.location.assign(nav.to.url.href);
+  });
+
+  // The endpoint picker is global: a page change closes it, so it never
+  // covers the page it led to (an approval on /sign, a new session) — except
+  // while the share form is up: a one-time link is shown only once.
+  afterNavigate(() => {
+    if (!get(connectDialogSharing)) closeConnectDialog();
+  });
 
   const isFullscreenPage = $derived(isUnauthPath(page.url.pathname));
 
@@ -57,9 +83,19 @@
     }
 
     if (!isUnauthPage) {
+      // The service worker (push + app-shell cache) is registered here, in
+      // the authenticated bootstrap only — never from a public page such as
+      // the guest page /t (kit.serviceWorker.register is off, #306).
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker
+          .register("/service-worker.js", { type: dev ? "module" : "classic" })
+          .catch((err) => console.error("service worker registration failed:", err));
+      }
       await connectWs();
       await fetchEndpoints();
       fetchAccount();
+      // The sidebar's Guest access count needs the list from the start.
+      void fetchTickets().catch(() => {});
 
       onWsMessage((msg) => {
         if (msg.type === "terminal:mode") {
@@ -114,6 +150,10 @@
       </main>
     </div>
   </div>
+
+  {#if $connectDialog}
+    <ConnectDialog mode={$connectDialog} onClose={closeConnectDialog} />
+  {/if}
 {/if}
 
 <style>

@@ -130,4 +130,120 @@ export const sourceLabels: Record<string, string> = {
 export const triggerKindLabels: Record<string, string> = {
   ui: "Web UI",
   mcp: "MCP Client",
+  ticket: "One-time access ticket",
 };
+
+/**
+ * Outcome of a skip (#308). "Skip" drops this one key; ShellWatch then offers
+ * the next key the server accepts, which arrives as a new request. The wire
+ * still calls it deny (`POST /api/actions/{id}/deny`, status "denied").
+ *
+ * - `skipped`: the key was skipped.
+ * - `ended`: the request was no longer pending (it expired just before, or was
+ *   swept) — nothing to skip, the request is over either way.
+ */
+export type SkipResult = { kind: "skipped" } | { kind: "ended"; status: string };
+
+/** The skip call itself failed: nothing was skipped, the prompt stays. */
+export class SkipFailedError extends Error {
+  constructor(detail: string) {
+    super(`Failed to skip: ${detail}`);
+    this.name = "SkipFailedError";
+  }
+}
+
+/** Skip a pending sign / key-approve request. Throws SkipFailedError. */
+export async function skipAction(actionId: string): Promise<SkipResult> {
+  let res: Response;
+  try {
+    res = await apiFetch(`/api/actions/${actionId}/deny`, { method: "POST" });
+  } catch (err) {
+    throw new SkipFailedError(err instanceof Error ? err.message : String(err));
+  }
+  if (res.ok) {
+    // The server reports the store-asserted outcome: "denied", or "expired"
+    // when the action lapsed just before the skip landed.
+    const body = (await res.json().catch(() => ({}))) as { status?: string };
+    return body.status === "expired" ? { kind: "ended", status: "expired" } : { kind: "skipped" };
+  }
+  // 404: swept in between; it had expired. Anything else (409 lost a race
+  // against a resolve, 5xx) is a failed skip.
+  if (res.status === 404) return { kind: "ended", status: "expired" };
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new SkipFailedError(body.error ?? `HTTP ${res.status}`);
+}
+
+/**
+ * Whether a ceremony failure means "this device can't or won't use that
+ * passkey". Browsers fold "no matching passkey here", "dialog dismissed" and
+ * "timed out" into one NotAllowedError and don't tell them apart; every other
+ * error (SecurityError, AbortError, ...) is a real failure and does not skip.
+ */
+export function isCeremonyCancelled(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { name?: unknown }).name === "NotAllowedError"
+  );
+}
+
+export type SignOrSkipOutcome =
+  | { kind: "signed"; response: ResolveResponse }
+  | { kind: "auto-skipped"; skip: SkipResult };
+
+export interface SignOrSkipDeps {
+  ceremony?: (p: SignCeremonyParams) => Promise<SignCeremonyResult>;
+  resolve?: (actionId: string, r: SignCeremonyResult) => Promise<ResolveResponse>;
+  skip?: (actionId: string) => Promise<SkipResult>;
+}
+
+/**
+ * Run the passkey ceremony and resolve the request; a cancelled ceremony
+ * (NotAllowedError only) runs the Skip flow automatically (#308). Throws the
+ * ceremony / resolve error otherwise, and SkipFailedError when the automatic
+ * skip call fails — in both cases nothing was skipped.
+ */
+export async function signOrAutoSkip(
+  actionId: string,
+  params: SignCeremonyParams,
+  deps: SignOrSkipDeps = {},
+): Promise<SignOrSkipOutcome> {
+  const ceremony = deps.ceremony ?? performSignCeremony;
+  const resolveFn = deps.resolve ?? resolveAction;
+  const skip = deps.skip ?? skipAction;
+  let result: SignCeremonyResult;
+  try {
+    result = await ceremony(params);
+  } catch (err) {
+    if (!isCeremonyCancelled(err)) throw err;
+    return { kind: "auto-skipped", skip: await skip(actionId) };
+  }
+  return { kind: "signed", response: await resolveFn(actionId, result) };
+}
+
+/** Info toast after a manual skip. */
+export function manualSkipMessage(keyLabel: string | undefined): string {
+  return `Skipped ${keyLabel || "key"}. If another key matches, a new request follows.`;
+}
+
+/** Info toast after an automatic skip (cancelled / unavailable passkey). */
+export function autoSkipMessage(passkeyLabel: string | undefined): string {
+  return `Skipped ${passkeyLabel || "passkey"}: not available on this device`;
+}
+
+/** Info toast when a skip found the request already over. */
+export function endedMessage(status: string): string {
+  return status === "expired"
+    ? "The request had already expired."
+    : `The request was already ${status}.`;
+}
+
+/** The toast text for a finished skip, manual or automatic. */
+export function skipResultMessage(
+  skip: SkipResult,
+  mode: "manual" | "auto",
+  label: string | undefined,
+): string {
+  if (skip.kind === "ended") return endedMessage(skip.status);
+  return mode === "auto" ? autoSkipMessage(label) : manualSkipMessage(label);
+}

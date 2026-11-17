@@ -6,7 +6,6 @@
 package rest
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,9 +23,10 @@ import (
 // Sessions wires the session routes.
 type Sessions struct {
 	Manager *terminal.Manager
-	Svc     *endpointsvc.Service
-	// MaxSessions resolves an account's concurrent-session cap.
-	MaxSessions func(ctx context.Context, accountID string) (int, bool)
+	// Svc opens sessions (endpoint lookup + max_sessions).
+	Svc *endpointsvc.Service
+	// Views builds the fields shared with the WebSocket session list.
+	Views terminal.SessionViews
 }
 
 func (s *Sessions) Mount(r chi.Router) {
@@ -36,67 +36,56 @@ func (s *Sessions) Mount(r chi.Router) {
 	r.Delete("/api/sessions/{sessionId}", s.close)
 }
 
-// toSessionDTO builds the bare TerminalSession wire shape. Optional fields
-// omit when empty (matching the conditional spread in terminal-manager.ts).
-func toSessionDTO(s terminal.Session) api.TerminalSession {
+// toSessionDTO builds the bare TerminalSession wire shape: the shared
+// session view plus the REST-only fields. Optional fields omit when empty
+// (matching the conditional spread in terminal-manager.ts).
+func (h *Sessions) toSessionDTO(s terminal.Session) api.TerminalSession {
+	v := h.Views.View(s)
 	return api.TerminalSession{
-		SessionId: s.SessionID, EndpointId: s.EndpointID, AccountId: s.AccountID,
-		Status: api.TerminalStatus(s.Status), Source: api.TerminalSource(s.Source),
-		CreatedAt:        s.CreatedAt.UTC().Format(isoMillis),
+		SessionId: v.SessionID, EndpointId: v.EndpointID, AccountId: s.AccountID,
+		Status: api.TerminalStatus(v.Status), Source: api.TerminalSource(v.Source),
+		CreatedAt:        v.CreatedAt,
 		LastActivityAt:   s.LastActivityAt.UTC().Format(isoMillis),
 		CloseReason:      strPtrIf(string(s.CloseReason)),
 		SourceIp:         strPtrIf(s.SourceIP),
 		OwnerClientId:    strPtrIf(s.OwnerClientID),
-		McpReason:        strPtrIf(s.MCPReason),
+		Reason:           strPtrIf(s.Reason),
 		McpClientName:    strPtrIf(s.MCPClientName),
 		McpClientVersion: strPtrIf(s.MCPClientVer),
+		TicketId:         strPtrIf(v.TicketID),
+		TicketLabel:      v.TicketLabel,
+		GuestAttached:    v.GuestAttached,
 	}
 }
 
 func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
-	acc := accountID(r)
-	if s.MaxSessions != nil {
-		if max, ok := s.MaxSessions(r.Context(), acc); ok {
-			if s.Manager.CountOpenForAccount(acc) >= max {
-				writeErr(w, 429, "Maximum concurrent sessions ("+strconv.Itoa(max)+") reached")
-				return
-			}
-		}
-	}
-
-	body := readRawBody(r)
-	endpointID := stringField(body, "endpointId")
-
-	ref, err := s.Svc.RefForAccount(r.Context(), endpointID, acc)
-	if err != nil || ref == nil {
-		writeErr(w, 404, "Endpoint not found")
-		return
-	}
-	sess, err := s.Manager.Create(r.Context(), *ref, acc, terminal.Trigger{
+	sess, err := s.Svc.Open(r.Context(), accountID(r), stringField(readRawBody(r), "endpointId"), terminal.Trigger{
 		Kind: terminal.SourceUI, SourceIP: realip.FromRequest(r),
 	})
-	if err != nil {
-		// The SSH connect (incl. passkey signing handshake) failed; the
-		// Manager logs the reason (terminal: session connect failed).
-		// A failure that was already published to the notification log (e.g. a
-		// host-key mismatch) carries the notification id (#252): the client
-		// dedupes its error toast against the pushed notification by identity.
-		var notified *sshx.NotifiedError
-		if errors.As(err, &notified) {
-			apierr.WriteNotified(w, 400, err.Error(), notified.NotificationID)
-			return
-		}
+	var limit *terminal.LimitError
+	var notified *sshx.NotifiedError
+	switch {
+	case errors.Is(err, endpointsvc.ErrEndpointNotFound), errors.Is(err, endpointsvc.ErrEndpointLookup):
+		writeErr(w, 404, "Endpoint not found")
+	case errors.As(err, &limit):
+		writeErr(w, 429, err.Error())
+	case errors.As(err, &notified):
+		// The connect failed and was published to the notification log (e.g.
+		// a host-key mismatch, #252): the client dedupes its error toast
+		// against the pushed notification by id. The Manager logs the reason.
+		apierr.WriteNotified(w, 400, err.Error(), notified.NotificationID)
+	case err != nil:
 		writeErr(w, 400, err.Error())
-		return
+	default:
+		writeJSON(w, 200, s.toSessionDTO(*sess))
 	}
-	writeJSON(w, 200, toSessionDTO(*sess))
 }
 
 func (s *Sessions) list(w http.ResponseWriter, r *http.Request) {
 	sessions := s.Manager.ListForAccount(accountID(r))
 	out := make([]api.TerminalSession, 0, len(sessions))
 	for _, sess := range sessions {
-		out = append(out, toSessionDTO(sess))
+		out = append(out, s.toSessionDTO(sess))
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
 }

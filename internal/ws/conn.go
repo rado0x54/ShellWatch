@@ -4,6 +4,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -11,13 +12,18 @@ import (
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
-// conn is one browser connection: its account, per-session attached/controlled
+// conn is one browser connection: its scope, per-session attached/controlled
 // state, per-session last-sent output offset, and a bounded outbound queue
 // drained by a single writer goroutine (spec §5.7: preserve per-connection
 // ordering; drop a slow client rather than block the hub).
+//
+// The scope is an account (accountID set) or one ticket guest session
+// (guestID set, accountID empty; #328). Account-scoped fan-out goes through
+// ownedBy, which a guest connection never matches.
 type conn struct {
 	ws        *websocket.Conn
 	accountID string
+	guestID   string
 
 	mu         sync.Mutex
 	attached   map[string]bool
@@ -33,7 +39,21 @@ type conn struct {
 
 	out    chan []byte
 	closed bool
+
+	// writerDone and finishOnce serve the guest connection's drain-then-close
+	// (finish).
+	writerDone <-chan struct{}
+	finishOnce sync.Once
 }
+
+// ownedBy reports whether the connection belongs to an account: never true
+// for a guest connection.
+func (c *conn) ownedBy(accountID string) bool {
+	return c.guestID == "" && accountID != "" && c.accountID == accountID
+}
+
+// isGuest reports a /ws/guest connection.
+func (c *conn) isGuest() bool { return c.guestID != "" }
 
 func newConn(wsc *websocket.Conn, accountID string) *conn {
 	return &conn{
@@ -61,7 +81,7 @@ func (c *conn) startWriter(ctx context.Context) <-chan struct{} {
 // connection closed AND closes the outbound channel — the writer drains what
 // is queued and exits, so Serve's close/<-writerDone teardown always finishes
 // and the hub entry is removed. Returns false on overflow; the caller must
-// drop the websocket after releasing the lock.
+// call dropOverflow after releasing the lock.
 func (c *conn) enqueueLocked(raw []byte) bool {
 	if c.closed {
 		return true
@@ -82,8 +102,17 @@ func (c *conn) enqueue(raw []byte) {
 	ok := c.enqueueLocked(raw)
 	c.mu.Unlock()
 	if !ok {
-		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
+		c.dropOverflow()
 	}
+}
+
+// dropOverflow closes a connection whose send queue overflowed. The close
+// runs on its own goroutine: a websocket close handshake against a peer that
+// stopped reading blocks for seconds, and enqueue is called with other locks
+// held (the ticket service publishes guest frames under its global lock).
+func (c *conn) dropOverflow() {
+	slog.Warn("ws: slow client dropped", "account", c.accountID, "guest", c.isGuest(), "reason", "send buffer overflow")
+	go func() { _ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow") }()
 }
 
 func (c *conn) send(msg any) {
@@ -108,6 +137,19 @@ func (c *conn) close() {
 	}
 	c.mu.Unlock()
 	_ = c.ws.Close(websocket.StatusNormalClosure, "")
+}
+
+// attachedIDs lists the sessions this connection is attached to.
+func (c *conn) attachedIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.attached))
+	for id, ok := range c.attached {
+		if ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (c *conn) isAttached(sessionID string) bool {
@@ -147,7 +189,7 @@ func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, f
 	}
 	c.mu.Unlock()
 	if !ok {
-		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
+		c.dropOverflow()
 	}
 }
 
@@ -232,15 +274,19 @@ func (c *conn) flushLocked(mgr *terminal.Manager, sessionID string) {
 	if len(res.Data) == 0 && !res.Reset {
 		return
 	}
-	msg := map[string]any{
-		"type": "terminal:output", "sessionId": sessionID,
-		"data": string(res.Data), "offset": res.Offset,
-	}
-	if res.Reset {
-		msg["reset"] = true
-	}
+	msg := outputFrame(sessionID, res.Data, res.Offset, res.Reset)
 	c.mu.Lock()
 	c.lastOffset[sessionID] = res.Offset
 	c.mu.Unlock()
 	c.send(msg)
+}
+
+// outputFrame builds a terminal:output frame; reset tells the client to
+// clear what it shows first (catch-up).
+func outputFrame(sessionID string, data []byte, offset int64, reset bool) map[string]any {
+	msg := map[string]any{"type": "terminal:output", "sessionId": sessionID, "data": string(data), "offset": offset}
+	if reset {
+		msg["reset"] = true
+	}
+	return msg
 }

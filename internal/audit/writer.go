@@ -83,10 +83,11 @@ func (w *Writer) handleSessionStatus(e terminal.StatusEvent, snapshot func(sessi
 
 func (w *Writer) insertOpen(s *terminal.Session) {
 	_, err := w.db.Exec(
-		`INSERT INTO audit_session_lifecycle (session_id, account_id, endpoint_id, source, status, created_at, source_ip, mcp_reason, mcp_client_name, mcp_client_version)
-		 VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+		`INSERT INTO audit_session_lifecycle (session_id, account_id, endpoint_id, source, status, created_at, source_ip, reason, mcp_client_name, mcp_client_version, ticket_id, ticket_label)
+		 VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
 		s.SessionID, s.AccountID, s.EndpointID, string(s.Source), s.CreatedAt.UTC().Format(isoMillis),
-		nz(s.SourceIP), nz(s.MCPReason), nz(s.MCPClientName), nz(s.MCPClientVer))
+		nz(s.SourceIP), nz(s.Reason), nz(s.MCPClientName), nz(s.MCPClientVer),
+		nz(s.TicketID), nz(s.TicketLabel))
 	if err != nil {
 		slog.Warn("audit: insert session-open failed", "session", s.SessionID, "err", err)
 	}
@@ -121,12 +122,12 @@ func (w *Writer) insertSigning(a *approval.Action) {
 	_, err := w.db.Exec(
 		`INSERT INTO audit_signing_requests (id, account_id, type, source, created_at,
 			source_ip, endpoint_label, endpoint_address, session_id,
-			mcp_reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
+			reason, mcp_client_name, mcp_client_version, client_hostname, client_os, client_version,
 			credential_id, passkey_label, user_verification, key_label, key_fingerprint, host_key_fingerprint)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.AccountID, string(a.Type), a.Context.Source, a.CreatedAt.UTC().Format(isoMillis),
 		nz(a.Context.SourceIP), nz(a.Context.EndpointLabel), nz(a.Context.EndpointAddress), nz(a.Context.SessionID),
-		nz(a.Context.MCPReason), nz(a.Context.MCPClientName), nz(a.Context.MCPClientVer),
+		nz(a.Context.Reason), nz(a.Context.MCPClientName), nz(a.Context.MCPClientVer),
 		nz(a.Context.ClientHostname), nz(a.Context.ClientOS), nz(a.Context.ClientVersion),
 		nz(a.CredentialID), nz(a.PasskeyLabel), nz(a.UserVerification), nz(a.KeyLabel), nz(a.KeyFingerprint),
 		nz(hostKeyFp))
@@ -147,11 +148,14 @@ func (w *Writer) MarkHostKeyPinned(actionID string) {
 	}
 }
 
-// HostKeyEvent is a host-key audit record (#241): a mismatch that aborted a
-// handshake ('host-key-mismatch', outcome denied) or a pin removal
-// ('host-key-cleared' — host/port change or a human forgetting the key).
+// HostKeyEvent is an endpoint-connection audit record with no pending phase:
+// a mismatch that aborted a handshake ('host-key-mismatch', outcome denied,
+// #241), a connection refused because the server accepted "none" auth
+// ('unauthenticated-endpoint', outcome denied, #311; Fingerprint is the
+// observed host key), or a pin removal ('host-key-cleared' — host/port change
+// or a human forgetting the key).
 type HostKeyEvent struct {
-	Type             string // "host-key-mismatch" | "host-key-cleared"
+	Type             string // "host-key-mismatch" | "unauthenticated-endpoint" | "host-key-cleared"
 	AccountID        string
 	EndpointID       string
 	EndpointLabel    string
@@ -161,7 +165,7 @@ type HostKeyEvent struct {
 	PriorFingerprint string // the pinned key a mismatch was checked against
 	Reason           string // what cleared the pin (cancel_reason column)
 	SourceIP         string
-	MCPReason        string
+	TriggerReason    string // the trigger's self-reported reason (reason column)
 	MCPClientName    string
 	MCPClientVersion string
 }
@@ -174,18 +178,18 @@ func (w *Writer) RecordHostKeyEvent(ev HostKeyEvent) string {
 	now := w.clk.Now().UTC().Format(isoMillis)
 	id := w.newEventID()
 	outcome := sql.NullString{}
-	if ev.Type == "host-key-mismatch" {
+	if ev.Type == "host-key-mismatch" || ev.Type == "unauthenticated-endpoint" {
 		outcome = sql.NullString{String: "denied", Valid: true}
 	}
 	_, err := w.db.Exec(
 		`INSERT INTO audit_signing_requests (id, account_id, type, source, created_at, resolved_at, outcome, latency_ms,
 			source_ip, endpoint_id, endpoint_label, endpoint_address,
-			mcp_reason, mcp_client_name, mcp_client_version,
+			reason, mcp_client_name, mcp_client_version,
 			host_key_fingerprint, host_key_prior_fingerprint, cancel_reason)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, ev.AccountID, ev.Type, ev.Source, now, now, outcome,
 		nz(ev.SourceIP), nz(ev.EndpointID), nz(ev.EndpointLabel), nz(ev.EndpointAddress),
-		nz(ev.MCPReason), nz(ev.MCPClientName), nz(ev.MCPClientVersion),
+		nz(ev.TriggerReason), nz(ev.MCPClientName), nz(ev.MCPClientVersion),
 		nz(ev.Fingerprint), nz(ev.PriorFingerprint), nz(ev.Reason))
 	if err != nil {
 		slog.Warn("audit: insert host-key event failed", "type", ev.Type, "endpoint", ev.EndpointID, "err", err)

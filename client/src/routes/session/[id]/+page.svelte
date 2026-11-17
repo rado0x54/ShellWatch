@@ -5,7 +5,7 @@
   import { page } from "$app/state";
   import Terminal from "$lib/components/Terminal.svelte";
   import TransferStrip from "$lib/components/TransferStrip.svelte";
-  import { type SessionMode, sessions } from "$lib/stores/ws.js";
+  import { ownerTransport, type SessionMode, sessions } from "$lib/stores/ws.js";
   import type { PageProps } from "./$types";
 
   let modes = $state<Record<string, SessionMode>>({});
@@ -41,7 +41,7 @@
       <TransferStrip sessionId={session.sessionId} />
       <div class="terminal-pane">
         <Terminal
-          sessionId={session.sessionId}
+          transport={ownerTransport(session.sessionId)}
           mode={modes[session.sessionId] ?? session.mode}
           onModeChange={(mode) => {
             modes[session.sessionId] = mode;

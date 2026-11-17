@@ -1,3 +1,10 @@
+## v1.2.0 (2026-11-15)
+
+- feat(agent-client): authenticate with a fixed CIMD client_id served by app.shellwatch.ai; DCR only via login --dcr ([#256](https://github.com/rado0x54/ShellWatch/pull/256)) ([#294](https://github.com/rado0x54/ShellWatch/pull/294))
+- security: cap inbound WebSocket message size and add baseline security response headers ([#264](https://github.com/rado0x54/ShellWatch/pull/264))
+- fix: clear pnpm audit (hono node-server 2.x, minimatch 11), bump agent-client to Go 1.27.3, add govulncheck CI gate ([#260](https://github.com/rado0x54/ShellWatch/pull/260))
+- test(e2e): black-box suite against real OpenSSH sshd + real Ory Hydra ([#245](https://github.com/rado0x54/ShellWatch/pull/245))
+
 ## v1.1.0 (2026-06-14)
 
 - feat: replace OAuth shim + API keys with Ory Hydra ([#217](https://github.com/rado0x54/ShellWatch/pull/217)) ([#218](https://github.com/rado0x54/ShellWatch/pull/218))

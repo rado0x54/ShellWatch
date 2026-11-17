@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
+/**
+ * One-time access tickets (#306), owner side: mint, list and revoke. The
+ * server pushes `tickets:changed` over /ws whenever a ticket or its guest
+ * session changes state; the list is refetched then.
+ */
+import { writable } from "svelte/store";
+import { apiFetch } from "../api.js";
+
+/** A ticket is listed until its guest session ends; ended ones are in the
+ * ticket audit (`fetchTicketEvents`). */
+export type TicketState = "minted" | "redeemed" | "pending" | "open";
+
+export interface TicketGuest {
+  state: Exclude<TicketState, "minted">;
+  channel: "web";
+  confirmationCode: string;
+  reason: string;
+  sourceIp: string;
+  userAgent: string;
+  redeemedAt: string;
+  admissionDeadline: string | null;
+  lifetimeDeadline: string | null;
+  sessionId: string | null;
+  attached: boolean;
+  connections: number;
+}
+
+export interface Ticket {
+  id: string;
+  endpointId: string;
+  label: string;
+  createdAt: string;
+  expiresAt: string;
+  redeemTtlSeconds: number;
+  lifetimeSeconds: number;
+  reasonRequired: boolean;
+  agentForward: boolean;
+  state: TicketState;
+  guest: TicketGuest | null;
+}
+
+export interface MintOptions {
+  label: string;
+  redeemTtlSeconds: number;
+  lifetimeSeconds: number;
+  reasonRequired: boolean;
+  agentForward: boolean;
+}
+
+/** The mint screen's defaults: the most restrictive value of each option. */
+export const DEFAULT_MINT_OPTIONS: MintOptions = {
+  label: "",
+  redeemTtlSeconds: 300,
+  lifetimeSeconds: 900,
+  reasonRequired: true,
+  agentForward: false,
+};
+
+/** Option bounds (seconds), mirrored from the server. */
+export const REDEEM_TTL_BOUNDS = { min: 60, max: 86_400 } as const;
+export const LIFETIME_BOUNDS = { min: 60, max: 28_800 } as const;
+
+export const tickets = writable<Ticket[]>([]);
+
+/**
+ * Server clock minus this device's clock (ms), from the list response's
+ * `Date` header: the ticket deadlines are server times, so countdowns use
+ * `Date.now() + offset`. 0 until known.
+ */
+export const ticketsClockOffset = writable(0);
+
+/** Bumped by every fetch: only the latest one may set the list. */
+let fetchSeq = 0;
+
+export async function fetchTickets(): Promise<void> {
+  // Refreshes overlap (tickets:changed, a reconnect, a page mount): a slow,
+  // older response must not overwrite a newer one ("pending" after "open").
+  const mine = ++fetchSeq;
+  const res = await apiFetch("/api/tickets");
+  if (!res.ok || mine !== fetchSeq) return;
+  const date = Date.parse(res.headers.get("Date") ?? "");
+  const data = (await res.json()) as { tickets: Ticket[] };
+  if (mine !== fetchSeq) return;
+  if (!Number.isNaN(date)) ticketsClockOffset.set(date - Date.now());
+  tickets.set(data.tickets);
+}
+
+async function errorFrom(res: Response, fallback: string): Promise<Error> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return new Error(body.error || fallback);
+  } catch {
+    return new Error(fallback);
+  }
+}
+
+/**
+ * Mint a ticket; returns it with its token and the share link (shown exactly
+ * once). The server builds the link from its externalUrl: the guest routes
+ * accept only that origin, whatever address this browser uses.
+ */
+export async function mintTicket(
+  endpointId: string,
+  opts: MintOptions,
+): Promise<{ ticket: Ticket; token: string; shareLink: string }> {
+  const res = await apiFetch(`/api/endpoints/${encodeURIComponent(endpointId)}/tickets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (res.status !== 201) throw await errorFrom(res, "Failed to create the access link");
+  const out = (await res.json()) as { ticket: Ticket; token: string; shareLink: string };
+  // The token is shown exactly once: a failed list refresh must not turn a
+  // successful mint into an error (the ticket exists either way).
+  void fetchTickets().catch(() => {});
+  return out;
+}
+
+/**
+ * Revoke a live ticket (ends its guest session). "ended" when the ticket is
+ * gone (404): its guest session had already ended, nothing changed.
+ */
+export async function revokeTicket(id: string): Promise<"revoked" | "ended"> {
+  const res = await apiFetch(`/api/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    throw await errorFrom(res, "Failed to revoke the ticket");
+  }
+  void fetchTickets().catch(() => {});
+  return res.ok ? "revoked" : "ended";
+}
+
+/** Why a guest session ended, for people (the raw reason is the fallback). */
+export function endReasonLabel(reason: string | null): string {
+  switch (reason) {
+    case "client.guest":
+      return "ended by the guest";
+    case "ticket-revoked":
+      return "revoked";
+    case "ticket-lifetime":
+      return "time limit reached";
+    case "ticket-not-admitted":
+      return "not admitted";
+    case "ticket-unattached":
+      return "guest never connected";
+    case "guest-disconnected":
+      return "guest disconnected";
+    case "endpoint-removed":
+      return "endpoint deleted";
+    case "idle-timeout":
+      return "idle timeout";
+    case "server-hangup":
+      return "the remote host ended it";
+    case "client.ui":
+    case "client.ws":
+      return "closed by you";
+    case "shutdown":
+      return "server shut down";
+    case null:
+      return "unknown";
+    default:
+      return reason;
+  }
+}
+
+/** The guest-access page's live groups, newest first within each. */
+export function groupTickets(list: Ticket[]): { active: Ticket[]; invites: Ticket[] } {
+  const newest = (a: Ticket, b: Ticket) => b.createdAt.localeCompare(a.createdAt);
+  return {
+    active: list.filter((t) => t.state !== "minted").sort(newest),
+    invites: list.filter((t) => t.state === "minted").sort(newest),
+  };
+}

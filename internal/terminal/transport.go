@@ -7,6 +7,8 @@ package terminal
 
 import (
 	"context"
+	"net"
+	"strconv"
 
 	"github.com/pkg/sftp"
 )
@@ -68,6 +70,12 @@ type EndpointRef struct {
 	Username         string
 	UserVerification string
 	AgentForward     bool
+}
+
+// Target is the address a session connects to (user@host:port). A ticket is
+// bound to the target it was minted for (#326).
+func (e EndpointRef) Target() string {
+	return e.Username + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 }
 
 // TransportFactory establishes a transport for a session.
