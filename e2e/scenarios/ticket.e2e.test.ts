@@ -232,7 +232,10 @@ describe(`one-time access ticket on sshd-${target}`, () => {
       },
       { what: "guest session gone" },
     );
-    expect(await guest.attach()).toBe(404);
+    // A reconnect with the dead cookie is told at once, in a frame (#321).
+    expect(await guest.attach()).toBe(101);
+    expect((await guest.status("closed")).message).toBe("The session has ended.");
+    guest.close();
 
     const audit = await sc.api.get<{ rows: { event: string; endReason: string | null }[] }>(
       `/api/audit/tickets?ticketId=${ticketId}`,
@@ -261,7 +264,7 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     expect(await guest.attach()).toBe(101);
     const prompt = await nextPrompt();
     expect((await sc.api.delete(`/api/tickets/${minted.body.ticket.id}`)).status).toBe(200);
-    expect((await guest.status("closed")).message).toBe("Access was not granted.");
+    expect((await guest.status("closed")).message).toBe("The session has ended.");
     await waitFor(
       async () =>
         (await sc.api.get<{ status: string }>(`/api/actions/${prompt.actionId}`)).status !== 200 ||

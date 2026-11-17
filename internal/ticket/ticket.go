@@ -86,11 +86,9 @@ const CookieName = "__Host-sw_guest"
 // codeAlphabet has no look-alikes (no 0/O, 1/I).
 const codeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
-// Generic messages: the only failure texts a guest ever sees.
-const (
-	MsgNotGranted = "Access was not granted."
-	MsgEnded      = "The session has ended."
-)
+// MsgEnded is the one closed text a guest sees, whatever ended its session
+// (the real reason is in the owner's audit log).
+const MsgEnded = "The session has ended."
 
 var (
 	// ErrNotFound is the uniform redeem failure: unknown, used, expired,
@@ -1147,7 +1145,7 @@ func (s *Service) statusLocked(g *guest) Status {
 		st.RetryAt = iso(g.retryAt)
 		attemptsLeft := MaxAttempts - g.attempt
 		st.AttemptsLeft = &attemptsLeft
-		st.Message = MsgNotGranted
+		st.Message = "Access was not granted."
 	case StateOpen:
 		st.LifetimeDeadline = iso(g.lifetimeDeadline)
 	}
@@ -1379,12 +1377,8 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 	delete(s.guests, g.id)
 	s.retainClosedLocked(g.t, reason)
 
-	msg := MsgEnded
-	if prev != StateOpen {
-		msg = MsgNotGranted
-	}
 	if s.pub != nil {
-		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: msg, ServerTime: iso(s.clk.Now())})
+		s.pub.GuestClose(g.id, Status{State: StateClosed, Message: MsgEnded, ServerTime: iso(s.clk.Now())})
 	}
 	now := s.clk.Now()
 	ev := s.event(g.t, g, audit.TicketEnded)

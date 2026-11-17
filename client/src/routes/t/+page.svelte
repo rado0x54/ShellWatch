@@ -22,6 +22,12 @@
     type RedeemFailure,
     clockOffsetMs,
   } from "$lib/guest/guest-client.js";
+  import {
+    endingFor,
+    onConnectionLost,
+    RECONNECT_DELAY_MS,
+    type Ending,
+  } from "$lib/guest/reconnect.js";
 
   type Phase =
     | "loading"
@@ -33,13 +39,6 @@
     | "open"
     | "ended"
     | "invalid";
-
-  const RECONNECT_DELAY_MS = 2000;
-  /** Matches the server's reconnect grace: past it the session is gone. */
-  const RECONNECT_GIVE_UP_MS = 60_000;
-  /** A reload with no token: how long to retry the first handshake before
-   * concluding this browser has no guest session. */
-  const RELOAD_ATTACH_RETRY_MS = 5000;
 
   let phase = $state<Phase>("loading");
   let token = $state("");
@@ -66,11 +65,9 @@
   let socket: GuestSocket | null = null;
   let term = $state<GuestTerminal | null>(null);
   let dropSince: number | null = null;
-  /** Until when a failed first handshake is retried: right after redeeming
-   * this is the server's attach deadline (the session stays attachable until
-   * then), so one network blip or 429 cannot lock out a guest whose ticket
-   * is already spent. */
-  let firstConnectDeadline = 0;
+  /** Whether this run has received any status: decides which ending text a
+   * guest session gets (see endingFor). */
+  let sawStatus = false;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -90,6 +87,13 @@
       clockOffset = clockOffsetMs(st.serverTime, Date.now());
       now = serverNow();
     }
+    if (st.state === "closed") {
+      showEnding(endingFor(sawStatus, st.message));
+      socket?.close();
+      socket = null;
+      return;
+    }
+    sawStatus = true;
     reconnecting = false;
     dropSince = null;
     if (st.code) code = st.code;
@@ -107,36 +111,26 @@
         if (st.lifetimeDeadline) lifetimeDeadline = Date.parse(st.lifetimeDeadline);
         phase = "open";
         break;
-      case "closed":
-        endedMessage = st.message ?? "The session has ended.";
-        phase = "ended";
-        socket?.close();
-        socket = null;
-        break;
     }
   }
 
+  function showEnding(e: Ending): void {
+    reconnecting = false;
+    failure = null;
+    if (e.phase === "ended") endedMessage = e.message;
+    phase = e.phase;
+  }
+
+  /** A failed handshake (first connect included) or a dropped socket: the
+   * server could not be reached, so retry until the give-up. */
   function onDrop(): void {
     if (phase === "ended" || phase === "invalid") return;
-    if (phase === "connecting" && dropSince === null && !reconnecting) {
-      // The first handshake failed. Keep trying while the session can still
-      // be attached. Past that, there is no guest session for this browser
-      // (reload after the session ended, or a copied URL).
-      if (Date.now() < firstConnectDeadline) {
-        reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
-        return;
-      }
-      phase = "invalid";
-      failure = null;
+    const d = onConnectionLost(dropSince, sawStatus, Date.now());
+    if (!d.retry) {
+      showEnding(d.ending);
       return;
     }
-    const t = Date.now();
-    dropSince ??= t;
-    if (t - dropSince > RECONNECT_GIVE_UP_MS) {
-      endedMessage = "The connection was lost and the session has ended.";
-      phase = "ended";
-      return;
-    }
+    dropSince = d.dropSince;
     reconnecting = true;
     reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
   }
@@ -189,9 +183,6 @@
     token = "";
     code = res.redeemed.confirmationCode;
     clockOffset = res.clockOffsetMs;
-    // In local time: the server's attach deadline shifted by the offset.
-    const attachBy = Date.parse(res.redeemed.attachDeadline) - clockOffset;
-    firstConnectDeadline = Number.isNaN(attachBy) ? Date.now() + 30_000 : attachBy;
     phase = "connecting";
     connect();
   }
@@ -262,11 +253,11 @@
     linkNotice = "";
     reconnecting = false;
     dropSince = null;
+    sawStatus = false;
     if (t === null) {
       // No link in the address bar: a reload of a live guest session (the
       // cookie reattaches), or nothing to do here.
       phase = "connecting";
-      firstConnectDeadline = Date.now() + RELOAD_ATTACH_RETRY_MS;
       connect();
       return;
     }
@@ -354,7 +345,7 @@
       {/if}
 
       {#if phase === "loading" || phase === "redeeming" || phase === "connecting"}
-        <p class="muted">Please wait…</p>
+        <p class="muted">{reconnecting ? "Reconnecting…" : "Please wait…"}</p>
       {:else if phase === "form"}
         <p>
           Someone shared one-time access to a terminal with you. Say why you need it; the person who

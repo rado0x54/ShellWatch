@@ -308,8 +308,15 @@ and other sessions' output can never reach it.
   **403** before the upgrade (log: `ws: guest origin rejected`). The expected
   origin never comes from `Host` or the connection's scheme, so a reverse proxy
   that rewrites `Host` or terminates TLS changes nothing.
-- No live guest session for the cookie → **404** before the upgrade. Also
-  behind `security.allowedNetworks` (403) and a per-IP rate limit (429).
+- No live guest session for the cookie (ended, revoked, never existed, or no
+  cookie at all — the server keeps no state to tell them apart) → the upgrade
+  is **accepted**, a single `status` frame `closed` / "The session has ended."
+  (with `serverTime`) is sent, and the connection closes normally (log:
+  `ws: guest rejected`). A browser cannot see why a handshake failed, so a
+  refused upgrade would look like a network drop and the page would keep
+  reconnecting. Such a connection never attaches. The wrong-`Origin` 403
+  still comes first. Also behind `security.allowedNetworks` (403) and a
+  per-IP rate limit (429).
 - Several tabs of the redeeming browser may attach at once (each gets the
   catch-up, then the same output; input from any goes to the session); at most
   8 connections per guest session. A further one receives a final `closed`
@@ -343,12 +350,12 @@ the frame was built). The guest device's clock may be off, so the page counts
 `status` fields by `state` — none ever names the endpoint (label, address,
 user) or carries a server error text; `message` is one of a few fixed texts:
 
-| `state`   | Fields                                                                                                           | Meaning                                                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pending` | `code`, `admissionDeadline?`                                                                                     | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                                                    |
-| `refused` | `code`, `admissionDeadline`, `remainingSeconds`, `retryAt`, `attemptsLeft`, `message: "Access was not granted."` | The attempt ended without admission (every key skipped or expired, or the connect failed). The guest may send `retry` from `retryAt` (15 s after the refusal) until the deadline. A guest session has at most 3 attempts; when the last one is refused, or no retry could start before the admission deadline, it closes instead (`closed`, "Access was not granted."). |
-| `open`    | `lifetimeDeadline`                                                                                               | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                                                       |
-| `closed`  | `message: "Access was not granted."` (never admitted) or `"The session has ended."`                              | Final. The server closes the connection after it.                                                                                                                                                                                                                                                                                                                       |
+| `state`   | Fields                                                                                                           | Meaning                                                                                                                                                                                                                                                                                                                                      |
+| --------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pending` | `code`, `admissionDeadline?`                                                                                     | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                         |
+| `refused` | `code`, `admissionDeadline`, `remainingSeconds`, `retryAt`, `attemptsLeft`, `message: "Access was not granted."` | The attempt ended without admission (every key skipped or expired, or the connect failed). The guest may send `retry` from `retryAt` (15 s after the refusal) until the deadline. A guest session has at most 3 attempts; when the last one is refused, or no retry could start before the admission deadline, it closes instead (`closed`). |
+| `open`    | `lifetimeDeadline`                                                                                               | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                            |
+| `closed`  | `message: "The session has ended."` (whatever the cause) or `"Too many open windows for this session."`          | Final. The server closes the connection after it. The cap text means only this connection was refused; the session itself goes on in the guest's other tabs. The real end reason is only in the owner's audit log.                                                                                                                           |
 
 ## Lifecycle bounds
 
