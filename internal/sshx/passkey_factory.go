@@ -227,7 +227,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 		EndpointAddress: fmt.Sprintf("%s@%s:%d", fp.Endpoint.Username, fp.Endpoint.Host, fp.Endpoint.Port),
 		TriggerKind:     string(fp.Trigger.Kind),
 		SourceIP:        fp.Trigger.SourceIP,
-		MCPReason:       fp.Trigger.Reason,
+		Reason:          fp.Trigger.Reason,
 		MCPClientName:   fp.Trigger.MCPClientName,
 		MCPClientVer:    fp.Trigger.MCPClientVer,
 	}

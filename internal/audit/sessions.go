@@ -30,18 +30,16 @@ type SessionRow struct {
 	ClosedAt         *string `json:"closedAt"`
 	DurationMs       *int64  `json:"durationMs"`
 	SourceIP         *string `json:"sourceIp"`
-	MCPReason        *string `json:"mcpReason"`
+	Reason           *string `json:"reason"` // the trigger's self-reported reason (mcp or ticket)
 	MCPClientName    *string `json:"mcpClientName"`
 	MCPClientVersion *string `json:"mcpClientVersion"`
 	ClientHostname   *string `json:"clientHostname"`
 	ClientOS         *string `json:"clientOs"`
 	ClientVersion    *string `json:"clientVersion"`
 	CloseReason      *string `json:"closeReason"`
-	// Ticket guest sessions (#306): the admitting ticket and the guest's
-	// self-reported reason.
+	// Ticket guest sessions (#306): the admitting ticket.
 	TicketID    *string `json:"ticketId"`
 	TicketLabel *string `json:"ticketLabel"`
-	Reason      *string `json:"reason"`
 }
 
 // SessionFilters narrow a session-lifecycle page.
@@ -88,8 +86,8 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 	}
 
 	query := `SELECT session_id, account_id, endpoint_id, source, status, created_at,
-		closed_at, duration_ms, source_ip, mcp_reason, mcp_client_name, mcp_client_version,
-		client_hostname, client_os, client_version, close_reason, ticket_id, ticket_label, reason
+		closed_at, duration_ms, source_ip, reason, mcp_client_name, mcp_client_version,
+		client_hostname, client_os, client_version, close_reason, ticket_id, ticket_label
 		FROM audit_session_lifecycle WHERE ` + strings.Join(conds, " AND ") +
 		` ORDER BY created_at DESC, session_id DESC LIMIT ?`
 	args = append(args, limit+1)
@@ -103,17 +101,17 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 	out := []SessionRow{} // non-nil: empty pages serialize as "rows": []
 	for rows.Next() {
 		var r SessionRow
-		var closedAt, sourceIP, mcpReason, mcpName, mcpVer, cHost, cOS, cVer, closeReason, ticketID, ticketLabel, reason sql.NullString
+		var closedAt, sourceIP, reason, mcpName, mcpVer, cHost, cOS, cVer, closeReason, ticketID, ticketLabel sql.NullString
 		var duration sql.NullInt64
 		if err := rows.Scan(&r.SessionID, &r.AccountID, &r.EndpointID, &r.Source, &r.Status, &r.CreatedAt,
-			&closedAt, &duration, &sourceIP, &mcpReason, &mcpName, &mcpVer,
-			&cHost, &cOS, &cVer, &closeReason, &ticketID, &ticketLabel, &reason); err != nil {
+			&closedAt, &duration, &sourceIP, &reason, &mcpName, &mcpVer,
+			&cHost, &cOS, &cVer, &closeReason, &ticketID, &ticketLabel); err != nil {
 			return Page[SessionRow]{}, err
 		}
 		r.ClosedAt = ns(closedAt)
 		r.DurationMs = ni(duration)
 		r.SourceIP = ns(sourceIP)
-		r.MCPReason = ns(mcpReason)
+		r.Reason = ns(reason)
 		r.MCPClientName = ns(mcpName)
 		r.MCPClientVersion = ns(mcpVer)
 		r.ClientHostname = ns(cHost)
@@ -122,7 +120,6 @@ func (s *Sessions) List(ctx context.Context, accountID string, f SessionFilters,
 		r.CloseReason = ns(closeReason)
 		r.TicketID = ns(ticketID)
 		r.TicketLabel = ns(ticketLabel)
-		r.Reason = ns(reason)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

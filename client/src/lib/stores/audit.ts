@@ -10,7 +10,7 @@ export interface AuditSessionRow {
   closedAt: string | null;
   durationMs: number | null;
   sourceIp: string | null;
-  mcpReason: string | null;
+  reason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
   clientHostname: string | null;
@@ -66,7 +66,7 @@ export interface SigningRequestRow {
   endpointLabel: string | null;
   endpointAddress: string | null;
   sessionId: string | null;
-  mcpReason: string | null;
+  reason: string | null;
   mcpClientName: string | null;
   mcpClientVersion: string | null;
   clientHostname: string | null;

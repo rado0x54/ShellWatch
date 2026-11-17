@@ -57,7 +57,7 @@ func notificationsServer(t *testing.T) *httptest.Server {
 		Payload: map[string]any{
 			"endpointId": "audit-endpoint-2", "endpointLabel": "Demo",
 			"endpointAddress": "openclaw@172.28.0.117:22", "trigger": "mcp",
-			"mcpClientName": "codex", "mcpClientVersion": "1.2.3", "mcpReason": "deploy hotfix",
+			"mcpClientName": "codex", "mcpClientVersion": "1.2.3", "reason": "deploy hotfix",
 			"sourceIp": "203.0.113.1",
 			"error":    "Failed to connect to demo: dial tcp 172.28.0.117:22: i/o timeout",
 		},

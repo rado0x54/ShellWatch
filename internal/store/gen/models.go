@@ -34,7 +34,6 @@ type AuditSessionLifecycle struct {
 	ClosedAt         sql.NullString
 	DurationMs       sql.NullInt64
 	SourceIp         sql.NullString
-	McpReason        sql.NullString
 	McpClientName    sql.NullString
 	McpClientVersion sql.NullString
 	ClientHostname   sql.NullString
@@ -59,7 +58,7 @@ type AuditSigningRequest struct {
 	EndpointLabel           sql.NullString
 	EndpointAddress         sql.NullString
 	SessionID               sql.NullString
-	McpReason               sql.NullString
+	Reason                  sql.NullString
 	McpClientName           sql.NullString
 	McpClientVersion        sql.NullString
 	ClientHostname          sql.NullString

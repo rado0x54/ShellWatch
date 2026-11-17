@@ -214,7 +214,7 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
       expect(audit).toMatchObject({
         source: "mcp",
         closeReason: "client.mcp",
-        mcpReason: MCP_REASON,
+        reason: MCP_REASON,
         mcpClientName: mcpClientId,
       });
       const signing = await sc.api.get<Record<string, unknown>>(
@@ -223,7 +223,7 @@ describe(`MCP (Hydra token, real sshd-${target})`, () => {
       expect(signing.body).toMatchObject({
         source: "endpoint-auth",
         outcome: "approved",
-        mcpReason: MCP_REASON,
+        reason: MCP_REASON,
         mcpClientName: mcpClientId,
       });
 

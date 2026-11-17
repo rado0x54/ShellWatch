@@ -13,7 +13,7 @@
     "endpointLabel": "Prod Web",
     "endpointAddress": "ubuntu@web-01:22",
     "sessionId": null,
-    "mcpReason": null,
+    "reason": null,
     "mcpClientName": null,
     "mcpClientVersion": null,
     "clientHostname": null,

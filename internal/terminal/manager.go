@@ -312,7 +312,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	}
 	if trigger.Kind == SourceMCP {
 		sess.OwnerClientID = trigger.OwnerClientID
-		sess.MCPReason = trigger.Reason
+		sess.Reason = trigger.Reason
 		sess.MCPClientName = trigger.MCPClientName
 		sess.MCPClientVer = trigger.MCPClientVer
 	}

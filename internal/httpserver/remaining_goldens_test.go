@@ -137,7 +137,7 @@ func seedKeyAction(as *approval.Store) *approval.Action {
 		KeyLabel: "Deploy Key", KeyFingerprint: "SHA256:Rml4ZWREZXRlcm1pbmlzdGljRmluZ2VycHJpbnQ",
 		Context: approval.Context{
 			Source: "endpoint-auth", EndpointLabel: "Prod DB", EndpointAddress: "deploy@db.internal:2222",
-			TriggerKind: "mcp", MCPReason: "deploy hotfix", MCPClientName: "codex",
+			TriggerKind: "mcp", Reason: "deploy hotfix", MCPClientName: "codex",
 		},
 		ResolveKey: func() {},
 	})

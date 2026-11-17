@@ -77,16 +77,15 @@ type Session struct {
 	// only; empty for UI sessions). MCP ownership is (AccountID, OwnerClientID)
 	// — the spec's server-minted-handle model, #243.
 	OwnerClientID string
-	MCPReason     string
+	// Reason is the trigger's self-reported reason (an MCP agent's or a
+	// ticket guest's — Source tells which, #319).
+	Reason        string
 	MCPClientName string
 	MCPClientVer  string
 	// Ticket fields (source ticket only, #306).
 	TicketID      string
 	TicketLabel   string
 	TicketChannel TicketChannel
-	// Reason is the self-reported reason of a ticket guest (MCP sessions
-	// keep theirs in MCPReason for wire compatibility).
-	Reason string
 }
 
 // Trigger carries create-time metadata (EndpointAuthTrigger subset).

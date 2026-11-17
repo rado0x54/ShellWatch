@@ -242,7 +242,12 @@ components:
             OAuth client_id that owns the session (mcp source only; omitted for
             ui sessions). MCP session visibility is scoped to
             (account, ownerClientId) — #243.
-        mcpReason: { type: string }
+        reason:
+          type: string
+          description: >-
+            The trigger's self-reported reason (unverified): an MCP agent's
+            (source `mcp`) or a one-time access guest's (source `ticket`,
+            #306); `source` tells which (#319).
         mcpClientName: { type: string }
         mcpClientVersion: { type: string }
         ticketId:
@@ -251,11 +256,6 @@ components:
         ticketLabel:
           type: string
           description: Source `ticket` only (#306); may be empty.
-        reason:
-          type: string
-          description: >-
-            Source `ticket` only (#306) — the guest's self-reported reason for
-            access (unverified).
         guestAttached:
           type: boolean
           description: >-
@@ -385,7 +385,13 @@ components:
         closedAt: { type: string, format: date-time, nullable: true }
         durationMs: { type: integer, nullable: true }
         sourceIp: { type: string, nullable: true }
-        mcpReason: { type: string, nullable: true }
+        reason:
+          type: string
+          nullable: true
+          description: >-
+            The trigger's self-reported reason (unverified): an MCP agent's
+            (source `mcp`) or a one-time access guest's (source `ticket`,
+            #306); `source` tells which (#319).
         mcpClientName: { type: string, nullable: true }
         mcpClientVersion: { type: string, nullable: true }
         clientHostname: { type: string, nullable: true }
@@ -397,12 +403,6 @@ components:
           nullable: true
           description: Source `ticket` only (#306).
         ticketLabel: { type: string, nullable: true }
-        reason:
-          type: string
-          nullable: true
-          description: >-
-            The guest's self-reported reason (source `ticket`). MCP sessions keep
-            theirs in `mcpReason`.
 
     SigningRequestPage:
       type: object
@@ -865,7 +865,7 @@ components:
             audit row); session-connect-failed — any other
             failed SSH connect, whatever the trigger (payload: endpointId,
             endpointLabel, endpointAddress, trigger, mcpClientName,
-            mcpClientVersion, mcpReason, sourceIp, error);
+            mcpClientVersion, reason, sourceIp, error);
             file-transfer-failed — an out-of-band file transfer ended failed
             or expired, including one interrupted by a server restart, or a
             finished upload (status may be completed or cancelled) whose staging cleanup
@@ -921,7 +921,13 @@ components:
         endpointLabel: { type: string, nullable: true }
         endpointAddress: { type: string, nullable: true }
         sessionId: { type: string, nullable: true }
-        mcpReason: { type: string, nullable: true }
+        reason:
+          type: string
+          nullable: true
+          description: >-
+            The trigger's self-reported reason (unverified, #319): an MCP
+            agent's (mcpClientName is set) or a one-time access guest's
+            (#306).
         mcpClientName: { type: string, nullable: true }
         mcpClientVersion: { type: string, nullable: true }
         clientHostname: { type: string, nullable: true }
