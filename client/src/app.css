@@ -96,6 +96,12 @@
   --secondary-dim: #b07a1a;
   --on-secondary: #2a1a00;
 
+  /* Session sources that are not you at the keyboard: warm accents next to
+     amber, distinct from each other and from error red. UI sessions keep the
+     neutral look. */
+  --source-mcp: #f5d04a; /* MCP agent — gold */
+  --source-ticket: #ff8a3d; /* one-time access guest — orange */
+
   /* Error — crimson */
   --error: #ff5a5a;
   --error-container: #8b1a1a;
@@ -336,6 +342,26 @@ pre,
 /* ------------------------------------------------------------------
  * Status dots — small 6px squares, colored, glow when live
  * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+ * Session source accent (sidebar, Observer Mode): an MCP or guest session
+ * carries .source-mcp / .source-ticket, which sets --source-accent for its
+ * rail, tile edge and .source-tag.
+ * ------------------------------------------------------------------ */
+.source-mcp {
+  --source-accent: var(--source-mcp);
+}
+.source-ticket {
+  --source-accent: var(--source-ticket);
+}
+.source-tag {
+  font-family: var(--font-mono);
+  font-size: var(--label-sm);
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--source-accent, var(--on-surface-variant));
+}
+
 .status-dot {
   display: inline-block;
   width: 6px;
@@ -398,8 +424,27 @@ pre,
   background: var(--surface-bright);
   border: 1px solid var(--outline-variant);
   padding: 1.5rem;
-  min-width: 340px;
+  min-width: min(340px, calc(100vw - 2rem));
   max-width: 480px;
+  /* Long dialogs (endpoint picker, share form) scroll inside the viewport. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+/* Phones: dialogs take the full width with a small margin. The inline
+   width/max-width a dialog sets (Modal's width prop) yields to this. */
+@media (max-width: 480px) {
+  .modal-overlay {
+    align-items: flex-start;
+    padding: 1rem;
+  }
+
+  .modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0;
+    padding: 1.25rem;
+  }
 }
 
 .modal h3 {

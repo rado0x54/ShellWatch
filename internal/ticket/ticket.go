@@ -55,6 +55,11 @@ const (
 	MaxAttempts = 3
 	// RetryCooldown is the minimum wait after a refusal before "Ask again".
 	RetryCooldown = 15 * time.Second
+	// ClosedRetention and MaxClosedPerAccount bound how long, and how many,
+	// closed guest sessions stay in the owner's list (the same limits as the
+	// Manager's ended terminal sessions); the audit log keeps them for good.
+	ClosedRetention     = 5 * time.Minute
+	MaxClosedPerAccount = 10
 	// ReasonMaxLen caps the guest's reason (characters, after sanitizing).
 	ReasonMaxLen = 200
 	// LabelMaxLen caps a ticket label (characters).
@@ -110,6 +115,10 @@ var (
 	// request, a database error). The ticket is left untouched, so the
 	// guest can simply try again.
 	ErrUnavailable = errors.New("temporarily unavailable")
+	// ErrAlreadyEnded: revoke of a ticket whose guest session already
+	// ended. Nothing changes; the ticket leaves the list on its own
+	// (ClosedRetention), and the audit already has its end.
+	ErrAlreadyEnded = errors.New("ticket already ended")
 )
 
 // OptionError is a mint option outside its bounds.
@@ -221,6 +230,10 @@ type ticket struct {
 	createdAt  time.Time
 	expiresAt  time.Time
 	guest      *guest
+	// endedAt / endReason: set when the guest session closed; the ticket
+	// then stays listed (state closed) until the retention limits drop it.
+	endedAt   time.Time
+	endReason terminal.CloseReason
 }
 
 type guest struct {
@@ -330,17 +343,14 @@ func (fx *effects) ownerSessions(accountID string) {
 // apply runs the deferred effects. async closes terminal sessions on their
 // own goroutines — required inside a Manager status hook, where a
 // synchronous Close would join a pump that has not started yet.
-func (s *Service) apply(fx *effects, async bool) {
+func (s *Service) apply(fx *effects) {
 	for _, c := range fx.cancels {
 		c()
 	}
-	for _, c := range fx.closes {
-		if async {
-			go s.p.Manager.Close(c.sessionID, c.reason)
-		} else {
-			s.p.Manager.Close(c.sessionID, c.reason)
-		}
-	}
+	// Audit rows and owner notifications first: they are quick and must not
+	// wait behind a terminal close. A close can block for seconds (a wedged
+	// transport, up to the Manager's join timeout), so each one runs on its
+	// own goroutine — the janitor and every other caller move on at once.
 	if s.p.Audit != nil {
 		for _, ev := range fx.audits {
 			s.p.Audit.Record(ev)
@@ -353,6 +363,9 @@ func (s *Service) apply(fx *effects, async bool) {
 		for acc := range fx.sessions {
 			s.p.Notifier.SessionsChanged(acc)
 		}
+	}
+	for _, c := range fx.closes {
+		go s.p.Manager.Close(c.sessionID, c.reason)
 	}
 }
 
@@ -447,7 +460,7 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (Minted, error) {
 	fx.audits = append(fx.audits, s.event(t, nil, audit.TicketMinted))
 	fx.ownerTickets(t.accountID)
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	slog.Info("ticket: minted", "account", t.accountID, "ticket", t.id, "endpoint", t.endpointID,
 		"redeemTtl", opts.RedeemTTL, "lifetime", opts.Lifetime,
 		"reasonRequired", opts.ReasonRequired, "agentForward", opts.AgentForward)
@@ -467,6 +480,9 @@ type View struct {
 	AgentForward     bool       `json:"agentForward"`
 	State            string     `json:"state"`
 	Guest            *GuestView `json:"guest"`
+	// EndedAt / EndReason: set once the guest session closed (state closed).
+	EndedAt   *string `json:"endedAt"`
+	EndReason *string `json:"endReason"`
 }
 
 // GuestView is the guest-session half of a View.
@@ -520,11 +536,16 @@ func (s *Service) viewLocked(t *ticket) View {
 		}
 		v.Guest = gv
 	}
+	if !t.endedAt.IsZero() {
+		v.EndedAt = isoPtr(t.endedAt)
+		why := string(t.endReason)
+		v.EndReason = &why
+	}
 	return v
 }
 
-// List returns the account's live tickets (unredeemed, or with a live
-// guest session), oldest first.
+// List returns the account's tickets — unredeemed, with a live guest
+// session, or with a recently closed one (ClosedRetention) — oldest first.
 func (s *Service) List(accountID string) []View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -544,16 +565,22 @@ func (s *Service) List(accountID string) []View {
 	return out
 }
 
-// Revoke ends a ticket in any state: an unredeemed ticket is deleted,
-// anything later goes through the close path. False when the ticket is not
-// the account's (or no longer exists).
-func (s *Service) Revoke(accountID, ticketID string) bool {
+// Revoke ends a live ticket: an unredeemed one is deleted, a redeemed one
+// goes through the close path. ErrNotFound when the ticket is not the
+// account's (or no longer listed); ErrAlreadyEnded when its guest session
+// already ended — nothing is removed then.
+func (s *Service) Revoke(accountID, ticketID string) error {
 	var fx effects
 	s.mu.Lock()
 	t, ok := s.tickets[ticketID]
 	if !ok || t.accountID != accountID {
 		s.mu.Unlock()
-		return false
+		return ErrNotFound
+	}
+	if !t.endedAt.IsZero() {
+		s.mu.Unlock()
+		slog.Info("ticket: revoke ignored", "account", accountID, "ticket", ticketID, "reason", "already ended")
+		return ErrAlreadyEnded
 	}
 	fx.audits = append(fx.audits, s.event(t, t.guest, audit.TicketRevoked))
 	if t.guest == nil {
@@ -563,9 +590,36 @@ func (s *Service) Revoke(accountID, ticketID string) bool {
 		s.closeLocked(t.guest, terminal.CloseTicketRevoked, &fx)
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	slog.Info("ticket: revoked", "account", accountID, "ticket", ticketID)
-	return true
+	return nil
+}
+
+// retainClosedLocked keeps a ticket whose guest session just closed in the
+// owner's list for ClosedRetention, dropping the account's oldest closed
+// ones beyond MaxClosedPerAccount.
+func (s *Service) retainClosedLocked(t *ticket, reason terminal.CloseReason) {
+	t.endedAt = s.clk.Now()
+	t.endReason = reason
+	var closed []*ticket
+	for _, o := range s.tickets {
+		if o.accountID == t.accountID && !o.endedAt.IsZero() {
+			closed = append(closed, o)
+		}
+	}
+	if over := len(closed) - MaxClosedPerAccount; over > 0 {
+		slices.SortFunc(closed, func(a, b *ticket) int { return a.endedAt.Compare(b.endedAt) })
+		for _, o := range closed[:over] {
+			s.dropClosedLocked(o, "evicted")
+		}
+	}
+}
+
+// dropClosedLocked removes an ended ticket from the owner's list and logs
+// why (expired, evicted, endpoint or account removed).
+func (s *Service) dropClosedLocked(t *ticket, why string) {
+	s.dropTicketLocked(t)
+	slog.Info("ticket: removed from list", "account", t.accountID, "ticket", t.id, "reason", why)
 }
 
 func (s *Service) dropTicketLocked(t *ticket) {
@@ -791,7 +845,7 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	fx.ownerTickets(t.accountID)
 	opts = t.opts
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	slog.Info("ticket: redeemed", "account", t.accountID, "ticket", t.id, "channel", p.Channel, "sourceIp", p.SourceIP)
 	return Redeemed{
 		Cookie:           cookie,
@@ -816,7 +870,7 @@ func (s *Service) invalidate(t *ticket, event, why string) {
 	fx.audits = append(fx.audits, ev)
 	fx.ownerTickets(t.accountID)
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 func (s *Service) liveGuestsLocked(accountID string) int {
@@ -912,7 +966,7 @@ func (s *Service) Attach(guestID string) error {
 		fx.ownerSessions(g.t.accountID)
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	return nil
 }
 
@@ -937,7 +991,7 @@ func (s *Service) Detach(guestID string) {
 		}
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 // End is the guest's End button: close immediately.
@@ -970,7 +1024,7 @@ func (s *Service) Retry(guestID string) {
 	fx.ownerTickets(g.t.accountID)
 	ticketID, attempt := g.t.id, g.attempt
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	slog.Info("ticket: retry", "ticket", ticketID, "attempt", attempt)
 }
 
@@ -1108,7 +1162,7 @@ func (s *Service) attemptFailed(guestID string, n int, why string) {
 	}
 	s.refuseLocked(g, why, &fx)
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 func (s *Service) refuseLocked(g *guest, why string, fx *effects) {
@@ -1192,7 +1246,7 @@ func (s *Service) onStatus(ev terminal.StatusEvent) {
 		}
 	}
 	s.mu.Unlock()
-	s.apply(&fx, true)
+	s.apply(&fx)
 }
 
 // --- the one close path ---------------------------------------------------
@@ -1207,7 +1261,7 @@ func (s *Service) closeByID(guestID string, reason terminal.CloseReason) {
 	}
 	s.closeLocked(g, reason, &fx)
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 // closeLocked is the one close path. It closes the terminal session (or
@@ -1221,6 +1275,10 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 	}
 	prev := g.state
 	g.state = StateClosed
+	// A closed guest session stays listed for a while: it must not claim
+	// connections (the sockets are being closed now).
+	g.conns = 0
+	g.graceDeadline = time.Time{}
 	if g.attemptCancel != nil {
 		fx.cancels = append(fx.cancels, g.attemptCancel)
 		g.attemptCancel = nil
@@ -1235,7 +1293,7 @@ func (s *Service) closeLocked(g *guest, reason terminal.CloseReason, fx *effects
 	}
 	delete(s.byCookie, g.cookieHash)
 	delete(s.guests, g.id)
-	s.dropTicketLocked(g.t)
+	s.retainClosedLocked(g.t, reason)
 
 	msg := MsgEnded
 	if prev != StateOpen {
@@ -1288,6 +1346,13 @@ func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseR
 		if !match(t) {
 			continue
 		}
+		if !t.endedAt.IsZero() {
+			// Already closed: its account or endpoint is gone, so it leaves
+			// the list now.
+			s.dropClosedLocked(t, string(reason))
+			fx.ownerTickets(t.accountID)
+			continue
+		}
 		if t.guest == nil {
 			s.dropTicketLocked(t)
 			ev := s.event(t, nil, audit.TicketInvalidated)
@@ -1299,7 +1364,7 @@ func (s *Service) closeMatching(match func(*ticket) bool, reason terminal.CloseR
 		}
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 // Sweep enforces every deadline: redeem TTL, attach window, admission
@@ -1310,6 +1375,11 @@ func (s *Service) Sweep() {
 	now := s.clk.Now()
 	s.mu.Lock()
 	for _, t := range s.tickets {
+		if !t.endedAt.IsZero() && now.Sub(t.endedAt) >= ClosedRetention {
+			s.dropClosedLocked(t, "expired")
+			fx.ownerTickets(t.accountID)
+			continue
+		}
 		if t.guest == nil && !now.Before(t.expiresAt) {
 			s.dropTicketLocked(t)
 			fx.audits = append(fx.audits, s.event(t, nil, audit.TicketExpired))
@@ -1330,7 +1400,7 @@ func (s *Service) Sweep() {
 		}
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 }
 
 // RunJanitor sweeps every interval until ctx is done.
@@ -1353,14 +1423,13 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	s.closed = true
 	for _, t := range s.tickets {
-		if t.guest != nil {
+		if t.guest != nil && t.endedAt.IsZero() {
 			s.closeLocked(t.guest, terminal.CloseShutdown, &fx)
-		} else {
-			s.dropTicketLocked(t)
 		}
+		s.dropTicketLocked(t)
 	}
 	s.mu.Unlock()
-	s.apply(&fx, false)
+	s.apply(&fx)
 	if s.unsub != nil {
 		s.unsub()
 	}

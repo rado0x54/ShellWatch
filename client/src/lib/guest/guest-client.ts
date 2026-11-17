@@ -22,7 +22,7 @@ export type RedeemFailure =
   | "not-found" // unknown, used, expired, revoked: indistinguishable
   | "reason-required"
   | "live-session" // this browser already holds a guest session
-  | "busy" // the owner's guest-session cap; retry later
+  | "busy" // 429: the owner's guest-session cap or the rate limit; retry later
   | "forbidden"
   | "error";
 
@@ -53,7 +53,9 @@ export const REDEEM_FAILURE_TEXT: Record<RedeemFailure, string> = {
   "not-found": "This access link is not valid. It may have been used, revoked or expired.",
   "reason-required": "Please say why you need access.",
   "live-session": "This browser already has an active guest session.",
-  busy: "Too many guest sessions are active right now. Try again in a few minutes.",
+  // 429 is the owner's guest-session limit or the per-address rate limit;
+  // the guest cannot tell which, so the text covers both.
+  busy: "Too many requests right now. Try again in a few minutes.",
   forbidden: "This access link cannot be used from here.",
   error: "Something went wrong. Try again.",
 };

@@ -494,7 +494,8 @@ components:
         The owner's view of a one-time access ticket and, once redeemed, its
         guest session (#306). Tickets live in process memory: a restart
         invalidates them. Listed while the ticket is unredeemed or its guest
-        session is live; afterwards only the audit log has it.
+        session is live, then for 5 minutes as `closed` (at most 10 per
+        account); afterwards only the audit log has it.
       properties:
         id: { type: string }
         endpointId: { type: string }
@@ -518,14 +519,27 @@ components:
             false no forwarding channel is opened whatever the endpoint says.
         state:
           type: string
-          enum: [minted, redeemed, pending, refused, open]
+          enum: [minted, redeemed, pending, refused, open, closed]
           description: >-
             `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket
             not attached yet; `pending` — an admission attempt is running (sign
             prompts are open); `refused` — the last attempt was not approved,
             the guest may ask again inside the admission window; `open` —
-            admitted.
+            admitted; `closed` — the guest session ended (`endReason`). A
+            closed ticket stays listed for 5 minutes, at most 10 per account.
         guest: { $ref: "#/components/schemas/TicketGuestView" }
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the guest session closed (state `closed` only).
+        endReason:
+          type: string
+          nullable: true
+          description: >-
+            Why the guest session closed (a terminal close reason, e.g.
+            `client.guest`, `ticket-revoked`, `ticket-lifetime`); state
+            `closed` only.
       required:
         [
           id,
@@ -539,6 +553,8 @@ components:
           agentForward,
           state,
           guest,
+          endedAt,
+          endReason,
         ]
 
     TicketGuestView:
@@ -546,7 +562,7 @@ components:
       nullable: true
       description: Null until the ticket is redeemed.
       properties:
-        state: { type: string, enum: [redeemed, pending, refused, open] }
+        state: { type: string, enum: [redeemed, pending, refused, open, closed] }
         channel: { type: string, enum: [web], description: "`ssh` follows with #307." }
         confirmationCode:
           type: string
@@ -1974,7 +1990,7 @@ paths:
     get:
       operationId: listTickets
       tags: [tickets]
-      summary: List the account's live tickets and guest sessions
+      summary: List the account's tickets and guest sessions (live and recently closed)
       parameters:
         - name: endpointId
           in: query
@@ -2002,7 +2018,9 @@ paths:
         through the one close path (reason `ticket-revoked`): the terminal
         session is closed or its setup cancelled, open sign prompts are
         cancelled, the guest cookie stops working and the guest's WebSocket
-        receives the final `closed` status.
+        receives the final `closed` status. A ticket whose guest session
+        already ended (`closed`) answers 409 and stays listed until it
+        expires (5 minutes).
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -2015,6 +2033,11 @@ paths:
                 properties: { status: { type: string, enum: [revoked] } }
                 required: [status]
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The ticket's guest session already ended; nothing changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/tickets/check:
     post:
       operationId: checkTicket

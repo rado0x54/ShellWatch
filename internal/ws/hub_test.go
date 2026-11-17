@@ -72,4 +72,18 @@ func TestHubRefreshesListWhenRetainedSessionIsRemoved(t *testing.T) {
 	clk.Advance(terminal.EndedRetention)
 	mgr.SweepEnded()
 	waitList("without the expired session", func(l []map[string]any) bool { return len(l) == 0 })
+
+	// Another account's connection gets nothing for that removal.
+	other := newConn(nil, "other")
+	hub.add(other)
+	t.Cleanup(func() { hub.remove(other) })
+	hub.onRemoved(terminal.RemovedEvent{SessionID: "x", AccountID: "acc", Reason: terminal.RemovedExpired})
+	if n := len(other.out); n != 0 {
+		t.Errorf("another account got %d frames for acc's removal", n)
+	}
+	// An explicit close already broadcast its status: no extra list.
+	hub.onRemoved(terminal.RemovedEvent{SessionID: "y", AccountID: "other", Reason: terminal.RemovedClosed})
+	if n := len(other.out); n != 0 {
+		t.Errorf("explicit close removal sent %d extra frames", n)
+	}
 }

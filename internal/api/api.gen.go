@@ -481,6 +481,7 @@ func (e TicketGuestViewChannel) Valid() bool {
 
 // Defines values for TicketGuestViewState.
 const (
+	TicketGuestViewStateClosed   TicketGuestViewState = "closed"
 	TicketGuestViewStateOpen     TicketGuestViewState = "open"
 	TicketGuestViewStatePending  TicketGuestViewState = "pending"
 	TicketGuestViewStateRedeemed TicketGuestViewState = "redeemed"
@@ -490,6 +491,8 @@ const (
 // Valid indicates whether the value is a known member of the TicketGuestViewState enum.
 func (e TicketGuestViewState) Valid() bool {
 	switch e {
+	case TicketGuestViewStateClosed:
+		return true
 	case TicketGuestViewStateOpen:
 		return true
 	case TicketGuestViewStatePending:
@@ -505,6 +508,7 @@ func (e TicketGuestViewState) Valid() bool {
 
 // Defines values for TicketViewState.
 const (
+	TicketViewStateClosed   TicketViewState = "closed"
 	TicketViewStateMinted   TicketViewState = "minted"
 	TicketViewStateOpen     TicketViewState = "open"
 	TicketViewStatePending  TicketViewState = "pending"
@@ -515,6 +519,8 @@ const (
 // Valid indicates whether the value is a known member of the TicketViewState enum.
 func (e TicketViewState) Valid() bool {
 	switch e {
+	case TicketViewStateClosed:
+		return true
 	case TicketViewStateMinted:
 		return true
 	case TicketViewStateOpen:
@@ -1664,12 +1670,18 @@ type TicketGuestViewChannel string
 // TicketGuestViewState defines model for TicketGuestView.State.
 type TicketGuestViewState string
 
-// TicketView The owner's view of a one-time access ticket and, once redeemed, its guest session (#306). Tickets live in process memory: a restart invalidates them. Listed while the ticket is unredeemed or its guest session is live; afterwards only the audit log has it.
+// TicketView The owner's view of a one-time access ticket and, once redeemed, its guest session (#306). Tickets live in process memory: a restart invalidates them. Listed while the ticket is unredeemed or its guest session is live, then for 5 minutes as `closed` (at most 10 per account); afterwards only the audit log has it.
 type TicketView struct {
 	// AgentForward When true the endpoint's own agentForward setting is honoured; when false no forwarding channel is opened whatever the endpoint says.
 	AgentForward bool   `json:"agentForward"`
 	CreatedAt    string `json:"createdAt"`
-	EndpointId   string `json:"endpointId"`
+
+	// EndReason Why the guest session closed (a terminal close reason, e.g. `client.guest`, `ticket-revoked`, `ticket-lifetime`); state `closed` only.
+	EndReason *string `json:"endReason"`
+
+	// EndedAt When the guest session closed (state `closed` only).
+	EndedAt    *string `json:"endedAt"`
+	EndpointId string  `json:"endpointId"`
 
 	// ExpiresAt End of the redeem TTL.
 	ExpiresAt string `json:"expiresAt"`
@@ -1686,11 +1698,11 @@ type TicketView struct {
 	ReasonRequired   bool `json:"reasonRequired"`
 	RedeemTtlSeconds int  `json:"redeemTtlSeconds"`
 
-	// State `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted.
+	// State `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted; `closed` — the guest session ended (`endReason`). A closed ticket stays listed for 5 minutes, at most 10 per account.
 	State TicketViewState `json:"state"`
 }
 
-// TicketViewState `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted.
+// TicketViewState `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket not attached yet; `pending` — an admission attempt is running (sign prompts are open); `refused` — the last attempt was not approved, the guest may ask again inside the admission window; `open` — admitted; `closed` — the guest session ended (`endReason`). A closed ticket stays listed for 5 minutes, at most 10 per account.
 type TicketViewState string
 
 // TransferResult Outcome body of a transfer link request (upload always; download only when it failed before the response body started). Same shape as the shellwatch_transfer_file `status` result.

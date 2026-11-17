@@ -181,7 +181,7 @@ ShellWatch runs **no OAuth logic of its own** — [Ory Hydra](https://www.ory.sh
 
 ### Web UI (`client/`)
 
-SvelteKit SPA (adapter-static) built into `web/dist` and embedded into the server binary (`web/embed.go`); unknown non-API paths fall back to `index.html`. SvelteKit provides client-side routing, layouts, and the build pipeline — no SSR, no server routes. The UI uses xterm.js for terminal emulation and Svelte stores for state.
+SvelteKit SPA (adapter-static) built into `web/dist` and embedded into the server binary (`web/embed.go`); unknown non-API paths fall back to `index.html`. SvelteKit provides client-side routing, layouts, and the build pipeline — no SSR, no server routes. The UI uses xterm.js for terminal emulation and Svelte stores for state. The sidebar's **Connect** opens an endpoint picker (`ConnectDialog`) with Connect and Share access per endpoint; Share access mints a one-time access link (`ShareTicketDialog`).
 
 **Routes:**
 | Route | View |
@@ -190,6 +190,8 @@ SvelteKit SPA (adapter-static) built into `web/dist` and embedded into the serve
 | `/session/[id]` | Specific session terminal view |
 | `/observer` | Observer — multi-session grid (dynamic layout) |
 | `/sign/[id]` | Sign-request approval page (passkey ceremony or key approval) |
+| `/guests` | Guest access (#306) — active guests, unused links, recently ended; end or revoke any |
+| `/t` | One-time access guest page (public; no app bootstrap) |
 | `/settings/endpoints` | SSH endpoint CRUD |
 | `/settings/keys` | SSH key listing |
 | `/settings/passkeys` | WebAuthn passkey management |

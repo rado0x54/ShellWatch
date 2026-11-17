@@ -211,7 +211,7 @@ func TestTicketAdmissionWindowCancelsOpenPrompt(t *testing.T) {
 	a := r.nextAction(t)
 	// Revoke stands in for the window (same close path, no clock needed).
 	views := r.svc.List("acc")
-	if len(views) != 1 || !r.svc.Revoke("acc", views[0].ID) {
+	if len(views) != 1 || r.svc.Revoke("acc", views[0].ID) != nil {
 		t.Fatal("revoke failed")
 	}
 	waitFor(t, "prompt cancelled", func() bool {

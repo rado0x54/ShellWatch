@@ -142,8 +142,9 @@ func (h *Hub) onRegistered(_, accountID string) {
 // broadcast and the delete (the broadcast must come first so the tail drain
 // can read the buffer), and such a connection would otherwise stay attached
 // forever without a terminal:closed. closeSession no-ops when not attached.
-// It also resends every connection its session list.
-func (h *Hub) onRemoved(sessionID string) {
+// For a silent removal (expiry, eviction) it also resends the owning
+// account's connections their session list.
+func (h *Hub) onRemoved(ev terminal.RemovedEvent) {
 	h.mu.Lock()
 	conns := make([]*conn, 0, len(h.conns))
 	for c := range h.conns {
@@ -151,14 +152,15 @@ func (h *Hub) onRemoved(sessionID string) {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
-		if c.isAttached(sessionID) { // cheap prefilter: don't take flushMu on bystanders
-			c.closeSession(h.mgr, sessionID)
+		if c.isAttached(ev.SessionID) { // cheap prefilter: don't take flushMu on bystanders
+			c.closeSession(h.mgr, ev.SessionID)
 		}
-		// A removal is a list change too: an errored session is listed
-		// until it is removed (expiry, eviction), and nothing else would
-		// tell the browser. Lists are account-scoped per connection, so
-		// bystanders just get their unchanged list.
-		c.send(h.sessionList(c))
+		// A silent removal (a retained ended session expired or evicted) is
+		// a list change nothing else announces: an errored session is listed
+		// until then. Only the owning account's connections need the list.
+		if ev.Reason.Silent() && c.accountID == ev.AccountID {
+			c.send(h.sessionList(c))
+		}
 	}
 }
 

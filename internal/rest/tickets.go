@@ -134,7 +134,11 @@ func (t *Tickets) revoke(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid id encoding")
 		return
 	}
-	if !t.Service.Revoke(accountID(r), id) {
+	switch err := t.Service.Revoke(accountID(r), id); {
+	case errors.Is(err, ticket.ErrAlreadyEnded):
+		writeErr(w, 409, "Ticket already ended")
+		return
+	case err != nil:
 		writeErr(w, 404, "Ticket not found")
 		return
 	}

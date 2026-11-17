@@ -104,7 +104,7 @@ type Manager struct {
 
 	statusSubs  map[int]func(StatusEvent)
 	outputSubs  map[int]func(sessionID string, offset int64)
-	removedSubs map[int]func(sessionID string)
+	removedSubs map[int]func(RemovedEvent)
 	// registeredSubs fire when Create registers a session, before its
 	// transport is set up (#273).
 	registeredSubs map[int]func(sessionID, accountID string)
@@ -127,7 +127,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		idleTimeout:      DefaultIdleTimeout,
 		statusSubs:       map[int]func(StatusEvent){},
 		outputSubs:       map[int]func(string, int64){},
-		removedSubs:      map[int]func(string){},
+		removedSubs:      map[int]func(RemovedEvent){},
 		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
 	}
@@ -171,7 +171,7 @@ func (m *Manager) SweepEnded() {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		m.remove(id, removedExpired)
+		m.remove(id, RemovedExpired)
 	}
 }
 
@@ -194,7 +194,7 @@ func (m *Manager) capEnded(accountID string) {
 	}
 	m.mu.Unlock()
 	for _, id := range drop {
-		m.remove(id, removedEvicted)
+		m.remove(id, RemovedEvicted)
 	}
 }
 
@@ -281,7 +281,7 @@ func (m *Manager) SubscribeRegistered(fn func(sessionID, accountID string)) func
 // connections whose attach raced the removal: the Closed broadcast happens
 // before the delete (so the tail drain can still read the buffer), which
 // leaves a window where an attach lands on a session about to disappear.
-func (m *Manager) SubscribeRemoved(fn func(sessionID string)) func() {
+func (m *Manager) SubscribeRemoved(fn func(RemovedEvent)) func() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := m.nextSub
@@ -391,7 +391,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// (in which case closing inserted it and this balances it).
 		slog.Warn("terminal: session connect failed", append(sessionAttrs(sess, ep), "err", err)...)
 		m.setStatus(mg, StatusClosed, CloseTransportError)
-		m.remove(sess.SessionID, removedConnectFailed)
+		m.remove(sess.SessionID, RemovedConnectFailed)
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}
 	if aborted {
@@ -399,7 +399,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// deleted / shut-down session must not go live now.
 		_ = transport.Close()
 		m.setStatus(mg, StatusClosed, "")
-		m.remove(sess.SessionID, removedClosed)
+		m.remove(sess.SessionID, RemovedClosed)
 		return nil, fmt.Errorf("session was closed during connection setup (%s)", sess.CloseReason)
 	}
 
@@ -725,33 +725,50 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// On the join path the pump finalized Closed itself; on the timeout path
 	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
-	m.remove(sessionID, removedClosed)
+	m.remove(sessionID, RemovedClosed)
 }
 
-// Why a session left the registry (the "terminal: session removed" log).
+// RemovedEvent is what SubscribeRemoved hooks receive: which session left
+// the registry, whose it was, and why.
+type RemovedEvent struct {
+	SessionID string
+	AccountID string
+	Reason    RemovedReason
+}
+
+// RemovedReason says why a session left the registry (also the "terminal:
+// session removed" log's reason).
+type RemovedReason string
+
 const (
-	removedClosed         = "closed"         // explicit close
-	removedConnectFailed  = "connect-failed" // Create's setup failed
-	removedExpired        = "expired"        // retained past EndedRetention
-	removedEvicted        = "evicted"        // over MaxEndedPerAccount
-	removedAccountDeleted = "account-deleted"
+	RemovedClosed         RemovedReason = "closed"         // explicit close
+	RemovedConnectFailed  RemovedReason = "connect-failed" // Create's setup failed
+	RemovedExpired        RemovedReason = "expired"        // retained past EndedRetention
+	RemovedEvicted        RemovedReason = "evicted"        // over MaxEndedPerAccount
+	RemovedAccountDeleted RemovedReason = "account-deleted"
 )
+
+// Silent reports whether no status event announced this removal: a retained
+// ended session dropped by expiry or eviction. Explicit closes and failed
+// connects broadcast their closed status just before; an account deletion
+// leaves nobody to tell.
+func (r RemovedReason) Silent() bool { return r == RemovedExpired || r == RemovedEvicted }
 
 // remove is the one way a session leaves the registry. It clears the buffer
 // and deletes the entry in one critical section (no reader can observe a
 // cleared-but-still-listed session), logs it, then fires the removed hooks —
 // only when THIS call performed the delete, so each removal notifies exactly
 // once. The WS hub treats a removal as a session-list change.
-func (m *Manager) remove(sessionID, why string) {
+func (m *Manager) remove(sessionID string, why RemovedReason) {
 	m.mu.Lock()
 	mg, present := m.terminals[sessionID]
-	var removed []func(string)
+	var removed []func(RemovedEvent)
 	var accountID string
 	if present {
 		accountID = mg.session.AccountID
 		mg.output.Clear()
 		delete(m.terminals, sessionID)
-		removed = make([]func(string), 0, len(m.removedSubs))
+		removed = make([]func(RemovedEvent), 0, len(m.removedSubs))
 		for _, fn := range m.removedSubs {
 			removed = append(removed, fn)
 		}
@@ -763,12 +780,12 @@ func (m *Manager) remove(sessionID, why string) {
 	// Explicit closes and failed connects already logged their end; the
 	// retention removals are the only trace of those.
 	level := slog.LevelInfo
-	if why == removedClosed || why == removedConnectFailed {
+	if why == RemovedClosed || why == RemovedConnectFailed {
 		level = slog.LevelDebug
 	}
 	slog.Log(context.Background(), level, "terminal: session removed", "session", sessionID, "account", accountID, "reason", why)
 	for _, fn := range removed {
-		fn(sessionID)
+		fn(RemovedEvent{SessionID: sessionID, AccountID: accountID, Reason: why})
 	}
 }
 
@@ -873,7 +890,7 @@ func (m *Manager) RemoveForAccount(accountID string) int {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		m.remove(id, removedAccountDeleted)
+		m.remove(id, RemovedAccountDeleted)
 	}
 	return len(ids)
 }

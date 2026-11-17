@@ -6,6 +6,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -417,6 +419,7 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 // deploy is picked up immediately.
 func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 	fileServer := http.FileServerFS(staticFS)
+	csp := &guestCSPCache{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
@@ -463,7 +466,7 @@ func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 			// and a strict policy that allows only this origin's scripts plus
 			// the SPA's own inline bootstrap (by hash).
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Security-Policy", guestPageCSP(data, externalURL()))
+			w.Header().Set("Content-Security-Policy", csp.get(data, externalURL()))
 		}
 		_, _ = w.Write(data)
 	}
@@ -476,6 +479,29 @@ func staticCacheControl(path string) string {
 		return "public, max-age=31536000, immutable"
 	}
 	return "no-cache"
+}
+
+// guestCSPCache keeps the guest page's policy: index.html is fixed for the
+// process, so the policy only changes with externalUrl. Rebuilt when the
+// index or the URL differs from the cached inputs.
+type guestCSPCache struct {
+	mu        sync.Mutex
+	index     []byte
+	extURL    string
+	policy    string
+	populated bool
+}
+
+func (c *guestCSPCache) get(index []byte, externalURL string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.populated || c.extURL != externalURL || !bytes.Equal(c.index, index) {
+		c.index = append(c.index[:0], index...)
+		c.extURL = externalURL
+		c.policy = guestPageCSP(index, externalURL)
+		c.populated = true
+	}
+	return c.policy
 }
 
 // guestPagePath is the one-time access guest page (#306).

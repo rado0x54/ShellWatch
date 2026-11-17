@@ -216,7 +216,7 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
       }
 
       if (msg.type === "tickets:changed") {
-        void fetchTickets();
+        void fetchTickets().catch(() => {});
       }
 
       if (msg.type === "notification:new") {

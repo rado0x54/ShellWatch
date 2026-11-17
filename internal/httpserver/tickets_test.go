@@ -631,8 +631,9 @@ func TestTicketLostRedemptionResponse(t *testing.T) {
 		t.Fatal("guest session dropped before the attach window")
 	}
 	r.sweep(2 * time.Second)
-	if n := len(r.svc.List("acc-a")); n != 0 {
-		t.Fatalf("%d tickets live after the attach window", n)
+	if l := r.svc.List("acc-a"); len(l) != 1 || l[0].State != ticket.StateClosed ||
+		l[0].EndReason == nil || *l[0].EndReason != string(terminal.CloseTicketUnattached) {
+		t.Fatalf("after the attach window: %+v", l)
 	}
 	r.gate.noAttempt(t)
 	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 404 {
@@ -893,8 +894,21 @@ func TestTicketRevokeInEveryState(t *testing.T) {
 	}
 	readUntil(t, c, statusIs("closed"))
 	eventually(t, "session closed", func() bool { return r.mgr.GetSession(sid) == nil })
-	if st, _ := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 404 {
-		t.Errorf("revoke twice: %d", st)
+	// A closed one stays listed; revoking it again is refused and keeps it.
+	if st, out := r.ownerJSON(t, "DELETE", "/api/tickets/"+id, "ui", ""); st != 409 || out["error"] != "Ticket already ended" {
+		t.Errorf("revoke of an ended ticket: %d %v", st, out)
+	}
+	listed := false
+	for _, v := range r.svc.List("acc-a") {
+		if v.ID == id {
+			listed = true
+			if v.Guest == nil || v.Guest.Attached || v.Guest.Connections != 0 {
+				t.Errorf("closed ticket claims a connected guest: %+v", v.Guest)
+			}
+		}
+	}
+	if !listed {
+		t.Error("revoke of an ended ticket removed it")
 	}
 }
 

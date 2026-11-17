@@ -243,3 +243,101 @@ func TestRedeemEndpointLookupErrorKeepsTicket(t *testing.T) {
 		t.Fatalf("retry: %v", err)
 	}
 }
+
+// A closed guest session stays in the owner's list (state closed, with the
+// reason, no connections) for ClosedRetention, at most MaxClosedPerAccount
+// per account; a revoke of a closed one is refused and removes nothing.
+func TestClosedTicketsRetainedBriefly(t *testing.T) {
+	s, _, _, clk := newTestService(t)
+	redeemUnattached := func() string {
+		m, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		return m.Ticket.ID
+	}
+	first := redeemUnattached()
+	clk.Advance(AttachWindow)
+	s.Sweep()
+	views := s.List("acc")
+	if len(views) != 1 || views[0].State != StateClosed || views[0].EndedAt == nil ||
+		views[0].EndReason == nil || *views[0].EndReason != string(terminal.CloseTicketUnattached) {
+		t.Fatalf("closed view: %+v", views)
+	}
+	clk.Advance(ClosedRetention - time.Second)
+	s.Sweep()
+	if len(s.List("acc")) != 1 {
+		t.Fatal("dropped before the retention")
+	}
+	clk.Advance(time.Second)
+	s.Sweep()
+	if len(s.List("acc")) != 0 {
+		t.Fatal("kept past the retention")
+	}
+
+	// The cap: the 11th closed one drops the oldest.
+	var ids []string
+	for i := 0; i < MaxClosedPerAccount+1; i++ {
+		ids = append(ids, redeemUnattached())
+		clk.Advance(AttachWindow)
+		s.Sweep()
+	}
+	listed := map[string]bool{}
+	for _, v := range s.List("acc") {
+		listed[v.ID] = true
+	}
+	if listed[ids[0]] || len(listed) != MaxClosedPerAccount {
+		t.Errorf("cap: %d listed, oldest listed=%v", len(listed), listed[ids[0]])
+	}
+	// Revoking a closed one changes nothing: it leaves the list on its own.
+	if err := s.Revoke("acc", ids[1]); !errors.Is(err, ErrAlreadyEnded) || len(s.List("acc")) != MaxClosedPerAccount {
+		t.Errorf("revoke of a closed ticket: %v, %d listed", err, len(s.List("acc")))
+	}
+	_ = first
+}
+
+// blockingClose is a Manager whose Close hangs (a wedged transport).
+type blockingClose struct {
+	*fakeSessions
+	release chan struct{}
+}
+
+func (b *blockingClose) Close(string, terminal.CloseReason) { <-b.release }
+
+// A terminal close that hangs must not hold up the caller (the janitor, a
+// revoke): the audit and owner notification go out first and the close runs
+// in the background.
+func TestCloseDoesNotWaitForATerminalClose(t *testing.T) {
+	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
+	b := &blockingClose{fakeSessions: f, release: make(chan struct{})}
+	t.Cleanup(func() { close(b.release) })
+	s := New(Params{
+		Manager: b, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
+			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
+		},
+		NewID: func() string { return "tk" },
+	})
+	s.SetPublisher(&pubLog{})
+	t.Cleanup(s.Close)
+	redeemAttached(t, s)
+	<-f.creates
+	f.answers <- nil // admitted: an open terminal session to close
+	waitUntil(t, "admitted", func() bool {
+		v := s.List("acc")
+		return len(v) == 1 && v[0].State == StateOpen
+	})
+	done := make(chan error, 1)
+	go func() { done <- s.Revoke("acc", s.List("acc")[0].ID) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoke waited for the hung terminal close")
+	}
+}

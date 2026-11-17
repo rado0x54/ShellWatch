@@ -54,6 +54,8 @@
   let attemptsLeft = $state<number | null>(null);
   let lifetimeDeadline = $state<number | null>(null);
   let endedMessage = $state("");
+  /** Shown when a second link was pasted during a live session. */
+  let linkNotice = $state("");
   let reconnecting = $state(false);
   /** Server clock minus this device's clock: deadlines come from the server,
    * and the guest device's clock may be wrong. */
@@ -148,13 +150,21 @@
   });
 
   function connect(): void {
+    // Callbacks of a socket from an earlier run (closed by start()) are
+    // ignored, so a late frame cannot overwrite the new link's state.
+    const mine = run;
     socket = new GuestSocket({
-      onStatus,
+      onStatus: (st) => {
+        if (mine === run) onStatus(st);
+      },
       onOutput: (data, reset) => {
+        if (mine !== run) return;
         if (term) term.write(data, reset);
         else heldOutput.push({ data, reset });
       },
-      onDrop,
+      onDrop: () => {
+        if (mine === run) onDrop();
+      },
     });
     socket.connect();
   }
@@ -165,9 +175,11 @@
   }
 
   async function redeem(replaceCurrent = false): Promise<void> {
+    const mine = run;
     failure = null;
     phase = "redeeming";
     const res = await redeemTicket(token, reason, fetch, replaceCurrent);
+    if (mine !== run) return; // a newer link replaced this one meanwhile
     if (!res.ok) {
       failure = res.failure;
       phase = res.failure === "not-found" || res.failure === "forbidden" ? "invalid" : "form";
@@ -200,8 +212,56 @@
   }
 
   onMount(() => {
-    const t = takeTokenFromLocation(window.location, window.history);
     ticker = setInterval(() => (now = serverNow()), 1000);
+    // A new link typed or pasted into a tab already on /t changes only the
+    // fragment: the browser fires hashchange instead of loading the page, so
+    // the page starts over itself.
+    window.addEventListener("hashchange", onHashChange);
+    start(takeTokenFromLocation(window.location, window.history));
+  });
+
+  /** Phases with a live guest session in this tab (or one being set up). */
+  const LIVE: Phase[] = ["redeeming", "connecting", "pending", "refused", "open"];
+
+  function onHashChange(): void {
+    const t = takeTokenFromLocation(window.location, window.history);
+    if (t === null) return;
+    if (LIVE.includes(phase)) {
+      // One guest session at a time: a second link never replaces the live
+      // one from here. It is dropped (the address bar is already clean);
+      // the guest finishes or ends this session, then opens the link again.
+      linkNotice =
+        "This tab already has a guest session. End it first, then open the new link again.";
+      return;
+    }
+    start(t);
+  }
+
+  /** Bumped by every (re)start: a request or socket of an earlier run ignores
+   * its late results. */
+  let run = 0;
+
+  /** (Re)start the page for a token from the address bar, or for none. */
+  function start(t: string | null): void {
+    run++;
+    socket?.close();
+    socket = null;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    heldOutput.length = 0;
+    token = "";
+    reason = "";
+    reasonRequired = null;
+    failure = null;
+    code = "";
+    admissionDeadline = null;
+    retryAt = null;
+    attemptsLeft = null;
+    lifetimeDeadline = null;
+    endedMessage = "";
+    linkNotice = "";
+    reconnecting = false;
+    dropSince = null;
     if (t === null) {
       // No link in the address bar: a reload of a live guest session (the
       // cookie reattaches), or nothing to do here.
@@ -216,12 +276,15 @@
       return;
     }
     token = t;
+    phase = "loading";
     void checkLink();
-  });
+  }
 
   /** Ask the server whether the link is still good before showing the form. */
   async function checkLink(): Promise<void> {
+    const mine = run;
     const res = await checkTicket(token);
+    if (mine !== run) return; // a newer link replaced this one meanwhile
     if (res.ok) {
       reasonRequired = res.reasonRequired;
       phase = "form";
@@ -238,6 +301,7 @@
   }
 
   onDestroy(() => {
+    window.removeEventListener("hashchange", onHashChange);
     if (ticker) clearInterval(ticker);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     socket?.close();
@@ -264,6 +328,12 @@
       </span>
       <button type="button" class="btn btn-secondary" onclick={endSession}>End session</button>
     </header>
+    {#if linkNotice}
+      <p class="link-notice" role="status">
+        {linkNotice}
+        <button type="button" class="btn btn-ghost" onclick={() => (linkNotice = "")}>OK</button>
+      </p>
+    {/if}
     <div class="guest-term">
       <GuestTerminal
         bind:this={term}
@@ -276,6 +346,12 @@
   <main class="guest-page">
     <div class="guest-card">
       <h1>Guest access</h1>
+      {#if linkNotice}
+        <p class="link-notice" role="status">
+          {linkNotice}
+          <button type="button" class="btn btn-ghost" onclick={() => (linkNotice = "")}>OK</button>
+        </p>
+      {/if}
 
       {#if phase === "loading" || phase === "redeeming" || phase === "connecting"}
         <p class="muted">Please wait…</p>
@@ -412,6 +488,18 @@
 
   .error {
     color: var(--error, #ff5a5a);
+  }
+
+  .link-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3, 8px);
+    margin: 0;
+    padding: var(--space-2, 4px) var(--space-4, 12px);
+    background: color-mix(in srgb, var(--warning, #f8a010) 12%, transparent);
+    color: var(--on-surface, #f2f2f2);
+    font-size: var(--label-md, 0.8rem);
   }
 
   .guest-shell {

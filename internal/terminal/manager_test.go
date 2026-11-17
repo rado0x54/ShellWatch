@@ -476,7 +476,7 @@ func TestDestroyBoundsWedgedClosesConcurrently(t *testing.T) {
 func TestRemovedHookFiresOnceUnderCloseRemoveRace(t *testing.T) {
 	mgr, _ := mockManager(t)
 	var fires atomic.Int32
-	unsubRemoved := mgr.SubscribeRemoved(func(string) { fires.Add(1) })
+	unsubRemoved := mgr.SubscribeRemoved(func(RemovedEvent) { fires.Add(1) })
 	defer unsubRemoved()
 	// The pump broadcasts Closed while Close is parked on the join; purging
 	// the account from inside that broadcast deletes the session before Close
@@ -508,7 +508,7 @@ func TestRemovedHookFiresOnceUnderCloseRemoveRace(t *testing.T) {
 func TestRemovedHookFires(t *testing.T) {
 	mgr, _ := mockManager(t)
 	var removed []string
-	unsub := mgr.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	unsub := mgr.SubscribeRemoved(func(ev RemovedEvent) { removed = append(removed, ev.SessionID) })
 	defer unsub()
 
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
@@ -526,7 +526,7 @@ func TestRemovedHookFires(t *testing.T) {
 	t.Cleanup(func() { _ = mock2.Close() })
 	mgr2 := NewManager(func(context.Context, FactoryParams) (Transport, error) { return mock2, nil }, clock.Real{}, 0)
 	removed = nil
-	unsub2 := mgr2.SubscribeRemoved(func(id string) { removed = append(removed, id) })
+	unsub2 := mgr2.SubscribeRemoved(func(ev RemovedEvent) { removed = append(removed, ev.SessionID) })
 	defer unsub2()
 	sess2, err := mgr2.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
 	if err != nil {

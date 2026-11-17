@@ -4,6 +4,8 @@
     "ticket": {
       "agentForward": false,
       "createdAt": "<TS>",
+      "endReason": null,
+      "endedAt": null,
       "endpointId": "ep-a",
       "expiresAt": "<TS>",
       "guest": null,

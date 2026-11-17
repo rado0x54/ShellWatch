@@ -1,19 +1,18 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
-  // "Share one-time access" for one endpoint (#306): choose the ticket's
-  // options (each defaults to its most restrictive value), mint it, then hand
-  // the link over (copy, QR code, navigator.share). The endpoint's outstanding
-  // tickets are listed below with a Revoke action.
+  // "Share access" for one endpoint (#306): choose the ticket's options (each
+  // defaults to its most restrictive value), mint it, then hand the link over
+  // (copy, QR code, navigator.share). Outstanding tickets and guest sessions
+  // are managed on the Guest access page.
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import Modal from "$lib/components/Modal.svelte";
   import QrCode from "$lib/components/QrCode.svelte";
   import type { Endpoint } from "$lib/stores/endpoints.js";
   import {
     DEFAULT_MINT_OPTIONS,
     mintTicket,
-    revokeTicket,
     shareLink,
-    ticketStateLabel,
-    tickets,
     type MintOptions,
   } from "$lib/stores/tickets.js";
   import { toastError, toastInfo } from "$lib/stores/toasts.js";
@@ -51,8 +50,6 @@
   let link = $state<string | null>(null);
   const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
-  const outstanding = $derived($tickets.filter((t) => t.endpointId === endpoint.id));
-
   async function handleMint(): Promise<void> {
     if (busy) return;
     busy = true;
@@ -85,21 +82,13 @@
     }
   }
 
-  async function handleRevoke(id: string): Promise<void> {
-    try {
-      await revokeTicket(id);
-    } catch (err) {
-      toastError(errorMessage(err));
-    }
+  async function openGuestAccess(): Promise<void> {
+    onClose();
+    await goto(resolve("/guests"));
   }
 </script>
 
-<Modal
-  title="Share one-time access"
-  {onClose}
-  onSubmit={link ? undefined : handleMint}
-  width="560px"
->
+<Modal title="Share access" {onClose} onSubmit={link ? undefined : handleMint} width="560px">
   <p class="modal-desc">
     <strong>{endpoint.label}</strong> ({formatEndpointAddress(endpoint)})
   </p>
@@ -150,7 +139,11 @@
       </p>
     {/if}
   {:else}
-    <p>Send this link to the guest. It works once; you approve the guest on this device.</p>
+    <p>
+      Send this link to the guest. It works once; you approve the guest on a device you are signed
+      in on. Follow it under
+      <button type="button" class="link-btn" onclick={openGuestAccess}>Guest access</button>.
+    </p>
     <div class="share">
       <QrCode value={link} size={176} />
       <div class="share-actions">
@@ -167,29 +160,6 @@
         {/if}
       </div>
     </div>
-  {/if}
-
-  {#if outstanding.length > 0}
-    <h3 class="list-title">Outstanding for this endpoint</h3>
-    <ul class="tickets">
-      {#each outstanding as t (t.id)}
-        <li>
-          <div class="ticket-info">
-            <span class="ticket-label">{t.label || "(no label)"}</span>
-            <span class="ticket-state">{ticketStateLabel(t)}</span>
-            {#if t.guest}
-              <span class="ticket-guest">
-                code <code>{t.guest.confirmationCode}</code> · {t.guest.sourceIp}
-                {#if t.guest.reason}· “{t.guest.reason}”{/if}
-              </span>
-            {/if}
-          </div>
-          <button type="button" class="btn btn-secondary" onclick={() => handleRevoke(t.id)}>
-            Revoke
-          </button>
-        </li>
-      {/each}
-    </ul>
   {/if}
 
   {#snippet actions()}
@@ -223,6 +193,13 @@
   .field-row {
     display: flex;
     gap: var(--space-4);
+  }
+
+  @media (max-width: 480px) {
+    .field-row {
+      flex-direction: column;
+      gap: 0;
+    }
   }
 
   .field-hint {
@@ -263,37 +240,13 @@
     width: 100%;
   }
 
-  .list-title {
-    margin: var(--space-5) 0 var(--space-2);
-    font-size: var(--label-lg, 0.9rem);
-  }
-
-  .tickets {
-    list-style: none;
+  .link-btn {
+    background: none;
+    border: none;
     padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .tickets li {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    justify-content: space-between;
-  }
-
-  .ticket-info {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .ticket-state,
-  .ticket-guest {
-    color: var(--on-surface-variant);
-    font-size: var(--label-md);
-    overflow-wrap: anywhere;
+    color: var(--primary);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 </style>

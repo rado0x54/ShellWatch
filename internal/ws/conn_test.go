@@ -399,7 +399,7 @@ func TestRemovedSweepClosesRacedAttach(t *testing.T) {
 	// Simulate the raced attach: the conn is attached while the session is
 	// already gone from the registry (hub.onRemoved fires right after the
 	// delete in Manager.Close).
-	hub.onRemoved(h.sess.SessionID)
+	hub.onRemoved(terminal.RemovedEvent{SessionID: h.sess.SessionID, AccountID: "acc", Reason: terminal.RemovedClosed})
 
 	timeout := time.After(5 * time.Second)
 	for {
@@ -414,7 +414,7 @@ func TestRemovedSweepClosesRacedAttach(t *testing.T) {
 				}
 				// Second sweep: no terminal frame for the session again (a
 				// removal always resends the session list, which is fine).
-				hub.onRemoved(h.sess.SessionID)
+				hub.onRemoved(terminal.RemovedEvent{SessionID: h.sess.SessionID, AccountID: "acc", Reason: terminal.RemovedClosed})
 				quiet := time.After(100 * time.Millisecond)
 				for {
 					select {

@@ -48,6 +48,9 @@ type GuestHub struct {
 
 	mu    sync.Mutex
 	conns map[string]map[*guestConn]struct{}
+	// guestBySession maps an admitted terminal session to its guest session,
+	// so output is routed without scanning every guest connection.
+	guestBySession map[string]string
 
 	unsubOutput  func()
 	unsubRemoved func()
@@ -70,7 +73,7 @@ type GuestHubParams struct {
 
 // NewGuestHub wires the guest hub to the Manager's output notifier.
 func NewGuestHub(p GuestHubParams) *GuestHub {
-	h := &GuestHub{mgr: p.Manager, svc: p.Service, externalURL: p.ExternalURL, conns: map[string]map[*guestConn]struct{}{}}
+	h := &GuestHub{mgr: p.Manager, svc: p.Service, externalURL: p.ExternalURL, conns: map[string]map[*guestConn]struct{}{}, guestBySession: map[string]string{}}
 	h.unsubOutput = p.Manager.SubscribeOutput(h.onOutput)
 	h.unsubRemoved = p.Manager.SubscribeRemoved(h.onRemoved)
 	return h
@@ -134,8 +137,14 @@ func (h *GuestHub) bind(c *guestConn, sessionID string) {
 	if c.isAttached(sessionID) {
 		return
 	}
+	h.mu.Lock()
+	h.guestBySession[sessionID] = c.guestID
+	h.mu.Unlock()
 	buffered, err := h.mgr.ReadOutputFrom(sessionID, nil)
 	if err != nil {
+		// The session is already gone; its closed event ends the guest
+		// session (and this connection) through the ticket service.
+		slog.Warn("ws: guest bind failed", "session", sessionID, "err", err)
 		return
 	}
 	// The catch-up is always the whole buffer with reset: a reconnecting
@@ -156,6 +165,13 @@ func (h *GuestHub) bind(c *guestConn, sessionID string) {
 // removed, so the buffer is still readable.
 func (h *GuestHub) GuestClose(guestID string, st ticket.Status) {
 	raw := statusFrame(st)
+	h.mu.Lock()
+	for sid, gid := range h.guestBySession {
+		if gid == guestID {
+			delete(h.guestBySession, sid)
+		}
+	}
+	h.mu.Unlock()
 	for _, c := range h.snapshot(guestID) {
 		for _, sid := range c.attachedIDs() {
 			c.flushOutput(h.mgr, sid)
@@ -186,7 +202,13 @@ func (c *guestConn) finish() {
 }
 
 func (h *GuestHub) onOutput(sessionID string, _ int64) {
-	for _, c := range h.all() {
+	h.mu.Lock()
+	guestID, ok := h.guestBySession[sessionID]
+	h.mu.Unlock()
+	if !ok {
+		return // not a guest's session: the common case, no scan
+	}
+	for _, c := range h.snapshot(guestID) {
 		if c.isAttached(sessionID) {
 			c.flushOutput(h.mgr, sessionID)
 		}
@@ -195,7 +217,11 @@ func (h *GuestHub) onOutput(sessionID string, _ int64) {
 
 // onRemoved drops a removed session's binding (its output is gone); the
 // ticket service's status hook closes the guest session itself.
-func (h *GuestHub) onRemoved(sessionID string) {
+func (h *GuestHub) onRemoved(ev terminal.RemovedEvent) {
+	sessionID := ev.SessionID
+	h.mu.Lock()
+	delete(h.guestBySession, sessionID)
+	h.mu.Unlock()
 	for _, c := range h.all() {
 		if c.isAttached(sessionID) {
 			c.detach(sessionID)
@@ -239,7 +265,7 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 		wsc.SetReadLimit(MaxGuestInboundMessageBytes)
 		start := time.Now()
 		err = h.serve(r.Context(), wsc, guestID)
-		slog.Info("ws: guest disconnected", "sourceIp", ip, "duration", time.Since(start).Round(time.Second),
+		slog.Info("ws: guest disconnected", "sourceIp", ip, "dur", time.Since(start).Round(time.Second),
 			"reason", disconnectReason(err))
 	}
 }

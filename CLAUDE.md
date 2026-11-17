@@ -95,6 +95,7 @@ client/                   # SvelteKit frontend app (adapter-static → web/dist)
       passkey-invite/     # Passkey invite flow
       register/           # Initial admin registration
       session/            # Session detail
+      guests/             # Guest access: active guests, unused links, recently ended (#306)
       t/                  # One-time access guest page (public; no app bootstrap)
       sign/               # FIDO/SSH signing approval
       settings/           # Settings with tab sub-routes

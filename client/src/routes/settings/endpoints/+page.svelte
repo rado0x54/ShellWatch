@@ -24,8 +24,6 @@
   import { formatEndpointAddress, parseEndpointAddress } from "$lib/utils/endpoint-address.js";
   import SettingsList from "$lib/components/SettingsList.svelte";
   import SettingsRow from "$lib/components/SettingsRow.svelte";
-  import ShareTicketDialog from "$lib/components/ShareTicketDialog.svelte";
-  import { fetchTickets, tickets } from "$lib/stores/tickets.js";
 
   // The wizard kinds prefix the form with a Server-Setup primer. Triggered
   // automatically when the user clicks Add Endpoint while they have no own
@@ -38,14 +36,6 @@
     | { kind: "host-key"; id: string };
 
   let modal = $state<ModalMode | null>(null);
-  // "Share one-time access" (#306) for this endpoint, when open.
-  let shareTarget = $state<Endpoint | null>(null);
-  const outstandingByEndpoint = $derived(
-    $tickets.reduce<Record<string, number>>((acc, t) => {
-      acc[t.endpointId] = (acc[t.endpointId] ?? 0) + 1;
-      return acc;
-    }, {}),
-  );
   let saving = $state(false);
   let formLabel = $state("");
   let formAddress = $state("");
@@ -176,7 +166,6 @@
     fetchEndpoints();
     fetchAccount();
     fetchCredentials();
-    void fetchTickets();
   });
 
   async function handleToggleDemo() {
@@ -321,10 +310,6 @@
         {/snippet}
         {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
         {#snippet actions()}
-          <button type="button" class="btn btn-secondary" onclick={() => (shareTarget = ep)}>
-            Share one-time access{#if outstandingByEndpoint[ep.id]}
-              ({outstandingByEndpoint[ep.id]}){/if}
-          </button>
           <button type="button" class="btn btn-secondary" onclick={() => openHostKey(ep)}
             >Host key</button
           >
@@ -377,20 +362,10 @@
               </span>
             {/snippet}
             {#snippet secondary()}{formatEndpointAddress(ep)}{/snippet}
-            {#snippet actions()}
-              <button type="button" class="btn btn-secondary" onclick={() => (shareTarget = ep)}>
-                Share one-time access{#if outstandingByEndpoint[ep.id]}
-                  ({outstandingByEndpoint[ep.id]}){/if}
-              </button>
-            {/snippet}
           </SettingsRow>
         {/each}
       </SettingsList>
     {/if}
-  {/if}
-
-  {#if shareTarget}
-    <ShareTicketDialog endpoint={shareTarget} onClose={() => (shareTarget = null)} />
   {/if}
 
   {#if deleteTarget}

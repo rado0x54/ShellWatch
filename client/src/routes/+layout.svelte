@@ -2,16 +2,24 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dev } from "$app/environment";
-  import { beforeNavigate } from "$app/navigation";
+  import { afterNavigate, beforeNavigate } from "$app/navigation";
   import { page } from "$app/state";
   import "../app.css";
+  import ConnectDialog from "$lib/components/ConnectDialog.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import Wordmark from "$lib/components/Wordmark.svelte";
   import { fetchAccount } from "$lib/stores/account.js";
   import { initBuildInfoFromWindow } from "$lib/stores/build-info.js";
   import { selfRegistrationEnabled } from "$lib/stores/connection.js";
+  import { get } from "svelte/store";
+  import {
+    closeConnectDialog,
+    connectDialog,
+    connectDialogSharing,
+  } from "$lib/stores/connect-dialog.js";
   import { fetchEndpoints } from "$lib/stores/endpoints.js";
+  import { fetchTickets } from "$lib/stores/tickets.js";
   import { beginLogin, isAuthenticated } from "$lib/oauth.js";
   import { connectWs, onWsMessage } from "$lib/stores/ws.js";
   import { crossesGuestBoundary, isUnauthPath } from "$lib/guest/paths.js";
@@ -39,6 +47,13 @@
     if (!crossesGuestBoundary(nav.from.url.pathname, nav.to.url.pathname)) return;
     nav.cancel();
     window.location.assign(nav.to.url.href);
+  });
+
+  // The endpoint picker is global: a page change closes it, so it never
+  // covers the page it led to (an approval on /sign, a new session) — except
+  // while the share form is up: a one-time link is shown only once.
+  afterNavigate(() => {
+    if (!get(connectDialogSharing)) closeConnectDialog();
   });
 
   const isFullscreenPage = $derived(isUnauthPath(page.url.pathname));
@@ -79,6 +94,8 @@
       await connectWs();
       await fetchEndpoints();
       fetchAccount();
+      // The sidebar's Guest access count needs the list from the start.
+      void fetchTickets().catch(() => {});
 
       onWsMessage((msg) => {
         if (msg.type === "terminal:mode") {
@@ -133,6 +150,10 @@
       </main>
     </div>
   </div>
+
+  {#if $connectDialog}
+    <ConnectDialog mode={$connectDialog} onClose={closeConnectDialog} />
+  {/if}
 {/if}
 
 <style>
