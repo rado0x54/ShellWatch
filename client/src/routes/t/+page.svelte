@@ -46,6 +46,8 @@
   let failure = $state<RedeemFailure | null>(null);
   let code = $state("");
   let admissionDeadline = $state<number | null>(null);
+  let retryAt = $state<number | null>(null);
+  let attemptsLeft = $state<number | null>(null);
   let lifetimeDeadline = $state<number | null>(null);
   let endedMessage = $state("");
   let reconnecting = $state(false);
@@ -89,6 +91,8 @@
         phase = "pending";
         break;
       case "refused":
+        retryAt = st.retryAt ? Date.parse(st.retryAt) : null;
+        attemptsLeft = st.attemptsLeft ?? null;
         phase = "refused";
         break;
       case "open":
@@ -154,10 +158,10 @@
     void redeem();
   }
 
-  async function redeem(): Promise<void> {
+  async function redeem(replaceCurrent = false): Promise<void> {
     failure = null;
     phase = "redeeming";
-    const res = await redeemTicket(token, reason);
+    const res = await redeemTicket(token, reason, fetch, replaceCurrent);
     if (!res.ok) {
       failure = res.failure;
       phase = res.failure === "not-found" || res.failure === "forbidden" ? "invalid" : "form";
@@ -174,25 +178,11 @@
     connect();
   }
 
-  /** 409: end this browser's current guest session, then redeem this link. */
+  /** 409: the server ends this browser's current guest session in the same
+   * step that redeems this link (no reconnect to the old session, so the
+   * owner is not prompted for it). */
   function endCurrentAndContinue(): void {
-    failure = null;
-    phase = "redeeming";
-    const tmp = new GuestSocket({
-      onStatus: (st) => {
-        if (st.state !== "closed") {
-          tmp.end();
-          return;
-        }
-        tmp.close();
-        void redeem();
-      },
-      onOutput: () => {},
-      onDrop: () => {
-        if (!tmp.isEnded) void redeem();
-      },
-    });
-    tmp.connect();
+    void redeem(true);
   }
 
   function askAgain(): void {
@@ -301,8 +291,15 @@
           <p class="muted">Waiting for approval… {fmt(secondsLeft(admissionDeadline))} left.</p>
         {:else}
           <p class="error" role="alert">Access was not granted.</p>
-          <p class="muted">You can ask again for {fmt(secondsLeft(admissionDeadline))}.</p>
-          <button type="button" class="btn btn-primary" onclick={askAgain}>Ask again</button>
+          {@const wait = secondsLeft(retryAt)}
+          <p class="muted">
+            You can ask again for {fmt(secondsLeft(admissionDeadline))}{attemptsLeft !== null
+              ? ` (${attemptsLeft} ${attemptsLeft === 1 ? "try" : "tries"} left)`
+              : ""}.
+          </p>
+          <button type="button" class="btn btn-primary" onclick={askAgain} disabled={wait > 0}>
+            {wait > 0 ? `Ask again in ${fmt(wait)}` : "Ask again"}
+          </button>
         {/if}
         {#if reconnecting}
           <p class="muted">Reconnecting…</p>

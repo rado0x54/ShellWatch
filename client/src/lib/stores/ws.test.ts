@@ -132,6 +132,22 @@ describe("ws store", () => {
     toasts.set([]);
   });
 
+  it("refetches tickets when the socket reconnects", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify({ tickets: [] })));
+    await connectWs();
+    MockWebSocket.instances[0].onopen?.();
+    const ticketCalls = () => fetchSpy.mock.calls.filter(([u]) => String(u) === "/api/tickets");
+    const first = ticketCalls().length;
+    MockWebSocket.instances[0].onclose?.();
+    await vi.waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(1), {
+      timeout: 5000,
+    });
+    MockWebSocket.instances.at(-1)!.onopen?.();
+    await vi.waitFor(() => expect(ticketCalls().length).toBe(first + 1));
+  });
+
   it("onWsMessage registers a handler and returns unsubscribe", async () => {
     await connectWs();
     const ws = MockWebSocket.instances[0];

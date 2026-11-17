@@ -60,6 +60,19 @@ describe("redeemTicket", () => {
     expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN, reason: "printer" });
   });
 
+  it("asks the server to replace this browser's guest session only when told to", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 404 }));
+    await redeemTicket(TOKEN, "r", fetchFn as unknown as typeof fetch, true);
+    await redeemTicket(TOKEN, "r", fetchFn as unknown as typeof fetch);
+    const bodies = (fetchFn.mock.calls as unknown as [string, RequestInit][]).map(([, init]) =>
+      JSON.parse(String(init.body)),
+    );
+    expect(bodies).toEqual([
+      { token: TOKEN, reason: "r", replaceCurrent: true },
+      { token: TOKEN, reason: "r" },
+    ]);
+  });
+
   it.each([
     [400, "reason-required"],
     [403, "forbidden"],

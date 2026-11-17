@@ -11,7 +11,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -38,6 +37,11 @@ func (t *Tickets) Mount(r chi.Router) {
 
 func (t *Tickets) mint(w http.ResponseWriter, r *http.Request) {
 	acc := accountID(r)
+	endpointID, err := pathParam(r, "id")
+	if err != nil {
+		writeErr(w, 400, "invalid id encoding")
+		return
+	}
 	body := readRawBody(r)
 	opts := ticket.Options{ReasonRequired: true}
 	if raw, ok := body["label"]; ok && string(raw) != "null" {
@@ -89,7 +93,7 @@ func (t *Tickets) mint(w http.ResponseWriter, r *http.Request) {
 		*f.dst = string(raw) == "true"
 	}
 	minted, err := t.Service.Mint(r.Context(), ticket.MintParams{
-		AccountID: acc, EndpointID: pathParam(r, "id"), Options: opts,
+		AccountID: acc, EndpointID: endpointID, Options: opts,
 	})
 	var optErr *ticket.OptionError
 	switch {
@@ -125,7 +129,12 @@ func (t *Tickets) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (t *Tickets) revoke(w http.ResponseWriter, r *http.Request) {
-	if !t.Service.Revoke(accountID(r), pathParam(r, "id")) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		writeErr(w, 400, "invalid id encoding")
+		return
+	}
+	if !t.Service.Revoke(accountID(r), id) {
 		writeErr(w, 404, "Ticket not found")
 		return
 	}
@@ -149,7 +158,7 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	if !auth.OriginAllowed(t.ExternalURL(), origin) {
 		// Login CSRF: a foreign page must not plant a guest cookie.
-		slog.Warn("ws: guest origin rejected", "route", "redeem", "sourceIp", ip,
+		slog.Warn("ticket: redeem rejected", "reason", "origin not allowed", "sourceIp", ip,
 			"origin", auth.OriginHost(origin), "expected", auth.OriginHost(t.ExternalURL()))
 		apierr.Write(w, http.StatusForbidden, "Forbidden")
 		return
@@ -161,11 +170,14 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token  string `json:"token"`
 		Reason string `json:"reason"`
+		// ReplaceCurrent: end this browser's current guest session instead
+		// of answering 409.
+		ReplaceCurrent bool `json:"replaceCurrent"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, redeemBodyMax)).Decode(&body)
 	res, err := t.Service.Redeem(r.Context(), ticket.RedeemParams{
 		Token: body.Token, Reason: body.Reason, SourceIP: ip, UserAgent: r.UserAgent(),
-		Cookie: cookie, Channel: terminal.TicketChannelWeb,
+		Cookie: cookie, Channel: terminal.TicketChannelWeb, ReplaceCurrent: body.ReplaceCurrent,
 	})
 	var capErr *ticket.CapacityError
 	switch {
@@ -199,15 +211,4 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"lifetimeSeconds":        int(res.Lifetime / time.Second),
 		"agentForward":           res.AgentForward,
 	})
-}
-
-// pathParam is a URL parameter decoded. chi matches on the escaped path, so
-// an id the client sent through encodeURIComponent (a demo id's ":" arrives
-// as %3A) is still escaped in chi.URLParam.
-func pathParam(r *http.Request, key string) string {
-	raw := chi.URLParam(r, key)
-	if v, err := url.PathUnescape(raw); err == nil {
-		return v
-	}
-	return raw
 }

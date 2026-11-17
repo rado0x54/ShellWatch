@@ -3,6 +3,7 @@ package terminal
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -128,11 +129,10 @@ func TestTerminalStateRetention(t *testing.T) {
 	if got := mgr.ListForAccount("acc"); len(got) != 0 {
 		t.Fatalf("closed session in account list: %+v", got)
 	}
-	// Explicit Close on an already-closed session is a no-op (Node close()
-	// early-return): the post-mortem record survives.
+	// An explicit Close drops the retained session at once.
 	mgr.Close(sess.SessionID, CloseClientUI)
-	if mgr.GetSession(sess.SessionID) == nil {
-		t.Fatal("post-mortem session dropped by no-op Close")
+	if mgr.GetSession(sess.SessionID) != nil {
+		t.Fatal("explicit Close kept the retained session")
 	}
 
 	// Errored sessions stay VISIBLE in lists (status filter is closed-only).
@@ -647,5 +647,68 @@ func TestResizeUnknownSessionErrors(t *testing.T) {
 	mgr, _ := mockManager(t)
 	if err := mgr.Resize("nope", 80, 24); err == nil {
 		t.Error("resize of an unknown session must fail")
+	}
+}
+
+// Ended sessions are retained for EndedRetention and at most
+// MaxEndedPerAccount per account (oldest dropped first); they never count
+// as active.
+func TestEndedSessionRetentionBounds(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var mu sync.Mutex
+	var mocks []*MockTransport
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		mu.Lock()
+		mocks = append(mocks, tr)
+		mu.Unlock()
+		return tr, nil
+	}, clk, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	hangUp := func() string {
+		t.Helper()
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		tr := mocks[len(mocks)-1]
+		mu.Unlock()
+		_ = tr.Close()
+		waitFor(t, func() bool {
+			s := mgr.GetSession(sess.SessionID)
+			return s == nil || s.Status == StatusClosed
+		})
+		return sess.SessionID
+	}
+
+	first := hangUp()
+	if ids := mgr.EndpointIDsForAccount("acc"); len(ids) != 0 {
+		t.Errorf("an ended session counts as active: %v", ids)
+	}
+	clk.Advance(EndedRetention - time.Second)
+	mgr.SweepEnded()
+	if mgr.GetSession(first) == nil {
+		t.Fatal("dropped before the retention elapsed")
+	}
+	clk.Advance(time.Second)
+	mgr.SweepEnded()
+	if mgr.GetSession(first) != nil {
+		t.Fatal("kept past the retention")
+	}
+
+	// The count cap: the 11th ended session drops the oldest.
+	var ids []string
+	for i := 0; i < MaxEndedPerAccount+1; i++ {
+		clk.Advance(time.Second)
+		ids = append(ids, hangUp())
+	}
+	if mgr.GetSession(ids[0]) != nil {
+		t.Error("oldest ended session kept beyond the cap")
+	}
+	for _, id := range ids[1:] {
+		if mgr.GetSession(id) == nil {
+			t.Errorf("ended session %s dropped within the cap", id)
+		}
 	}
 }

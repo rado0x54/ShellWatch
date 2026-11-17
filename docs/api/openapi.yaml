@@ -1837,7 +1837,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
-          description: Endpoint has active sessions
+          description: >-
+            Endpoint has active sessions — opening or open sessions of any
+            source (UI, MCP, one-time access guest), or a guest session still
+            waiting for approval or allowed to ask again. Ended (closed or
+            errored) sessions do not count. A successful delete revokes the
+            endpoint's outstanding tickets.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2047,6 +2052,14 @@ paths:
                     Why the guest wants access. Control characters are stripped
                     and it is capped at 200 characters. Required (non-empty) when the
                     ticket says so.
+                replaceCurrent:
+                  type: boolean
+                  default: false
+                  description: >-
+                    End this browser's current guest session (named by its
+                    guest cookie) in the same step that consumes the ticket,
+                    instead of answering 409. The old session is not attached
+                    for it, so it raises no owner prompt.
               required: [token]
       responses:
         "202":
@@ -2096,8 +2109,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: >-
-            This browser already holds a live guest session (checked before
-            the ticket is looked at; the ticket is not consumed).
+            This browser already holds a live guest session and
+            `replaceCurrent` is not set (the ticket is not consumed).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -60,6 +60,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 type ticketSSHRig struct {
+	clk     *clock.Fake
 	svc     *ticket.Service
 	mgr     *terminal.Manager
 	actions chan *approval.Action
@@ -82,8 +83,9 @@ func newTicketSSHRig(t *testing.T, port int) *ticketSSHRig {
 	ref := &terminal.EndpointRef{ID: "e1", Label: "Box", AccountID: "acc", Host: "127.0.0.1", Port: port,
 		Username: "root", UserVerification: "required", AgentForward: true}
 	n := 0
+	clk := clock.NewFake(time.Now())
 	svc := ticket.New(ticket.Params{
-		Manager: mgr,
+		Manager: mgr, Clock: clk,
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			if id == "e1" && acc == "acc" {
 				r := *ref
@@ -96,7 +98,7 @@ func newTicketSSHRig(t *testing.T, port int) *ticketSSHRig {
 	pub := &statusLog{}
 	svc.SetPublisher(pub)
 	t.Cleanup(svc.Close)
-	return &ticketSSHRig{svc: svc, mgr: mgr, actions: actions, store: actionStore, pub: pub}
+	return &ticketSSHRig{clk: clk, svc: svc, mgr: mgr, actions: actions, store: actionStore, pub: pub}
 }
 
 func newActionID() func() string {
@@ -173,7 +175,9 @@ func TestTicketAdmittedThroughFileKeyApproval(t *testing.T) {
 	r.store.Deny(a.ID)
 	waitFor(t, "refused", func() bool { return r.pub.last() == ticket.StateRefused })
 
-	// Ask again: a fresh prompt; approving it admits the guest.
+	// Ask again (after the cooldown): a fresh prompt; approving it admits
+	// the guest.
+	r.clk.Advance(ticket.RetryCooldown)
 	r.svc.Retry(guestID)
 	a2 := r.nextAction(t)
 	if a2.ID == a.ID || a2.Context.Ticket == nil || a2.Context.Ticket.ConfirmationCode != code {

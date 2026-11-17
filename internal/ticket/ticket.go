@@ -20,7 +20,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -49,6 +48,13 @@ const (
 	MaxOutstanding = 20
 	// MaxConnections caps guest WebSocket connections per guest session.
 	MaxConnections = 8
+	// MaxAttempts caps admission attempts per guest session (the first one
+	// plus "Ask again"). Each attempt prompts the owner and dials the
+	// endpoint, so a ticket holder must not be able to repeat it at will.
+	// When the last one is refused, the guest session closes.
+	MaxAttempts = 3
+	// RetryCooldown is the minimum wait after a refusal before "Ask again".
+	RetryCooldown = 15 * time.Second
 	// ReasonMaxLen caps the guest's reason (characters, after sanitizing).
 	ReasonMaxLen = 200
 	// LabelMaxLen caps a ticket label (characters).
@@ -133,6 +139,10 @@ type Status struct {
 	RemainingSeconds  *int   `json:"remainingSeconds,omitempty"`
 	// LifetimeDeadline (open): the hard end of the session.
 	LifetimeDeadline string `json:"lifetimeDeadline,omitempty"`
+	// RetryAt (refused): when "Ask again" is accepted; AttemptsLeft
+	// (refused): how many more attempts the guest has.
+	RetryAt      string `json:"retryAt,omitempty"`
+	AttemptsLeft *int   `json:"attemptsLeft,omitempty"`
 	// Message is a fixed generic text (refused, closed).
 	Message string `json:"message,omitempty"`
 	// ServerTime is the server's clock when the frame was built. The guest
@@ -234,6 +244,7 @@ type guest struct {
 	graceDeadline time.Time // zero while attached (or before the first attach)
 
 	attempt        int
+	retryAt        time.Time // when "Ask again" is allowed (refused only)
 	attemptSession string
 	attemptCancel  context.CancelFunc
 	sessionID      string // the admitted terminal session
@@ -576,6 +587,11 @@ type RedeemParams struct {
 	UserAgent string
 	Cookie    string
 	Channel   terminal.TicketChannel
+	// ReplaceCurrent ends the guest session the browser's cookie names (if
+	// any) in the same step that consumes the ticket, instead of answering
+	// ErrLiveGuest. The old session is never attached for it, so no owner
+	// prompt is raised for it.
+	ReplaceCurrent bool
 }
 
 // Redeemed is a successful redemption: the guest cookie (returned exactly
@@ -597,6 +613,19 @@ type CapacityError struct{ RetryAfter time.Duration }
 func (e *CapacityError) Error() string { return ErrCapacity.Error() }
 func (e *CapacityError) Unwrap() error { return ErrCapacity }
 
+// HasLiveGuestForEndpoint reports whether the account has a live guest
+// session (any state before closed) on the endpoint.
+func (s *Service) HasLiveGuestForEndpoint(accountID, endpointID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.guests {
+		if g.state != StateClosed && g.t.accountID == accountID && g.t.endpointID == endpointID {
+			return true
+		}
+	}
+	return false
+}
+
 // HasLiveGuest reports whether cookie names a live guest session.
 func (s *Service) HasLiveGuest(cookie string) bool {
 	if cookie == "" {
@@ -611,7 +640,9 @@ func (s *Service) HasLiveGuest(cookie string) bool {
 // Redeem consumes a ticket and creates a guest session waiting for its
 // first attach. Nothing is connected and no prompt is raised here.
 func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) {
-	if s.HasLiveGuest(p.Cookie) {
+	// Early exit before any lookup; repeated under the lock below, where it
+	// is authoritative.
+	if !p.ReplaceCurrent && s.HasLiveGuest(p.Cookie) {
 		slog.Info("ticket: redeem rejected", "reason", "browser holds a live guest session", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrLiveGuest
 	}
@@ -691,12 +722,38 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "already redeemed", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrNotFound
 	}
-	if live := s.liveGuestsLocked(t.accountID); live >= MaxGuestSessions {
+	// One guest session per browser, checked in the step that consumes the
+	// ticket: two concurrent redemptions with the same cookie cannot both
+	// pass. (Two first-time redemptions without a cookie cannot be told
+	// apart; the loser's cookie is overwritten and its unattached session
+	// drops after the attach window.)
+	var replaced *guest
+	if p.Cookie != "" {
+		if old, ok := s.byCookie[hash(p.Cookie)]; ok && old.state != StateClosed {
+			if !p.ReplaceCurrent {
+				s.mu.Unlock()
+				slog.Info("ticket: redeem rejected", "reason", "browser holds a live guest session", "sourceIp", p.SourceIP)
+				return Redeemed{}, ErrLiveGuest
+			}
+			replaced = old
+		}
+	}
+	live := s.liveGuestsLocked(t.accountID)
+	if replaced != nil && replaced.t.accountID == t.accountID {
+		live-- // its slot is freed below
+	}
+	if live >= MaxGuestSessions {
+		// Checked before the replaced session is closed: a rejected
+		// redemption leaves the browser's current session alone.
 		retry := s.retryAfterLocked(t.accountID)
 		s.mu.Unlock()
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "guest session cap reached",
 			"account", t.accountID, "sourceIp", p.SourceIP)
 		return Redeemed{}, &CapacityError{RetryAfter: retry}
+	}
+	if replaced != nil {
+		slog.Info("ticket: guest session replaced", "ticket", replaced.t.id, "by", t.id, "sourceIp", p.SourceIP)
+		s.closeLocked(replaced, terminal.CloseClientGuest, &fx)
 	}
 	delete(s.byToken, h)
 	t.guest = g
@@ -866,16 +923,27 @@ func (s *Service) Retry(guestID string) {
 	var fx effects
 	s.mu.Lock()
 	g, ok := s.guests[guestID]
-	if !ok || g.state != StateRefused || !s.clk.Now().Before(g.admissionDeadline) {
+	now := s.clk.Now()
+	if !ok || g.state != StateRefused || !now.Before(g.admissionDeadline) {
+		s.mu.Unlock()
+		return
+	}
+	if g.attempt >= MaxAttempts || now.Before(g.retryAt) {
+		// The page hides or disables the button; a script may not. Resend
+		// the status so a confused client resyncs.
+		slog.Info("ticket: retry rejected", "ticket", g.t.id, "attempt", g.attempt,
+			"reason", "cooldown or attempt limit")
+		s.publishStatusLocked(g)
 		s.mu.Unlock()
 		return
 	}
 	fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketRetried))
 	s.startAttemptLocked(g, &fx)
 	fx.ownerTickets(g.t.accountID)
+	ticketID, attempt := g.t.id, g.attempt
 	s.mu.Unlock()
 	s.apply(&fx, false)
-	slog.Info("ticket: retry", "ticket", g.t.id, "attempt", g.attempt)
+	slog.Info("ticket: retry", "ticket", ticketID, "attempt", attempt)
 }
 
 // GuestAttached reports, for a terminal session admitted by a ticket,
@@ -916,6 +984,9 @@ func (s *Service) statusLocked(g *guest) Status {
 			left = 0
 		}
 		st.RemainingSeconds = &left
+		st.RetryAt = iso(g.retryAt)
+		attemptsLeft := MaxAttempts - g.attempt
+		st.AttemptsLeft = &attemptsLeft
 		st.Message = MsgNotGranted
 	case StateOpen:
 		st.LifetimeDeadline = iso(g.lifetimeDeadline)
@@ -1013,7 +1084,6 @@ func (s *Service) attemptFailed(guestID string, n int, why string) {
 }
 
 func (s *Service) refuseLocked(g *guest, why string, fx *effects) {
-	g.state = StateRefused
 	if g.attemptCancel != nil {
 		fx.cancels = append(fx.cancels, g.attemptCancel)
 		g.attemptCancel = nil
@@ -1021,9 +1091,17 @@ func (s *Service) refuseLocked(g *guest, why string, fx *effects) {
 	ev := s.event(g.t, g, audit.TicketAttemptFailed)
 	ev.EndReason = why
 	fx.audits = append(fx.audits, ev)
+	slog.Info("ticket: attempt failed", "ticket", g.t.id, "attempt", g.attempt, "reason", why)
+	if g.attempt >= MaxAttempts {
+		// No attempts left: nothing more the guest can do.
+		g.attemptSession = ""
+		s.closeLocked(g, terminal.CloseTicketNotAdmitted, fx)
+		return
+	}
+	g.state = StateRefused
+	g.retryAt = s.clk.Now().Add(RetryCooldown)
 	fx.ownerTickets(g.t.accountID)
 	s.publishStatusLocked(g)
-	slog.Info("ticket: attempt failed", "ticket", g.t.id, "attempt", g.attempt, "reason", why)
 }
 
 // onStatus is the Manager status hook: admission, and the end of an
@@ -1074,11 +1152,11 @@ func (s *Service) onStatus(ev terminal.StatusEvent) {
 			g.attemptSession = "" // the terminal session is already ending
 			s.closeLocked(g, reason, &fx)
 		case StatePending:
-			why := string(ev.Reason)
-			if why == "" {
-				why = "connection closed during setup"
-			}
-			s.refuseLocked(g, why, &fx)
+			// A pending attempt's session never went live: Manager.Create
+			// broadcasts this closed (transport-error) just before it
+			// returns the real error to runAttempt, which records it via
+			// attemptFailed. Refusing here would audit every failure as
+			// transport-error and hide an owner's denial.
 		}
 	}
 	s.mu.Unlock()
@@ -1261,11 +1339,12 @@ func (s *Service) Close() {
 
 func hash(s string) [32]byte { return sha256.Sum256([]byte(s)) }
 
+// crypto/rand.Read never returns an error (Go 1.24+: it crashes the
+// program instead of handing out weak randomness), so none is checked.
+
 func randomToken() string {
 	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(fmt.Sprintf("crypto/rand: %v", err))
-	}
+	_, _ = rand.Read(b[:])
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 

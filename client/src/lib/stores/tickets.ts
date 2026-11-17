@@ -90,7 +90,9 @@ export async function mintTicket(
   });
   if (res.status !== 201) throw await errorFrom(res, "Failed to create the access link");
   const out = (await res.json()) as { ticket: Ticket; token: string };
-  await fetchTickets();
+  // The token is shown exactly once: a failed list refresh must not turn a
+  // successful mint into an error (the ticket exists either way).
+  void fetchTickets().catch(() => {});
   return out;
 }
 

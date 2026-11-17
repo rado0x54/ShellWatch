@@ -20,7 +20,7 @@ import {
   type WsClient,
 } from "../harness/clients.js";
 import { recordScenario } from "../harness/out.js";
-import { stripAnsi, waitFor } from "../harness/util.js";
+import { sleep, stripAnsi, waitFor } from "../harness/util.js";
 
 const target = sshdTargets()[0]!;
 const COOKIE = "__Host-sw_guest";
@@ -31,6 +31,8 @@ interface GuestFrame {
   code?: string;
   message?: string;
   remainingSeconds?: number;
+  retryAt?: string;
+  attemptsLeft?: number;
   data?: string;
   reset?: boolean;
 }
@@ -184,7 +186,10 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     expect(refused.remainingSeconds).toBeGreaterThan(0);
     expect(JSON.stringify(guest.frames)).not.toMatch(/E2E ticket|filekey|authentication/);
 
-    // Ask again: a fresh prompt with the same code; approve it.
+    // Ask again, once the cooldown has passed: a fresh prompt with the same
+    // code; approve it.
+    expect(refused.attemptsLeft).toBe(2);
+    await sleep(Math.max(0, Date.parse(refused.retryAt!) - Date.now()) + 250);
     guest.send({ type: "retry" });
     await guest.status("pending");
     const second = await nextPrompt();

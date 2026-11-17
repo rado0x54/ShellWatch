@@ -123,12 +123,13 @@ func redeemAttached(t *testing.T, s *Service) string {
 // Events from an attempt that is no longer current change nothing; a stale
 // attempt that goes live anyway is closed, never admitted.
 func TestStaleAttemptEventsAreIgnored(t *testing.T) {
-	s, f, pub, _ := newTestService(t)
+	s, f, pub, clk := newTestService(t)
 	gid := redeemAttached(t, s)
 	first := <-f.creates
 	f.answers <- errors.New("skipped")
 	waitUntil(t, "refused", func() bool { return pub.last() == StateRefused })
 
+	clk.Advance(RetryCooldown)
 	s.Retry(gid)
 	second := <-f.creates
 	if second.SessionID == first.SessionID {

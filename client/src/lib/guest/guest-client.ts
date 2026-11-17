@@ -78,6 +78,8 @@ export async function redeemTicket(
   token: string,
   reason: string,
   fetchFn: typeof fetch = fetch,
+  /** End this browser's current guest session instead of a 409. */
+  replaceCurrent = false,
 ): Promise<RedeemResult> {
   let res: Response;
   try {
@@ -88,7 +90,7 @@ export async function redeemTicket(
       credentials: "same-origin",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, reason }),
+      body: JSON.stringify(replaceCurrent ? { token, reason, replaceCurrent } : { token, reason }),
     });
   } catch {
     return { ok: false, failure: "error" };
@@ -125,6 +127,9 @@ export interface GuestStatus {
   code?: string;
   admissionDeadline?: string;
   remainingSeconds?: number;
+  /** refused: when "Ask again" is accepted, and how many attempts remain. */
+  retryAt?: string;
+  attemptsLeft?: number;
   lifetimeDeadline?: string;
   message?: string;
   /** The server's clock when the frame was built (ISO 8601). */
@@ -182,10 +187,6 @@ export class GuestSocket {
       if (this.ws === ws) this.ws = null;
       if (!this.ended) this.handlers.onDrop();
     };
-  }
-
-  get isEnded(): boolean {
-    return this.ended;
   }
 
   private send(msg: Record<string, unknown>): void {

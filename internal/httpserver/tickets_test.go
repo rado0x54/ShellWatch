@@ -29,6 +29,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/rado0x54/shellwatch/internal/agent"
 	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/buildinfo"
@@ -112,6 +113,7 @@ type ticketRig struct {
 	gate    *gatedFactory
 	db      *sql.DB
 	maxSess int
+	epSvc   *endpointsvc.Service
 	// demoID is a demo endpoint's id ("demo:…"), visible to every account.
 	demoID string
 	// lookupErr makes the redeem-time account check fail (a database
@@ -189,10 +191,14 @@ func ticketServer(t *testing.T) *ticketRig {
 		return nil
 	})
 	rig.svc = svc
+	epSvc.Sessions = mgr
+	epSvc.LiveGuest = svc.HasLiveGuestForEndpoint
+	epSvc.OnDeleted = svc.CloseForEndpoint
+	rig.epSvc = epSvc
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WSHub:     hub,
-		Endpoints: &rest.Endpoints{Svc: epSvc, Sessions: mgr, NewID: ids.NewUUID, OnDeleted: svc.CloseForEndpoint},
+		Endpoints: &rest.Endpoints{Svc: epSvc, NewID: ids.NewUUID},
 		Sessions: &rest.Sessions{Manager: mgr, Svc: epSvc, GuestAttached: svc.GuestAttached,
 			MaxSessions: func(context.Context, string) (int, bool) { return rig.maxSess, true }},
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
@@ -244,11 +250,16 @@ type redeemResult struct {
 type redeemOpts struct {
 	origin, cookie, bearer string
 	noOrigin               bool
+	replaceCurrent         bool
 }
 
 func (r *ticketRig) redeem(t *testing.T, token, reason string, o redeemOpts) redeemResult {
 	t.Helper()
-	raw, _ := json.Marshal(map[string]string{"token": token, "reason": reason})
+	body := map[string]any{"token": token, "reason": reason}
+	if o.replaceCurrent {
+		body["replaceCurrent"] = true
+	}
+	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", r.ts.URL+"/api/tickets/redeem", strings.NewReader(string(raw)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "GuestBrowser/1.0")
@@ -752,6 +763,54 @@ func TestTicketRefusedAskAgainAndAdmissionWindow(t *testing.T) {
 	wantEvents(t, r, ticketID, "minted", "redeemed", "attached", "attempt-failed", "retried", "ended:ticket-not-admitted")
 }
 
+// "Ask again" is bounded: a cooldown after each refusal and MaxAttempts in
+// total; the last refusal closes the guest session. The audit keeps each
+// attempt's real failure cause (not the Manager's generic transport-error).
+func TestTicketRetryCooldownAndAttemptLimit(t *testing.T) {
+	r := ticketServer(t)
+	ticketID, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	for attempt := 1; attempt <= ticket.MaxAttempts; attempt++ {
+		r.gate.waitStarted(t)
+		r.gate.decisions <- errors.New("owner skipped every key")
+		if attempt == ticket.MaxAttempts {
+			break
+		}
+		refused := readUntil(t, c, statusIs("refused"))
+		if left := refused["attemptsLeft"]; left != float64(ticket.MaxAttempts-attempt) {
+			t.Errorf("attempt %d: attemptsLeft %v", attempt, left)
+		}
+		if refused["retryAt"] != r.clk.Now().Add(ticket.RetryCooldown).UTC().Format(clock.ISOMillis) {
+			t.Errorf("retryAt %v", refused["retryAt"])
+		}
+		// Too early: ignored, and the status is resent.
+		writeMsg(t, c, map[string]any{"type": "retry"})
+		readUntil(t, c, statusIs("refused"))
+		r.gate.noAttempt(t)
+		r.clk.Advance(ticket.RetryCooldown)
+		writeMsg(t, c, map[string]any{"type": "retry"})
+		readUntil(t, c, statusIs("pending"))
+	}
+	closed := readUntil(t, c, statusIs("closed"))
+	if closed["message"] != ticket.MsgNotGranted {
+		t.Errorf("closed after the last attempt: %v", closed)
+	}
+	wantEvents(t, r, ticketID, "minted", "redeemed", "attached",
+		"attempt-failed", "retried", "attempt-failed", "retried", "attempt-failed", "ended:ticket-not-admitted")
+	page, err := audit.NewTicketEvents(r.db, nil).List(context.Background(), "acc-a",
+		audit.TicketEventFilters{TicketID: ticketID, Event: audit.TicketAttemptFailed, Limit: 10})
+	if err != nil || len(page.Rows) != ticket.MaxAttempts {
+		t.Fatalf("attempt-failed rows: %d %v", len(page.Rows), err)
+	}
+	for _, row := range page.Rows {
+		if row.EndReason == nil || !strings.Contains(*row.EndReason, "owner skipped every key") {
+			t.Errorf("attempt-failed reason %v, want the real cause", row.EndReason)
+		}
+	}
+}
+
 func TestTicketAdmissionWindowClosesFromRefused(t *testing.T) {
 	r := ticketServer(t)
 	_, token := r.mint(t, "ep-a", `{}`)
@@ -1052,6 +1111,28 @@ func TestTicketOneGuestSessionPerBrowser(t *testing.T) {
 	}
 }
 
+// replaceCurrent ends the browser's current guest session in the redeem
+// step itself: the old one, never attached, raises no connect attempt (no
+// owner prompt), its cookie stops working, and the new one proceeds.
+func TestTicketRedeemReplacesCurrentGuest(t *testing.T) {
+	r := ticketServer(t)
+	firstID, first := r.mint(t, "ep-a", `{}`)
+	_, second := r.mint(t, "ep-a", `{}`)
+	old := r.redeem(t, first, "x", redeemOpts{})
+	res := r.redeem(t, second, "x", redeemOpts{cookie: old.cookie, replaceCurrent: true})
+	if res.status != 202 || res.cookie == "" {
+		t.Fatalf("replacing redeem: %d %s", res.status, res.raw)
+	}
+	r.gate.noAttempt(t)
+	if _, st := r.dialGuest(t, old.cookie, guestOrigin); st != 404 {
+		t.Errorf("old cookie after replacement: %d", st)
+	}
+	wantEvents(t, r, firstID, "minted", "redeemed", "ended:client.guest")
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
+}
+
 func TestTicketOriginMatrix(t *testing.T) {
 	r := ticketServer(t)
 	_, token := r.mint(t, "ep-a", `{}`)
@@ -1132,7 +1213,11 @@ func TestTicketGuestRoutesIgnoreBearer(t *testing.T) {
 	}
 }
 
-func TestTicketEndpointDeletedEndsGuest(t *testing.T) {
+// Endpoint delete is shared by REST and MCP: a live guest session (here a
+// refused one, which has no terminal session but may ask again) blocks it
+// like an open session; once the guest has ended, the delete succeeds and
+// revokes the endpoint's outstanding tickets.
+func TestTicketEndpointDeleteGuardAndTicketRevocation(t *testing.T) {
 	r := ticketServer(t)
 	_, token := r.mint(t, "ep-a", `{}`)
 	minted, _ := r.mint(t, "ep-a", `{}`)
@@ -1141,13 +1226,24 @@ func TestTicketEndpointDeletedEndsGuest(t *testing.T) {
 	r.gate.waitStarted(t)
 	r.gate.decisions <- errors.New("skipped")
 	readUntil(t, c, statusIs("refused"))
-	if st, out := r.ownerJSON(t, "DELETE", "/api/endpoints/ep-a", "ui", ""); st != 200 {
-		t.Fatalf("delete endpoint: %d %v", st, out)
+
+	if st, out := r.ownerJSON(t, "DELETE", "/api/endpoints/ep-a", "ui", ""); st != 409 {
+		t.Fatalf("REST delete with a live guest: %d %v", st, out)
 	}
+	mcp := agent.New(agent.Params{Deps: agent.Deps{Manager: r.mgr, Svc: r.epSvc}, AccountID: "acc-a", ClientID: "c", MaxOwned: -1})
+	if _, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); !errors.Is(err, endpointsvc.ErrActiveSessions) {
+		t.Fatalf("MCP delete with a live guest: %v", err)
+	}
+
+	writeMsg(t, c, map[string]any{"type": "end"})
 	readUntil(t, c, statusIs("closed"))
+	eventually(t, "guest gone", func() bool { return !r.svc.HasLiveGuestForEndpoint("acc-a", "ep-a") })
+	if ok, err := mcp.DeleteEndpoint(context.Background(), "ep-a"); err != nil || !ok {
+		t.Fatalf("MCP delete after the guest ended: %v %v", ok, err)
+	}
 	for _, v := range r.svc.List("acc-a") {
 		if v.ID == minted {
-			t.Error("minted ticket survived its endpoint")
+			t.Error("outstanding ticket survived its endpoint")
 		}
 	}
 }
@@ -1215,7 +1311,7 @@ func TestTicketSecretsNeverLogged(t *testing.T) {
 			t.Errorf("%s leaked into the log", name)
 		}
 	}
-	for _, want := range []string{"ticket: minted", "ticket: redeemed", "ticket: attached", "ticket: ended", "ws: guest origin rejected"} {
+	for _, want := range []string{"ticket: minted", "ticket: redeemed", "ticket: attached", "ticket: ended", "ticket: redeem rejected"} {
 		if !strings.Contains(logged, want) {
 			t.Errorf("log lacks %q", want)
 		}

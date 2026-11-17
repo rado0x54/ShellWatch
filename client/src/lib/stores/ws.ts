@@ -90,6 +90,8 @@ export const sessions = writable<SessionListEntry[]>([]);
 export const wsConnected = writable(false);
 
 let ws: WebSocket | null = null;
+/** Whether a socket was open before: a later open is a reconnect. */
+let openedBefore = false;
 const handlers = new Set<MessageHandler>();
 const lastOffsetBySession = new Map<string, number>();
 /** Sessions some view is attached to (#271). Attachment is per-connection
@@ -171,6 +173,11 @@ export async function connectWs(opts?: { force?: boolean }): Promise<void> {
   ws.onopen = () => {
     for (const sessionId of attachedSessions) sendAttach(sessionId);
     wsConnected.set(true);
+    // tickets:changed sent while the socket was down is lost: catch up.
+    // (Sessions need no refetch: the server sends sessions:changed on
+    // every connect.)
+    if (openedBefore) void fetchTickets().catch(() => {});
+    openedBefore = true;
   };
 
   ws.onmessage = (event) => {

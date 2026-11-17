@@ -4,13 +4,17 @@
 // merge rules and the field constraints both wire layers enforce — before it
 // existed, the demo-aware resolution was hand-rolled three times and the
 // validation constants twice, and the copies had already drifted once.
-// Mutations (create/update/delete) go straight to Endpoints: demo entries are
+// Delete is shared by REST and MCP (#314): the active-session guard and the
+// post-delete hooks must apply to both. Create/update still go straight to
+// Endpoints from each wire layer (#315 moves them here too): demo entries are
 // synthesized per request, never stored, and the wire layers reject demo ids
 // before mutating.
 package endpointsvc
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"github.com/rado0x54/shellwatch/internal/demo"
 	"github.com/rado0x54/shellwatch/internal/store"
@@ -38,6 +42,66 @@ func IsUserVerification(v string) bool {
 type Service struct {
 	Endpoints *store.Endpoints
 	Demo      *demo.Service
+
+	// Sessions reports the endpoints an account has active (not ended)
+	// terminal sessions on, guest sessions included (terminal.Manager). nil
+	// skips that part of the delete guard (tests).
+	Sessions ActiveSessionLister
+	// LiveGuest reports a live guest session for the endpoint, including one
+	// with no terminal session right now (waiting to attach, or refused and
+	// allowed to ask again): it may still dial the endpoint, so it blocks a
+	// delete like an open session. nil-able.
+	LiveGuest func(accountID, endpointID string) bool
+	// OnDeleted runs after a delete, so the endpoint's outstanding tickets
+	// end with it (#306). nil-able.
+	OnDeleted func(accountID, endpointID string)
+}
+
+// ActiveSessionLister is satisfied by terminal.Manager.
+type ActiveSessionLister interface {
+	EndpointIDsForAccount(accountID string) []string
+}
+
+var (
+	// ErrDemoReadOnly: demo endpoints cannot be changed.
+	ErrDemoReadOnly = errors.New("Demo endpoints are read-only")
+	// ErrActiveSessions: the endpoint has active sessions (any source).
+	ErrActiveSessions = errors.New("Cannot delete endpoint with active sessions")
+)
+
+// Delete removes an account-scoped endpoint for REST and MCP alike. It is
+// refused while the endpoint has active sessions (UI, MCP or guest, or a guest
+// that may still connect); ended sessions never block it. On success the
+// post-delete hook revokes the endpoint's outstanding tickets. Returns false
+// when nothing matched.
+func (s *Service) Delete(ctx context.Context, id, accountID string) (bool, error) {
+	if demo.IsID(id) {
+		return false, ErrDemoReadOnly
+	}
+	if s.hasActiveSessions(accountID, id) {
+		slog.Info("endpoint: delete refused", "account", accountID, "endpoint", id, "reason", "active sessions")
+		return false, ErrActiveSessions
+	}
+	ok, err := s.Endpoints.Delete(ctx, id, accountID)
+	if err != nil || !ok {
+		return ok, err
+	}
+	slog.Info("endpoint: deleted", "account", accountID, "endpoint", id)
+	if s.OnDeleted != nil {
+		s.OnDeleted(accountID, id)
+	}
+	return true, nil
+}
+
+func (s *Service) hasActiveSessions(accountID, endpointID string) bool {
+	if s.Sessions != nil {
+		for _, epID := range s.Sessions.EndpointIDsForAccount(accountID) {
+			if epID == endpointID {
+				return true
+			}
+		}
+	}
+	return s.LiveGuest != nil && s.LiveGuest(accountID, endpointID)
 }
 
 // Endpoint is a resolved endpoint plus its provenance.

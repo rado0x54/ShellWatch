@@ -208,7 +208,7 @@ login/consent URLs pointed at ShellWatch — see `hydra.yml`.
 > nginx do by default) and pass WebSocket upgrades for `/ws/guest` like `/ws`.
 > The check never looks at `Host` or the connection's scheme, so a proxy that
 > rewrites `Host` or terminates TLS is fine — but a wrong `externalUrl` refuses
-> every guest with 403 (log: `ws: guest origin rejected`, with the origin and
+> every guest with 403 (logs: `ticket: redeem rejected` for the redeem call, `ws: guest origin rejected` for the guest WebSocket, with the origin and
 > the expected host). The server warns at startup when `externalUrl` is
 > `http://` while `server.trustProxy` is set.
 >

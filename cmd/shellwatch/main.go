@@ -468,6 +468,11 @@ func run() error {
 		NewID: newUUID,
 	})
 	defer tickets.Close()
+	// Endpoint delete (REST and MCP alike) is refused while sessions or
+	// guests are active, and revokes the endpoint's tickets afterwards.
+	epSvc.Sessions = manager
+	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
+	epSvc.OnDeleted = tickets.CloseForEndpoint
 	guestHub := ws.NewGuestHub(ws.GuestHubParams{
 		Manager: manager, Service: tickets,
 		ExternalURL: func() string { return cfg.Server.ExternalURL },
@@ -526,12 +531,10 @@ func run() error {
 			return has
 		},
 		Endpoints: &rest.Endpoints{
-			Svc:       epSvc,
-			Sessions:  manager,
-			NewID:     newUUID,
-			StepUp:    webauthnDeps.StepUp,
-			Audit:     auditWriter,
-			OnDeleted: tickets.CloseForEndpoint,
+			Svc:    epSvc,
+			NewID:  newUUID,
+			StepUp: webauthnDeps.StepUp,
+			Audit:  auditWriter,
 		},
 		Sessions: &rest.Sessions{
 			Manager:       manager,

@@ -2050,7 +2050,10 @@ type ListTicketsParams struct {
 type RedeemTicketJSONBody struct {
 	// Reason Why the guest wants access. Control characters are stripped and it is capped at 200 characters. Required (non-empty) when the ticket says so.
 	Reason *string `json:"reason,omitempty"`
-	Token  string  `json:"token"`
+
+	// ReplaceCurrent End this browser's current guest session (named by its guest cookie) in the same step that consumes the ticket, instead of answering 409. The old session is not attached for it, so it raises no owner prompt.
+	ReplaceCurrent *bool  `json:"replaceCurrent,omitempty"`
+	Token          string `json:"token"`
 }
 
 // RevokeTicket200JSONResponseBodyStatus defines parameters for RevokeTicket.
