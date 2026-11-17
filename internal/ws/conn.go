@@ -12,13 +12,18 @@ import (
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
 
-// conn is one browser connection: its account, per-session attached/controlled
+// conn is one browser connection: its scope, per-session attached/controlled
 // state, per-session last-sent output offset, and a bounded outbound queue
 // drained by a single writer goroutine (spec §5.7: preserve per-connection
 // ordering; drop a slow client rather than block the hub).
+//
+// The scope is an account (accountID set) or one ticket guest session
+// (guestID set, accountID empty; #328). Account-scoped fan-out goes through
+// ownedBy, which a guest connection never matches.
 type conn struct {
 	ws        *websocket.Conn
 	accountID string
+	guestID   string
 
 	mu         sync.Mutex
 	attached   map[string]bool
@@ -35,10 +40,20 @@ type conn struct {
 	out    chan []byte
 	closed bool
 
-	// guest marks a /ws/guest connection (#306): output frames use the guest
-	// protocol shape ({type: output}, no session id).
-	guest bool
+	// writerDone and finishOnce serve the guest connection's drain-then-close
+	// (finish).
+	writerDone <-chan struct{}
+	finishOnce sync.Once
 }
+
+// ownedBy reports whether the connection belongs to an account: never true
+// for a guest connection.
+func (c *conn) ownedBy(accountID string) bool {
+	return c.guestID == "" && accountID != "" && c.accountID == accountID
+}
+
+// isGuest reports a /ws/guest connection.
+func (c *conn) isGuest() bool { return c.guestID != "" }
 
 func newConn(wsc *websocket.Conn, accountID string) *conn {
 	return &conn{
@@ -96,7 +111,7 @@ func (c *conn) enqueue(raw []byte) {
 // stopped reading blocks for seconds, and enqueue is called with other locks
 // held (the ticket service publishes guest frames under its global lock).
 func (c *conn) dropOverflow() {
-	slog.Warn("ws: slow client dropped", "account", c.accountID, "guest", c.guest, "reason", "send buffer overflow")
+	slog.Warn("ws: slow client dropped", "account", c.accountID, "guest", c.isGuest(), "reason", "send buffer overflow")
 	go func() { _ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow") }()
 }
 
@@ -259,31 +274,18 @@ func (c *conn) flushLocked(mgr *terminal.Manager, sessionID string) {
 	if len(res.Data) == 0 && !res.Reset {
 		return
 	}
-	msg := outputFrame(outputFrameParams{guest: c.guest, sessionID: sessionID, data: res.Data, offset: res.Offset, reset: res.Reset})
+	msg := outputFrame(sessionID, res.Data, res.Offset, res.Reset)
 	c.mu.Lock()
 	c.lastOffset[sessionID] = res.Offset
 	c.mu.Unlock()
 	c.send(msg)
 }
 
-// outputFrame builds a terminal output frame: terminal:output on /ws, the
-// guest protocol's sessionless output on /ws/guest.
-type outputFrameParams struct {
-	// guest selects the guest protocol's shape (no session id).
-	guest     bool
-	sessionID string
-	data      []byte
-	offset    int64
-	// reset tells the client to clear what it shows first (catch-up).
-	reset bool
-}
-
-func outputFrame(p outputFrameParams) map[string]any {
-	msg := map[string]any{"type": "terminal:output", "sessionId": p.sessionID, "data": string(p.data), "offset": p.offset}
-	if p.guest {
-		msg = map[string]any{"type": "output", "data": string(p.data), "offset": p.offset}
-	}
-	if p.reset {
+// outputFrame builds a terminal:output frame; reset tells the client to
+// clear what it shows first (catch-up).
+func outputFrame(sessionID string, data []byte, offset int64, reset bool) map[string]any {
+	msg := map[string]any{"type": "terminal:output", "sessionId": sessionID, "data": string(data), "offset": offset}
+	if reset {
 		msg["reset"] = true
 	}
 	return msg

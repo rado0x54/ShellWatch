@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
 import { writable } from "svelte/store";
 import { beginLogin, getAccessToken, hasRefreshToken } from "../oauth.js";
+import type { TerminalMode, TerminalTransport } from "../terminal/transport.js";
 import type { FileTransferEvent } from "./file-transfers.js";
 import { fetchTickets } from "./tickets.js";
 import type { AppNotification } from "./notifications.js";
@@ -20,7 +21,7 @@ const WS_BEARER_SUBPROTOCOL = "shellwatch.bearer";
 /** Delay before a reconnect attempt after a drop. */
 const RECONNECT_DELAY_MS = 2000;
 
-export type SessionMode = "control" | "observer";
+export type SessionMode = TerminalMode;
 
 export interface SessionListEntry {
   sessionId: string;
@@ -283,4 +284,28 @@ export function wsTakeControl(sessionId: string): void {
 
 export function wsReleaseControl(sessionId: string): void {
   wsSend({ type: "terminal:release-control", sessionId });
+}
+
+/** The owner socket as a Terminal transport for one session (#328): attach
+ * with a full replay on subscribe (a fresh xterm has no backlog, so a stale
+ * offset from an earlier mount must not give an empty attach), detach on
+ * stop. */
+export function ownerTransport(sessionId: string): TerminalTransport {
+  return {
+    subscribe(sink) {
+      const off = onWsMessage((msg) => {
+        if (!("sessionId" in msg) || msg.sessionId !== sessionId) return;
+        if (msg.type === "terminal:output") sink.output(msg.data, msg.reset === true);
+        else if (msg.type === "terminal:closed") sink.closed();
+        else if (msg.type === "terminal:mode") sink.mode?.(msg.mode);
+      });
+      wsAttach(sessionId, { fresh: true });
+      return () => {
+        wsDetach(sessionId);
+        off();
+      };
+    },
+    sendInput: (data) => wsSendInput(sessionId, data),
+    sendResize: (cols, rows) => wsSendResize(sessionId, cols, rows),
+  };
 }

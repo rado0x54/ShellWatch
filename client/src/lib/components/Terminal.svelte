@@ -1,28 +1,28 @@
 <!-- SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0 -->
 <script lang="ts">
+  // The one interactive terminal (#328). It knows no socket: the session page
+  // passes the owner transport, the guest page the guest socket.
   import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { Terminal } from "@xterm/xterm";
   import { onDestroy, onMount } from "svelte";
+  import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "$lib/terminal/theme.js";
   import {
-    onWsMessage,
-    type SessionMode,
-    wsAttach,
-    wsDetach,
-    wsSendInput,
-    wsSendResize,
-  } from "$lib/stores/ws.js";
+    bindTerminal,
+    type TerminalMode,
+    type TerminalTransport,
+  } from "$lib/terminal/transport.js";
 
   interface Props {
-    sessionId: string;
-    mode?: SessionMode;
+    transport: TerminalTransport;
+    mode?: TerminalMode;
     fontSize?: number;
     readonly?: boolean;
-    onModeChange?: (mode: SessionMode) => void;
+    onModeChange?: (mode: TerminalMode) => void;
   }
 
   let {
-    sessionId,
+    transport,
     mode = "control",
     fontSize = 14,
     readonly = false,
@@ -31,91 +31,49 @@
 
   let containerEl: HTMLDivElement;
   let terminal: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
-  let unsubscribe: (() => void) | null = null;
+  let unbind: (() => void) | null = null;
 
   onMount(() => {
-    terminal = new Terminal({
+    const term = new Terminal({
       cursorBlink: !readonly,
       fontSize,
-      fontFamily:
-        "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
-      theme: {
-        background: "#0e0e0e",
-        foreground: "#f2f2f2",
-        cursor: "#69f6b8",
-        cursorAccent: "#002919",
-        selectionBackground: "rgba(105, 246, 184, 0.25)",
-        black: "#0e0e0e",
-        red: "#ff5a5a",
-        green: "#69f6b8",
-        yellow: "#f8a010",
-        blue: "#3fbe8a",
-        magenta: "#b07a1a",
-        cyan: "#69f6b8",
-        white: "#adaaaa",
-        brightBlack: "#494847",
-        brightRed: "#ff5a5a",
-        brightGreen: "#69f6b8",
-        brightYellow: "#f8a010",
-        brightBlue: "#3fbe8a",
-        brightMagenta: "#b07a1a",
-        brightCyan: "#69f6b8",
-        brightWhite: "#f2f2f2",
-      },
+      fontFamily: TERMINAL_FONT_FAMILY,
+      theme: TERMINAL_THEME,
       disableStdin: readonly || mode === "observer",
     });
-
-    fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.loadAddon(new WebLinksAddon());
-
-    terminal.open(containerEl);
+    terminal = term;
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon());
+    term.open(containerEl);
     fitAddon.fit();
 
-    if (!readonly) {
-      terminal.onData((data) => {
-        wsSendInput(sessionId, data);
-      });
-    }
-
-    // Fresh xterm has no backlog — force full replay so a stale offset from a
-    // previous mount (e.g. observer mode) doesn't cause an empty attach.
-    wsAttach(sessionId, { fresh: true });
-    wsSendResize(sessionId, terminal.cols, terminal.rows);
-
-    unsubscribe = onWsMessage((msg) => {
-      if (msg.type === "terminal:output" && msg.sessionId === sessionId) {
-        if (msg.reset) terminal?.reset();
-        terminal?.write(msg.data);
-      }
-      if (msg.type === "terminal:closed" && msg.sessionId === sessionId) {
-        terminal?.write("\r\n\x1b[31m[Session closed]\x1b[0m\r\n");
-      }
-      if (msg.type === "terminal:mode" && msg.sessionId === sessionId) {
-        mode = msg.mode;
-        if (terminal) {
-          terminal.options.disableStdin = msg.mode === "observer";
-        }
-        onModeChange?.(msg.mode);
-      }
-    });
+    if (!readonly) term.onData((data) => transport.sendInput(data));
+    unbind = bindTerminal(
+      {
+        reset: () => term.reset(),
+        write: (data) => term.write(data),
+        setInputEnabled: (on) => (term.options.disableStdin = readonly || !on),
+      },
+      transport,
+      (m) => {
+        mode = m;
+        onModeChange?.(m);
+      },
+    );
+    transport.sendResize(term.cols, term.rows);
 
     resizeObserver = new ResizeObserver(() => {
-      if (fitAddon && terminal) {
-        fitAddon.fit();
-        wsSendResize(sessionId, terminal.cols, terminal.rows);
-      }
+      fitAddon.fit();
+      transport.sendResize(term.cols, term.rows);
     });
     resizeObserver.observe(containerEl);
-
-    terminal.focus();
+    term.focus();
   });
 
   onDestroy(() => {
-    wsDetach(sessionId);
-    unsubscribe?.();
+    unbind?.();
     resizeObserver?.disconnect();
     terminal?.dispose();
   });

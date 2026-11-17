@@ -3,6 +3,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { Terminal } from "@xterm/xterm";
   import { onDestroy, onMount } from "svelte";
+  import { READONLY_TERMINAL_THEME, TERMINAL_FONT_FAMILY } from "$lib/terminal/theme.js";
 
   interface Props {
     data: string;
@@ -23,23 +24,10 @@
       disableStdin: true,
       scrollback: 5000,
       fontSize,
-      fontFamily:
-        "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
+      fontFamily: TERMINAL_FONT_FAMILY,
       rows,
-      theme: {
-        background: "#0e0e0e",
-        foreground: "#f2f2f2",
-        // 8-digit hex: fully transparent cursor — this is a read-only snapshot.
-        cursor: "#00000000",
-        selectionBackground: "rgba(105, 246, 184, 0.25)",
-        green: "#69f6b8",
-        yellow: "#f8a010",
-        red: "#ff5a5a",
-        brightGreen: "#69f6b8",
-        brightYellow: "#f8a010",
-        brightRed: "#ff5a5a",
-        brightWhite: "#f2f2f2",
-      },
+      // Fully transparent cursor: this is a read-only snapshot.
+      theme: READONLY_TERMINAL_THEME,
     });
 
     fitAddon = new FitAddon();

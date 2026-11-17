@@ -287,9 +287,11 @@ neither the code nor the reason.
 # Guest WebSocket (`/ws/guest`, #306)
 
 The connection a one-time access guest's browser holds while it waits for
-admission and then uses as its terminal. A separate endpoint with its own
-registry: `sessions:changed`, `sign:request`, `notification:new`,
-`tickets:changed` and other sessions' output can never reach it.
+admission and then uses as its terminal. A separate endpoint (own credential,
+Origin check and read limit) on the same hub and terminal frames as `/ws`
+(#328), with a guest scope instead of an account: `sessions:changed`,
+`sign:request`, `notification:new`, `tickets:changed`, `terminal:file` and
+other sessions' output can never reach it.
 
 ## Transport & auth
 
@@ -311,25 +313,29 @@ rejected`). Never derived from `Host` or the connection's scheme.
   `security.allowedNetworks` (403) and a per-IP rate limit (429).
 - Several tabs may attach at once (each gets the catch-up, then the same
   output; input from any reaches the session), at most 8 per guest session.
-- Inbound frames are capped at 1 MiB. The connection **is** the attachment:
-  there are no attach/detach messages.
+- Inbound frames are capped at 1 MiB. The server attaches the connection to
+  the guest's terminal session on admission (and on every attach after it);
+  the client sends no `terminal:attach`. It learns the session id from the
+  `terminal:output` catch-up frame.
 
 ## Client → Server
 
-| `type`   | Fields                         | Effect                                                                                        |
-| -------- | ------------------------------ | --------------------------------------------------------------------------------------------- |
-| `input`  | `data: string`                 | Input to the admitted session. Dropped before admission.                                      |
-| `resize` | `cols: number`, `rows: number` | Resize the admitted session's PTY. Dropped before admission.                                  |
-| `end`    | —                              | End the guest session now (end reason `client.guest`), from any tab; closes every connection. |
+| `type`            | Fields                                              | Effect                                                                                        |
+| ----------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `terminal:input`  | `sessionId: string`, `data: string`                 | Input to the admitted session. Dropped before admission or for any other `sessionId`.         |
+| `terminal:resize` | `sessionId: string`, `cols: number`, `rows: number` | Resize the admitted session's PTY. Dropped before admission or for any other `sessionId`.     |
+| `end`             | —                                                   | End the guest session now (end reason `client.guest`), from any tab; closes every connection. |
 
-Every other frame (any `terminal:*` type included) is silently dropped.
+Every other frame (`terminal:attach`, `terminal:close`, `terminal:take-control`
+and the rest) is silently dropped; no `error` frame is ever sent.
 
 ## Server → Client
 
-| `type`   | Fields                                           | Meaning                                                                                                                                 |
-| -------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `status` | `state`, plus the fields below                   | The guest session's state. Sent on every transition and to each connection when it attaches.                                            |
-| `output` | `data: string`, `offset: number`, `reset?: true` | Terminal output of the admitted session. On (re)attach after admission the whole buffer is sent once with `reset: true`; deltas follow. |
+| `type`            | Fields                                                                | Meaning                                                                                                                                              |
+| ----------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`          | `state`, plus the fields below                                        | The guest session's state. Sent on every transition and to each connection when it attaches. The only guest-specific frame.                          |
+| `terminal:output` | `sessionId: string`, `data: string`, `offset: number`, `reset?: true` | Terminal output of the admitted session, as on `/ws`. On (re)attach after admission the whole buffer is sent once with `reset: true`; deltas follow. |
+| `terminal:closed` | `sessionId: string`                                                   | The admitted session ended (after its remaining output), as on `/ws`. The final `closed` status follows.                                             |
 
 Every `status` frame carries `serverTime` (the server's clock, ISO 8601): the
 page counts `admissionDeadline` / `lifetimeDeadline` down against it, not
@@ -341,7 +347,7 @@ user) or carries a server error text; `message` is one of a few fixed texts:
 | `state`   | Fields                       | Meaning                                                                                                                                                                                                                                                                                                                                       |
 | --------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pending` | `code`, `admissionDeadline?` | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                          |
-| `open`    | `lifetimeDeadline`           | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                             |
+| `open`    | `lifetimeDeadline`           | Admitted; `terminal:output` frames follow.                                                                                                                                                                                                                                                                                                    |
 | `closed`  | `message` (one of the below) | Final; the server closes the connection after it. `"Access was not granted."` — it ended before admission (denied, connect failed, admission window over, revoked). `"The session has ended."` — any end after admission, or no live guest session. `"Too many open windows for this session."` — only this connection was refused (the cap). |
 
 ## Lifecycle bounds

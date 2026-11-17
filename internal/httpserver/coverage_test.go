@@ -80,8 +80,7 @@ func fullHandler(t *testing.T) chi.Router {
 	t.Cleanup(transfers.Close)
 	tickets := ticket.New(ticket.Params{Manager: manager, ResolveEndpoint: epSvc.RefForAccount, Open: epSvc.Open, NewID: func() string { return "id" }})
 	t.Cleanup(tickets.Close)
-	guestHub := ws.NewGuestHub(ws.GuestHubParams{Manager: manager, Service: tickets, ExternalURL: func() string { return externalURL }})
-	t.Cleanup(guestHub.Close)
+	hub.EnableGuests(ws.GuestParams{Service: tickets, ExternalURL: func() string { return externalURL }})
 
 	h := New(Params{
 		Config: cfg, Resolve: auth.Resolver(func(context.Context, string) *auth.Principal { return nil }),
@@ -107,7 +106,7 @@ func fullHandler(t *testing.T) chi.Router {
 		Transfers:    transfers,
 		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return "https://sw.example" }},
 		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return externalURL }},
-		GuestHub:     guestHub,
+		GuestWS:      hub.GuestHandler(),
 		AgentProxy:   &agentproxy.Deps{Broker: approval.NewBroker(actionStore, func() string { return externalURL }, &approval.WSChannel{Hub: hub}), Credentials: credStore, FileKeys: nil, RpID: "localhost", NewConnectionID: func() string { return "id" }},
 		Accounts:     &rest.Accounts{Store: store.NewAccounts(db), Creds: credStore, Endpoints: endpointStore, Demo: demoSvc, Now: func() string { return "" }},
 		Credentials:  &rest.Credentials{Store: credStore, Admin: fake, StepUp: stepUp},

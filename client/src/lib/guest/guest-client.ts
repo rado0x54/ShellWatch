@@ -7,6 +7,7 @@
  * (from the URL fragment, sent once in the redeem body) and the HttpOnly guest
  * cookie the server sets on redemption (sent automatically on `/ws/guest`).
  */
+import type { TerminalSink, TerminalTransport } from "../terminal/transport.js";
 
 /** What the redeem call answers on 202. */
 export interface Redeemed {
@@ -165,13 +166,14 @@ export interface GuestStatus {
   serverTime?: string;
 }
 
+/** What `/ws/guest` sends: the `/ws` terminal frames plus `status` (#328). */
 export type GuestFrame =
   | ({ type: "status" } & GuestStatus)
-  | { type: "output"; data: string; offset: number; reset?: true };
+  | { type: "terminal:output"; sessionId: string; data: string; offset: number; reset?: true }
+  | { type: "terminal:closed"; sessionId: string };
 
 export interface GuestSocketHandlers {
   onStatus: (st: GuestStatus) => void;
-  onOutput: (data: string, reset: boolean) => void;
   /** The socket closed without a final `closed` status (network drop, or
    * the server refused the handshake). */
   onDrop: () => void;
@@ -180,12 +182,21 @@ export interface GuestSocketHandlers {
 type SocketCtor = new (url: string) => WebSocket;
 
 /**
- * The guest WebSocket. The connection is the attachment: there are no
- * attach or detach messages. Client → server: input, resize, end.
+ * The guest WebSocket, and the guest page's terminal transport. The server
+ * attaches the connection to the admitted session; the session id comes
+ * from the output frames. `connect()` again after a drop reconnects the same
+ * guest session. Client → server: terminal:input, terminal:resize, end.
  */
-export class GuestSocket {
+export class GuestSocket implements TerminalTransport {
   private ws: WebSocket | null = null;
   private ended = false;
+  private sessionId: string | null = null;
+  private sink: TerminalSink | null = null;
+  /** Output before the terminal subscribed (the catch-up follows the open
+   * status at once); a reset frame replaces it. */
+  private held: Array<{ data: string; reset: boolean }> = [];
+  /** The last size, sent again once the session id is known. */
+  private size: { cols: number; rows: number } | null = null;
 
   constructor(
     private readonly handlers: GuestSocketHandlers,
@@ -205,12 +216,7 @@ export class GuestSocket {
       } catch {
         return;
       }
-      if (frame.type === "status") {
-        if (frame.state === "closed") this.ended = true;
-        this.handlers.onStatus(frame);
-      } else if (frame.type === "output") {
-        this.handlers.onOutput(frame.data, frame.reset === true);
-      }
+      this.onFrame(frame);
     };
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
@@ -218,16 +224,48 @@ export class GuestSocket {
     };
   }
 
+  private onFrame(frame: GuestFrame): void {
+    if (frame.type === "status") {
+      if (frame.state === "closed") this.ended = true;
+      this.handlers.onStatus(frame);
+      return;
+    }
+    if (frame.type !== "terminal:output" && frame.type !== "terminal:closed") return;
+    if (this.sessionId === null) {
+      this.sessionId = frame.sessionId;
+      if (this.size) this.sendResize(this.size.cols, this.size.rows);
+    }
+    if (frame.sessionId !== this.sessionId) return;
+    if (frame.type === "terminal:closed") {
+      this.sink?.closed();
+      return;
+    }
+    const reset = frame.reset === true;
+    if (this.sink) this.sink.output(frame.data, reset);
+    else if (reset) this.held = [{ data: frame.data, reset }];
+    else this.held.push({ data: frame.data, reset });
+  }
+
+  subscribe(sink: TerminalSink): () => void {
+    this.sink = sink;
+    for (const o of this.held.splice(0)) sink.output(o.data, o.reset);
+    return () => {
+      if (this.sink === sink) this.sink = null;
+    };
+  }
+
   private send(msg: Record<string, unknown>): void {
     if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(msg));
   }
 
-  input(data: string): void {
-    this.send({ type: "input", data });
+  sendInput(data: string): void {
+    if (this.sessionId) this.send({ type: "terminal:input", sessionId: this.sessionId, data });
   }
 
-  resize(cols: number, rows: number): void {
-    this.send({ type: "resize", cols, rows });
+  sendResize(cols: number, rows: number): void {
+    this.size = { cols, rows };
+    if (this.sessionId)
+      this.send({ type: "terminal:resize", sessionId: this.sessionId, cols, rows });
   }
 
   end(): void {

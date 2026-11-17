@@ -5,6 +5,7 @@
   import { onDestroy, onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { endpoints } from "$lib/stores/endpoints.js";
+  import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "$lib/terminal/theme.js";
   import {
     onWsMessage,
     type SessionListEntry,
@@ -75,21 +76,8 @@
         const terminal = new Terminal({
           cursorBlink: false,
           fontSize: 11,
-          fontFamily:
-            "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
-          theme: {
-            background: "#0e0e0e",
-            foreground: "#f2f2f2",
-            cursor: "#69f6b8",
-            selectionBackground: "rgba(105, 246, 184, 0.25)",
-            green: "#69f6b8",
-            yellow: "#f8a010",
-            red: "#ff5a5a",
-            brightGreen: "#69f6b8",
-            brightYellow: "#f8a010",
-            brightRed: "#ff5a5a",
-            brightWhite: "#f2f2f2",
-          },
+          fontFamily: TERMINAL_FONT_FAMILY,
+          theme: TERMINAL_THEME,
           disableStdin: true,
           scrollback: 1000,
         });

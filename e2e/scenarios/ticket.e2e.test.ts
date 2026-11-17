@@ -30,6 +30,7 @@ interface GuestFrame {
   state?: string;
   code?: string;
   message?: string;
+  sessionId?: string;
   data?: string;
   reset?: boolean;
 }
@@ -105,10 +106,16 @@ class Guest {
   output(): string {
     return stripAnsi(
       this.frames
-        .filter((f) => f.type === "output")
+        .filter((f) => f.type === "terminal:output")
         .map((f) => f.data ?? "")
         .join(""),
     );
+  }
+
+  /** The admitted session, from the output frames (the server attaches the
+   * guest; it never names the session otherwise). */
+  sessionId(): string {
+    return this.frames.find((f) => f.type === "terminal:output")?.sessionId ?? "";
   }
 
   close() {
@@ -225,7 +232,11 @@ describe(`one-time access ticket on sshd-${target}`, () => {
 
     // A real shell round-trip as the guest.
     await waitFor(() => /\$ ?$/m.test(guest2.output()), { timeoutMs: 15_000, what: "prompt" });
-    guest2.send({ type: "input", data: "echo guest-$((40 + 2))\n" });
+    guest2.send({
+      type: "terminal:input",
+      sessionId: guest2.sessionId(),
+      data: "echo guest-$((40 + 2))\n",
+    });
     await waitFor(() => guest2.output().includes("guest-42"), { timeoutMs: 15_000, what: "echo" });
 
     // The owner sees the guest session in the normal list.
