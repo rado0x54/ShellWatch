@@ -15,6 +15,7 @@ vi.mock("../oauth.js", () => oauth);
 import {
   connectWs,
   onWsMessage,
+  ownerTransport,
   type SessionListEntry,
   sessions,
   wsAttach,
@@ -210,6 +211,37 @@ describe("ws store", () => {
 
     expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:attach", sessionId: "sess-1" });
     wsDetach("sess-1");
+  });
+
+  it("ownerTransport attaches fresh, routes only its session's frames, and detaches", async () => {
+    await connectWs();
+    const ws = MockWebSocket.instances[0];
+    const got: string[] = [];
+    const stop = ownerTransport("sess-1").subscribe({
+      output: (d, reset) => got.push(`${reset ? "reset:" : ""}${d}`),
+      closed: () => got.push("closed"),
+      mode: (m) => got.push(`mode:${m}`),
+    });
+    expect(JSON.parse(ws.sent[0])).toEqual({ type: "terminal:attach", sessionId: "sess-1" });
+    ws.simulateMessage({
+      type: "terminal:output",
+      sessionId: "sess-1",
+      data: "a",
+      offset: 1,
+      reset: true,
+    });
+    ws.simulateMessage({ type: "terminal:output", sessionId: "sess-2", data: "x", offset: 1 });
+    ws.simulateMessage({ type: "terminal:mode", sessionId: "sess-1", mode: "observer" });
+    ws.simulateMessage({ type: "terminal:closed", sessionId: "sess-1" });
+    expect(got).toEqual(["reset:a", "mode:observer", "closed"]);
+    ownerTransport("sess-1").sendInput("ls");
+    stop();
+    expect(ws.sent.slice(1).map((m) => JSON.parse(m))).toEqual([
+      { type: "terminal:input", sessionId: "sess-1", data: "ls" },
+      { type: "terminal:detach", sessionId: "sess-1" },
+    ]);
+    ws.simulateMessage({ type: "terminal:output", sessionId: "sess-1", data: "late", offset: 2 });
+    expect(got).toHaveLength(3);
   });
 
   it("wsSendInput sends terminal:input message", async () => {

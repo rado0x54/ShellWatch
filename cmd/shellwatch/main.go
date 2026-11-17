@@ -476,12 +476,11 @@ func run() error {
 	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
 	epSvc.OnDeleted = tickets.CloseForEndpoint
 	epSvc.OnTargetChanged = tickets.RevokeStaleForEndpoint
-	guestHub := ws.NewGuestHub(ws.GuestHubParams{
-		Manager: manager, Service: tickets,
+	wsHub.EnableGuests(ws.GuestParams{
+		Service:     tickets,
 		ExternalURL: func() string { return cfg.Server.ExternalURL },
 	})
-	defer guestHub.Close()
-	tickets.SetPublisher(guestHub)
+	tickets.SetPublisher(wsHub)
 	wsHub.SetGuestAttached(tickets.GuestAttached)
 	go tickets.RunJanitor(ctx, time.Second)
 
@@ -544,7 +543,7 @@ func run() error {
 		},
 		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
-		GuestHub:     guestHub,
+		GuestWS:      wsHub.GuestHandler(),
 		WSHub:        wsHub,
 		MCP:          mcpDeps,
 		Actions:      &rest.Actions{Store: actionStore},

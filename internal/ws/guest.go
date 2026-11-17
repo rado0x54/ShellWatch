@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// Guest WebSocket (/ws/guest, #306): the connection a ticket guest's
+// Guest WebSocket (/ws/guest, #306, #328): the connection a ticket guest's
 // browser holds while it waits for admission and then uses as its terminal.
-// The guest cookie is the only credential. Guest connections reuse the
-// per-connection machinery of the account hub (conn: writer queue, flushMu
-// ordering, attach catch-up) but live in their own registry: they are never
-// in Hub.conns, so SendToAccount, session-list broadcasts and sign requests
-// cannot reach them — isolation by construction, not by filter. The
-// connection *is* the attachment; there are no attach/detach messages.
+// The guest cookie is the only credential. A guest connection is an ordinary
+// hub connection with a guest scope: no account id (so SendToAccount,
+// session-list broadcasts and sign requests cannot match it), attached only
+// by the hub to its guest's terminal session, and its read loop accepts only
+// terminal:input / terminal:resize for that session plus end. It speaks the
+// /ws terminal frames; the one guest-specific frame is status.
 package ws
 
 import (
@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -24,14 +23,13 @@ import (
 	"github.com/rado0x54/shellwatch/internal/auth"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/realip"
-	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/ticket"
 )
 
 // MaxGuestInboundMessageBytes caps one client→server guest frame.
 const MaxGuestInboundMessageBytes = 1 << 20
 
-// GuestService is the ticket-service surface the guest hub drives
+// GuestService is the ticket-service surface the hub drives for guests
 // (satisfied by *ticket.Service).
 type GuestService interface {
 	GuestByCookie(cookie string) (string, bool)
@@ -40,71 +38,24 @@ type GuestService interface {
 	End(guestID string)
 }
 
-// GuestHub owns every guest connection, keyed by guest session.
-type GuestHub struct {
-	mgr         *terminal.Manager
-	svc         GuestService
-	externalURL func() string
-
-	mu    sync.Mutex
-	conns map[string]map[*guestConn]struct{}
-	// guestBySession maps an admitted terminal session to its guest session,
-	// so output is routed without scanning every guest connection.
-	guestBySession map[string]string
-
-	unsubOutput  func()
-	unsubRemoved func()
-}
-
-type guestConn struct {
-	*conn
-	guestID    string
-	writerDone <-chan struct{}
-	finishOnce sync.Once
-}
-
-// GuestHubParams configure the guest hub.
-type GuestHubParams struct {
-	Manager *terminal.Manager
+// GuestParams enable the guest route on the hub.
+type GuestParams struct {
 	Service GuestService
 	// ExternalURL yields server.externalUrl, the only accepted Origin.
 	ExternalURL func() string
 }
 
-// NewGuestHub wires the guest hub to the Manager's output notifier.
-func NewGuestHub(p GuestHubParams) *GuestHub {
-	h := &GuestHub{mgr: p.Manager, svc: p.Service, externalURL: p.ExternalURL, conns: map[string]map[*guestConn]struct{}{}, guestBySession: map[string]string{}}
-	h.unsubOutput = p.Manager.SubscribeOutput(h.onOutput)
-	h.unsubRemoved = p.Manager.SubscribeRemoved(h.onRemoved)
-	return h
-}
-
-// Close detaches the hub's manager subscriptions.
-func (h *GuestHub) Close() {
-	h.unsubOutput()
-	h.unsubRemoved()
-}
-
-func (h *GuestHub) snapshot(guestID string) []*guestConn {
+// EnableGuests wires the ticket service (set once at the composition root,
+// before /ws/guest serves). The hub is then the service's ticket.Publisher.
+func (h *Hub) EnableGuests(p GuestParams) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]*guestConn, 0, len(h.conns[guestID]))
-	for c := range h.conns[guestID] {
-		out = append(out, c)
-	}
-	return out
+	h.guests = p
+	h.mu.Unlock()
 }
 
-func (h *GuestHub) all() []*guestConn {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	var out []*guestConn
-	for _, set := range h.conns {
-		for c := range set {
-			out = append(out, c)
-		}
-	}
-	return out
+// guestConns lists the open connections of one guest session.
+func (h *Hub) guestConns(guestID string) []*conn {
+	return h.snapshot(func(c *conn) bool { return c.guestID == guestID })
 }
 
 // statusFrame is a guest status message: the Status fields plus its type.
@@ -122,64 +73,46 @@ func closedFrame(msg string) []byte {
 }
 
 // GuestStatus implements ticket.Publisher.
-func (h *GuestHub) GuestStatus(guestID string, st ticket.Status) {
+func (h *Hub) GuestStatus(guestID string, st ticket.Status) {
 	raw := statusFrame(st)
-	for _, c := range h.snapshot(guestID) {
+	for _, c := range h.guestConns(guestID) {
 		c.enqueue(raw)
 	}
 }
 
-// GuestOpen implements ticket.Publisher: bind every not-yet-bound
-// connection of the guest to its admitted session, with the full buffered
-// output as catch-up.
-func (h *GuestHub) GuestOpen(guestID, sessionID string) {
-	for _, c := range h.snapshot(guestID) {
-		h.bind(c, sessionID)
-	}
-}
-
-func (h *GuestHub) bind(c *guestConn, sessionID string) {
-	if c.isAttached(sessionID) {
-		return
-	}
-	h.mu.Lock()
-	h.guestBySession[sessionID] = c.guestID
-	h.mu.Unlock()
-	buffered, err := h.mgr.ReadOutputFrom(sessionID, nil)
-	if err != nil {
-		// The session is already gone; its closed event ends the guest
-		// session (and this connection) through the ticket service.
-		slog.Warn("ws: guest bind failed", "session", sessionID, "err", err)
-		return
-	}
-	// The catch-up is always the whole buffer with reset: a reconnecting
-	// page (dropped socket, no reload) clears what it showed before.
-	frames := [][]byte{marshalFrame(outputFrame(outputFrameParams{
-		guest: true, sessionID: sessionID, data: buffered.Data, offset: buffered.Offset, reset: true,
-	}))}
-	c.attachWithCatchUp(sessionID, true, buffered.Offset, frames)
-	c.flushOutput(h.mgr, sessionID)
-}
-
-// GuestClose implements ticket.Publisher: the output still pending for the
-// guest's session, then the final status, then every connection closes once
-// its queue has drained. The flush mirrors the account hub's closeSession: a
-// session that ends on the remote side (logout, the last command's result)
-// emits its tail right before closing, and the guest must see it too. It
-// runs inside the Manager's closed-status hook, before the session is
-// removed, so the buffer is still readable.
-func (h *GuestHub) GuestClose(guestID string, st ticket.Status) {
-	raw := statusFrame(st)
-	h.mu.Lock()
-	for sid, gid := range h.guestBySession {
-		if gid == guestID {
-			delete(h.guestBySession, sid)
+// GuestOpen implements ticket.Publisher: attach every not-yet-attached
+// connection of the guest to its admitted session. The catch-up is always
+// the whole buffer with reset, so a reconnecting page (dropped socket, no
+// reload) clears what it showed before.
+func (h *Hub) GuestOpen(guestID, sessionID string) {
+	for _, c := range h.guestConns(guestID) {
+		if c.isAttached(sessionID) {
+			continue
 		}
+		buffered, err := h.mgr.ReadOutputFrom(sessionID, nil)
+		if err != nil {
+			// Already gone: its closed event ends the guest session (and this
+			// connection) through the ticket service.
+			slog.Warn("ws: guest attach failed", "session", sessionID, "err", err)
+			return
+		}
+		frame := marshalFrame(outputFrame(sessionID, buffered.Data, buffered.Offset, true))
+		c.attachWithCatchUp(sessionID, true, buffered.Offset, [][]byte{frame})
+		c.flushOutput(h.mgr, sessionID)
 	}
-	h.mu.Unlock()
-	for _, c := range h.snapshot(guestID) {
+}
+
+// GuestClose implements ticket.Publisher: the session's pending output and
+// terminal:closed (a session that ends on the remote side emits its tail
+// right before closing), then the final status, then every connection
+// closes once its queue has drained. It runs inside the Manager's
+// closed-status hook, before the session is removed, so the buffer is still
+// readable.
+func (h *Hub) GuestClose(guestID string, st ticket.Status) {
+	raw := statusFrame(st)
+	for _, c := range h.guestConns(guestID) {
 		for _, sid := range c.attachedIDs() {
-			c.flushOutput(h.mgr, sid)
+			c.closeSession(h.mgr, sid)
 		}
 		c.enqueue(raw)
 		c.finish()
@@ -188,7 +121,7 @@ func (h *GuestHub) GuestClose(guestID string, st ticket.Status) {
 
 // finish closes the outbound queue, lets the writer drain it (so the final
 // status frame arrives), then closes the socket — which ends the read loop.
-func (c *guestConn) finish() {
+func (c *conn) finish() {
 	c.finishOnce.Do(func() {
 		c.mu.Lock()
 		if !c.closed {
@@ -206,44 +139,24 @@ func (c *guestConn) finish() {
 	})
 }
 
-func (h *GuestHub) onOutput(sessionID string, _ int64) {
-	h.mu.Lock()
-	guestID, ok := h.guestBySession[sessionID]
-	h.mu.Unlock()
-	if !ok {
-		return // not a guest's session: the common case, no scan
-	}
-	for _, c := range h.snapshot(guestID) {
-		if c.isAttached(sessionID) {
-			c.flushOutput(h.mgr, sessionID)
-		}
-	}
-}
-
-// onRemoved drops a removed session's binding (its output is gone); the
-// ticket service's status hook closes the guest session itself.
-func (h *GuestHub) onRemoved(ev terminal.RemovedEvent) {
-	sessionID := ev.SessionID
-	h.mu.Lock()
-	delete(h.guestBySession, sessionID)
-	h.mu.Unlock()
-	for _, c := range h.all() {
-		if c.isAttached(sessionID) {
-			c.detach(sessionID)
-		}
-	}
-}
-
-// Handler is the /ws/guest upgrade handler. It is gate-exempt: the guest
-// cookie is the only credential, and no principal ever enters this
+// GuestHandler is the /ws/guest upgrade handler. It is gate-exempt: the
+// guest cookie is the only credential, and no principal ever enters this
 // context. The Origin check runs before anything else.
-func (h *GuestHub) Handler() http.HandlerFunc {
+func (h *Hub) GuestHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		g := h.guests
+		h.mu.Unlock()
 		ip := realip.FromRequest(r)
 		origin := r.Header.Get("Origin")
-		if !auth.OriginAllowed(h.externalURL(), origin) {
+		if g.Service == nil {
+			slog.Error("ws: guest route without a ticket service")
+			apierr.Write(w, http.StatusNotFound, "Not found")
+			return
+		}
+		if !auth.OriginAllowed(g.ExternalURL(), origin) {
 			slog.Warn("ws: guest origin rejected", "sourceIp", ip, "origin", auth.OriginHost(origin),
-				"expected", auth.OriginHost(h.externalURL()))
+				"expected", auth.OriginHost(g.ExternalURL()))
 			apierr.Write(w, http.StatusForbidden, "Forbidden")
 			return
 		}
@@ -251,7 +164,7 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 		if ck, err := r.Cookie(ticket.CookieName); err == nil {
 			cookie = ck.Value
 		}
-		guestID, ok := h.svc.GuestByCookie(cookie)
+		guestID, ok := g.Service.GuestByCookie(cookie)
 		wsc, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			// The exact-origin check above is authoritative; this pattern only
 			// stops the library's Host comparison from refusing a correct
@@ -264,11 +177,11 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 		}
 		wsc.SetReadLimit(MaxGuestInboundMessageBytes)
 		if !ok {
-			// Ended, revoked or never existed: indistinguishable, and the
-			// page is told so in a frame (a refused handshake's status is
-			// invisible to a browser, which would keep reconnecting). No
-			// per-cookie state survives a guest session, and an unknown
-			// cookie never reaches Attach.
+			// Ended, revoked or never existed: indistinguishable, and the page
+			// is told so in a frame (a refused handshake's status is invisible
+			// to a browser, which would keep reconnecting). No per-cookie state
+			// survives a guest session, and an unknown cookie never reaches
+			// Attach.
 			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			_ = wsc.Write(ctx, websocket.MessageText, closedFrame(ticket.MsgEnded))
 			cancel()
@@ -277,7 +190,7 @@ func (h *GuestHub) Handler() http.HandlerFunc {
 			return
 		}
 		start := time.Now()
-		err = h.serve(r.Context(), wsc, guestID)
+		err = h.serveGuest(r.Context(), wsc, g.Service, guestID)
 		slog.Info("ws: guest disconnected", "sourceIp", ip, "dur", time.Since(start).Round(time.Second),
 			"reason", disconnectReason(err))
 	}
@@ -295,41 +208,20 @@ func globEscape(s string) string {
 	return b.String()
 }
 
-// guestMessage is a parsed inbound guest frame.
-type guestMessage struct {
-	Type string `json:"type"`
-	Data string `json:"data"`
-	Cols int    `json:"cols"`
-	Rows int    `json:"rows"`
-}
-
-func (h *GuestHub) serve(ctx context.Context, wsc *websocket.Conn, guestID string) error {
-	c := &guestConn{conn: newConn(wsc, ""), guestID: guestID}
-	c.guest = true
+func (h *Hub) serveGuest(ctx context.Context, wsc *websocket.Conn, svc GuestService, guestID string) error {
+	c := newConn(wsc, "")
+	c.guestID = guestID
 	c.writerDone = c.startWriter(ctx)
 	defer func() {
 		c.finish()
 		<-c.writerDone
 	}()
-
 	// Register before Attach: the status Attach publishes must reach this
 	// connection.
-	h.mu.Lock()
-	if h.conns[guestID] == nil {
-		h.conns[guestID] = map[*guestConn]struct{}{}
-	}
-	h.conns[guestID][c] = struct{}{}
-	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		delete(h.conns[guestID], c)
-		if len(h.conns[guestID]) == 0 {
-			delete(h.conns, guestID)
-		}
-		h.mu.Unlock()
-	}()
+	h.add(c)
+	defer h.remove(c)
 
-	if err := h.svc.Attach(guestID); err != nil {
+	if err := svc.Attach(guestID); err != nil {
 		msg := ticket.MsgEnded
 		if err == ticket.ErrTooManyConnections {
 			msg = "Too many open windows for this session."
@@ -339,47 +231,32 @@ func (h *GuestHub) serve(ctx context.Context, wsc *websocket.Conn, guestID strin
 		_, _, rerr := wsc.Read(ctx)
 		return rerr
 	}
-	defer h.svc.Detach(guestID)
+	defer svc.Detach(guestID)
 
 	for {
 		_, raw, err := wsc.Read(ctx)
 		if err != nil {
 			return err
 		}
-		var msg guestMessage
-		if json.Unmarshal(raw, &msg) != nil {
-			continue
+		if msg := parseClientMessage(raw); msg != nil {
+			h.routeGuest(c, svc, msg)
 		}
-		h.route(c, &msg)
 	}
 }
 
-// route accepts only input, resize and end — always for the guest's
-// own session. Everything else is dropped.
-func (h *GuestHub) route(c *guestConn, msg *guestMessage) {
+// routeGuest accepts only input and resize for the session the hub attached
+// this connection to, and end. Everything else is dropped without an answer.
+func (h *Hub) routeGuest(c *conn, svc GuestService, msg *clientMessage) {
 	switch msg.Type {
-	case "input":
-		if sid := c.boundSession(); sid != "" {
-			_ = h.mgr.SendInput(sid, msg.Data)
+	case "terminal:input":
+		if c.isAttached(msg.SessionID) {
+			_ = h.mgr.SendInput(msg.SessionID, msg.Data)
 		}
-	case "resize":
-		if sid := c.boundSession(); sid != "" && msg.Cols > 0 && msg.Rows > 0 {
-			_ = h.mgr.Resize(sid, msg.Cols, msg.Rows)
+	case "terminal:resize":
+		if c.isAttached(msg.SessionID) && msg.Cols > 0 && msg.Rows > 0 {
+			_ = h.mgr.Resize(msg.SessionID, msg.Cols, msg.Rows)
 		}
 	case "end":
-		h.svc.End(c.guestID)
+		svc.End(c.guestID)
 	}
-}
-
-// boundSession is the one session this connection is attached to ("" before
-// admission).
-func (c *guestConn) boundSession() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for sid, ok := range c.attached {
-		if ok {
-			return sid
-		}
-	}
-	return ""
 }

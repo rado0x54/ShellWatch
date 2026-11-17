@@ -8,7 +8,7 @@
   // sends Authorization, stores nothing and links nowhere into the app; the
   // HttpOnly guest cookie is its only credential.
   import { onDestroy, onMount } from "svelte";
-  import GuestTerminal from "$lib/components/GuestTerminal.svelte";
+  import Terminal from "$lib/components/Terminal.svelte";
   import {
     GuestSocket,
     checkTicket,
@@ -56,8 +56,8 @@
   /** The server's idea of now, advanced by the ticker. */
   const serverNow = (): number => Date.now() + clockOffset;
   let now = $state(Date.now());
-  let socket: GuestSocket | null = null;
-  let term = $state<GuestTerminal | null>(null);
+  /** One per run: a reconnect reopens it, so the terminal keeps its transport. */
+  let socket = $state.raw<GuestSocket | null>(null);
   let dropSince: number | null = null;
   /** Whether this run has received any status: decides which ending text a
    * guest session gets (see endingFor). */
@@ -113,26 +113,13 @@
     reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
   }
 
-  // Output that arrives before the terminal is mounted (the catch-up frame
-  // follows the open status immediately) is held until it is.
-  const heldOutput: Array<{ data: string; reset: boolean }> = [];
-
-  $effect(() => {
-    if (term) for (const o of heldOutput.splice(0)) term.write(o.data, o.reset);
-  });
-
   function connect(): void {
     // Callbacks of a socket from an earlier run (closed by start()) are
     // ignored, so a late frame cannot overwrite the new link's state.
     const mine = run;
-    socket = new GuestSocket({
+    socket ??= new GuestSocket({
       onStatus: (st) => {
         if (mine === run) onStatus(st);
-      },
-      onOutput: (data, reset) => {
-        if (mine !== run) return;
-        if (term) term.write(data, reset);
-        else heldOutput.push({ data, reset });
       },
       onDrop: () => {
         if (mine === run) onDrop();
@@ -202,7 +189,6 @@
     socket = null;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
-    heldOutput.length = 0;
     token = reason = code = endedMessage = linkNotice = "";
     reasonRequired = failure = admissionDeadline = lifetimeDeadline = dropSince = null;
     reconnecting = sawStatus = false;
@@ -276,11 +262,9 @@
     </header>
     {@render notice()}
     <div class="guest-term">
-      <GuestTerminal
-        bind:this={term}
-        onInput={(data) => socket?.input(data)}
-        onResize={(cols, rows) => socket?.resize(cols, rows)}
-      />
+      {#if socket}
+        <Terminal transport={socket} />
+      {/if}
     </div>
   </div>
 {:else}

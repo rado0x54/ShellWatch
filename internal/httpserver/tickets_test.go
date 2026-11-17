@@ -172,9 +172,8 @@ func ticketServer(t *testing.T) *ticketRig {
 		NewID: ids.NewUUID,
 	})
 	t.Cleanup(svc.Close)
-	guestHub := wshub.NewGuestHub(wshub.GuestHubParams{Manager: mgr, Service: svc, ExternalURL: func() string { return externalURL }})
-	t.Cleanup(guestHub.Close)
-	svc.SetPublisher(guestHub)
+	hub.EnableGuests(wshub.GuestParams{Service: svc, ExternalURL: func() string { return externalURL }})
+	svc.SetPublisher(hub)
 	hub.SetGuestAttached(svc.GuestAttached)
 
 	cfg := &config.Config{}
@@ -206,7 +205,7 @@ func ticketServer(t *testing.T) *ticketRig {
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
 		Tickets:      &rest.Tickets{Service: svc, ExternalURL: func() string { return externalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: svc, ExternalURL: func() string { return externalURL }},
-		GuestHub:     guestHub,
+		GuestWS:      hub.GuestHandler(),
 	})
 	rig.ts = httptest.NewServer(handler)
 	t.Cleanup(rig.ts.Close)
@@ -721,13 +720,14 @@ func TestTicketAdmissionEndToEnd(t *testing.T) {
 	if open["lifetimeDeadline"] == nil {
 		t.Errorf("open frame %v", open)
 	}
-	// Input reaches the session; output comes back as guest output frames.
-	writeMsg(t, c, map[string]any{"type": "input", "data": "hello"})
-	out := readUntil(t, c, func(m map[string]any) bool { return m["type"] == "output" && m["data"] != "" })
-	if out["data"] != "hello" || out["sessionId"] != nil {
+	// Input reaches the session; output comes back as terminal:output frames
+	// of the guest's session (#328: the /ws protocol).
+	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": fp.SessionID, "data": "hello"})
+	out := readUntil(t, c, func(m map[string]any) bool { return m["type"] == "terminal:output" && m["data"] != "" })
+	if out["data"] != "hello" || out["sessionId"] != fp.SessionID {
 		t.Errorf("output frame %v", out)
 	}
-	writeMsg(t, c, map[string]any{"type": "resize", "cols": 120, "rows": 40})
+	writeMsg(t, c, map[string]any{"type": "terminal:resize", "sessionId": fp.SessionID, "cols": 120, "rows": 40})
 
 	// The owner's session list: source ticket, ticket fields, attached.
 	_, sessions := r.ownerJSON(t, "GET", "/api/sessions", "ui", "")
@@ -914,7 +914,7 @@ func TestTicketGuestGetsTailOutputBeforeClose(t *testing.T) {
 	_ = tr.Close()
 	var out strings.Builder
 	readUntil(t, c, func(m map[string]any) bool {
-		if m["type"] == "output" {
+		if m["type"] == "terminal:output" {
 			out.WriteString(m["data"].(string))
 		}
 		return m["type"] == "status" && m["state"] == "closed"
@@ -969,10 +969,10 @@ func TestTicketTabsAndReconnectGrace(t *testing.T) {
 	// A second tab of the same browser attaches and sees the same output.
 	c2, _ := r.dialGuest(t, cookie, guestOrigin)
 	readUntil(t, c2, statusIs("open"))
-	writeMsg(t, c2, map[string]any{"type": "input", "data": "from-tab-2"})
+	writeMsg(t, c2, map[string]any{"type": "terminal:input", "sessionId": sid, "data": "from-tab-2"})
 	for _, c := range []*websocket.Conn{c1, c2} {
 		readUntil(t, c, func(m map[string]any) bool {
-			return m["type"] == "output" && strings.Contains(m["data"].(string), "from-tab-2")
+			return m["type"] == "terminal:output" && strings.Contains(m["data"].(string), "from-tab-2")
 		})
 	}
 	// Closing one tab does not start the grace.
@@ -999,7 +999,7 @@ func TestTicketTabsAndReconnectGrace(t *testing.T) {
 	r.clk.Advance(30 * time.Second)
 	c3, _ := r.dialGuest(t, cookie, guestOrigin)
 	readUntil(t, c3, statusIs("open"))
-	catchUp := readUntil(t, c3, func(m map[string]any) bool { return m["type"] == "output" })
+	catchUp := readUntil(t, c3, func(m map[string]any) bool { return m["type"] == "terminal:output" })
 	if catchUp["reset"] != true || !strings.Contains(catchUp["data"].(string), "from-tab-2") {
 		t.Errorf("catch-up frame %v", catchUp)
 	}
@@ -1035,27 +1035,73 @@ func TestTicketGuestConnectionCap(t *testing.T) {
 	}
 }
 
-// Guest connections are never in the account hub's set: account-level
-// frames never reach them, and every other message type is dropped.
+// A guest connection shares the hub but not the account's scope (#328):
+// sessions:changed, sign:request, notification:new, terminal:file and the
+// output of any other session never reach it, every non-guest message type
+// is dropped, and input addressed to another session goes nowhere.
 func TestTicketGuestIsolation(t *testing.T) {
 	r := ticketServer(t)
-	c, _, _, _ := r.admit(t)
-	// An owner UI session of the same account, with output.
-	rig := r
-	owner := dialOwnerWS(t, rig.ts, "ui")
-	readMsg(t, owner) // connect-time sessions:changed
+	c, _, guestSID, _ := r.admit(t)
+	r.gate.mu.Lock()
+	guestTr := r.gate.last
+	r.gate.mu.Unlock()
+
+	// A UI session of the same account, watched by an owner socket.
+	r.gate.decisions <- nil
+	st, created := r.ownerJSON(t, "POST", "/api/sessions", "ui", `{"endpointId":"ep-a"}`)
+	if st != 200 {
+		t.Fatalf("UI session: %d %v", st, created)
+	}
+	<-r.gate.started
+	otherSID := created["sessionId"].(string)
+	r.gate.mu.Lock()
+	otherTr := r.gate.last
+	r.gate.mu.Unlock()
+	owner := dialOwnerWS(t, r.ts, "ui")
+	writeMsg(t, owner, map[string]any{"type": "terminal:attach", "sessionId": otherSID})
+
+	// Account- and session-scoped frames that must stay with the owner.
 	r.hub.SendToAccount("acc-a", map[string]any{"type": "sign:request", "id": "secret"})
-	writeMsg(t, c, map[string]any{"type": "terminal:attach", "sessionId": "sess_000000000000"})
-	writeMsg(t, c, map[string]any{"type": "terminal:close", "sessionId": "sess_000000000000"})
-	writeMsg(t, c, map[string]any{"type": "input", "data": "marker"})
+	r.hub.SendToAccount("acc-a", map[string]any{"type": "notification:new", "notification": map[string]any{}})
+	r.hub.SendToSession(guestSID, map[string]any{"type": "terminal:file", "transferId": "x", "sessionId": guestSID})
+	r.hub.SessionsChanged("acc-a")
+	otherTr.Push([]byte("other-output"))
+	readUntil(t, owner, func(m map[string]any) bool {
+		return m["type"] == "terminal:output" && strings.Contains(m["data"].(string), "other-output")
+	})
+
+	// Messages a guest may not send, and input for a session not its own.
+	for _, m := range []map[string]any{
+		{"type": "terminal:attach", "sessionId": otherSID},
+		{"type": "terminal:take-control", "sessionId": otherSID},
+		{"type": "terminal:close", "sessionId": otherSID},
+		{"type": "terminal:input", "sessionId": otherSID, "data": "smuggled"},
+		{"type": "terminal:resize", "sessionId": otherSID, "cols": 10, "rows": 10},
+	} {
+		writeMsg(t, c, m)
+	}
+	writeMsg(t, c, map[string]any{"type": "terminal:input", "sessionId": guestSID, "data": "marker"})
+	guestTr.Push([]byte("marker"))
 	for {
 		msg := readMsg(t, c)
-		if msg["type"] != "status" && msg["type"] != "output" {
+		if msg["type"] != "status" && msg["type"] != "terminal:output" {
 			t.Fatalf("guest received %v", msg)
 		}
-		if msg["type"] == "output" && strings.Contains(msg["data"].(string), "marker") {
-			break
+		if msg["type"] == "terminal:output" {
+			if msg["sessionId"] != guestSID {
+				t.Fatalf("guest received another session's output: %v", msg)
+			}
+			if strings.Contains(msg["data"].(string), "marker") {
+				break
+			}
 		}
+	}
+	if r.mgr.GetSession(otherSID) == nil {
+		t.Error("guest closed the owner's session")
+	}
+	res, err := r.mgr.ReadOutputFrom(otherSID, nil)
+	if err != nil || strings.Contains(string(res.Data), "smuggled") {
+		t.Errorf("guest input reached another session: %q %v", res.Data, err)
 	}
 }
 

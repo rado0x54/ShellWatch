@@ -174,45 +174,92 @@ class FakeSocket {
 }
 
 describe("GuestSocket", () => {
-  it("connects /ws/guest without a subprotocol and speaks only the guest protocol", () => {
+  const ctor = FakeSocket as unknown as new (url: string) => WebSocket;
+  const output = (data: string, reset = false) =>
+    JSON.stringify({
+      type: "terminal:output",
+      sessionId: "sess_1",
+      data,
+      offset: 0,
+      ...(reset ? { reset: true } : {}),
+    });
+
+  it("connects /ws/guest without a subprotocol and speaks the /ws terminal frames", () => {
     const statuses: string[] = [];
-    const output: string[] = [];
     const drop = vi.fn();
     const s = new GuestSocket(
-      { onStatus: (st) => statuses.push(st.state), onOutput: (d) => output.push(d), onDrop: drop },
+      { onStatus: (st) => statuses.push(st.state), onDrop: drop },
       { protocol: "https:", host: "sw.example.com" },
-      FakeSocket as unknown as new (url: string) => WebSocket,
+      ctor,
     );
     s.connect();
     const ws = FakeSocket.last!;
     expect(ws.url).toBe("wss://sw.example.com/ws/guest");
     expect(ws.protocols).toBeUndefined();
+    const got: string[] = [];
+    let closed = 0;
+    s.subscribe({ output: (d) => got.push(d), closed: () => closed++ });
+    // Before the session id is known, input is not sent and the size waits.
+    s.sendInput("early");
+    s.sendResize(80, 24);
     ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "pending", code: "4F7K" }) });
     ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "open" }) });
-    ws.onmessage?.({ data: JSON.stringify({ type: "output", data: "hi", offset: 2 }) });
+    ws.onmessage?.({ data: output("hi", true) });
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "terminal:output", sessionId: "other", data: "x", offset: 1 }),
+    });
     ws.onmessage?.({ data: JSON.stringify({ type: "sessions:changed", sessions: [] }) });
-    s.input("ls\r");
-    s.resize(80, 24);
+    s.sendInput("ls\r");
     s.end();
+    ws.onmessage?.({ data: JSON.stringify({ type: "terminal:closed", sessionId: "sess_1" }) });
     expect(statuses).toEqual(["pending", "open"]);
-    expect(output).toEqual(["hi"]);
-    expect(ws.sent.map((m) => JSON.parse(m).type)).toEqual(["input", "resize", "end"]);
+    expect(got).toEqual(["hi"]);
+    expect(closed).toBe(1);
+    expect(ws.sent.map((m) => JSON.parse(m))).toEqual([
+      { type: "terminal:resize", sessionId: "sess_1", cols: 80, rows: 24 },
+      { type: "terminal:input", sessionId: "sess_1", data: "ls\r" },
+      { type: "end" },
+    ]);
     ws.onmessage?.({ data: JSON.stringify({ type: "status", state: "closed", message: "x" }) });
     ws.close();
     expect(drop).not.toHaveBeenCalled(); // a final closed status is not a drop
   });
 
-  it("reports a drop when the socket closes without a final status", () => {
+  it("holds output until the terminal subscribes; a reset replaces what is held", () => {
+    const s = new GuestSocket(
+      { onStatus: () => {}, onDrop: () => {} },
+      { protocol: "http:", host: "h" },
+      ctor,
+    );
+    s.connect();
+    const ws = FakeSocket.last!;
+    ws.onmessage?.({ data: output("stale") });
+    ws.onmessage?.({ data: output("fresh", true) });
+    ws.onmessage?.({ data: output("+delta") });
+    const got: Array<[string, boolean]> = [];
+    const stop = s.subscribe({ output: (d, r) => got.push([d, r]), closed: () => {} });
+    expect(got).toEqual([
+      ["fresh", true],
+      ["+delta", false],
+    ]);
+    stop();
+    ws.onmessage?.({ data: output("later") });
+    expect(got).toHaveLength(2);
+  });
+
+  it("reports a drop when the socket closes without a final status, and reconnects", () => {
     const drop = vi.fn();
     const s = new GuestSocket(
-      { onStatus: () => {}, onOutput: () => {}, onDrop: drop },
+      { onStatus: () => {}, onDrop: drop },
       { protocol: "http:", host: "localhost:3001" },
-      FakeSocket as unknown as new (url: string) => WebSocket,
+      ctor,
     );
     s.connect();
     expect(FakeSocket.last!.url).toBe("ws://localhost:3001/ws/guest");
     FakeSocket.last!.close();
     expect(drop).toHaveBeenCalledOnce();
+    s.connect();
+    expect(FakeSocket.last!.url).toBe("ws://localhost:3001/ws/guest");
   });
 });
 
@@ -224,7 +271,9 @@ describe("guest page isolation", () => {
   const files = [
     join(here, "guest-client.ts"),
     join(here, "paths.ts"),
-    join(here, "../components/GuestTerminal.svelte"),
+    join(here, "../components/Terminal.svelte"),
+    join(here, "../terminal/transport.ts"),
+    join(here, "../terminal/theme.ts"),
     join(here, "../../routes/t/+page.svelte"),
   ];
   it.each(files)("%s imports no token, API-wrapper or owner-socket module", (file) => {

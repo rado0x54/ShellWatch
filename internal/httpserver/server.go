@@ -91,11 +91,11 @@ type Params struct {
 	Push         *rest.Push
 	// Transfers mounts the file-transfer link route (#263; nil-able).
 	Transfers *transfer.Service
-	// Tickets mounts the owner ticket routes; TicketRedeem and GuestHub the
+	// Tickets mounts the owner ticket routes; TicketRedeem and GuestWS the
 	// two gate-exempt guest routes (#306). nil-able.
 	Tickets      *rest.Tickets
 	TicketRedeem *rest.TicketRedeem
-	GuestHub     *ws.GuestHub
+	GuestWS      http.Handler
 }
 
 // New builds the router. ExternalURL is read from Config at request time so
@@ -277,7 +277,7 @@ func New(p Params) http.Handler {
 	if p.Tickets != nil {
 		p.Tickets.Mount(r)
 	}
-	if p.TicketRedeem != nil || p.GuestHub != nil {
+	if p.TicketRedeem != nil || p.GuestWS != nil {
 		// The two guest routes (#306). Their own credential is the ticket
 		// (redeem body) or the guest cookie (handshake); both sit behind the
 		// same CIDR allowlist as every other surface without a bearer token,
@@ -287,8 +287,8 @@ func New(p Params) http.Handler {
 			r.Method(http.MethodPost, "/api/tickets/redeem", ipGate(p.TicketRedeem))
 			r.Method(http.MethodPost, "/api/tickets/check", ipGate(http.HandlerFunc(p.TicketRedeem.Check)))
 		}
-		if p.GuestHub != nil {
-			r.Method(http.MethodGet, "/ws/guest", ipGate(p.GuestHub.Handler()))
+		if p.GuestWS != nil {
+			r.Method(http.MethodGet, "/ws/guest", ipGate(p.GuestWS))
 		}
 	}
 	if p.AgentProxy != nil && agentProxy {
