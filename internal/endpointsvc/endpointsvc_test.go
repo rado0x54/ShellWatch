@@ -137,7 +137,7 @@ func TestUpdatePatchAuditAndTargetChange(t *testing.T) {
 			rec := &auditRec{}
 			var changed []string
 			svc.Audit = rec
-			svc.OnTargetChanged = func(_, id string) { changed = append(changed, id) }
+			svc.OnTargetChanged = func(_, id, target string) { changed = append(changed, id+" "+target) }
 			ok, err := svc.Update(ctx, UpdateParams{ID: "own", AccountID: "acc", Patch: tc.patch, By: Actor{Via: "MCP", MCPClientName: "c"}})
 			if err != nil || !ok {
 				t.Fatalf("update: %v %v", ok, err)

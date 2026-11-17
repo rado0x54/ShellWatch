@@ -1361,15 +1361,18 @@ func (s *Service) CloseForEndpoint(accountID, endpointID string) {
 	}, terminal.CloseEndpointRemoved)
 }
 
-// RevokeUnredeemedForEndpoint drops the endpoint's unredeemed tickets: its
-// host, port or username changed, and they were minted for the old target.
-// Redeemed tickets and running guest sessions are left alone.
-func (s *Service) RevokeUnredeemedForEndpoint(accountID, endpointID string) {
+// RevokeStaleForEndpoint drops the endpoint's unredeemed tickets bound to a
+// target other than target (its new one): they can no longer be redeemed.
+// A ticket minted for the new target while the change was being stored is
+// kept. Redeemed tickets and running guest sessions are left alone (connect
+// refuses a stale one).
+func (s *Service) RevokeStaleForEndpoint(accountID, endpointID, target string) {
 	var fx effects
 	s.mu.Lock()
 	n := 0
 	for _, t := range s.tickets {
-		if t.accountID == accountID && t.endpointID == endpointID && t.guest == nil && t.endedAt.IsZero() {
+		if t.accountID == accountID && t.endpointID == endpointID && t.target != target &&
+			t.guest == nil && t.endedAt.IsZero() {
 			s.dropTicketLocked(t)
 			ev := s.event(t, nil, audit.TicketInvalidated)
 			ev.EndReason = "endpoint target changed"

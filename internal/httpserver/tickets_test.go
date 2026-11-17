@@ -196,7 +196,7 @@ func ticketServer(t *testing.T) *ticketRig {
 	epSvc.MaxSessions = func(context.Context, string) (int, bool) { return rig.maxSess, true }
 	epSvc.LiveGuest = svc.HasLiveGuestForEndpoint
 	epSvc.OnDeleted = svc.CloseForEndpoint
-	epSvc.OnTargetChanged = svc.RevokeUnredeemedForEndpoint
+	epSvc.OnTargetChanged = svc.RevokeStaleForEndpoint
 	rig.epSvc = epSvc
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
@@ -1197,6 +1197,28 @@ func TestEndpointTargetChangeRevokesUnredeemedTickets(t *testing.T) {
 	}
 	if res := r.redeem(t, token, "x", redeemOpts{}); res.status != 404 {
 		t.Errorf("ticket for the old target still redeemable: %d %s", res.status, res.raw)
+	}
+}
+
+// The cleanup after a target change keeps a ticket minted for the new target
+// in the window between storing the change and the cleanup (#332 review).
+func TestTargetChangeKeepsTicketMintedForNewTarget(t *testing.T) {
+	r := ticketServer(t)
+	_, stale := r.mint(t, "ep-a", `{}`)
+	var fresh string
+	revoke := r.epSvc.OnTargetChanged
+	r.epSvc.OnTargetChanged = func(acc, ep, target string) {
+		_, fresh = r.mint(t, "ep-a", `{}`) // lands after the new target is stored
+		revoke(acc, ep, target)
+	}
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"host":"elsewhere.example"}`); st != 200 {
+		t.Fatalf("host edit: %d %v", st, out)
+	}
+	if res := r.redeem(t, fresh, "x", redeemOpts{}); res.status != 202 {
+		t.Errorf("ticket minted for the new target: %d %s", res.status, res.raw)
+	}
+	if res := r.redeem(t, stale, "x", redeemOpts{}); res.status != 404 {
+		t.Errorf("ticket for the old target: %d %s", res.status, res.raw)
 	}
 }
 

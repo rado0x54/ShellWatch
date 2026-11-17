@@ -172,14 +172,20 @@ func TestStaleAttemptEventsAreIgnored(t *testing.T) {
 	}
 }
 
-// A target change drops only unredeemed tickets of that endpoint.
-func TestRevokeUnredeemedForEndpoint(t *testing.T) {
+// A target change drops only that endpoint's unredeemed tickets bound to
+// another target; one minted for the new target survives.
+func TestRevokeStaleForEndpoint(t *testing.T) {
 	s, f, _, _ := newTestService(t)
 	redeemAttached(t, s)
 	<-f.creates
 	m, _ := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
 	other, _ := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep2"})
-	s.RevokeUnredeemedForEndpoint("acc", "ep")
+	current := terminal.EndpointRef{}.Target() // the fake resolver's target
+	s.RevokeStaleForEndpoint("acc", "ep", current)
+	if len(s.List("acc")) != 3 {
+		t.Fatalf("a ticket for the current target was revoked: %d listed", len(s.List("acc")))
+	}
+	s.RevokeStaleForEndpoint("acc", "ep", "u@new.example:22")
 	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unredeemed ticket survived: %v", err)
 	}

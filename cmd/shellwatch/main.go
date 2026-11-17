@@ -475,7 +475,7 @@ func run() error {
 	epSvc.Audit = auditWriter
 	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
 	epSvc.OnDeleted = tickets.CloseForEndpoint
-	epSvc.OnTargetChanged = tickets.RevokeUnredeemedForEndpoint
+	epSvc.OnTargetChanged = tickets.RevokeStaleForEndpoint
 	guestHub := ws.NewGuestHub(ws.GuestHubParams{
 		Manager: manager, Service: tickets,
 		ExternalURL: func() string { return cfg.Server.ExternalURL },

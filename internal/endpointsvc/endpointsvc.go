@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/demo"
@@ -46,6 +47,10 @@ type Service struct {
 	Endpoints *store.Endpoints
 	Demo      *demo.Service
 
+	// updateMu serializes updates, so OnTargetChanged hooks run in the order
+	// their target changes were stored.
+	updateMu sync.Mutex
+
 	// Sessions is terminal.Manager: the delete guard and Open. nil skips the
 	// guard (tests); Open needs it.
 	Sessions SessionManager
@@ -62,9 +67,10 @@ type Service struct {
 	// OnDeleted runs after a delete, so the endpoint's outstanding tickets
 	// end with it (#306). nil-able.
 	OnDeleted func(accountID, endpointID string)
-	// OnTargetChanged runs after an update changed host, port or username:
-	// unredeemed tickets were minted for the old target. nil-able.
-	OnTargetChanged func(accountID, endpointID string)
+	// OnTargetChanged runs after an update changed host, port or username,
+	// with the new target (terminal.EndpointRef.Target): unredeemed tickets
+	// bound to any other target are stale. nil-able.
+	OnTargetChanged func(accountID, endpointID, target string)
 }
 
 // SessionManager is satisfied by terminal.Manager.
@@ -213,6 +219,8 @@ func (s *Service) Update(ctx context.Context, p UpdateParams) (bool, error) {
 	if err := p.Patch.validate(); err != nil {
 		return false, err
 	}
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
 	old, err := s.Endpoints.GetForAccount(ctx, p.ID, p.AccountID)
 	if err != nil || old == nil {
 		return false, err
@@ -227,7 +235,8 @@ func (s *Service) Update(ctx context.Context, p UpdateParams) (bool, error) {
 		s.AuditHostKeyCleared(*old, "endpoint host/port updated via "+p.By.Via, p.By)
 	}
 	if (old.Host != merged.Host || old.Port != merged.Port || old.Username != merged.Username) && s.OnTargetChanged != nil {
-		s.OnTargetChanged(p.AccountID, p.ID)
+		target := terminal.EndpointRef{Host: merged.Host, Port: int(merged.Port), Username: merged.Username}.Target()
+		s.OnTargetChanged(p.AccountID, p.ID, target)
 	}
 	return true, nil
 }
