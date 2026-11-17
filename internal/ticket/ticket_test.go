@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rado0x54/shellwatch/internal/audit"
 	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 )
@@ -466,8 +467,9 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var lookupTakes time.Duration
 	n := 0
+	rec := &auditLog{}
 	s := New(Params{
-		Manager: f, Clock: clk,
+		Manager: f, Clock: clk, Audit: rec,
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			clk.Advance(lookupTakes) // a slow database
 			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
@@ -490,6 +492,10 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	if len(s.List("acc")) != 0 {
 		t.Error("the expired ticket is still listed")
 	}
+	// The same audit row as any other expiry, reason included.
+	if ev, ok := rec.last(audit.TicketExpired); !ok || ev.EndReason != "expired" || ev.TicketID != m.Ticket.ID {
+		t.Errorf("expired audit row: %+v (found %v)", ev, ok)
+	}
 
 	lookupTakes = 0
 	m2, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
@@ -504,4 +510,27 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	if want := clk.Now().Add(AttachWindow); !res.AttachDeadline.Equal(want) {
 		t.Errorf("attach deadline %s, want %s (counted from consumption)", res.AttachDeadline, want)
 	}
+}
+
+// auditLog records ticket audit events in memory.
+type auditLog struct {
+	mu     sync.Mutex
+	events []audit.TicketEvent
+}
+
+func (a *auditLog) Record(ev audit.TicketEvent) {
+	a.mu.Lock()
+	a.events = append(a.events, ev)
+	a.mu.Unlock()
+}
+
+func (a *auditLog) last(name string) (audit.TicketEvent, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := len(a.events) - 1; i >= 0; i-- {
+		if a.events[i].Event == name {
+			return a.events[i], true
+		}
+	}
+	return audit.TicketEvent{}, false
 }

@@ -711,9 +711,11 @@ type Checked struct {
 }
 
 // Check reports whether a ticket can still be redeemed, without consuming it
-// (the guest page asks before showing the form). It applies exactly the
-// redeem-time checks (unknown, used, revoked, expired, account or endpoint
-// gone), so ErrNotFound means "redeem would fail too".
+// (the guest page asks before showing the form). It applies the redeem-time
+// checks (unknown, used, revoked, expired, account or endpoint gone), so
+// ErrNotFound means "redeem would fail too". Redeem additionally rechecks
+// expiry at the moment it consumes the ticket, so a link that expires
+// between the two can still be refused.
 func (s *Service) Check(ctx context.Context, token, sourceIP string) (Checked, error) {
 	_, opts, err := s.usable(ctx, token, "check", sourceIP)
 	if err != nil {
@@ -819,11 +821,10 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	// consumption, and count the attach window from it.
 	now := s.clk.Now()
 	if !now.Before(t.expiresAt) {
-		s.dropTicketLocked(t)
-		fx.audits = append(fx.audits, s.event(t, nil, audit.TicketExpired))
-		fx.ownerTickets(t.accountID)
 		s.mu.Unlock()
-		s.apply(&fx)
+		// The same drop, audit row and owner notification as an expiry seen
+		// before the lookups (usable).
+		s.invalidate(t, audit.TicketExpired, "expired")
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "expired", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrNotFound
 	}
