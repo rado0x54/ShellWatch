@@ -784,7 +784,6 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 		p.Channel = terminal.TicketChannelWeb
 	}
 	h := hash(p.Token)
-	now := s.clk.Now()
 	t, opts, err := s.usable(ctx, p.Token, "redeem", p.SourceIP)
 	if err != nil {
 		return Redeemed{}, err
@@ -801,7 +800,6 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 		reason: reason, sourceIP: p.SourceIP,
 		userAgent: util.SanitizeFreeText(p.UserAgent, UserAgentMaxLen),
 		channel:   p.Channel, state: StateRedeemed,
-		redeemedAt: now, attachDeadline: now.Add(AttachWindow),
 	}
 	var fx effects
 	s.mu.Lock()
@@ -816,6 +814,20 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "already redeemed", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrNotFound
 	}
+	// The eligibility lookups above ran without the lock and can take a
+	// while: the ticket may have expired meanwhile. Recheck at the moment of
+	// consumption, and count the attach window from it.
+	now := s.clk.Now()
+	if !now.Before(t.expiresAt) {
+		s.dropTicketLocked(t)
+		fx.audits = append(fx.audits, s.event(t, nil, audit.TicketExpired))
+		fx.ownerTickets(t.accountID)
+		s.mu.Unlock()
+		s.apply(&fx)
+		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "expired", "sourceIp", p.SourceIP)
+		return Redeemed{}, ErrNotFound
+	}
+	g.redeemedAt, g.attachDeadline = now, now.Add(AttachWindow)
 	// One guest session per browser, checked in the step that consumes the
 	// ticket: two concurrent redemptions with the same cookie cannot both
 	// pass. (Two first-time redemptions without a cookie cannot be told

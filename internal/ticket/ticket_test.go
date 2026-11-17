@@ -457,3 +457,51 @@ func TestDeadlinesHoldBetweenSweeps(t *testing.T) {
 		}
 	})
 }
+
+// The eligibility lookups run without the lock and can be slow: a ticket
+// that expires during them is not consumed, and the attach window counts
+// from the moment of consumption.
+func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
+	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var lookupTakes time.Duration
+	n := 0
+	s := New(Params{
+		Manager: f, Clock: clk,
+		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
+			clk.Advance(lookupTakes) // a slow database
+			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
+		},
+		NewID: func() string { n++; return "t" + string(rune('0'+n)) },
+	})
+	s.SetPublisher(&pubLog{})
+	t.Cleanup(s.Close)
+
+	// Mint looks the endpoint up too: keep it quick there.
+	m, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(DefaultRedeemTTL - time.Second)
+	lookupTakes = 2 * time.Second // expires while the lookup runs
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("redeem of a ticket that expired during the lookup: %v", err)
+	}
+	if len(s.List("acc")) != 0 {
+		t.Error("the expired ticket is still listed")
+	}
+
+	lookupTakes = 0
+	m2, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookupTakes = 10 * time.Second
+	res, err := s.Redeem(context.Background(), RedeemParams{Token: m2.Token, Reason: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := clk.Now().Add(AttachWindow); !res.AttachDeadline.Equal(want) {
+		t.Errorf("attach deadline %s, want %s (counted from consumption)", res.AttachDeadline, want)
+	}
+}
