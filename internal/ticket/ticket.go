@@ -928,13 +928,13 @@ func (s *Service) Retry(guestID string) {
 		s.mu.Unlock()
 		return
 	}
-	if g.attempt >= MaxAttempts || now.Before(g.retryAt) {
-		// The page hides or disables the button; a script may not. Resend
-		// the status so a confused client resyncs.
-		slog.Info("ticket: retry rejected", "ticket", g.t.id, "attempt", g.attempt,
-			"reason", "cooldown or attempt limit")
-		s.publishStatusLocked(g)
+	if now.Before(g.retryAt) {
+		// The page knows retryAt and keeps the button disabled until then;
+		// only a script sends this early. Drop it quietly: no Info log and no
+		// status resend per frame, so repeating it costs nothing.
+		ticketID := g.t.id
 		s.mu.Unlock()
+		slog.Debug("ticket: retry ignored", "ticket", ticketID, "reason", "cooldown")
 		return
 	}
 	fx.audits = append(fx.audits, s.event(g.t, g, audit.TicketRetried))
@@ -1092,14 +1092,18 @@ func (s *Service) refuseLocked(g *guest, why string, fx *effects) {
 	ev.EndReason = why
 	fx.audits = append(fx.audits, ev)
 	slog.Info("ticket: attempt failed", "ticket", g.t.id, "attempt", g.attempt, "reason", why)
-	if g.attempt >= MaxAttempts {
-		// No attempts left: nothing more the guest can do.
+	// Truncated to the millisecond the frame carries, so the advertised
+	// retryAt is exactly the enforced one.
+	retryAt := s.clk.Now().Add(RetryCooldown).Truncate(time.Millisecond)
+	if g.attempt >= MaxAttempts || !retryAt.Before(g.admissionDeadline) {
+		// No attempt left, or none that could start before the admission
+		// window ends: nothing more the guest can do.
 		g.attemptSession = ""
 		s.closeLocked(g, terminal.CloseTicketNotAdmitted, fx)
 		return
 	}
 	g.state = StateRefused
-	g.retryAt = s.clk.Now().Add(RetryCooldown)
+	g.retryAt = retryAt
 	fx.ownerTickets(g.t.accountID)
 	s.publishStatusLocked(g)
 }

@@ -785,9 +785,8 @@ func TestTicketRetryCooldownAndAttemptLimit(t *testing.T) {
 		if refused["retryAt"] != r.clk.Now().Add(ticket.RetryCooldown).UTC().Format(clock.ISOMillis) {
 			t.Errorf("retryAt %v", refused["retryAt"])
 		}
-		// Too early: ignored, and the status is resent.
+		// Too early: silently ignored (no attempt, no frame).
 		writeMsg(t, c, map[string]any{"type": "retry"})
-		readUntil(t, c, statusIs("refused"))
 		r.gate.noAttempt(t)
 		r.clk.Advance(ticket.RetryCooldown)
 		writeMsg(t, c, map[string]any{"type": "retry"})
@@ -808,6 +807,23 @@ func TestTicketRetryCooldownAndAttemptLimit(t *testing.T) {
 		if row.EndReason == nil || !strings.Contains(*row.EndReason, "owner skipped every key") {
 			t.Errorf("attempt-failed reason %v, want the real cause", row.EndReason)
 		}
+	}
+}
+
+// A refusal too close to the end of the admission window for another try
+// (the cooldown would end after it) closes the guest session at once,
+// instead of advertising a retry that can never start.
+func TestTicketRefusalNearDeadlineCloses(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, token, "x", redeemOpts{})
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("pending"))
+	r.gate.waitStarted(t)
+	r.clk.Advance(ticket.AdmissionWindow - ticket.RetryCooldown + time.Second)
+	r.gate.decisions <- errors.New("skipped")
+	if st := readUntil(t, c, func(m map[string]any) bool { return m["type"] == "status" && m["state"] != "pending" }); st["state"] != "closed" {
+		t.Fatalf("refusal near the deadline: %v", st)
 	}
 }
 

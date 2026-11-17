@@ -412,13 +412,20 @@ func TestRemovedSweepClosesRacedAttach(t *testing.T) {
 				if h.c.isAttached(h.sess.SessionID) {
 					t.Fatal("conn still attached after the removal sweep")
 				}
-				hub.onRemoved(h.sess.SessionID) // second sweep: no-op
-				select {
-				case f2 := <-h.frames:
-					t.Fatalf("second sweep sent a frame: %+v", f2)
-				case <-time.After(100 * time.Millisecond):
+				// Second sweep: no terminal frame for the session again (a
+				// removal always resends the session list, which is fine).
+				hub.onRemoved(h.sess.SessionID)
+				quiet := time.After(100 * time.Millisecond)
+				for {
+					select {
+					case f2 := <-h.frames:
+						if f2.Type != "sessions:changed" {
+							t.Fatalf("second sweep sent a frame: %+v", f2)
+						}
+					case <-quiet:
+						return
+					}
 				}
-				return
 			}
 		case <-timeout:
 			t.Fatal("removal sweep never delivered terminal:closed")

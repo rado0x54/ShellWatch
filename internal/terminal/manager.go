@@ -38,9 +38,15 @@ type managed struct {
 	// transport was absent (a browser attached to an opening session);
 	// zero when none. Guarded by resizeMu.
 	pendingCols, pendingRows int
-	// endedAt is when the session reached closed/error (zero while live).
-	// Guarded by Manager.mu.
+	// endedAt is set when a session that ended on its own (not explicitly
+	// closed) becomes retained, after its closed/error broadcast finished;
+	// zero otherwise. Only retained sessions are swept, capped or counted as
+	// ended. Guarded by Manager.mu.
 	endedAt time.Time
+	// explicitClose is set when Close began closing the session: such a
+	// session is removed by Close itself and never retained. Guarded by
+	// Manager.mu.
+	explicitClose bool
 	// pumpDone closes when the pump goroutine exits; Close joins it so the
 	// Closed broadcast always sees every event the transport delivered.
 	pumpDone chan struct{}
@@ -165,10 +171,7 @@ func (m *Manager) SweepEnded() {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		m.removeEntry(id)
-	}
-	if len(ids) > 0 {
-		slog.Debug("terminal: ended sessions expired", "count", len(ids))
+		m.remove(id, removedExpired)
 	}
 }
 
@@ -191,7 +194,7 @@ func (m *Manager) capEnded(accountID string) {
 	}
 	m.mu.Unlock()
 	for _, id := range drop {
-		m.removeEntry(id)
+		m.remove(id, removedEvicted)
 	}
 }
 
@@ -379,17 +382,16 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 
 	if err != nil {
 		// Broadcast closed BEFORE removal (same ordering invariant as Close):
-		// the pre-registered opening session was visible to session lists, and
-		// the WS hub refreshes lists on status broadcasts, not on the removed
-		// hook — removing silently would leave a stale "opening" row in every
-		// browser that listed it during setup. Closed (not error) because
+		// the pre-registered opening session was visible to session lists,
+		// and the status broadcast is what carries the audit and the final
+		// state to every listener. Closed (not error) because
 		// closed sessions are filtered from the list snapshot the broadcast
 		// sends. The audit writer is unaffected: recordClose is an idempotent
 		// UPDATE, and no lifecycle row exists unless a Close raced the setup
 		// (in which case closing inserted it and this balances it).
 		slog.Warn("terminal: session connect failed", append(sessionAttrs(sess, ep), "err", err)...)
 		m.setStatus(mg, StatusClosed, CloseTransportError)
-		m.removeEntry(sess.SessionID)
+		m.remove(sess.SessionID, removedConnectFailed)
 		return nil, fmt.Errorf("Failed to connect to %s: %w", ep.ID, err)
 	}
 	if aborted {
@@ -397,7 +399,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		// deleted / shut-down session must not go live now.
 		_ = transport.Close()
 		m.setStatus(mg, StatusClosed, "")
-		m.removeEntry(sess.SessionID)
+		m.remove(sess.SessionID, removedClosed)
 		return nil, fmt.Errorf("session was closed during connection setup (%s)", sess.CloseReason)
 	}
 
@@ -429,9 +431,11 @@ func (m *Manager) pump(mg *managed) {
 		switch {
 		case ev.Err != nil:
 			m.setStatus(mg, StatusError, m.reasonOr(mg, CloseTransportError))
+			m.retain(mg)
 			return
 		case ev.Closed:
 			m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
+			m.retain(mg)
 			return
 		default:
 			if mg.abandoned.Load() {
@@ -452,6 +456,7 @@ func (m *Manager) pump(mg *managed) {
 		}
 	}
 	m.setStatus(mg, StatusClosed, m.reasonOr(mg, CloseServerHangup))
+	m.retain(mg)
 }
 
 // reasonOr reads the stamped close reason under the lock (setStatus /
@@ -635,19 +640,20 @@ func (m *Manager) CountOpenForAccount(accountID string) int {
 	return n
 }
 
-// EndpointIDsForAccount lists endpoint ids an account has active (not ended)
-// sessions on, guest sessions included (the endpoint-delete guard). Retained
-// closed/errored sessions never block a delete.
-func (m *Manager) EndpointIDsForAccount(accountID string) []string {
+// HasActiveSession reports whether the account has an active session on the
+// endpoint: any source (UI, MCP, guest), anything not yet closed or errored.
+// Ended sessions never count (the endpoint-delete guard).
+func (m *Manager) HasActiveSession(accountID, endpointID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var ids []string
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID && mg.endedAt.IsZero() {
-			ids = append(ids, mg.session.EndpointID)
+		st := mg.session.Status
+		if mg.session.AccountID == accountID && mg.session.EndpointID == endpointID &&
+			st != StatusClosed && st != StatusError {
+			return true
 		}
 	}
-	return ids
+	return false
 }
 
 // GetSession returns a session snapshot, or nil.
@@ -663,8 +669,9 @@ func (m *Manager) GetSession(sessionID string) *Session {
 }
 
 // Close explicitly closes a session: transport down, buffer cleared, removed
-// from the registry (terminal-manager.ts close()). A retained ended session
-// is removed at once; a session already closing is left to finish.
+// from the registry (terminal-manager.ts close()). No-op for a session that
+// is already closing or closed: a retained ended session stays readable until
+// the retention limits remove it.
 func (m *Manager) Close(sessionID string, reason CloseReason) {
 	mg, err := m.get(sessionID)
 	if err != nil {
@@ -675,11 +682,9 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// (we bail) or lose (it becomes the normal closing->closed step) — never
 	// interleave into a closed->closing regression.
 	if !m.beginClosing(mg, reason) {
-		// Already ended on its own and retained for its last output: an
-		// explicit close drops it now.
-		if m.isStatus(mg, StatusClosed) {
-			m.removeEntry(sessionID)
-		}
+		// Already closing, or ended on its own and retained: the retention
+		// limits remove it (removing it here could clear the buffer while
+		// its closed broadcast is still sending the tail).
 		return
 	}
 	m.mu.Lock()
@@ -720,20 +725,30 @@ func (m *Manager) Close(sessionID string, reason CloseReason) {
 	// On the join path the pump finalized Closed itself; on the timeout path
 	// this is what finalizes it.
 	m.setStatus(mg, StatusClosed, reason)
-	m.removeEntry(sessionID)
+	m.remove(sessionID, removedClosed)
 }
 
-// removeEntry clears a registered session's buffer and deletes it from the
-// registry in one critical section (no reader can observe a cleared-but-
-// still-listed session), then fires the removed hooks. The hooks fire only
-// when THIS call performed the delete — a concurrent RemoveForAccount may
-// have won, and each removal must notify exactly once (the WS hub sweep keys
-// on it).
-func (m *Manager) removeEntry(sessionID string) {
+// Why a session left the registry (the "terminal: session removed" log).
+const (
+	removedClosed         = "closed"         // explicit close
+	removedConnectFailed  = "connect-failed" // Create's setup failed
+	removedExpired        = "expired"        // retained past EndedRetention
+	removedEvicted        = "evicted"        // over MaxEndedPerAccount
+	removedAccountDeleted = "account-deleted"
+)
+
+// remove is the one way a session leaves the registry. It clears the buffer
+// and deletes the entry in one critical section (no reader can observe a
+// cleared-but-still-listed session), logs it, then fires the removed hooks —
+// only when THIS call performed the delete, so each removal notifies exactly
+// once. The WS hub treats a removal as a session-list change.
+func (m *Manager) remove(sessionID, why string) {
 	m.mu.Lock()
 	mg, present := m.terminals[sessionID]
 	var removed []func(string)
+	var accountID string
 	if present {
+		accountID = mg.session.AccountID
 		mg.output.Clear()
 		delete(m.terminals, sessionID)
 		removed = make([]func(string), 0, len(m.removedSubs))
@@ -742,9 +757,37 @@ func (m *Manager) removeEntry(sessionID string) {
 		}
 	}
 	m.mu.Unlock()
+	if !present {
+		return
+	}
+	// Explicit closes and failed connects already logged their end; the
+	// retention removals are the only trace of those.
+	level := slog.LevelInfo
+	if why == removedClosed || why == removedConnectFailed {
+		level = slog.LevelDebug
+	}
+	slog.Log(context.Background(), level, "terminal: session removed", "session", sessionID, "account", accountID, "reason", why)
 	for _, fn := range removed {
 		fn(sessionID)
 	}
+}
+
+// retain keeps a session that ended on its own (remote exit, hangup, error)
+// readable for EndedRetention. It runs after the closed/error broadcast, so a
+// retention removal can never clear the buffer under it, and only sessions
+// retained here count toward MaxEndedPerAccount.
+func (m *Manager) retain(mg *managed) {
+	m.mu.Lock()
+	st := mg.session.Status
+	if mg.explicitClose || (st != StatusClosed && st != StatusError) || !mg.endedAt.IsZero() ||
+		m.terminals[mg.session.SessionID] != mg {
+		m.mu.Unlock()
+		return
+	}
+	mg.endedAt = m.clk.Now()
+	accountID := mg.session.AccountID
+	m.mu.Unlock()
+	m.capEnded(accountID)
 }
 
 // beginClosing atomically checks the status and transitions to closing,
@@ -757,6 +800,7 @@ func (m *Manager) beginClosing(mg *managed, reason CloseReason) bool {
 		return false
 	}
 	mg.session.Status = StatusClosing
+	mg.explicitClose = true
 	if reason != "" && mg.session.CloseReason == "" {
 		mg.session.CloseReason = reason
 	}
@@ -822,24 +866,14 @@ func (m *Manager) RemoveForAccount(accountID string) int {
 	m.mu.Lock()
 	ids := make([]string, 0)
 	for id, mg := range m.terminals {
-		if mg.session.AccountID != accountID {
-			continue
-		}
-		if mg.session.Status == StatusClosed || mg.session.Status == StatusError {
-			mg.output.Clear()
-			delete(m.terminals, id)
+		if mg.session.AccountID == accountID &&
+			(mg.session.Status == StatusClosed || mg.session.Status == StatusError) {
 			ids = append(ids, id)
 		}
 	}
-	removed := make([]func(string), 0, len(m.removedSubs))
-	for _, fn := range m.removedSubs {
-		removed = append(removed, fn)
-	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		for _, fn := range removed {
-			fn(id)
-		}
+		m.remove(id, removedAccountDeleted)
 	}
 	return len(ids)
 }
@@ -857,12 +891,6 @@ func (m *Manager) Destroy() {
 	}
 	m.mu.Unlock()
 	m.closeAll(ids, CloseShutdown)
-}
-
-func (m *Manager) isStatus(mg *managed, st Status) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return mg.session.Status == st
 }
 
 func (m *Manager) get(sessionID string) (*managed, error) {
@@ -895,11 +923,6 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	if reason != "" && mg.session.CloseReason == "" {
 		mg.session.CloseReason = reason
 	}
-	ended := status == StatusClosed || status == StatusError
-	if ended {
-		mg.endedAt = m.clk.Now()
-	}
-	accountID := mg.session.AccountID
 	subs := make([]func(StatusEvent), 0, len(m.statusSubs))
 	for _, fn := range m.statusSubs {
 		subs = append(subs, fn)
@@ -913,11 +936,6 @@ func (m *Manager) setStatus(mg *managed, status Status, reason CloseReason) {
 	}
 	for _, fn := range subs {
 		fn(ev)
-	}
-	// After the hooks: the closed broadcast (and the WS tail drains inside
-	// it) must see the buffer of the session that just ended.
-	if ended {
-		m.capEnded(accountID)
 	}
 }
 

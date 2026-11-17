@@ -43,10 +43,10 @@ type Service struct {
 	Endpoints *store.Endpoints
 	Demo      *demo.Service
 
-	// Sessions reports the endpoints an account has active (not ended)
-	// terminal sessions on, guest sessions included (terminal.Manager). nil
-	// skips that part of the delete guard (tests).
-	Sessions ActiveSessionLister
+	// Sessions reports active (not ended) terminal sessions, guest sessions
+	// included (terminal.Manager). nil skips that part of the delete guard
+	// (tests).
+	Sessions ActiveSessions
 	// LiveGuest reports a live guest session for the endpoint, including one
 	// with no terminal session right now (waiting to attach, or refused and
 	// allowed to ask again): it may still dial the endpoint, so it blocks a
@@ -57,9 +57,9 @@ type Service struct {
 	OnDeleted func(accountID, endpointID string)
 }
 
-// ActiveSessionLister is satisfied by terminal.Manager.
-type ActiveSessionLister interface {
-	EndpointIDsForAccount(accountID string) []string
+// ActiveSessions is satisfied by terminal.Manager.
+type ActiveSessions interface {
+	HasActiveSession(accountID, endpointID string) bool
 }
 
 var (
@@ -94,14 +94,8 @@ func (s *Service) Delete(ctx context.Context, id, accountID string) (bool, error
 }
 
 func (s *Service) hasActiveSessions(accountID, endpointID string) bool {
-	if s.Sessions != nil {
-		for _, epID := range s.Sessions.EndpointIDsForAccount(accountID) {
-			if epID == endpointID {
-				return true
-			}
-		}
-	}
-	return s.LiveGuest != nil && s.LiveGuest(accountID, endpointID)
+	return (s.Sessions != nil && s.Sessions.HasActiveSession(accountID, endpointID)) ||
+		(s.LiveGuest != nil && s.LiveGuest(accountID, endpointID))
 }
 
 // Endpoint is a resolved endpoint plus its provenance.

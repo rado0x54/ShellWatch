@@ -189,7 +189,8 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     // Ask again, once the cooldown has passed: a fresh prompt with the same
     // code; approve it.
     expect(refused.attemptsLeft).toBe(2);
-    await sleep(Math.max(0, Date.parse(refused.retryAt!) - Date.now()) + 250);
+    // (+20 ms: timers are not exact, and an early retry is silently ignored.)
+    await sleep(Math.max(0, Date.parse(refused.retryAt!) - Date.now()) + 20);
     guest.send({ type: "retry" });
     await guest.status("pending");
     const second = await nextPrompt();

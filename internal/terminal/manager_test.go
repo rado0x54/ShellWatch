@@ -89,8 +89,8 @@ func TestManagerSessionLimitHelper(t *testing.T) {
 	m, _ := mockManager(t)
 	ep := EndpointRef{ID: "e1", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
 	m.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
-	if ids := m.EndpointIDsForAccount("acc"); len(ids) != 1 || ids[0] != "e1" {
-		t.Fatalf("endpoint ids: %v", ids)
+	if !m.HasActiveSession("acc", "e1") || m.HasActiveSession("acc", "e2") || m.HasActiveSession("other", "e1") {
+		t.Fatal("HasActiveSession scoping")
 	}
 	if len(m.ListForAccount("other")) != 0 {
 		t.Error("account scoping leaked")
@@ -129,10 +129,12 @@ func TestTerminalStateRetention(t *testing.T) {
 	if got := mgr.ListForAccount("acc"); len(got) != 0 {
 		t.Fatalf("closed session in account list: %+v", got)
 	}
-	// An explicit Close drops the retained session at once.
+	// Explicit Close on an already-closed session is a no-op: the retained
+	// record survives until the retention limits remove it (removing it here
+	// could clear the buffer while its closed broadcast is still draining).
 	mgr.Close(sess.SessionID, CloseClientUI)
-	if mgr.GetSession(sess.SessionID) != nil {
-		t.Fatal("explicit Close kept the retained session")
+	if mgr.GetSession(sess.SessionID) == nil {
+		t.Fatal("retained session dropped by a no-op Close")
 	}
 
 	// Errored sessions stay VISIBLE in lists (status filter is closed-only).
@@ -683,8 +685,8 @@ func TestEndedSessionRetentionBounds(t *testing.T) {
 	}
 
 	first := hangUp()
-	if ids := mgr.EndpointIDsForAccount("acc"); len(ids) != 0 {
-		t.Errorf("an ended session counts as active: %v", ids)
+	if mgr.HasActiveSession("acc", "ep") {
+		t.Error("an ended session counts as active")
 	}
 	clk.Advance(EndedRetention - time.Second)
 	mgr.SweepEnded()
@@ -709,6 +711,50 @@ func TestEndedSessionRetentionBounds(t *testing.T) {
 	for _, id := range ids[1:] {
 		if mgr.GetSession(id) == nil {
 			t.Errorf("ended session %s dropped within the cap", id)
+		}
+	}
+}
+
+// Only sessions that ended on their own are retained: explicitly closed ones
+// are removed and never count toward MaxEndedPerAccount, so closing sessions
+// does not evict retained ones.
+func TestExplicitCloseDoesNotEvictRetained(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var mu sync.Mutex
+	var last *MockTransport
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		tr := NewMockTransport()
+		mu.Lock()
+		last = tr
+		mu.Unlock()
+		return tr, nil
+	}, clk, 0)
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	var retained []string
+	for i := 0; i < MaxEndedPerAccount; i++ {
+		clk.Advance(time.Second)
+		sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		tr := last
+		mu.Unlock()
+		_ = tr.Close()
+		waitFor(t, func() bool {
+			s := mgr.GetSession(sess.SessionID)
+			return s != nil && s.Status == StatusClosed
+		})
+		retained = append(retained, sess.SessionID)
+	}
+	sess, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close(sess.SessionID, CloseClientUI)
+	for _, id := range retained {
+		if mgr.GetSession(id) == nil {
+			t.Errorf("retained %s evicted by an explicit close", id)
 		}
 	}
 }

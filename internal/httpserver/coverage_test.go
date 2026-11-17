@@ -179,7 +179,7 @@ func TestRouteCoverageAgainstSpec(t *testing.T) {
 }
 
 // withSessions wires the endpoint-delete active-session guard.
-func withSessions(svc *endpointsvc.Service, sessions endpointsvc.ActiveSessionLister) *endpointsvc.Service {
+func withSessions(svc *endpointsvc.Service, sessions endpointsvc.ActiveSessions) *endpointsvc.Service {
 	svc.Sessions = sessions
 	return svc
 }

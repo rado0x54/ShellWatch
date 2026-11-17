@@ -184,8 +184,7 @@ most recent ended sessions (the oldest is dropped when another ends).
 ### `shellwatch_close_session`
 
 Input: `{ sessionId: string }`. Success → `{ status: "closed" }`.
-(Close reason recorded as `client.mcp`.) Closing a session that already ended
-on its own drops it at once (its output is no longer readable).
+(Close reason recorded as `client.mcp`.)
 
 ### `shellwatch_manage_keys`
 

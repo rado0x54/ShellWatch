@@ -69,7 +69,9 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const secondsLeft = (deadline: number | null): number =>
-    deadline === null ? 0 : Math.max(0, Math.round((deadline - now) / 1000));
+    // Rounded up: a countdown (and the Ask again button) never reaches 0
+    // before the deadline itself.
+    deadline === null ? 0 : Math.max(0, Math.ceil((deadline - now) / 1000));
 
   function fmt(seconds: number): string {
     const m = Math.floor(seconds / 60);
