@@ -131,8 +131,9 @@ while the endpoint has active sessions of any source — UI, MCP or a one-time
 access guest, including a guest still waiting for approval; ended sessions do
 not count. A successful delete revokes the endpoint's outstanding tickets. MCP
 has no way to force it (REST behaves the same). An `update` never touches
-running sessions; changing `host`, `port` or `username` also revokes the
-endpoint's unredeemed tickets (they were minted for the old target).
+running sessions. Tickets are bound to the target (`username@host:port`) they
+were minted for: after a `host`, `port` or `username` change, unredeemed ones
+are revoked and a redeemed guest that has not connected yet is refused.
 
 ### `shellwatch_create_session`
 

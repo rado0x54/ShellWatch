@@ -220,11 +220,14 @@ type ticket struct {
 	id         string
 	accountID  string
 	endpointID string
-	tokenHash  [32]byte
-	opts       Options
-	createdAt  time.Time
-	expiresAt  time.Time
-	guest      *guest
+	// target is the endpoint's target at mint (EndpointRef.Target): redeem
+	// and connect refuse once the endpoint points elsewhere (#326).
+	target    string
+	tokenHash [32]byte
+	opts      Options
+	createdAt time.Time
+	expiresAt time.Time
+	guest     *guest
 	// endedAt / endReason: set when the guest session closed; the ticket
 	// then stays listed (state closed) until the retention limits drop it.
 	endedAt   time.Time
@@ -441,7 +444,7 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (Minted, error) {
 	token := randomToken()
 	now := s.clk.Now()
 	t := &ticket{
-		id: s.p.NewID(), accountID: p.AccountID, endpointID: ref.ID, tokenHash: hash(token),
+		id: s.p.NewID(), accountID: p.AccountID, endpointID: ref.ID, target: ref.Target(), tokenHash: hash(token),
 		opts: opts, createdAt: now, expiresAt: now.Add(opts.RedeemTTL),
 	}
 	var fx effects
@@ -757,6 +760,11 @@ func (s *Service) usable(ctx context.Context, token, op, sourceIP string) (*tick
 	if ref == nil {
 		s.invalidate(t, audit.TicketInvalidated, "endpoint removed or disabled")
 		slog.Info(rejected, "ticket", t.id, "reason", "endpoint removed or disabled", "sourceIp", sourceIP)
+		return nil, Options{}, ErrNotFound
+	}
+	if ref.Target() != snapshot.target {
+		s.invalidate(t, audit.TicketInvalidated, "endpoint target changed")
+		slog.Info(rejected, "ticket", t.id, "reason", "endpoint target changed", "sourceIp", sourceIP)
 		return nil, Options{}, ErrNotFound
 	}
 	return t, snapshot.opts, nil
@@ -1112,7 +1120,7 @@ func (s *Service) startAttemptLocked(g *guest, fx *effects) {
 		Kind: terminal.SourceTicket, SourceIP: g.sourceIP, Reason: g.reason, SessionID: sid,
 		Ticket: &terminal.TicketTrigger{
 			TicketID: t.id, Label: t.opts.Label, Channel: g.channel, UserAgent: g.userAgent,
-			ConfirmationCode: g.code, AgentForward: t.opts.AgentForward,
+			ConfirmationCode: g.code, AgentForward: t.opts.AgentForward, Target: t.target,
 			LifetimeSeconds: int(t.opts.Lifetime / time.Second),
 		},
 	}
@@ -1135,6 +1143,11 @@ func (s *Service) runAttempt(ctx context.Context, a attemptParams) {
 	if errors.Is(err, endpointsvc.ErrEndpointNotFound) {
 		// Removed or disabled since redemption: it cannot be admitted.
 		s.closeByID(a.guestID, terminal.CloseEndpointRemoved)
+		return
+	}
+	if errors.Is(err, endpointsvc.ErrTargetChanged) {
+		// The endpoint points elsewhere now; the ticket was not for it.
+		s.closeByID(a.guestID, terminal.CloseTicketRevoked)
 		return
 	}
 	if err != nil {

@@ -2201,8 +2201,9 @@ paths:
         "404":
           description: >-
             Uniform failure: unknown, used, expired or revoked ticket, or one
-            whose endpoint or account is gone or disabled. The real reason is
-            only logged.
+            whose endpoint or account is gone or disabled, or whose endpoint
+            now points at a different host, port or username than at mint.
+            The real reason is only logged.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

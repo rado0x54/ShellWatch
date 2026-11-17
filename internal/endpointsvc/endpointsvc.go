@@ -87,6 +87,9 @@ var (
 	ErrLabelHostRequired = errors.New("label and host are required")
 	// ErrEndpointNotFound: Open on an id that doesn't resolve for the account.
 	ErrEndpointNotFound = errors.New("Endpoint not found")
+	// ErrTargetChanged: Open for a ticket whose endpoint now points at a
+	// different host, port or username than the ticket was minted for.
+	ErrTargetChanged = errors.New("endpoint target changed since the ticket was minted")
 	// ErrEndpointLookup: Open could not read the endpoint (wrapped cause).
 	ErrEndpointLookup = errors.New("endpoint lookup failed")
 )
@@ -198,8 +201,11 @@ type UpdateParams struct {
 
 // Update read-merges a patch into a stored endpoint. Running sessions keep
 // the copy they connected with. A host or port change clears the pinned host
-// key (in the store) and audits it; a host, port or username change revokes
-// the endpoint's unredeemed tickets. Returns false when nothing matched.
+// key (in the store) and audits it. Tickets are bound to the target they were
+// minted for (checked at redeem and at connect), so a host, port or username
+// change ends their use either way; OnTargetChanged only clears the
+// unredeemed ones from the owner's list right away. Returns false when
+// nothing matched.
 func (s *Service) Update(ctx context.Context, p UpdateParams) (bool, error) {
 	if demo.IsID(p.ID) {
 		return false, ErrDemoReadOnly
@@ -243,8 +249,9 @@ func (s *Service) AuditHostKeyCleared(ep store.Endpoint, reason string, by Actor
 // Open is the one way to open a session (UI, MCP, guest): resolve the
 // endpoint, apply max_sessions — every opening or open session of the
 // account, any source — and connect. Errors: ErrEndpointNotFound,
-// ErrEndpointLookup, *terminal.LimitError, or the connect error. A guest's
-// agent forwarding never goes beyond the endpoint's own setting.
+// ErrEndpointLookup, ErrTargetChanged, *terminal.LimitError, or the connect
+// error. A guest connects only to the target its ticket was minted for, and
+// its agent forwarding never goes beyond the endpoint's own setting.
 func (s *Service) Open(ctx context.Context, accountID, endpointID string, trigger terminal.Trigger) (*terminal.Session, error) {
 	ref, err := s.RefForAccount(ctx, endpointID, accountID)
 	if err != nil {
@@ -254,6 +261,11 @@ func (s *Service) Open(ctx context.Context, accountID, endpointID string, trigge
 		return nil, ErrEndpointNotFound
 	}
 	if trigger.Ticket != nil {
+		if trigger.Ticket.Target != ref.Target() {
+			slog.Info("terminal: session refused", "account", accountID, "endpoint", endpointID,
+				"source", trigger.Kind, "reason", "endpoint target changed since the ticket was minted")
+			return nil, ErrTargetChanged
+		}
 		ref.AgentForward = ref.AgentForward && trigger.Ticket.AgentForward
 	}
 	max := DefaultMaxSessions

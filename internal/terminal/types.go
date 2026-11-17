@@ -127,6 +127,9 @@ type TicketTrigger struct {
 	ConfirmationCode string
 	AgentForward     bool
 	LifetimeSeconds  int
+	// Target is the endpoint target the ticket was minted for
+	// (EndpointRef.Target); Open refuses to connect anywhere else.
+	Target string
 }
 
 // GenerateSessionID returns a "sess_<12 hex>" id (generateSessionId()).

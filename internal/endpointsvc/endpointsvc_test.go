@@ -189,7 +189,7 @@ func TestOpenLimit(t *testing.T) {
 			for i := 0; i < tc.opens; i++ {
 				tr := terminal.Trigger{Kind: sources[i%3]}
 				if tr.Kind == terminal.SourceTicket {
-					tr.Ticket = &terminal.TicketTrigger{}
+					tr.Ticket = &terminal.TicketTrigger{Target: "u@h:22"}
 				}
 				if _, err := svc.Open(ctx, "acc", "own", tr); err != nil {
 					t.Fatalf("open %d: %v", i, err)
@@ -202,6 +202,10 @@ func TestOpenLimit(t *testing.T) {
 			}
 			if _, err := svc.Open(ctx, "acc", "missing", terminal.Trigger{Kind: terminal.SourceUI}); !errors.Is(err, ErrEndpointNotFound) {
 				t.Errorf("missing endpoint: %v", err)
+			}
+			moved := terminal.Trigger{Kind: terminal.SourceTicket, Ticket: &terminal.TicketTrigger{Target: "u@old:22"}}
+			if _, err := svc.Open(ctx, "acc", "own", moved); !errors.Is(err, ErrTargetChanged) {
+				t.Errorf("ticket for another target: %v", err)
 			}
 		})
 	}

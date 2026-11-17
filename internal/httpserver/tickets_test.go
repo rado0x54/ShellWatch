@@ -1200,6 +1200,30 @@ func TestEndpointTargetChangeRevokesUnredeemedTickets(t *testing.T) {
 	}
 }
 
+// A ticket is bound to the target it was minted for, not only revoked after
+// an edit: a redemption racing the edit (the new target stored, the revoke
+// hook not yet run) and a guest redeemed before the edit but connecting
+// after it both fail, and nothing dials the new target (#332 review).
+func TestTicketBoundToMintedTarget(t *testing.T) {
+	r := ticketServer(t)
+	_, racing := r.mint(t, "ep-a", `{}`)
+	_, early := r.mint(t, "ep-a", `{}`)
+	res := r.redeem(t, early, "x", redeemOpts{})
+	if res.status != 202 {
+		t.Fatalf("redeem before the edit: %d %s", res.status, res.raw)
+	}
+	r.epSvc.OnTargetChanged = nil // the window before the revoke runs
+	if st, out := r.ownerJSON(t, "PUT", "/api/endpoints/ep-a", "ui", `{"host":"elsewhere.example"}`); st != 200 {
+		t.Fatalf("host edit: %d %v", st, out)
+	}
+	if got := r.redeem(t, racing, "x", redeemOpts{}); got.status != 404 {
+		t.Errorf("redeem racing the edit: %d %s", got.status, got.raw)
+	}
+	c, _ := r.dialGuest(t, res.cookie, guestOrigin)
+	readUntil(t, c, statusIs("closed"))
+	r.gate.noAttempt(t)
+}
+
 // REST and MCP create through the one endpoint service: the same input is
 // stored identically apart from the id.
 func TestEndpointCreateRESTAndMCPStoreTheSameRow(t *testing.T) {
