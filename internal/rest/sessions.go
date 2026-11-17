@@ -25,9 +25,8 @@ type Sessions struct {
 	Manager *terminal.Manager
 	// Svc opens sessions (endpoint lookup + max_sessions).
 	Svc *endpointsvc.Service
-	// GuestAttached reports whether a ticket guest is attached to a session
-	// (#306; ok=false for any other session). nil-able.
-	GuestAttached func(sessionID string) (attached, ok bool)
+	// Views builds the fields shared with the WebSocket session list.
+	Views terminal.SessionViews
 }
 
 func (s *Sessions) Mount(r chi.Router) {
@@ -37,28 +36,15 @@ func (s *Sessions) Mount(r chi.Router) {
 	r.Delete("/api/sessions/{sessionId}", s.close)
 }
 
-// toSessionDTO builds the bare TerminalSession wire shape. Optional fields
-// omit when empty (matching the conditional spread in terminal-manager.ts).
-// Guest sessions (source ticket) add the ticket fields and guestAttached.
+// toSessionDTO builds the bare TerminalSession wire shape: the shared
+// session view plus the REST-only fields. Optional fields omit when empty
+// (matching the conditional spread in terminal-manager.ts).
 func (h *Sessions) toSessionDTO(s terminal.Session) api.TerminalSession {
-	dto := toSessionDTO(s)
-	if s.Source == terminal.SourceTicket {
-		label := s.TicketLabel
-		dto.TicketId, dto.TicketLabel = strPtrIf(s.TicketID), &label
-		if h.GuestAttached != nil {
-			if attached, ok := h.GuestAttached(s.SessionID); ok {
-				dto.GuestAttached = &attached
-			}
-		}
-	}
-	return dto
-}
-
-func toSessionDTO(s terminal.Session) api.TerminalSession {
+	v := h.Views.View(s)
 	return api.TerminalSession{
-		SessionId: s.SessionID, EndpointId: s.EndpointID, AccountId: s.AccountID,
-		Status: api.TerminalStatus(s.Status), Source: api.TerminalSource(s.Source),
-		CreatedAt:        s.CreatedAt.UTC().Format(isoMillis),
+		SessionId: v.SessionID, EndpointId: v.EndpointID, AccountId: s.AccountID,
+		Status: api.TerminalStatus(v.Status), Source: api.TerminalSource(v.Source),
+		CreatedAt:        v.CreatedAt,
 		LastActivityAt:   s.LastActivityAt.UTC().Format(isoMillis),
 		CloseReason:      strPtrIf(string(s.CloseReason)),
 		SourceIp:         strPtrIf(s.SourceIP),
@@ -66,6 +52,9 @@ func toSessionDTO(s terminal.Session) api.TerminalSession {
 		Reason:           strPtrIf(s.Reason),
 		McpClientName:    strPtrIf(s.MCPClientName),
 		McpClientVersion: strPtrIf(s.MCPClientVer),
+		TicketId:         strPtrIf(v.TicketID),
+		TicketLabel:      v.TicketLabel,
+		GuestAttached:    v.GuestAttached,
 	}
 }
 
@@ -88,7 +77,7 @@ func (s *Sessions) create(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, 400, err.Error())
 	default:
-		writeJSON(w, 200, toSessionDTO(*sess))
+		writeJSON(w, 200, s.toSessionDTO(*sess))
 	}
 }
 

@@ -39,9 +39,8 @@ type Hub struct {
 	// frame is lost between the snapshot and the attach. nil -> none.
 	fileSnapshot func(sessionID string, deliver func(frames []any))
 
-	// guestAttached reports whether a ticket guest is attached to a session
-	// (#306; ok=false for non-guest sessions). nil -> never.
-	guestAttached func(sessionID string) (attached, ok bool)
+	// views builds the session-list rows (shared with REST).
+	views terminal.SessionViews
 
 	// guests enables /ws/guest (#328); zero -> no guest route.
 	guests GuestParams
@@ -66,11 +65,11 @@ func owner(accountID string) func(*conn) bool {
 	return func(c *conn) bool { return c.ownedBy(accountID) }
 }
 
-// SetGuestAttached wires the ticket service's attach lookup (set once at
-// the composition root).
-func (h *Hub) SetGuestAttached(fn func(sessionID string) (attached, ok bool)) {
+// SetSessionViews wires the session view shared with REST (set once at the
+// composition root).
+func (h *Hub) SetSessionViews(v terminal.SessionViews) {
 	h.mu.Lock()
-	h.guestAttached = fn
+	h.views = v
 	h.mu.Unlock()
 }
 
@@ -221,29 +220,14 @@ func (h *Hub) onOutput(sessionID string, _ int64) {
 func (h *Hub) sessionList(c *conn) map[string]any {
 	entries := make([]sessionListEntry, 0)
 	h.mu.Lock()
-	guestAttached := h.guestAttached
+	views := h.views
 	h.mu.Unlock()
 	for _, s := range h.mgr.ListForAccount(c.accountID) {
 		mode := "observer"
 		if c.hasControl(s.SessionID) {
 			mode = "control"
 		}
-		e := sessionListEntry{
-			SessionID: s.SessionID, EndpointID: s.EndpointID, Status: string(s.Status),
-			CreatedAt: s.CreatedAt.UTC().Format(isoMillis), Source: string(s.Source), Mode: mode,
-		}
-		if s.Source == terminal.SourceTicket {
-			e.TicketID, e.TicketLabel = s.TicketID, &s.TicketLabel
-			// Like REST: present only while the guest session is live, so a
-			// client can tell "guest away" (false) from "guest session over"
-			// (absent).
-			if guestAttached != nil {
-				if attached, ok := guestAttached(s.SessionID); ok {
-					e.GuestAttached = &attached
-				}
-			}
-		}
-		entries = append(entries, e)
+		entries = append(entries, sessionListEntry{SessionView: views.View(s), Mode: mode})
 	}
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }

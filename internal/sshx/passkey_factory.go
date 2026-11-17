@@ -233,7 +233,7 @@ func (p PasskeyFactoryParams) buildSigners(ctx context.Context, fp terminal.Fact
 	}
 	if t := fp.Trigger.Ticket; t != nil && fp.Trigger.Kind == terminal.SourceTicket {
 		actionCtx.Ticket = &approval.TicketContext{
-			TicketID: t.TicketID, Label: t.Label, Channel: string(t.Channel), UserAgent: t.UserAgent,
+			TicketID: fp.Trigger.TicketID, Label: fp.Trigger.TicketLabel, Channel: string(fp.Trigger.TicketChannel), UserAgent: t.UserAgent,
 			ConfirmationCode: t.ConfirmationCode, AgentForward: t.AgentForward, LifetimeSeconds: t.LifetimeSeconds,
 		}
 	}
