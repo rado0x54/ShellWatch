@@ -37,9 +37,6 @@ var protocolVersions = []string{"2026-07-28", "2025-11-25", "2025-06-18"}
 type Deps struct {
 	AgentDeps agent.Deps
 	Keys      *store.SSHKeys
-	// MaxOwned resolves the account's concurrent-session cap (accounts.
-	// max_sessions). nil/miss -> agent default (5).
-	MaxOwned func(ctx context.Context, accountID string) (int, bool)
 	// Version is the serverInfo version ("" falls back to "1.0.0").
 	Version string
 	// NotifyDebounce coalesces per-session resources/updated notifications for
@@ -74,18 +71,11 @@ func (d *Deps) Handler() http.Handler {
 // to an AgentSession for the request's (account, OAuth client), the live
 // instructions, and the resource watcher feeding resources/updated.
 func (d *Deps) buildServer(r *http.Request, principal auth.Principal) *mcpsdk.Server {
-	maxOwned := -1 // unresolved -> agent default (5); explicit 0 blocks
-	if d.MaxOwned != nil {
-		if m, ok := d.MaxOwned(r.Context(), principal.AccountID); ok {
-			maxOwned = m
-		}
-	}
 	as := agent.New(agent.Params{
 		Deps:      d.AgentDeps,
 		AccountID: principal.AccountID,
 		ClientID:  principal.ClientID,
 		SourceIP:  realip.FromRequest(r),
-		MaxOwned:  maxOwned,
 	})
 	// Agent attribution for the approval UI and audit log: default to the
 	// OAuth client_id (always known, tamper-proof). A 2026-07-28 client's

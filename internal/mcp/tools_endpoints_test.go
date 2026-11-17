@@ -2,8 +2,13 @@
 package mcp
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/rado0x54/shellwatch/internal/endpointsvc"
 )
 
 func TestEndpointPatchFromWire(t *testing.T) {
@@ -38,8 +43,6 @@ func TestEndpointPatchFromWire(t *testing.T) {
 		data map[string]any
 		want string
 	}{
-		{"uv unknown value", map[string]any{"userVerification": "none"},
-			"data.userVerification must be one of: required, preferred, discouraged"},
 		{"uv wrong type", map[string]any{"userVerification": true},
 			"data.userVerification must be one of: required, preferred, discouraged"},
 		{"agentForward string", map[string]any{"agentForward": "yes"},
@@ -48,13 +51,26 @@ func TestEndpointPatchFromWire(t *testing.T) {
 			"data.port must be a number"},
 		{"label number", map[string]any{"label": float64(5)},
 			"data.label must be a string"},
-		{"description too long", map[string]any{"description": strings.Repeat("x", 1001)},
-			"data.description must be a string up to 1000 characters (pass null to clear)"},
 		{"description wrong type", map[string]any{"description": float64(1)},
-			"data.description must be a string up to 1000 characters (pass null to clear)"},
+			"data.description must be a string up to 1000 characters"},
 	} {
 		if _, msg := endpointPatchFromWire(tc.data); msg != tc.want {
 			t.Errorf("%s: got %q want %q", tc.name, msg, tc.want)
+		}
+	}
+
+	// Value checks are the endpoint service's; the tool prefixes its wording.
+	for _, tc := range []struct {
+		data map[string]any
+		want string
+	}{
+		{map[string]any{"userVerification": "none"}, "data.userVerification must be one of: required, preferred, discouraged"},
+		{map[string]any{"description": strings.Repeat("x", 1001)}, "data.description must be a string up to 1000 characters"},
+	} {
+		p, _ := endpointPatchFromWire(tc.data)
+		err := (&endpointsvc.Service{}).Create(context.Background(), endpointsvc.CreateParams{ID: "x", Patch: p})
+		if got := endpointErr(err).Content[0].(*mcpsdk.TextContent).Text; got != tc.want {
+			t.Errorf("%v: got %q want %q", tc.data, got, tc.want)
 		}
 	}
 }

@@ -226,7 +226,6 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Token: body.Token, Reason: body.Reason, SourceIP: ip, UserAgent: r.UserAgent(),
 		Cookie: cookie, Channel: terminal.TicketChannelWeb, ReplaceCurrent: body.ReplaceCurrent,
 	})
-	var capErr *ticket.CapacityError
 	switch {
 	case errors.Is(err, ticket.ErrLiveGuest):
 		apierr.Write(w, http.StatusConflict, "A guest session is already active in this browser")
@@ -237,10 +236,6 @@ func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ticket.ErrUnavailable):
 		// The ticket is untouched; the guest page offers to try again.
 		apierr.Write(w, http.StatusServiceUnavailable, "Temporarily unavailable; try again")
-		return
-	case errors.As(err, &capErr):
-		w.Header().Set("Retry-After", strconv.Itoa(int(capErr.RetryAfter.Round(time.Second)/time.Second)))
-		apierr.Write(w, http.StatusTooManyRequests, "Too many guest sessions right now; try again later")
 		return
 	case err != nil:
 		// Unknown, used, expired, revoked or ineligible: one uniform answer.

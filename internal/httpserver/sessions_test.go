@@ -55,7 +55,7 @@ func sessionsServer(t *testing.T) (*httptest.Server, *terminal.MockTransport) {
 	})
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: endpoints}},
+		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: endpoints, Sessions: mgr}},
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-FSL-1.1-Apache-2.0
-// The maxOwned cap must not count sessions that died under the agent (idle
+// max_sessions must not count sessions that died under the agent (idle
 // janitor, server hangup) — deliberate divergence from Node, whose raw-set
 // count starves the cap after N external closes. Post-mortem retained
 // sessions (M6) stay OWNED (read_output keeps working); they just don't
@@ -43,8 +43,8 @@ func TestCapIgnoresExternallyClosedSessions(t *testing.T) {
 			return m, nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: 2})
-	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
+	sess := New(Params{Deps: Deps{Manager: mgr, Svc: capSvc(eps, mgr, 2, true)}, AccountID: "acc", ClientID: "client-1"})
+	if err := sess.CreateEndpoint(ctx, "ep1", testPatch("Box", "h", "u")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,16 +121,25 @@ func TestCapZeroBlocksCreation(t *testing.T) {
 			return terminal.NewMockTransport(), nil
 		}, clock.Real{}, 0)
 	eps := store.NewEndpoints(db, clock.Real{})
-	sess := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: 0})
-	if err := sess.CreateEndpoint(ctx, store.Endpoint{ID: "ep1", Label: "Box", Host: "h", Port: 22, Username: "u", UserVerification: "required"}); err != nil {
+	sess := New(Params{Deps: Deps{Manager: mgr, Svc: capSvc(eps, mgr, 0, true)}, AccountID: "acc", ClientID: "client-1"})
+	if err := sess.CreateEndpoint(ctx, "ep1", testPatch("Box", "h", "u")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sess.CreateSession(ctx, "ep1", "blocked"); err == nil {
 		t.Fatal("max_sessions=0 must block creation")
 	}
-	// Negative = "no cap resolved" -> default 5 still applies.
-	sess2 := New(Params{Deps: Deps{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: eps}}, AccountID: "acc", ClientID: "client-1", MaxOwned: -1})
+	// No cap resolved -> the default still applies.
+	sess2 := New(Params{Deps: Deps{Manager: mgr, Svc: capSvc(eps, mgr, 0, false)}, AccountID: "acc", ClientID: "client-1"})
 	if _, err := sess2.CreateSession(ctx, "ep1", "default cap"); err != nil {
 		t.Fatalf("default-cap create: %v", err)
 	}
+}
+
+func capSvc(eps *store.Endpoints, mgr *terminal.Manager, max int, ok bool) *endpointsvc.Service {
+	return &endpointsvc.Service{Endpoints: eps, Sessions: mgr,
+		MaxSessions: func(context.Context, string) (int, bool) { return max, ok }}
+}
+
+func testPatch(label, host, user string) endpointsvc.EndpointPatch {
+	return endpointsvc.EndpointPatch{Label: &label, Host: &host, Username: &user}
 }

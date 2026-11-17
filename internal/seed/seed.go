@@ -47,7 +47,7 @@ func FromConfig(ctx context.Context, db *sql.DB, cfg *config.Config, newID func(
 		adminID = newID()
 		if _, err := db.ExecContext(ctx,
 			`INSERT INTO accounts (id, name, enabled, max_sessions, last_used_at, created_at, updated_at)
-			 VALUES (?, 'admin', 1, 5, ?, ?, ?)`, adminID, ts, ts, ts); err != nil {
+			 VALUES (?, 'admin', 1, 20, ?, ?, ?)`, adminID, ts, ts, ts); err != nil {
 			return res, err
 		}
 		if _, err := db.ExecContext(ctx,

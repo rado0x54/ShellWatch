@@ -136,6 +136,9 @@ func TestEndpointsValidationMatrix(t *testing.T) {
 		{`{"label":"  ","host":"h"}`, 400, "label and host are required"},
 		{`{"label":"L","host":"h","userVerification":"bogus"}`, 400, "userVerification must be one of: required, preferred, discouraged"},
 		{`{"label":"L","host":"h","agentForward":"yes"}`, 400, "agentForward must be a boolean"},
+		{`{"label":"L","host":"h","agentForward":null}`, 400, "agentForward must be a boolean"},
+		{`{"label":"L","host":"h","description":5}`, 400, "description must be a string up to 1000 characters"},
+		{`{"label":"L","host":"h","description":"` + strings.Repeat("x", 1001) + `"}`, 400, "description must be a string up to 1000 characters"},
 	}
 	for _, tc := range cases {
 		status, body := doJSON(t, ts, "POST", "/api/endpoints", tc.body)

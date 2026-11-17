@@ -22,7 +22,7 @@ export type RedeemFailure =
   | "not-found" // unknown, used, expired, revoked: indistinguishable
   | "reason-required"
   | "live-session" // this browser already holds a guest session
-  | "busy" // 429: the owner's guest-session cap or the rate limit; retry later
+  | "busy" // 429: the rate limit; retry later
   | "forbidden"
   | "error";
 

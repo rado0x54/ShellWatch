@@ -38,6 +38,11 @@ func (f *fakeSessions) Create(ctx context.Context, _ terminal.EndpointRef, _ str
 	}
 }
 
+// open stands in for endpointsvc.Service.Open.
+func (f *fakeSessions) open(ctx context.Context, acc, id string, tr terminal.Trigger) (*terminal.Session, error) {
+	return f.Create(ctx, terminal.EndpointRef{ID: id, AccountID: acc}, acc, tr)
+}
+
 func (f *fakeSessions) Close(sessionID string, _ terminal.CloseReason) {
 	f.mu.Lock()
 	f.closed = append(f.closed, sessionID)
@@ -92,7 +97,7 @@ func newTestService(t *testing.T) (*Service, *fakeSessions, *pubLog, *clock.Fake
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	n := 0
 	s := New(Params{
-		Manager: f, Clock: clk,
+		Manager: f, Open: f.open, Clock: clk,
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
 		},
@@ -167,32 +172,29 @@ func TestStaleAttemptEventsAreIgnored(t *testing.T) {
 	}
 }
 
-// A capacity reservation is held from redemption and released by the close
-// path; refused guest sessions count.
-func TestCapacityCountsEveryLiveState(t *testing.T) {
-	s, f, _, clk := newTestService(t)
-	redeemAttached(t, s) // pending
+// A target change drops only that endpoint's unredeemed tickets bound to
+// another target; one minted for the new target survives.
+func TestRevokeStaleForEndpoint(t *testing.T) {
+	s, f, _, _ := newTestService(t)
+	redeemAttached(t, s)
 	<-f.creates
-	gid := redeemAttached(t, s)
-	<-f.creates
-	f.answers <- errors.New("skipped") // one of them refused
 	m, _ := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
-	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); err != nil {
-		t.Fatalf("third: %v", err) // redeemed, never attached: counts too
+	other, _ := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep2"})
+	current := terminal.EndpointRef{}.Target() // the fake resolver's target
+	s.RevokeStaleForEndpoint("acc", "ep", current)
+	if len(s.List("acc")) != 3 {
+		t.Fatalf("a ticket for the current target was revoked: %d listed", len(s.List("acc")))
 	}
-	extra, _ := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
-	_, err := s.Redeem(context.Background(), RedeemParams{Token: extra.Token, Reason: "x"})
-	var capErr *CapacityError
-	if !errors.As(err, &capErr) || capErr.RetryAfter <= 0 {
-		t.Fatalf("fourth: %v", err)
+	s.RevokeStaleForEndpoint("acc", "ep", "u@new.example:22")
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: m.Token, Reason: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unredeemed ticket survived: %v", err)
 	}
-	// The unattached one drops after the attach window, freeing a slot.
-	clk.Advance(AttachWindow)
-	s.Sweep()
-	if _, err := s.Redeem(context.Background(), RedeemParams{Token: extra.Token, Reason: "x"}); err != nil {
-		t.Errorf("after a slot freed: %v", err)
+	if _, err := s.Redeem(context.Background(), RedeemParams{Token: other.Token, Reason: "x"}); err != nil {
+		t.Errorf("other endpoint's ticket revoked: %v", err)
 	}
-	_ = gid
+	if n := len(s.List("acc")); n != 2 { // the redeemed guest session and the other ticket
+		t.Errorf("listed %d tickets, want 2", n)
+	}
 }
 
 func TestValidateOptionsDefaults(t *testing.T) {
@@ -221,7 +223,7 @@ func TestRedeemEndpointLookupErrorKeepsTicket(t *testing.T) {
 	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
 	var fail bool
 	s := New(Params{
-		Manager: f, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Manager: f, Open: f.open, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			if fail {
 				return nil, context.Canceled
@@ -316,7 +318,7 @@ func TestCloseDoesNotWaitForATerminalClose(t *testing.T) {
 	b := &blockingClose{fakeSessions: f, release: make(chan struct{})}
 	t.Cleanup(func() { close(b.release) })
 	s := New(Params{
-		Manager: b, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Manager: b, Open: f.open, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
 		},
@@ -373,7 +375,7 @@ func TestGuestFlapsAreBatchedForTheOwner(t *testing.T) {
 	f := &fakeSessions{creates: make(chan terminal.Trigger, 8), answers: make(chan error, 8)}
 	n := &countNotifier{}
 	s := New(Params{
-		Manager: f, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Notifier: n,
+		Manager: f, Open: f.open, Clock: clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Notifier: n,
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil
 		},
@@ -469,7 +471,7 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	n := 0
 	rec := &auditLog{}
 	s := New(Params{
-		Manager: f, Clock: clk, Audit: rec,
+		Manager: f, Open: f.open, Clock: clk, Audit: rec,
 		ResolveEndpoint: func(_ context.Context, id, acc string) (*terminal.EndpointRef, error) {
 			clk.Advance(lookupTakes) // a slow database
 			return &terminal.EndpointRef{ID: id, AccountID: acc}, nil

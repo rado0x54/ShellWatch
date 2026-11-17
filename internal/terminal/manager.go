@@ -344,6 +344,10 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 		m.mu.Unlock()
 		return nil, fmt.Errorf("server is shutting down")
 	}
+	if trigger.MaxActive > 0 && m.countActiveLocked(sess.AccountID) >= trigger.MaxActive {
+		m.mu.Unlock()
+		return nil, &LimitError{Max: trigger.MaxActive}
+	}
 	m.terminals[sess.SessionID] = mg
 	registered := make([]func(string, string), 0, len(m.registeredSubs))
 	for _, fn := range m.registeredSubs {
@@ -623,17 +627,13 @@ func (m *Manager) ListForAccount(accountID string) []Session {
 	return out
 }
 
-// CountOpenForAccount counts the account's status-open sessions — the REST
-// session-cap semantics: account-wide, UI and MCP sessions alike. Guest
-// sessions (source ticket) are excluded: they have their own cap in the
-// ticket service (#306). (The MCP cap in agent.Session deliberately differs:
-// it counts only that agent's own live sessions.)
-func (m *Manager) CountOpenForAccount(accountID string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// countActiveLocked counts the account's opening and open sessions, any
+// source: the max_sessions rule (#326).
+func (m *Manager) countActiveLocked(accountID string) int {
 	n := 0
 	for _, mg := range m.terminals {
-		if mg.session.AccountID == accountID && mg.session.Status == StatusOpen && mg.session.Source != SourceTicket {
+		st := mg.session.Status
+		if mg.session.AccountID == accountID && (st == StatusOpening || st == StatusOpen) {
 			n++
 		}
 	}

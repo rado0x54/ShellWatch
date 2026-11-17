@@ -88,7 +88,7 @@ func sessionGoldenServer(t *testing.T) *httptest.Server {
 	})
 	handler := New(Params{
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
-		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{})}},
+		Sessions: &rest.Sessions{Manager: mgr, Svc: &endpointsvc.Service{Endpoints: store.NewEndpoints(db, clock.Real{}), Sessions: mgr}},
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)

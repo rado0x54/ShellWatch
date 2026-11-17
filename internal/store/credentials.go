@@ -289,7 +289,7 @@ func (c *Credentials) SelfRegister(ctx context.Context, p SelfRegisterParams) (*
 			now := c.nowISO()
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO accounts (id, name, enabled, max_sessions, last_used_at, created_at, updated_at)
-				 VALUES (?, ?, 1, 5, ?, ?, ?)`, accountID, p.Name, now, now, now); err != nil {
+				 VALUES (?, ?, 1, 20, ?, ?, ?)`, accountID, p.Name, now, now, now); err != nil {
 				return err
 			}
 			if !hasAdmin {
