@@ -510,6 +510,18 @@ func TestRedeemRechecksExpiryAtConsumption(t *testing.T) {
 	if want := clk.Now().Add(AttachWindow); !res.AttachDeadline.Equal(want) {
 		t.Errorf("attach deadline %s, want %s (counted from consumption)", res.AttachDeadline, want)
 	}
+
+	// The janitor's expiry writes the same row shape as the redeem path.
+	lookupTakes = 0
+	m3, err := s.Mint(context.Background(), MintParams{AccountID: "acc", EndpointID: "ep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(DefaultRedeemTTL)
+	s.Sweep()
+	if ev, ok := rec.last(audit.TicketExpired); !ok || ev.EndReason != "expired" || ev.TicketID != m3.Ticket.ID {
+		t.Errorf("swept expired audit row: %+v (found %v)", ev, ok)
+	}
 }
 
 // auditLog records ticket audit events in memory.

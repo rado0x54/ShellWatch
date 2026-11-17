@@ -1472,7 +1472,9 @@ func (s *Service) Sweep() {
 		}
 		if t.guest == nil && !now.Before(t.expiresAt) {
 			s.dropTicketLocked(t)
-			fx.audits = append(fx.audits, s.event(t, nil, audit.TicketExpired))
+			ev := s.event(t, nil, audit.TicketExpired)
+			ev.EndReason = "expired" // the same shape as the check/redeem path
+			fx.audits = append(fx.audits, ev)
 			fx.ownerTickets(t.accountID)
 			slog.Info("ticket: expired", "ticket", t.id, "account", t.accountID)
 		}
