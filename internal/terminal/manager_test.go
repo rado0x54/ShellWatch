@@ -887,3 +887,57 @@ func TestDeadlineSweepDoesNotWaitForAStuckClose(t *testing.T) {
 		t.Error("input accepted by a session past its deadline")
 	}
 }
+
+// The idle sweep waits for its closes; a stuck one (a wedged transport) must
+// not hold up lifetime deadlines, which run on their own loop.
+func TestStuckIdleCloseDoesNotDelayDeadlines(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	wedged := &wedgedTransport{events: make(chan Event)}
+	n := 0
+	mgr := NewManager(func(context.Context, FactoryParams) (Transport, error) {
+		n++
+		if n == 1 {
+			return wedged, nil
+		}
+		tr := NewMockTransport()
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr, nil
+	}, clk, 0)
+	mgr.closeJoinTimeout = time.Hour // the stuck close stays stuck
+	mgr.deadlineInterval = 5 * time.Millisecond
+	mgr.SetIdleTimeout(90 * time.Second)
+	var mu sync.Mutex
+	reasons := map[string]CloseReason{}
+	mgr.SubscribeStatus(func(ev StatusEvent) {
+		if ev.Status == StatusClosed {
+			mu.Lock()
+			reasons[ev.SessionID] = ev.Reason
+			mu.Unlock()
+		}
+	})
+	ep := EndpointRef{ID: "ep", AccountID: "acc", Host: "h", Port: 22, Username: "u"}
+	idle, err := mgr.Create(context.Background(), ep, "acc", Trigger{Kind: SourceUI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(2 * time.Minute) // idle is past the idle timeout
+	guest, err := mgr.Create(context.Background(), ep, "acc",
+		Trigger{Kind: SourceTicket, Lifetime: time.Minute, LifetimeReason: CloseTicketLifetime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() { cancel(); close(wedged.events) })
+	go mgr.RunIdleJanitor(ctx, 5*time.Millisecond)
+	waitFor(t, func() bool {
+		s := mgr.GetSession(idle.SessionID)
+		return s != nil && s.Status == StatusClosing
+	})
+	clk.Advance(time.Minute) // the guest is past its lifetime, not idle
+	waitFor(t, func() bool { return mgr.GetSession(guest.SessionID) == nil })
+	mu.Lock()
+	defer mu.Unlock()
+	if reasons[guest.SessionID] != CloseTicketLifetime {
+		t.Errorf("guest close reason %q, want %q", reasons[guest.SessionID], CloseTicketLifetime)
+	}
+}

@@ -119,6 +119,8 @@ type Manager struct {
 	// teardown must not stall the idle janitor / shutdown / every other close
 	// behind it). Tests shorten it.
 	closeJoinTimeout time.Duration
+	// deadlineInterval is the deadline loop's tick (tests shorten it).
+	deadlineInterval time.Duration
 }
 
 // NewManager builds a Manager. factory establishes transports.
@@ -135,6 +137,7 @@ func NewManager(factory TransportFactory, clk clock.Clock, maxBufferSize int) *M
 		removedSubs:      map[int]func(RemovedEvent){},
 		registeredSubs:   map[int]func(string, string){},
 		closeJoinTimeout: 5 * time.Second,
+		deadlineInterval: DeadlineSweepInterval,
 	}
 }
 
@@ -151,10 +154,23 @@ func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = DefaultIdleSweepInterval
 	}
+	// Deadlines run on their own loop: SweepIdle waits for its closes, and a
+	// stuck one (up to closeJoinTimeout) must not keep a session open past
+	// its hard deadline.
+	go func() {
+		d := time.NewTicker(m.deadlineInterval)
+		defer d.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.C:
+				m.SweepDeadlines()
+			}
+		}
+	}()
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	d := time.NewTicker(DeadlineSweepInterval)
-	defer d.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,8 +178,6 @@ func (m *Manager) RunIdleJanitor(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 			m.SweepIdle()
 			m.SweepEnded()
-		case <-d.C:
-			m.SweepDeadlines()
 		}
 	}
 }
