@@ -1425,6 +1425,15 @@ func TestGuestPageCSP(t *testing.T) {
 			checkGuestPageHeaders(t, h, path)
 		})
 	}
+	// A client rebuild under -static-dir changes the inline bootstrap
+	// without a restart: the policy must hash the file as served now.
+	fs["index.html"] = &fstest.MapFile{Data: []byte(`<html><body><script>start2()</script></body></html>`)}
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest("GET", "/t", nil))
+	sum := sha256.Sum256([]byte("start2()"))
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'") {
+		t.Errorf("CSP after rebuild %q lacks the new bootstrap hash", csp)
+	}
 	// Other SPA routes keep the default headers.
 	for _, path := range []string{"/settings", "/t/x", "/tx"} {
 		rec := httptest.NewRecorder()

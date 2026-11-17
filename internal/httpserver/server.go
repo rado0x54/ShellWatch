@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -422,13 +421,6 @@ func configJS(cfg *config.Config, info buildinfo.Info) http.HandlerFunc {
 // deploy is picked up immediately.
 func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 	fileServer := http.FileServerFS(staticFS)
-	// The guest page's policy hashes index.html's inline scripts; the file
-	// is fixed for the process and externalUrl is static config, so it is
-	// computed once, on the first guest-page request.
-	var (
-		cspOnce sync.Once
-		csp     string
-	)
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
@@ -475,8 +467,10 @@ func spaHandler(staticFS fs.FS, externalURL func() string) http.HandlerFunc {
 			// and a strict policy that allows only this origin's scripts plus
 			// the SPA's own inline bootstrap (by hash).
 			w.Header().Set("Cache-Control", "no-store")
-			cspOnce.Do(func() { csp = guestPageCSP(data, externalURL()) })
-			w.Header().Set("Content-Security-Policy", csp)
+			// The policy hashes the index.html just read, per request: under
+			// -static-dir a client rebuild changes the inline bootstrap
+			// without a restart, and a stale hash would blank the page.
+			w.Header().Set("Content-Security-Policy", guestPageCSP(data, externalURL()))
 		}
 		_, _ = w.Write(data)
 	}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/rado0x54/shellwatch/internal/apierr"
 	"github.com/rado0x54/shellwatch/internal/auth"
+	"github.com/rado0x54/shellwatch/internal/clock"
 	"github.com/rado0x54/shellwatch/internal/realip"
 	"github.com/rado0x54/shellwatch/internal/terminal"
 	"github.com/rado0x54/shellwatch/internal/ticket"
@@ -321,7 +322,9 @@ func (h *GuestHub) serve(ctx context.Context, wsc *websocket.Conn, guestID strin
 		if err == ticket.ErrTooManyConnections {
 			msg = "Too many open windows for this session."
 		}
-		c.enqueue(statusFrame(ticket.Status{State: ticket.StateClosed, Message: msg}))
+		c.enqueue(statusFrame(ticket.Status{
+			State: ticket.StateClosed, Message: msg, ServerTime: time.Now().UTC().Format(clock.ISOMillis),
+		}))
 		c.finish()
 		_, _, rerr := wsc.Read(ctx)
 		return rerr

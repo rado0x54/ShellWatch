@@ -4,6 +4,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -65,7 +66,7 @@ func (c *conn) startWriter(ctx context.Context) <-chan struct{} {
 // connection closed AND closes the outbound channel — the writer drains what
 // is queued and exits, so Serve's close/<-writerDone teardown always finishes
 // and the hub entry is removed. Returns false on overflow; the caller must
-// drop the websocket after releasing the lock.
+// call dropOverflow after releasing the lock.
 func (c *conn) enqueueLocked(raw []byte) bool {
 	if c.closed {
 		return true
@@ -86,8 +87,17 @@ func (c *conn) enqueue(raw []byte) {
 	ok := c.enqueueLocked(raw)
 	c.mu.Unlock()
 	if !ok {
-		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
+		c.dropOverflow()
 	}
+}
+
+// dropOverflow closes a connection whose send queue overflowed. The close
+// runs on its own goroutine: a websocket close handshake against a peer that
+// stopped reading blocks for seconds, and enqueue is called with other locks
+// held (the ticket service publishes guest frames under its global lock).
+func (c *conn) dropOverflow() {
+	slog.Warn("ws: slow client dropped", "account", c.accountID, "guest", c.guest, "reason", "send buffer overflow")
+	go func() { _ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow") }()
 }
 
 func (c *conn) send(msg any) {
@@ -164,7 +174,7 @@ func (c *conn) attachWithCatchUp(sessionID string, control bool, offset int64, f
 	}
 	c.mu.Unlock()
 	if !ok {
-		_ = c.ws.Close(websocket.StatusPolicyViolation, "send buffer overflow")
+		c.dropOverflow()
 	}
 }
 
