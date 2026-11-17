@@ -285,6 +285,7 @@ func New(p Params) http.Handler {
 		ipGate := auth.NewIPChecker(p.Config.Security.AllowedNetworks).Middleware
 		if p.TicketRedeem != nil {
 			r.Method(http.MethodPost, "/api/tickets/redeem", ipGate(p.TicketRedeem))
+			r.Method(http.MethodPost, "/api/tickets/check", ipGate(http.HandlerFunc(p.TicketRedeem.Check)))
 		}
 		if p.GuestHub != nil {
 			r.Method(http.MethodGet, "/ws/guest", ipGate(p.GuestHub.Handler()))
@@ -319,7 +320,7 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 	// so it needs a ceiling — but it is also a user-facing redirect in a normal
 	// login, so the bucket is far wider than DCR's.
 	cimdAuthorize := func() *ratelimit.Limiter { return ratelimit.New(60, 15*time.Minute, clk) }
-	ticketRedeem := func() *ratelimit.Limiter { return ratelimit.New(20, 15*time.Minute, clk) }
+	guestTicket := ratelimit.New(20, 15*time.Minute, clk)
 	guestWS := func() *ratelimit.Limiter { return ratelimit.New(120, 15*time.Minute, clk) }
 
 	return []ratelimit.Rule{
@@ -352,7 +353,9 @@ func rateLimitRules(cfg *config.Config) []ratelimit.Rule {
 		// One-time access tickets (#306): redemption is the only
 		// unauthenticated way to spend a ticket, so a guesser gets a tight
 		// bucket; the guest WebSocket reconnects on reloads, so a wider one.
-		{Method: "POST", Path: "/api/tickets/redeem", Limiter: ticketRedeem()},
+		// Check shares redeem's bucket: both take a ticket token.
+		{Method: "POST", Path: "/api/tickets/redeem", Limiter: guestTicket},
+		{Method: "POST", Path: "/api/tickets/check", Limiter: guestTicket},
 		{Method: "GET", Path: "/ws/guest", Limiter: guestWS()},
 	}
 }

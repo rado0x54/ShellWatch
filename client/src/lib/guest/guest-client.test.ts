@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { clockOffsetMs, GuestSocket, redeemTicket, takeTokenFromLocation } from "./guest-client.js";
+import {
+  checkTicket,
+  clockOffsetMs,
+  GuestSocket,
+  redeemTicket,
+  takeTokenFromLocation,
+} from "./guest-client.js";
 
 const TOKEN = "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5";
 
@@ -88,6 +94,46 @@ describe("redeemTicket", () => {
     expect(await redeemTicket(TOKEN, "", fetchFn as unknown as typeof fetch)).toEqual({
       ok: false,
       failure,
+    });
+  });
+});
+
+describe("checkTicket", () => {
+  it("asks without credentials and reports whether a reason is required", async () => {
+    const fetchFn = vi.fn(
+      async () => new Response(JSON.stringify({ reasonRequired: false }), { status: 200 }),
+    );
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: true,
+      reasonRequired: false,
+    });
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/tickets/check");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+    expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN });
+  });
+
+  it.each([
+    [404, "not-found"],
+    [403, "forbidden"],
+    [429, "error"],
+    [503, "error"],
+  ])("maps %i to %s", async (status, failure) => {
+    const fetchFn = vi.fn(async () => new Response("{}", { status }));
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: false,
+      failure,
+    });
+  });
+
+  it("treats a network failure as undecided", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new TypeError("offline");
+    });
+    expect(await checkTicket(TOKEN, fetchFn as unknown as typeof fetch)).toEqual({
+      ok: false,
+      failure: "error",
     });
   });
 });

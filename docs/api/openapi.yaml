@@ -2015,6 +2015,64 @@ paths:
                 properties: { status: { type: string, enum: [revoked] } }
                 required: [status]
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/tickets/check:
+    post:
+      operationId: checkTicket
+      tags: [tickets]
+      summary: Check a ticket without redeeming it (guest)
+      security: []
+      description: >-
+        Lets the guest page show an invalid link at once, before asking for a
+        reason (#306). It applies exactly redeem's checks (unknown, used,
+        revoked or expired ticket, or one whose endpoint or account is gone)
+        and consumes nothing; an expired or ineligible ticket is spent here
+        just as redeem would spend it. No bearer token, no cookie. Same
+        `security.allowedNetworks` gate (403), `Origin` check (403
+        `Forbidden`) and per-IP rate limit as redeem — the two share one
+        bucket. Every response carries `Cache-Control: no-store`. Nothing in
+        any response names the endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+              required: [token]
+      responses:
+        "200":
+          description: The ticket can be redeemed now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reasonRequired:
+                    type: boolean
+                    description: Whether redeem will require a non-empty reason.
+                required: [reasonRequired]
+        "403":
+          description: Origin is not the configured external origin, or the peer is outside allowedNetworks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Uniform failure, exactly as for redeemTicket. The real reason is only logged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: The per-IP rate limit (shared with redeemTicket).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The account or endpoint could not be checked; try again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/tickets/redeem:
     post:
       operationId: redeemTicket
@@ -2022,7 +2080,8 @@ paths:
       summary: Redeem a ticket (guest)
       security: []
       description: >-
-        The guest page's only REST call (#306). No bearer token: the ticket in
+        The guest page's call that spends the ticket (#306); `checkTicket`
+        may precede it. No bearer token: the ticket in
         the body is the credential, and the route behaves identically with no,
         a valid or an invalid `Authorization` header. It sits behind
         `security.allowedNetworks` (403) and a per-IP rate limit (429 with the

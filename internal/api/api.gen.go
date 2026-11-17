@@ -2046,6 +2046,11 @@ type ListTicketsParams struct {
 	EndpointId *string `form:"endpointId,omitempty" json:"endpointId,omitempty"`
 }
 
+// CheckTicketJSONBody defines parameters for CheckTicket.
+type CheckTicketJSONBody struct {
+	Token string `json:"token"`
+}
+
 // RedeemTicketJSONBody defines parameters for RedeemTicket.
 type RedeemTicketJSONBody struct {
 	// Reason Why the guest wants access. Control characters are stripped and it is capped at 200 characters. Required (non-empty) when the ticket says so.
@@ -2178,6 +2183,9 @@ type CreatePushSubscriptionJSONRequestBody CreatePushSubscriptionJSONBody
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody CreateSessionJSONBody
+
+// CheckTicketJSONRequestBody defines body for CheckTicket for application/json ContentType.
+type CheckTicketJSONRequestBody CheckTicketJSONBody
 
 // RedeemTicketJSONRequestBody defines body for RedeemTicket for application/json ContentType.
 type RedeemTicketJSONRequestBody RedeemTicketJSONBody

@@ -73,7 +73,50 @@ export function takeTokenFromLocation(
   return /^[A-Za-z0-9_-]{16,128}$/.test(token) ? token : raw ? "" : null;
 }
 
-/** POST /api/tickets/redeem — the guest page's only REST call. */
+export type CheckResult =
+  | { ok: true; reasonRequired: boolean }
+  | { ok: false; failure: RedeemFailure };
+
+/**
+ * POST /api/tickets/check — whether the link can still be redeemed, without
+ * spending it (so an invalid link is shown before the guest types a reason).
+ * Only a definite answer (404, 403) is a failure the page acts on; anything
+ * else is "error", and the page falls back to the form.
+ */
+export async function checkTicket(
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<CheckResult> {
+  let res: Response;
+  try {
+    res = await fetchFn("/api/tickets/check", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+  } catch {
+    return { ok: false, failure: "error" };
+  }
+  switch (res.status) {
+    case 200:
+      try {
+        const body = (await res.json()) as { reasonRequired?: unknown };
+        return { ok: true, reasonRequired: body.reasonRequired === true };
+      } catch {
+        return { ok: false, failure: "error" };
+      }
+    case 403:
+      return { ok: false, failure: "forbidden" };
+    case 404:
+      return { ok: false, failure: "not-found" };
+    default:
+      return { ok: false, failure: "error" };
+  }
+}
+
+/** POST /api/tickets/redeem — spends the ticket. */
 export async function redeemTicket(
   token: string,
   reason: string,

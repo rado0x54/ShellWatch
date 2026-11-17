@@ -151,16 +151,51 @@ type TicketRedeem struct {
 // redeemBodyMax bounds the redeem body (a token and a short reason).
 const redeemBodyMax = 8 << 10
 
-// ServeHTTP handles a redemption. It never calls auth.PrincipalFrom.
-func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// guestPreamble is shared by the two guest REST routes: no caching, and the
+// Origin must be the configured external origin (login CSRF: a foreign page
+// must not plant a guest cookie, nor probe tickets from a victim's browser).
+// False when it answered 403.
+func (t *TicketRedeem) guestPreamble(w http.ResponseWriter, r *http.Request, op, ip string) bool {
 	w.Header().Set("Cache-Control", "no-store")
-	ip := realip.FromRequest(r)
 	origin := r.Header.Get("Origin")
 	if !auth.OriginAllowed(t.ExternalURL(), origin) {
-		// Login CSRF: a foreign page must not plant a guest cookie.
-		slog.Warn("ticket: redeem rejected", "reason", "origin not allowed", "sourceIp", ip,
+		slog.Warn("ticket: "+op+" rejected", "reason", "origin not allowed", "sourceIp", ip,
 			"origin", auth.OriginHost(origin), "expected", auth.OriginHost(t.ExternalURL()))
 		apierr.Write(w, http.StatusForbidden, "Forbidden")
+		return false
+	}
+	return true
+}
+
+// Check answers whether a ticket can still be redeemed, without consuming
+// it, so the guest page shows an invalid link at once (and asks for a reason
+// only when the ticket requires one). Same uniform 404 as redeem; no cookie,
+// no principal.
+func (t *TicketRedeem) Check(w http.ResponseWriter, r *http.Request) {
+	ip := realip.FromRequest(r)
+	if !t.guestPreamble(w, r, "check", ip) {
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, redeemBodyMax)).Decode(&body)
+	res, err := t.Service.Check(r.Context(), body.Token, ip)
+	switch {
+	case errors.Is(err, ticket.ErrUnavailable):
+		apierr.Write(w, http.StatusServiceUnavailable, "Temporarily unavailable; try again")
+		return
+	case err != nil:
+		apierr.Write(w, http.StatusNotFound, "Not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reasonRequired": res.ReasonRequired})
+}
+
+// ServeHTTP handles a redemption. It never calls auth.PrincipalFrom.
+func (t *TicketRedeem) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ip := realip.FromRequest(r)
+	if !t.guestPreamble(w, r, "redeem", ip) {
 		return
 	}
 	var cookie string

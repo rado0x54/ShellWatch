@@ -637,6 +637,74 @@ func (s *Service) HasLiveGuest(cookie string) bool {
 	return ok && g.state != StateClosed
 }
 
+// Checked is what a guest page may learn about a usable ticket before
+// redeeming it: whether it must ask for a reason. Nothing else (no
+// endpoint, no owner) leaves the service.
+type Checked struct {
+	ReasonRequired bool
+}
+
+// Check reports whether a ticket can still be redeemed, without consuming it
+// (the guest page asks before showing the form). It applies exactly the
+// redeem-time checks (unknown, used, revoked, expired, account or endpoint
+// gone), so ErrNotFound means "redeem would fail too".
+func (s *Service) Check(ctx context.Context, token, sourceIP string) (Checked, error) {
+	_, opts, err := s.usable(ctx, token, "check", sourceIP)
+	if err != nil {
+		return Checked{}, err
+	}
+	return Checked{ReasonRequired: opts.ReasonRequired}, nil
+}
+
+// usable looks a ticket up for Check and Redeem and applies the shared
+// checks. A definite "gone" (expired, account or endpoint removed) spends the
+// ticket; a failed lookup (cancelled request, database error) is
+// ErrUnavailable and leaves it alone. op names the caller in logs.
+func (s *Service) usable(ctx context.Context, token, op, sourceIP string) (*ticket, Options, error) {
+	rejected := "ticket: " + op + " rejected"
+	s.mu.Lock()
+	t := s.byToken[hash(token)]
+	var snapshot ticket
+	if t != nil {
+		snapshot = *t
+	}
+	s.mu.Unlock()
+	if t == nil || token == "" {
+		slog.Info(rejected, "reason", "unknown or already used ticket", "sourceIp", sourceIP)
+		return nil, Options{}, ErrNotFound
+	}
+	if !s.clk.Now().Before(snapshot.expiresAt) {
+		s.invalidate(t, audit.TicketExpired, "expired")
+		slog.Info(rejected, "ticket", t.id, "reason", "expired", "sourceIp", sourceIP)
+		return nil, Options{}, ErrNotFound
+	}
+	if s.p.AccountActive != nil {
+		active, err := s.p.AccountActive(ctx, snapshot.accountID)
+		if err != nil {
+			slog.Warn("ticket: eligibility check failed", "op", op, "ticket", t.id, "check", "account",
+				"sourceIp", sourceIP, "err", err)
+			return nil, Options{}, ErrUnavailable
+		}
+		if !active {
+			s.invalidate(t, audit.TicketInvalidated, "account removed or disabled")
+			slog.Info(rejected, "ticket", t.id, "reason", "account removed or disabled", "sourceIp", sourceIP)
+			return nil, Options{}, ErrNotFound
+		}
+	}
+	ref, err := s.p.ResolveEndpoint(ctx, snapshot.endpointID, snapshot.accountID)
+	if err != nil {
+		slog.Warn("ticket: eligibility check failed", "op", op, "ticket", t.id, "check", "endpoint",
+			"sourceIp", sourceIP, "err", err)
+		return nil, Options{}, ErrUnavailable
+	}
+	if ref == nil {
+		s.invalidate(t, audit.TicketInvalidated, "endpoint removed or disabled")
+		slog.Info(rejected, "ticket", t.id, "reason", "endpoint removed or disabled", "sourceIp", sourceIP)
+		return nil, Options{}, ErrNotFound
+	}
+	return t, snapshot.opts, nil
+}
+
 // Redeem consumes a ticket and creates a guest session waiting for its
 // first attach. Nothing is connected and no prompt is raised here.
 func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) {
@@ -651,54 +719,14 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	}
 	h := hash(p.Token)
 	now := s.clk.Now()
-
-	s.mu.Lock()
-	t := s.byToken[h]
-	var snapshot ticket
-	if t != nil {
-		snapshot = *t
-	}
-	s.mu.Unlock()
-	if t == nil || p.Token == "" {
-		slog.Info("ticket: redeem rejected", "reason", "unknown or already used ticket", "sourceIp", p.SourceIP)
-		return Redeemed{}, ErrNotFound
-	}
-	if !now.Before(snapshot.expiresAt) {
-		s.invalidate(t, audit.TicketExpired, "expired")
-		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "expired", "sourceIp", p.SourceIP)
-		return Redeemed{}, ErrNotFound
+	t, opts, err := s.usable(ctx, p.Token, "redeem", p.SourceIP)
+	if err != nil {
+		return Redeemed{}, err
 	}
 	reason := util.SanitizeFreeText(p.Reason, ReasonMaxLen)
-	if snapshot.opts.ReasonRequired && reason == "" {
+	if opts.ReasonRequired && reason == "" {
 		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "reason required", "sourceIp", p.SourceIP)
 		return Redeemed{}, ErrReasonRequired
-	}
-	// Eligibility recheck: the account and the endpoint must still be there.
-	// Only a definite "gone" spends the ticket; a failed lookup (cancelled
-	// request, database error) leaves it redeemable.
-	if s.p.AccountActive != nil {
-		active, err := s.p.AccountActive(ctx, snapshot.accountID)
-		if err != nil {
-			slog.Warn("ticket: redeem eligibility check failed", "ticket", t.id, "check", "account",
-				"sourceIp", p.SourceIP, "err", err)
-			return Redeemed{}, ErrUnavailable
-		}
-		if !active {
-			s.invalidate(t, audit.TicketInvalidated, "account removed or disabled")
-			slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "account removed or disabled", "sourceIp", p.SourceIP)
-			return Redeemed{}, ErrNotFound
-		}
-	}
-	ref, err := s.p.ResolveEndpoint(ctx, snapshot.endpointID, snapshot.accountID)
-	if err != nil {
-		slog.Warn("ticket: redeem eligibility check failed", "ticket", t.id, "check", "endpoint",
-			"sourceIp", p.SourceIP, "err", err)
-		return Redeemed{}, ErrUnavailable
-	}
-	if ref == nil {
-		s.invalidate(t, audit.TicketInvalidated, "endpoint removed or disabled")
-		slog.Info("ticket: redeem rejected", "ticket", t.id, "reason", "endpoint removed or disabled", "sourceIp", p.SourceIP)
-		return Redeemed{}, ErrNotFound
 	}
 
 	cookie := randomToken()
@@ -761,7 +789,7 @@ func (s *Service) Redeem(ctx context.Context, p RedeemParams) (Redeemed, error) 
 	s.byCookie[g.cookieHash] = g
 	fx.audits = append(fx.audits, s.event(t, g, audit.TicketRedeemed))
 	fx.ownerTickets(t.accountID)
-	opts := t.opts
+	opts = t.opts
 	s.mu.Unlock()
 	s.apply(&fx, false)
 	slog.Info("ticket: redeemed", "account", t.accountID, "ticket", t.id, "channel", p.Channel, "sourceIp", p.SourceIP)

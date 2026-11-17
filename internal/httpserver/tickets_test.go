@@ -239,6 +239,31 @@ func (r *ticketRig) mint(t *testing.T, endpointID, body string) (id, token strin
 	return tk["id"].(string), out["token"].(string)
 }
 
+// check calls the guest's non-consuming ticket check.
+func (r *ticketRig) check(t *testing.T, token, origin string) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"token": token})
+	req, _ := http.NewRequest("POST", r.ts.URL+"/api/tickets/check", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("check Cache-Control %q", res.Header.Get("Cache-Control"))
+	}
+	if len(res.Cookies()) != 0 {
+		t.Errorf("check set a cookie")
+	}
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res.StatusCode, out
+}
+
 type redeemResult struct {
 	status int
 	body   map[string]any
@@ -1149,6 +1174,34 @@ func TestTicketRedeemReplacesCurrentGuest(t *testing.T) {
 	r.gate.waitStarted(t)
 }
 
+// Check answers without consuming: the same ticket still redeems after it,
+// it reports whether a reason is required, it refuses a foreign Origin, and
+// an expired ticket answers the uniform 404 (and is spent, as redeem would).
+func TestTicketCheckDoesNotConsume(t *testing.T) {
+	r := ticketServer(t)
+	_, token := r.mint(t, "ep-a", `{"reasonRequired":false}`)
+	for i := 0; i < 2; i++ {
+		if st, out := r.check(t, token, guestOrigin); st != 200 || out["reasonRequired"] != false {
+			t.Fatalf("check %d: %d %v", i, st, out)
+		}
+	}
+	if st, _ := r.check(t, token, "https://evil.example"); st != 403 {
+		t.Errorf("foreign origin: %d", st)
+	}
+	if res := r.redeem(t, token, "", redeemOpts{}); res.status != 202 {
+		t.Fatalf("redeem after checks: %d %s", res.status, res.raw)
+	}
+	if st, out := r.check(t, "no-such-ticket-token-xxxxxxxx", guestOrigin); st != 404 || out["error"] != "Not found" {
+		t.Errorf("unknown token: %d %v", st, out)
+	}
+	expiredID, expired := r.mint(t, "ep-a", `{"redeemTtlSeconds":60}`)
+	r.clk.Advance(61 * time.Second)
+	if st, _ := r.check(t, expired, guestOrigin); st != 404 {
+		t.Errorf("expired: %d", st)
+	}
+	wantEvents(t, r, expiredID, "minted", "expired")
+}
+
 func TestTicketOriginMatrix(t *testing.T) {
 	r := ticketServer(t)
 	_, token := r.mint(t, "ep-a", `{}`)
@@ -1274,10 +1327,14 @@ func TestTicketGoldens(t *testing.T) {
 	token := minted["token"].(string)
 
 	r.clk.Advance(time.Second)
+	st, checked := r.check(t, token, guestOrigin)
+	assertBodyGolden(t, "ticket-check", st, checked)
 	res := r.redeem(t, token, "fix the printer", redeemOpts{})
 	assertBodyGolden(t, "ticket-redeem", res.status, res.body)
 	again := r.redeem(t, token, "x", redeemOpts{})
 	assertBodyGolden(t, "ticket-redeem-not-found", again.status, again.body)
+	st, spent := r.check(t, token, guestOrigin)
+	assertBodyGolden(t, "ticket-check-not-found", st, spent)
 
 	st, list := r.ownerJSON(t, "GET", "/api/tickets", "ui", "")
 	assertBodyGolden(t, "ticket-list", st, list)
@@ -1387,9 +1444,11 @@ func checkGuestPageHeaders(t *testing.T, h http.HandlerFunc, path string) {
 // GET /ws/guest skip the bearer gate.
 func TestTicketGateExemptionIsMethodExact(t *testing.T) {
 	r := ticketServer(t)
-	for _, m := range []string{"GET", "DELETE", "PUT"} {
-		if st, _ := r.ownerJSON(t, m, "/api/tickets/redeem", "", ""); st != 401 {
-			t.Errorf("%s /api/tickets/redeem without bearer: %d, want 401", m, st)
+	for _, path := range []string{"/api/tickets/redeem", "/api/tickets/check"} {
+		for _, m := range []string{"GET", "DELETE", "PUT"} {
+			if st, _ := r.ownerJSON(t, m, path, "", ""); st != 401 {
+				t.Errorf("%s %s without bearer: %d, want 401", m, path, st)
+			}
 		}
 	}
 }

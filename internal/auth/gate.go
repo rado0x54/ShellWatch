@@ -69,11 +69,12 @@ var exemptPrefixes = []string{
 }
 
 // Gate-exempt guest routes (#306), exempt for one method only: each checks
-// its own credential (the ticket in the redeem body; the guest cookie on the
+// its own credential (the ticket in the redeem/check body; the guest cookie on the
 // WebSocket handshake). The gate never reads cookies, so a guest cookie is
 // worthless on every bearer-gated route.
 var exemptMethodExact = map[string]string{
 	"/api/tickets/redeem": http.MethodPost,
+	"/api/tickets/check":  http.MethodPost,
 	"/ws/guest":           http.MethodGet,
 }
 

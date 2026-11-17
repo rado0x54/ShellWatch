@@ -14,6 +14,7 @@
   import GuestTerminal from "$lib/components/GuestTerminal.svelte";
   import {
     GuestSocket,
+    checkTicket,
     REDEEM_FAILURE_TEXT,
     redeemTicket,
     takeTokenFromLocation,
@@ -43,6 +44,9 @@
   let phase = $state<Phase>("loading");
   let token = $state("");
   let reason = $state("");
+  /** From the check; unknown (null) when it could not tell: then the field
+   * is shown as before and redeem enforces it. */
+  let reasonRequired = $state<boolean | null>(null);
   let failure = $state<RedeemFailure | null>(null);
   let code = $state("");
   let admissionDeadline = $state<number | null>(null);
@@ -212,8 +216,26 @@
       return;
     }
     token = t;
-    phase = "form";
+    void checkLink();
   });
+
+  /** Ask the server whether the link is still good before showing the form. */
+  async function checkLink(): Promise<void> {
+    const res = await checkTicket(token);
+    if (res.ok) {
+      reasonRequired = res.reasonRequired;
+      phase = "form";
+      return;
+    }
+    if (res.failure === "not-found" || res.failure === "forbidden") {
+      failure = res.failure;
+      phase = "invalid";
+      return;
+    }
+    // Could not tell (network, rate limit, server busy): show the form;
+    // redeem gives the definite answer.
+    phase = "form";
+  }
 
   onDestroy(() => {
     if (ticker) clearInterval(ticker);
@@ -263,11 +285,15 @@
           shared it has to approve the request.
         </p>
         <form onsubmit={submit}>
-          <label for="reason">Reason for access</label>
+          <label for="reason"
+            >Reason for access{#if reasonRequired === false}
+              <span class="muted">(optional)</span>{/if}</label
+          >
           <textarea
             id="reason"
             bind:value={reason}
             maxlength="200"
+            required={reasonRequired === true}
             rows="3"
             autocomplete="off"
             placeholder="e.g. Fixing the print server, as discussed on the phone"

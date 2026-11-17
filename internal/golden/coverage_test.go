@@ -134,6 +134,7 @@ var goldenCoverage = map[string]coverage{
 	"listTickets":      goldened("ticket-list"),
 	"revokeTicket":     goldened("ticket-revoke"),
 	"redeemTicket":     goldened("ticket-redeem", "ticket-redeem-not-found"),
+	"checkTicket":      goldened("ticket-check", "ticket-check-not-found"),
 	"listAuditTickets": goldened("audit-tickets", "audit-tickets-invalid-event"),
 
 	// --- Pending actions + push ---

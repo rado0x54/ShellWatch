@@ -60,6 +60,15 @@ class Guest {
     return { status: res.status, body: (await res.json()) as Record<string, unknown>, setCookie };
   }
 
+  async check(token: string, origin = SERVER_URL) {
+    const res = await fetch(`${SERVER_URL}/api/tickets/check`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ token }),
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
   attach(origin = SERVER_URL): Promise<number> {
     return new Promise((resolve) => {
       const ws = new WebSocket(`${SERVER_URL.replace("http://", "ws://")}/ws/guest`, {
@@ -144,6 +153,8 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     const ticketId = minted.body.ticket.id;
 
     const guest = new Guest();
+    // The page checks the link first: valid, reason required, not spent.
+    expect(await guest.check(token)).toEqual({ status: 200, body: { reasonRequired: true } });
     // A foreign origin cannot redeem (login CSRF) and the ticket survives it.
     expect((await guest.redeem(token, "x", "http://evil.example")).status).toBe(403);
     const redeemed = await guest.redeem(token, "fix the printer");
@@ -155,8 +166,9 @@ describe(`one-time access ticket on sshd-${target}`, () => {
     expect(code).toMatch(/^[2-9A-HJ-NP-Z]{4}$/);
     // Nothing in the redeem response names the endpoint.
     expect(JSON.stringify(redeemed.body)).not.toMatch(/E2E ticket|filekey|sshd/);
-    // Spent.
+    // Spent: redeem and check both answer the uniform 404.
     expect((await new Guest().redeem(token, "again")).status).toBe(404);
+    expect((await guest.check(token)).status).toBe(404);
 
     // Attach: pending with the code, and only now the owner is prompted.
     expect(await guest.attach("http://evil.example")).toBe(403);
