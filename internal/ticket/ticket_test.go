@@ -403,3 +403,57 @@ func TestGuestFlapsAreBatchedForTheOwner(t *testing.T) {
 		t.Errorf("%d notifications for 5 flips and a second tab, want 1", got-before)
 	}
 }
+
+// A deadline that has passed is enforced by the next event itself, not only
+// by the janitor: an approval after the admission window, a reconnect after
+// the grace, and Ask again after the window all end the guest session.
+func TestDeadlinesHoldBetweenSweeps(t *testing.T) {
+	t.Run("approval after the admission window", func(t *testing.T) {
+		s, f, pub, clk := newTestService(t)
+		redeemAttached(t, s)
+		tr := <-f.creates
+		clk.Advance(AdmissionWindow) // no Sweep
+		f.answers <- nil             // the owner approves too late; the session goes live
+		waitUntil(t, "closed", func() bool { return pub.last() == StateClosed })
+		waitUntil(t, "late session closed", func() bool {
+			for _, id := range f.closedIDs() {
+				if id == tr.SessionID {
+					return true
+				}
+			}
+			return false
+		})
+	})
+	t.Run("reconnect after the grace", func(t *testing.T) {
+		s, f, pub, clk := newTestService(t)
+		gid := redeemAttached(t, s)
+		<-f.creates
+		f.answers <- nil
+		waitUntil(t, "open", func() bool { return pub.last() == StateOpen })
+		s.Detach(gid)
+		clk.Advance(ReconnectGrace) // no Sweep
+		if err := s.Attach(gid); !errors.Is(err, ErrGone) {
+			t.Fatalf("attach after the grace: %v", err)
+		}
+		if pub.last() != StateClosed {
+			t.Errorf("state %s, want closed", pub.last())
+		}
+	})
+	t.Run("ask again after the admission window", func(t *testing.T) {
+		s, f, pub, clk := newTestService(t)
+		gid := redeemAttached(t, s)
+		<-f.creates
+		f.answers <- errors.New("skipped")
+		waitUntil(t, "refused", func() bool { return pub.last() == StateRefused })
+		clk.Advance(AdmissionWindow) // no Sweep
+		s.Retry(gid)
+		if pub.last() != StateClosed {
+			t.Errorf("state %s, want closed", pub.last())
+		}
+		select {
+		case tr := <-f.creates:
+			t.Errorf("a new attempt started: %+v", tr)
+		default:
+		}
+	})
+}

@@ -950,6 +950,14 @@ func (s *Service) Attach(guestID string) error {
 		s.mu.Unlock()
 		return ErrGone
 	}
+	if reason, expired := expiredLocked(g, s.clk.Now()); expired {
+		// Past a deadline (e.g. the reconnect grace): the attach must not
+		// revive it; end it now instead of waiting for the janitor.
+		s.closeLocked(g, reason, &fx)
+		s.mu.Unlock()
+		s.apply(&fx)
+		return ErrGone
+	}
 	if g.conns >= MaxConnections {
 		s.mu.Unlock()
 		slog.Info("ticket: guest attach refused", "ticket", g.t.id, "reason", "too many connections")
@@ -1057,8 +1065,14 @@ func (s *Service) Retry(guestID string) {
 	s.mu.Lock()
 	g, ok := s.guests[guestID]
 	now := s.clk.Now()
-	if !ok || g.state != StateRefused || !now.Before(g.admissionDeadline) {
+	if !ok || g.state != StateRefused {
 		s.mu.Unlock()
+		return
+	}
+	if reason, expired := expiredLocked(g, now); expired {
+		s.closeLocked(g, reason, &fx)
+		s.mu.Unlock()
+		s.apply(&fx)
 		return
 	}
 	if now.Before(g.retryAt) {
@@ -1257,6 +1271,12 @@ func (s *Service) onStatus(ev terminal.StatusEvent) {
 	case terminal.StatusOpen:
 		if current && g.state == StatePending {
 			now := s.clk.Now()
+			if reason, expired := expiredLocked(g, now); expired {
+				// Approved after the admission window closed: no admission.
+				// The close path also closes the session that just went live.
+				s.closeLocked(g, reason, &fx)
+				break
+			}
 			g.state = StateOpen
 			g.sessionID = ev.SessionID
 			g.openedAt = now
@@ -1445,19 +1465,31 @@ func (s *Service) Sweep() {
 		}
 	}
 	for _, g := range s.guests {
-		switch {
-		case g.state == StateRedeemed && g.admissionDeadline.IsZero() && !now.Before(g.attachDeadline):
-			s.closeLocked(g, terminal.CloseTicketUnattached, &fx)
-		case (g.state == StatePending || g.state == StateRefused) && !now.Before(g.admissionDeadline):
-			s.closeLocked(g, terminal.CloseTicketNotAdmitted, &fx)
-		case g.state == StateOpen && !now.Before(g.lifetimeDeadline):
-			s.closeLocked(g, terminal.CloseTicketLifetime, &fx)
-		case g.conns == 0 && !g.graceDeadline.IsZero() && !now.Before(g.graceDeadline):
-			s.closeLocked(g, terminal.CloseGuestDisconnected, &fx)
+		if reason, expired := expiredLocked(g, now); expired {
+			s.closeLocked(g, reason, &fx)
 		}
 	}
 	s.mu.Unlock()
 	s.apply(&fx)
+}
+
+// expiredLocked reports whether a guest session is past one of its
+// deadlines, and the close reason. The janitor enforces it periodically;
+// every transition that would extend access (an attach, an admission, a
+// retry) checks it first, so access never outlives a deadline just because
+// the janitor has not run yet.
+func expiredLocked(g *guest, now time.Time) (terminal.CloseReason, bool) {
+	switch {
+	case g.state == StateRedeemed && g.admissionDeadline.IsZero() && !now.Before(g.attachDeadline):
+		return terminal.CloseTicketUnattached, true
+	case (g.state == StatePending || g.state == StateRefused) && !now.Before(g.admissionDeadline):
+		return terminal.CloseTicketNotAdmitted, true
+	case g.state == StateOpen && !now.Before(g.lifetimeDeadline):
+		return terminal.CloseTicketLifetime, true
+	case g.conns == 0 && !g.graceDeadline.IsZero() && !now.Before(g.graceDeadline):
+		return terminal.CloseGuestDisconnected, true
+	}
+	return "", false
 }
 
 // RunJanitor sweeps every interval until ctx is done.

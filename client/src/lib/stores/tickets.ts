@@ -73,12 +73,19 @@ export const tickets = writable<Ticket[]>([]);
  */
 export const ticketsClockOffset = writable(0);
 
+/** Bumped by every fetch: only the latest one may set the list. */
+let fetchSeq = 0;
+
 export async function fetchTickets(): Promise<void> {
+  // Refreshes overlap (tickets:changed, a reconnect, a page mount): a slow,
+  // older response must not overwrite a newer one ("pending" after "open").
+  const mine = ++fetchSeq;
   const res = await apiFetch("/api/tickets");
-  if (!res.ok) return;
+  if (!res.ok || mine !== fetchSeq) return;
   const date = Date.parse(res.headers.get("Date") ?? "");
-  if (!Number.isNaN(date)) ticketsClockOffset.set(date - Date.now());
   const data = (await res.json()) as { tickets: Ticket[] };
+  if (mine !== fetchSeq) return;
+  if (!Number.isNaN(date)) ticketsClockOffset.set(date - Date.now());
   tickets.set(data.tickets);
 }
 

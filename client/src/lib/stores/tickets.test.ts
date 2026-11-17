@@ -8,6 +8,7 @@ import {
   groupTickets,
   mintTicket,
   revokeTicket,
+  tickets,
   ticketsClockOffset,
   type Ticket,
   type TicketState,
@@ -95,5 +96,22 @@ describe("tickets store", () => {
     await fetchTickets();
     // The Date header has 1 s resolution.
     expect(Math.abs(get(ticketsClockOffset) - 120_000)).toBeLessThan(2000);
+  });
+
+  it("keeps the newest list when refreshes overlap and answer out of order", async () => {
+    const respond: Array<(r: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => respond.push(resolve)),
+    );
+    const older = fetchTickets();
+    const newer = fetchTickets();
+    const list = (state: TicketState) =>
+      new Response(JSON.stringify({ tickets: [ticket("t1", state, "2026-01-01T00:00:00Z")] }));
+    await vi.waitFor(() => expect(respond).toHaveLength(2));
+    respond[1]!(list("open")); // the newer request answers first
+    await newer;
+    respond[0]!(list("pending")); // then the older, slower one
+    await older;
+    expect(get(tickets).map((t) => t.state)).toEqual(["open"]);
   });
 });
