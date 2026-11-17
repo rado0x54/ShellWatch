@@ -1001,10 +1001,10 @@ func (s *Service) connectLocked(g *guest, fx *effects) {
 	t := g.t
 	trigger := terminal.Trigger{
 		Kind: terminal.SourceTicket, SourceIP: g.sourceIP, Reason: g.reason, SessionID: g.sessionID,
+		TicketID: t.id, TicketLabel: t.opts.Label, TicketChannel: g.channel,
 		Lifetime: t.opts.Lifetime, LifetimeReason: terminal.CloseTicketLifetime,
 		Ticket: &terminal.TicketTrigger{
-			TicketID: t.id, Label: t.opts.Label, Channel: g.channel, UserAgent: g.userAgent,
-			ConfirmationCode: g.code, AgentForward: t.opts.AgentForward, Target: t.target,
+			UserAgent: g.userAgent, ConfirmationCode: g.code, AgentForward: t.opts.AgentForward, Target: t.target,
 			LifetimeSeconds: int(t.opts.Lifetime / time.Second),
 		},
 	}

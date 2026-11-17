@@ -174,7 +174,8 @@ func ticketServer(t *testing.T) *ticketRig {
 	t.Cleanup(svc.Close)
 	hub.EnableGuests(wshub.GuestParams{Service: svc, ExternalURL: func() string { return externalURL }})
 	svc.SetPublisher(hub)
-	hub.SetGuestAttached(svc.GuestAttached)
+	views := terminal.SessionViews{GuestAttached: svc.GuestAttached}
+	hub.SetSessionViews(views)
 
 	cfg := &config.Config{}
 	cfg.Server.ExternalURL = externalURL
@@ -201,7 +202,7 @@ func ticketServer(t *testing.T) *ticketRig {
 		Config: cfg, Resolve: resolve, StaticFS: os.DirFS(t.TempDir()), BuildInfo: buildinfo.Info{},
 		WSHub:        hub,
 		Endpoints:    &rest.Endpoints{Svc: epSvc, NewID: ids.NewUUID},
-		Sessions:     &rest.Sessions{Manager: mgr, Svc: epSvc, GuestAttached: svc.GuestAttached},
+		Sessions:     &rest.Sessions{Manager: mgr, Svc: epSvc, Views: views},
 		Audit:        &rest.Audit{Sessions: audit.NewSessions(db), Signings: audit.NewSignings(db), Tickets: ticketLog},
 		Tickets:      &rest.Tickets{Service: svc, ExternalURL: func() string { return externalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: svc, ExternalURL: func() string { return externalURL }},
@@ -699,9 +700,9 @@ func TestTicketAdmissionEndToEnd(t *testing.T) {
 	fp := r.gate.waitStarted(t)
 	tr := fp.Trigger
 	if tr.Kind != terminal.SourceTicket || tr.Reason != "fix the printer" || tr.SourceIP != "127.0.0.1" ||
-		tr.Ticket == nil || tr.Ticket.ConfirmationCode != code || tr.Ticket.Label != "Printer fix" ||
-		tr.Ticket.Channel != terminal.TicketChannelWeb || tr.Ticket.UserAgent != "GuestBrowser/1.0" ||
-		tr.Ticket.TicketID != ticketID || tr.Ticket.LifetimeSeconds != 900 || tr.Ticket.AgentForward {
+		tr.Ticket == nil || tr.Ticket.ConfirmationCode != code || tr.TicketLabel != "Printer fix" ||
+		tr.TicketChannel != terminal.TicketChannelWeb || tr.Ticket.UserAgent != "GuestBrowser/1.0" ||
+		tr.TicketID != ticketID || tr.Ticket.LifetimeSeconds != 900 || tr.Ticket.AgentForward {
 		t.Errorf("trigger %+v ticket %+v", tr, tr.Ticket)
 	}
 	// Agent forwarding off by default, whatever the endpoint says.

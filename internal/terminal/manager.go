@@ -353,19 +353,7 @@ func (m *Manager) Create(ctx context.Context, ep EndpointRef, expectedAccountID 
 	sess := &Session{
 		SessionID: sessionID, EndpointID: ep.ID, AccountID: ep.AccountID,
 		Status: StatusOpening, CreatedAt: now, LastActivityAt: now, Source: trigger.Kind,
-		SourceIP: trigger.SourceIP,
-	}
-	if trigger.Kind == SourceMCP {
-		sess.OwnerClientID = trigger.OwnerClientID
-		sess.Reason = trigger.Reason
-		sess.MCPClientName = trigger.MCPClientName
-		sess.MCPClientVer = trigger.MCPClientVer
-	}
-	if trigger.Kind == SourceTicket && trigger.Ticket != nil {
-		sess.TicketID = trigger.Ticket.TicketID
-		sess.TicketLabel = trigger.Ticket.Label
-		sess.TicketChannel = trigger.Ticket.Channel
-		sess.Reason = trigger.Reason
+		SourceIP: trigger.SourceIP, Origin: trigger.Origin,
 	}
 	sess.DeadlineReason = trigger.LifetimeReason // used once Deadline is set
 

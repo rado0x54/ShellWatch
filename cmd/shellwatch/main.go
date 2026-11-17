@@ -481,7 +481,8 @@ func run() error {
 		ExternalURL: func() string { return cfg.Server.ExternalURL },
 	})
 	tickets.SetPublisher(wsHub)
-	wsHub.SetGuestAttached(tickets.GuestAttached)
+	sessionViews := terminal.SessionViews{GuestAttached: tickets.GuestAttached}
+	wsHub.SetSessionViews(sessionViews)
 	go tickets.RunJanitor(ctx, time.Second)
 
 	buildInfo := buildinfo.Load(mustGetwd())
@@ -537,9 +538,9 @@ func run() error {
 			StepUp: webauthnDeps.StepUp,
 		},
 		Sessions: &rest.Sessions{
-			Manager:       manager,
-			Svc:           epSvc,
-			GuestAttached: tickets.GuestAttached,
+			Manager: manager,
+			Svc:     epSvc,
+			Views:   sessionViews,
 		},
 		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
 		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
