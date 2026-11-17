@@ -62,3 +62,6 @@ func (t *MockTransport) Events() <-chan Event { return t.events }
 
 // Push injects output.
 func (t *MockTransport) Push(data []byte) { t.events <- Event{Data: data} }
+
+// Fail injects a transport error (the session ends in StatusError).
+func (t *MockTransport) Fail(err error) { t.events <- Event{Err: err} }

@@ -7,6 +7,8 @@
   import type { PageProps } from "./$types";
   import TerminalSnapshot from "$lib/components/TerminalSnapshot.svelte";
   import { clearAction, toastError, toastInfo } from "$lib/stores/toasts.js";
+  import { revokeTicket } from "$lib/stores/tickets.js";
+  import { formatTicketDuration } from "$lib/utils/duration.js";
   import { errorMessage } from "$lib/utils/error-message.js";
   import {
     createSignPageController,
@@ -37,6 +39,20 @@
         sourceIp: string;
         mcpClientName?: string;
         mcpClientVersion?: string;
+      }
+    | {
+        // A guest redeeming a one-time access ticket (#306). Reason and
+        // userAgent are self-reported by the guest.
+        kind: "ticket";
+        sourceIp: string;
+        reason?: string;
+        ticketId: string;
+        ticketLabel: string;
+        channel: string;
+        userAgent?: string;
+        confirmationCode: string;
+        agentForward: boolean;
+        lifetimeSeconds: number;
       };
 
   type SignContext =
@@ -84,6 +100,11 @@
 
   let st = $state<SignPageState<ActionData>>(freshSignPageState(""));
   let processing = $state(false);
+  // Revoke-ticket button state (#306). Per action: reset with the rest of the
+  // page state when the id changes, so revoking ticket A never shows ticket
+  // B's button as revoked.
+  let revoking = $state(false);
+  let revoked = $state(false);
 
   // Load whenever the id changes, not just on mount (#308 §4): navigating
   // /sign/A -> /sign/B reuses this component, and onMount would leave A's
@@ -91,6 +112,8 @@
   const controller = createSignPageController<ActionData>(fetchSignAction, (next) => {
     st = next;
     processing = false;
+    revoking = false;
+    revoked = false;
     if (next.needsLogin) void beginLogin(`/sign/${next.actionId}`);
   });
   $effect(() => {
@@ -228,6 +251,12 @@
       if (ctx.clientHostname) items.push({ label: "Hostname", value: ctx.clientHostname });
       if (ctx.clientOs) items.push({ label: "OS", value: ctx.clientOs, mono: true });
       if (ctx.clientVersion) items.push({ label: "Version", value: ctx.clientVersion, mono: true });
+    } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "ticket") {
+      // The guest typed the reason and its browser sent the user agent:
+      // context, not identity.
+      items.push({ label: "Reason", value: ctx.trigger.reason || "(none given)" });
+      if (ctx.trigger.userAgent)
+        items.push({ label: "User agent", value: ctx.trigger.userAgent, mono: true });
     } else if (ctx.source === "endpoint-auth" && ctx.trigger.kind === "mcp") {
       // Reason is asserted by the agent — same trust boundary as clientInfo,
       // so it belongs in the self-reported box rather than the verified fields.
@@ -244,6 +273,30 @@
     return items;
   });
   const isTerminal = $derived(displayStatus !== "pending");
+
+  /** The ticket trigger, when a guest is asking for admission (#306). */
+  const ticketTrigger = $derived(
+    ctx?.source === "endpoint-auth" && ctx.trigger.kind === "ticket" ? ctx.trigger : null,
+  );
+
+  /** End the guest's ticket now, so an unwanted guest cannot keep asking
+   * for the rest of the admission window. */
+  async function handleRevokeTicket(ticketId: string) {
+    if (revoking) return;
+    const visit = controller.visit();
+    revoking = true;
+    try {
+      await revokeTicket(ticketId);
+      // The toast reports the revocation wherever the user is now; the button
+      // state belongs to the action it was pressed on.
+      if (stillOn(visit)) revoked = true;
+      toastInfo("Ticket revoked — the guest's access has ended");
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      if (stillOn(visit)) revoking = false;
+    }
+  }
 </script>
 
 <div class="sign-page">
@@ -399,6 +452,44 @@
             <TerminalSnapshot data={parentSessionTail} />
           </div>
         </details>
+      {/if}
+
+      {#if ticketTrigger}
+        <div class="sign-ticket" role="group" aria-label="One-time access ticket">
+          <div class="sign-ticket-code">
+            <span class="sign-label">Confirmation code</span>
+            <span class="sign-ticket-code-value">{ticketTrigger.confirmationCode}</span>
+            <span class="sign-muted">
+              Approve only if the guest told you this code over a channel you trust.
+            </span>
+          </div>
+          <div class="sign-fields">
+            <div class="sign-field">
+              <span class="sign-label">Ticket</span>
+              <span class="sign-value">{ticketTrigger.ticketLabel || "(no label)"}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Channel</span>
+              <span class="sign-value">{ticketTrigger.channel}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Session lifetime</span>
+              <span class="sign-value">{formatTicketDuration(ticketTrigger.lifetimeSeconds)}</span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Agent forwarding</span>
+              <span class="sign-value">{ticketTrigger.agentForward ? "on" : "off"}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            disabled={revoking || revoked}
+            onclick={() => handleRevokeTicket(ticketTrigger.ticketId)}
+          >
+            {revoked ? "Ticket revoked" : revoking ? "Revoking…" : "Revoke ticket"}
+          </button>
+        </div>
       {/if}
 
       {#if reportedItems.length > 0}
@@ -559,6 +650,28 @@
     height: 14rem;
     overflow: hidden;
     border-radius: 4px;
+  }
+
+  .sign-ticket {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    background: var(--surface-container);
+  }
+
+  .sign-ticket-code {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .sign-ticket-code-value {
+    font-family: var(--font-mono);
+    font-size: 2rem;
+    letter-spacing: 0.3em;
+    color: var(--primary);
   }
 
   .sign-reported {

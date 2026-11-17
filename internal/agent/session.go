@@ -203,7 +203,7 @@ func (s *Session) UpdateEndpoint(ctx context.Context, id string, patch EndpointP
 // DeleteEndpoint removes an account-scoped endpoint. Returns false when nothing
 // matched.
 func (s *Session) DeleteEndpoint(ctx context.Context, id string) (bool, error) {
-	return s.deps.Svc.Endpoints.Delete(ctx, id, s.accountID)
+	return s.deps.Svc.Delete(ctx, id, s.accountID)
 }
 
 // CreateSession opens a session against an endpoint owned by the account. A

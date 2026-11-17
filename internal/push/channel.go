@@ -176,6 +176,12 @@ func (c *Channel) deliver(action *approval.Action, deepLink string) {
 		}
 		body = `Sign with "` + label + `" for ` + action.Context.Source
 	}
+	if action.Context.TriggerKind == "ticket" {
+		// A one-time access guest (#306). The code and the reason stay off
+		// the push service; the notification opens /sign, which shows them.
+		title = "Guest Access Requested"
+		body = "A one-time access guest is waiting — open to compare the confirmation code"
+	}
 	if hk := action.Context.HostKey; hk != nil && hk.Status == "new" {
 		body += ` — FIRST connection to this host: approving pins host key ` + hk.Fingerprint
 	}

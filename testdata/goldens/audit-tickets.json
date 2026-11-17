@@ -1,0 +1,52 @@
+{
+  "status": 200,
+  "body": {
+    "nextCursor": null,
+    "rows": [
+      {
+        "accountId": "acc-a",
+        "agentForward": false,
+        "attempt": null,
+        "channel": null,
+        "confirmationCode": null,
+        "createdAt": "<TS>",
+        "durationMs": null,
+        "endReason": null,
+        "endpointId": "ep-a",
+        "event": "revoked",
+        "id": "<UUID>",
+        "lifetimeSeconds": 900,
+        "reason": null,
+        "reasonRequired": true,
+        "redeemTtlSeconds": 300,
+        "sessionId": null,
+        "sourceIp": null,
+        "ticketId": "<UUID>",
+        "ticketLabel": "Spare",
+        "userAgent": null
+      },
+      {
+        "accountId": "acc-a",
+        "agentForward": false,
+        "attempt": null,
+        "channel": null,
+        "confirmationCode": null,
+        "createdAt": "<TS>",
+        "durationMs": null,
+        "endReason": null,
+        "endpointId": "ep-a",
+        "event": "minted",
+        "id": "<UUID>",
+        "lifetimeSeconds": 900,
+        "reason": null,
+        "reasonRequired": true,
+        "redeemTtlSeconds": 300,
+        "sessionId": null,
+        "sourceIp": null,
+        "ticketId": "<UUID>",
+        "ticketLabel": "Spare",
+        "userAgent": null
+      }
+    ]
+  }
+}

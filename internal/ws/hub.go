@@ -38,6 +38,30 @@ type Hub struct {
 	// must hold back live terminal:file frames while deliver runs, so no
 	// frame is lost between the snapshot and the attach. nil -> none.
 	fileSnapshot func(sessionID string, deliver func(frames []any))
+
+	// guestAttached reports whether a ticket guest is attached to a session
+	// (#306; ok=false for non-guest sessions). nil -> never.
+	guestAttached func(sessionID string) (attached, ok bool)
+}
+
+// SetGuestAttached wires the ticket service's attach lookup (set once at
+// the composition root).
+func (h *Hub) SetGuestAttached(fn func(sessionID string) (attached, ok bool)) {
+	h.mu.Lock()
+	h.guestAttached = fn
+	h.mu.Unlock()
+}
+
+// TicketsChanged tells the account's browsers to refetch GET /api/tickets
+// (#306).
+func (h *Hub) TicketsChanged(accountID string) {
+	h.SendToAccount(accountID, map[string]any{"type": "tickets:changed"})
+}
+
+// SessionsChanged re-sends the account's session list (a guest attached or
+// detached, #306).
+func (h *Hub) SessionsChanged(accountID string) {
+	h.onRegistered("", accountID)
 }
 
 // SetFileSnapshot wires the file-transfer snapshot source (set once at the
@@ -118,7 +142,9 @@ func (h *Hub) onRegistered(_, accountID string) {
 // broadcast and the delete (the broadcast must come first so the tail drain
 // can read the buffer), and such a connection would otherwise stay attached
 // forever without a terminal:closed. closeSession no-ops when not attached.
-func (h *Hub) onRemoved(sessionID string) {
+// For a silent removal (expiry, eviction) it also resends the owning
+// account's connections their session list.
+func (h *Hub) onRemoved(ev terminal.RemovedEvent) {
 	h.mu.Lock()
 	conns := make([]*conn, 0, len(h.conns))
 	for c := range h.conns {
@@ -126,8 +152,14 @@ func (h *Hub) onRemoved(sessionID string) {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
-		if c.isAttached(sessionID) { // cheap prefilter: don't take flushMu on bystanders
-			c.closeSession(h.mgr, sessionID)
+		if c.isAttached(ev.SessionID) { // cheap prefilter: don't take flushMu on bystanders
+			c.closeSession(h.mgr, ev.SessionID)
+		}
+		// A silent removal (a retained ended session expired or evicted) is
+		// a list change nothing else announces: an errored session is listed
+		// until then. Only the owning account's connections need the list.
+		if ev.Reason.Silent() && c.accountID == ev.AccountID {
+			c.send(h.sessionList(c))
 		}
 	}
 }
@@ -202,15 +234,30 @@ func (h *Hub) onOutput(sessionID string, _ int64) {
 // (buildSessionList in ws-message-router.ts).
 func (h *Hub) sessionList(c *conn) map[string]any {
 	entries := make([]sessionListEntry, 0)
+	h.mu.Lock()
+	guestAttached := h.guestAttached
+	h.mu.Unlock()
 	for _, s := range h.mgr.ListForAccount(c.accountID) {
 		mode := "observer"
 		if c.hasControl(s.SessionID) {
 			mode = "control"
 		}
-		entries = append(entries, sessionListEntry{
+		e := sessionListEntry{
 			SessionID: s.SessionID, EndpointID: s.EndpointID, Status: string(s.Status),
 			CreatedAt: s.CreatedAt.UTC().Format(isoMillis), Source: string(s.Source), Mode: mode,
-		})
+		}
+		if s.Source == terminal.SourceTicket {
+			e.TicketID, e.TicketLabel = s.TicketID, &s.TicketLabel
+			// Like REST: present only while the guest session is live, so a
+			// client can tell "guest away" (false) from "guest session over"
+			// (absent).
+			if guestAttached != nil {
+				if attached, ok := guestAttached(s.SessionID); ok {
+					e.GuestAttached = &attached
+				}
+			}
+		}
+		entries = append(entries, e)
 	}
 	return map[string]any{"type": "sessions:changed", "sessions": entries}
 }

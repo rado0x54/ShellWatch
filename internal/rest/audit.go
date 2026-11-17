@@ -35,6 +35,8 @@ type Audit struct {
 	// FileTransfers serves the file-transfer log (#263) — the fifth audit
 	// surface, account-scoped like the first three.
 	FileTransfers *audit.FileTransfers
+	// Tickets serves the ticket event log (#306), account-scoped.
+	Tickets *audit.TicketEvents
 }
 
 var (
@@ -55,6 +57,26 @@ func (a *Audit) Mount(r chi.Router) {
 	if a.FileTransfers != nil {
 		r.Get("/api/audit/file-transfers", a.listFileTransfers)
 	}
+	if a.Tickets != nil {
+		r.Get("/api/audit/tickets", a.listTickets)
+	}
+}
+
+func (a *Audit) listTickets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if v := q.Get("event"); v != "" && !audit.TicketEventValues[v] {
+		writeErr(w, 400, "invalid event filter")
+		return
+	}
+	page, err := a.Tickets.List(r.Context(), accountID(r), audit.TicketEventFilters{
+		TicketID: q.Get("ticketId"), Event: q.Get("event"),
+		Cursor: q.Get("cursor"), Limit: parseLimit(q.Get("limit")),
+	})
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 var (

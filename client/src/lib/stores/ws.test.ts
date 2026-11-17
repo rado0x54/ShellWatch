@@ -25,6 +25,7 @@ import {
   wsSendResize,
   wsTakeControl,
 } from "./ws.js";
+import { toasts } from "./toasts.js";
 
 // Mock WebSocket
 class MockWebSocket {
@@ -103,6 +104,48 @@ describe("ws store", () => {
     ws.simulateMessage({ type: "sessions:changed", sessions: mockSessions });
 
     expect(get(sessions)).toEqual(mockSessions);
+  });
+
+  it("sign:request for a ticket guest carries the guest context onto the toast (#306)", async () => {
+    toasts.set([]);
+    await connectWs();
+    const ticket = {
+      ticketId: "tk1",
+      ticketLabel: "Printer",
+      confirmationCode: "AB2C",
+      reason: "fix the printer",
+      sourceIp: "203.0.113.7",
+    };
+    MockWebSocket.instances[0].simulateMessage({
+      type: "sign:request",
+      actionId: "a1",
+      actionType: "key-approve",
+      deepLink: "/sign/a1",
+      source: "endpoint-auth",
+      keyLabel: "k",
+      keyFingerprint: "SHA256:x",
+      ticket,
+    });
+    const [toast] = get(toasts);
+    expect(toast?.message).toBe("Guest access requested");
+    expect(toast?.action?.ticket).toEqual(ticket);
+    toasts.set([]);
+  });
+
+  it("refetches tickets when the socket reconnects", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify({ tickets: [] })));
+    await connectWs();
+    MockWebSocket.instances[0].onopen?.();
+    const ticketCalls = () => fetchSpy.mock.calls.filter(([u]) => String(u) === "/api/tickets");
+    const first = ticketCalls().length;
+    MockWebSocket.instances[0].onclose?.();
+    await vi.waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(1), {
+      timeout: 5000,
+    });
+    MockWebSocket.instances.at(-1)!.onopen?.();
+    await vi.waitFor(() => expect(ticketCalls().length).toBe(first + 1));
   });
 
   it("onWsMessage registers a handler and returns unsubscribe", async () => {

@@ -13,6 +13,21 @@ export interface SignRequestHostKey {
   status: "new" | "known";
 }
 
+/**
+ * One-time access guest context on an endpoint-auth sign request (#306). Its
+ * presence means approving admits an untrusted guest. The toast then shows the
+ * confirmation code and offers no one-click approval: the owner approves
+ * on /sign.
+ */
+export interface SignRequestTicket {
+  ticketId: string;
+  ticketLabel: string;
+  confirmationCode: string;
+  /** Self-reported by the guest. */
+  reason?: string;
+  sourceIp?: string;
+}
+
 interface SignRequestBase {
   actionId: string;
   deepLink: string;
@@ -20,6 +35,7 @@ interface SignRequestBase {
   endpointLabel?: string;
   endpointAddress?: string;
   hostKey?: SignRequestHostKey;
+  ticket?: SignRequestTicket;
 }
 
 export interface WebAuthnSignRequestAction extends SignRequestBase {

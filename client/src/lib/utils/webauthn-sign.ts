@@ -130,6 +130,7 @@ export const sourceLabels: Record<string, string> = {
 export const triggerKindLabels: Record<string, string> = {
   ui: "Web UI",
   mcp: "MCP Client",
+  ticket: "One-time access ticket",
 };
 
 /**

@@ -126,6 +126,11 @@ Per-action success payload (JSON in the text block):
 - `delete` → `{ status: "deleted", id }`
 
 Demo endpoints (`demo:*`) are read-only: create/update/delete return `isError`.
+`delete` is refused (`isError`, "Cannot delete endpoint with active sessions")
+while the endpoint has active sessions of any source — UI, MCP or a one-time
+access guest, including a guest still waiting for approval; ended sessions do
+not count. A successful delete revokes the endpoint's outstanding tickets. MCP
+has no way to force it (REST behaves the same; see #315).
 
 ### `shellwatch_create_session`
 
@@ -169,6 +174,12 @@ call blocks until some arrives, the session reaches a terminal state, or
 `data`). Values outside 0–30000 are an `isError` result.
 _(Note: `hasMore` here vs. WS `terminal:output`'s `reset` flag — different
 buffer-boundary signals for the same ring buffer.)_
+
+Each session buffers its most recent **256 KiB** of output; older bytes are
+dropped and offsets keep counting, so a reader that falls further behind
+skips ahead. A session that ended on its own (remote exit, hangup, error)
+stays readable for **5 minutes**, and an account keeps at most its **10**
+most recent ended sessions (the oldest is dropped when another ends).
 
 ### `shellwatch_close_session`
 

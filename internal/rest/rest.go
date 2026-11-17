@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -56,6 +57,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// pathParam is a chi URL parameter, percent-decoded. chi matches on the
+// escaped path, so an id the client sent through encodeURIComponent (a demo
+// id's ":" as %3A, a CIMD client id's URL) is still escaped in URLParam.
+// net/http answers a malformed escape with its own 400 before routing, so
+// the error is defence in depth only.
+func pathParam(r *http.Request, key string) (string, error) {
+	return url.PathUnescape(chi.URLParam(r, key))
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {

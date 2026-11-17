@@ -33,6 +33,10 @@ type conn struct {
 
 	out    chan []byte
 	closed bool
+
+	// guest marks a /ws/guest connection (#306): output frames use the guest
+	// protocol shape ({type: output}, no session id).
+	guest bool
 }
 
 func newConn(wsc *websocket.Conn, accountID string) *conn {
@@ -108,6 +112,19 @@ func (c *conn) close() {
 	}
 	c.mu.Unlock()
 	_ = c.ws.Close(websocket.StatusNormalClosure, "")
+}
+
+// attachedIDs lists the sessions this connection is attached to.
+func (c *conn) attachedIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.attached))
+	for id, ok := range c.attached {
+		if ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (c *conn) isAttached(sessionID string) bool {
@@ -232,15 +249,32 @@ func (c *conn) flushLocked(mgr *terminal.Manager, sessionID string) {
 	if len(res.Data) == 0 && !res.Reset {
 		return
 	}
-	msg := map[string]any{
-		"type": "terminal:output", "sessionId": sessionID,
-		"data": string(res.Data), "offset": res.Offset,
-	}
-	if res.Reset {
-		msg["reset"] = true
-	}
+	msg := outputFrame(outputFrameParams{guest: c.guest, sessionID: sessionID, data: res.Data, offset: res.Offset, reset: res.Reset})
 	c.mu.Lock()
 	c.lastOffset[sessionID] = res.Offset
 	c.mu.Unlock()
 	c.send(msg)
+}
+
+// outputFrame builds a terminal output frame: terminal:output on /ws, the
+// guest protocol's sessionless output on /ws/guest.
+type outputFrameParams struct {
+	// guest selects the guest protocol's shape (no session id).
+	guest     bool
+	sessionID string
+	data      []byte
+	offset    int64
+	// reset tells the client to clear what it shows first (catch-up).
+	reset bool
+}
+
+func outputFrame(p outputFrameParams) map[string]any {
+	msg := map[string]any{"type": "terminal:output", "sessionId": p.sessionID, "data": string(p.data), "offset": p.offset}
+	if p.guest {
+		msg = map[string]any{"type": "output", "data": string(p.data), "offset": p.offset}
+	}
+	if p.reset {
+		msg["reset"] = true
+	}
+	return msg
 }

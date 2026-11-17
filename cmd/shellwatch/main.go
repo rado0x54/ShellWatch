@@ -42,6 +42,7 @@ import (
 	"github.com/rado0x54/shellwatch/internal/sshx"
 	"github.com/rado0x54/shellwatch/internal/store"
 	"github.com/rado0x54/shellwatch/internal/terminal"
+	"github.com/rado0x54/shellwatch/internal/ticket"
 	"github.com/rado0x54/shellwatch/internal/transfer"
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 	"github.com/rado0x54/shellwatch/internal/ws"
@@ -446,6 +447,41 @@ func run() error {
 	wsHub.SetFileSnapshot(transfers.SnapshotTo)
 	go transfers.RunJanitor(ctx, 10*time.Second)
 
+	// One-time access tickets (#306): the ticket service owns every ticket
+	// and guest-session transition; the guest hub is its WebSocket side,
+	// kept apart from the account hub so no account-level frame can reach a
+	// guest. Tickets are process memory — a restart invalidates them.
+	if strings.HasPrefix(strings.ToLower(cfg.Server.ExternalURL), "http://") && cfg.Server.TrustProxy != false {
+		slog.Warn("config: server.externalUrl is http:// while server.trustProxy is set — "+
+			"this usually means a production deployment with a dev URL; guest ticket redemption "+
+			"checks Origin against externalUrl and will refuse every browser", "externalUrl", cfg.Server.ExternalURL)
+	}
+	accountsStore := store.NewAccounts(db)
+	ticketLog := audit.NewTicketEvents(db, clk)
+	tickets := ticket.New(ticket.Params{
+		Ctx: ctx, Manager: manager, Clock: clk, Audit: ticketLog, Notifier: wsHub,
+		ResolveEndpoint: epSvc.ActiveRefForAccount,
+		AccountActive: func(ctx context.Context, accountID string) (bool, error) {
+			acc, err := accountsStore.Get(ctx, accountID)
+			return err == nil && acc != nil && acc.Enabled, err
+		},
+		NewID: newUUID,
+	})
+	defer tickets.Close()
+	// Endpoint delete (REST and MCP alike) is refused while sessions or
+	// guests are active, and revokes the endpoint's tickets afterwards.
+	epSvc.Sessions = manager
+	epSvc.LiveGuest = tickets.HasLiveGuestForEndpoint
+	epSvc.OnDeleted = tickets.CloseForEndpoint
+	guestHub := ws.NewGuestHub(ws.GuestHubParams{
+		Manager: manager, Service: tickets,
+		ExternalURL: func() string { return cfg.Server.ExternalURL },
+	})
+	defer guestHub.Close()
+	tickets.SetPublisher(guestHub)
+	wsHub.SetGuestAttached(tickets.GuestAttached)
+	go tickets.RunJanitor(ctx, time.Second)
+
 	buildInfo := buildinfo.Load(mustGetwd())
 	mcpDeps := &mcp.Deps{
 		AgentDeps:      agent.Deps{Manager: manager, Svc: epSvc, Audit: auditWriter},
@@ -461,6 +497,7 @@ func run() error {
 	// its Hydra login/consent sessions so live grants die with the account.
 	// Fired by the admin DELETE route — the only way an account is deleted.
 	accountDeleted := func(accountID string) {
+		tickets.CloseForAccount(accountID, terminal.CloseAccountDeleted)
 		if n := manager.CloseAllForAccount(accountID, terminal.CloseAccountDeleted); n > 0 {
 			slog.Info("closed sessions for deleted account", "account", accountID, "count", n)
 		}
@@ -494,22 +531,25 @@ func run() error {
 			return has
 		},
 		Endpoints: &rest.Endpoints{
-			Svc:      epSvc,
-			Sessions: manager,
-			NewID:    newUUID,
-			StepUp:   webauthnDeps.StepUp,
-			Audit:    auditWriter,
+			Svc:    epSvc,
+			NewID:  newUUID,
+			StepUp: webauthnDeps.StepUp,
+			Audit:  auditWriter,
 		},
 		Sessions: &rest.Sessions{
-			Manager:     manager,
-			Svc:         epSvc,
-			MaxSessions: store.NewAccounts(db).MaxSessions,
+			Manager:       manager,
+			Svc:           epSvc,
+			MaxSessions:   store.NewAccounts(db).MaxSessions,
+			GuestAttached: tickets.GuestAttached,
 		},
-		WSHub:       wsHub,
-		MCP:         mcpDeps,
-		Actions:     &rest.Actions{Store: actionStore},
-		ClientLog:   oauthClientLog,
-		CimdRootCAs: cimdRootCAs,
+		Tickets:      &rest.Tickets{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
+		TicketRedeem: &rest.TicketRedeem{Service: tickets, ExternalURL: func() string { return cfg.Server.ExternalURL }},
+		GuestHub:     guestHub,
+		WSHub:        wsHub,
+		MCP:          mcpDeps,
+		Actions:      &rest.Actions{Store: actionStore},
+		ClientLog:    oauthClientLog,
+		CimdRootCAs:  cimdRootCAs,
 		Audit: &rest.Audit{
 			Sessions:     audit.NewSessions(db),
 			Signings:     audit.NewSignings(db),
@@ -518,6 +558,7 @@ func run() error {
 			IsAdmin:      store.NewAccounts(db),
 
 			FileTransfers: fileTransferLog,
+			Tickets:       ticketLog,
 		},
 		Transfers: transfers,
 		Accounts: &rest.Accounts{

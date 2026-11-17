@@ -57,10 +57,11 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
 | ------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `terminal:output`  | `sessionId`, `data: string`, `offset: number`, `reset?: true`                                 | Output chunk. `offset` is the absolute buffer offset after this chunk. `reset:true` means the client must clear its buffer first (offset was evicted).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `terminal:status`  | `sessionId`, `status`                                                                         | The session's status, sent **once** in the `terminal:attach` reply (the only emitter, `ws-message-router.ts`). It is **not** pushed on subsequent transitions — runtime status changes propagate via `sessions:changed`. `status ∈ {opening, open, closing, closed, error}`.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `terminal:closed`  | `sessionId`                                                                                   | Session closed. Any buffered output not yet delivered to this connection is flushed as a final `terminal:output` frame immediately **before** this message (no extra frame when the connection is already caught up), and within the same attachment no `terminal:output` follows it (a later re-attach to a retained post-mortem session may legitimately fetch output again). _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_                                                                                                                                                                                                                                    |
+| `terminal:closed`  | `sessionId`                                                                                   | Session closed. Any buffered output not yet delivered to this connection is flushed as a final `terminal:output` frame immediately **before** this message (no extra frame when the connection is already caught up), and within the same attachment no `terminal:output` follows it (a later re-attach to a retained ended session — kept 5 minutes, at most 10 per account — may legitimately fetch output again). _(Redundant with `terminal:status {status:"closed"}` — see inconsistencies.)_                                                                                                                                                                                               |
 | `terminal:mode`    | `sessionId`, `mode`                                                                           | Control-mode change. `mode ∈ {control, observer}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `terminal:file`    | `sessionId`, `transferId`, `direction`, `path`, `bytes`, `status`, `tier`, `mcpClientName`, … | An MCP agent moved (or is moving) a file through this session (#263). Sent to connections **attached** to the session: on create, on progress (debounced ~250 ms) and on every terminal state. See [`terminal:file`](#terminalfile-263).                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `sessions:changed` | `sessions: SessionListEntry[]`                                                                | Full session-list snapshot for the account. Broadcast on any lifecycle change, and when a session is registered: a session still connecting (e.g. waiting for its SSH signature to be approved) is listed with `status: "opening"` (#273).                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `tickets:changed`  | —                                                                                             | A one-time access ticket of the account or its guest session changed state (minted, redeemed, attached/detached, attempt failed, admitted, ended, revoked, expired), or an ended ticket left the list (after 5 minutes, beyond 10 per account, or with its endpoint or account) (#306). Carries no data: refetch `GET /api/tickets`. Sent to the account's connections only.                                                                                                                                                                                                                                                                                                                     |
 | `error`            | `message: string`                                                                             | Non-fatal error (bad attach, input without control, etc.). No `code`, no `sessionId`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `notification:new` | `notification: Notification`                                                                  | A new entry in the account's notification log (#252): a server-originated event the user must not miss, e.g. a host-key mismatch (#241) — no pending action exists for those, so this message plus Web Push is how the account is told. The same `Notification` object (OpenAPI schema) is persisted and readable at `GET /api/audit/notifications` (the Notifications tab under Audit), so a reconnecting client catches up from the log; toasts dedupe by `notification.id` against the HTTP error that may carry the same id (`Error.notificationId`). Client behavior derives from `type` + `payload`, never from title/detail text; unknown types render title/detail with no typed action. |
 
@@ -72,10 +73,19 @@ Each WS connection tracks two per-session sets: **attached** and **controlled**.
   endpointId: string;
   status: TerminalStatus; // opening | open | closing | closed | error
   createdAt: string; // ISO-8601
-  source: string; // "ui" | "mcp" | "ssh" — typed as bare string on the wire
+  source: string; // "ui" | "mcp" | "ssh" | "ticket" — typed as bare string on the wire
   mode: "control" | "observer"; // this connection's mode for the session
+  // Source "ticket" only (#306), omitted otherwise:
+  ticketId?: string;
+  ticketLabel?: string; // may be ""
+  guestAttached?: boolean; // the guest's browser holds a /ws/guest connection; absent once the guest session is over
 }
 ```
+
+A guest session (source `ticket`) attaches as **observer** for the owner, like
+`mcp`/`ssh`; the owner can take control, type and close it. Guest input does
+not depend on the owner's control mode. A `sessions:changed` is also sent when
+the guest attaches or detaches, so `guestAttached` stays current.
 
 ### `terminal:file` (#263)
 
@@ -229,6 +239,136 @@ hostKey?: {
   status: "new" | "known"; // "new": approving this action ALSO pins the key
 }
 ```
+
+### Endpoint-auth trigger `ticket` (#306)
+
+An endpoint-auth sign request raised while admitting a ticket guest carries
+`context.trigger.kind: "ticket"` (`GET /api/actions/:id`). There is no new
+approval type: approving the normal `webauthn-sign` / `key-approve` prompt is
+what admits the guest; Skip (deny) moves on to the next key.
+
+```ts
+trigger: {
+  kind: "ticket";
+  sourceIp: string;          // the guest's address (resolved under server.trustProxy)
+  reason?: string;           // SELF-REPORTED by the guest; omitted when empty
+  ticketId: string;          // DELETE /api/tickets/{ticketId} revokes it ("Revoke ticket")
+  ticketLabel: string;       // may be ""
+  channel: "web";            // "ssh" follows with #307
+  userAgent?: string;        // SELF-REPORTED by the guest browser
+  confirmationCode: string;  // also on the guest's waiting screen
+  agentForward: boolean;     // the ticket's option
+  lifetimeSeconds: number;   // the ticket's option
+}
+```
+
+The signing audit row records the reason in its `mcpReason` column (the
+generic trigger reason).
+
+The `sign:request` toast payload for such an action carries an extra `ticket`
+object. When it is present, the SPA's toast names the guest request and shows
+the code, but offers no Approve/Sign: the owner approves on `/sign/:id` after
+comparing the code (Skip stays available in the toast). Ordinary prompts
+carry no `ticket` key.
+
+```ts
+ticket?: {
+  ticketId: string;
+  ticketLabel: string;       // may be ""
+  confirmationCode: string;
+  reason?: string;           // SELF-REPORTED by the guest; omitted when empty
+  sourceIp?: string;         // the guest's address
+}
+```
+
+The Web Push notification for it reads "Guest Access Requested" and carries
+neither the code nor the reason.
+
+# Guest WebSocket (`/ws/guest`, #306)
+
+The connection a one-time access guest's browser holds while it waits for
+admission and then uses as its terminal. It is a separate endpoint with its
+own registry: a guest connection is never in the account hub's connection set,
+so `sessions:changed`, `sign:request`, `notification:new`, `tickets:changed`
+and other sessions' output can never reach it.
+
+## Transport & auth
+
+- Endpoint: `GET /ws/guest` (HTTP upgrade). Gate-exempt: **no bearer** is read
+  (a present, valid or invalid `Authorization` changes nothing), and no
+  subprotocol is negotiated.
+- Credential: the `__Host-sw_guest` cookie set by `POST /api/tickets/redeem`
+  (`Secure; HttpOnly; SameSite=Strict; Path=/`, no `Domain`). It is valid only
+  here, maps to one guest session, and is deleted server-side when the guest
+  session closes, whatever the browser still holds.
+- **Origin check** (cross-site WebSocket hijacking): the upgrade is accepted
+  only when `Origin` exactly equals `server.externalUrl`'s origin (scheme, host
+  and port; lowercased; the scheme's default port dropped on both sides).
+  Missing, `null` or any other origin — a sibling subdomain included — answers
+  **403** before the upgrade (log: `ws: guest origin rejected`). The expected
+  origin never comes from `Host` or the connection's scheme, so a reverse proxy
+  that rewrites `Host` or terminates TLS changes nothing.
+- No live guest session for the cookie → **404** before the upgrade. Also
+  behind `security.allowedNetworks` (403) and a per-IP rate limit (429).
+- Several tabs of the redeeming browser may attach at once (each gets the
+  catch-up, then the same output; input from any goes to the session); at most
+  8 connections per guest session. A further one receives a final `closed`
+  status and is closed.
+- Inbound frames are capped at 1 MiB. The connection **is** the attachment:
+  there are no attach/detach messages.
+
+## Client → Server
+
+| `type`   | Fields                         | Effect                                                                                                                                                                                             |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`  | `data: string`                 | Input to the admitted session. Dropped before admission.                                                                                                                                           |
+| `resize` | `cols: number`, `rows: number` | Resize the admitted session's PTY. Dropped before admission.                                                                                                                                       |
+| `end`    | —                              | End the guest session now (end reason `client.guest`), from any tab; closes every connection.                                                                                                      |
+| `retry`  | —                              | Ask again: start a fresh admission attempt. Accepted only in `refused`, inside the admission window, from `retryAt` on, while attempts remain; otherwise silently ignored (no frame is sent back). |
+
+Every other frame (any `terminal:*` type included) is silently dropped.
+
+## Server → Client
+
+| `type`   | Fields                                           | Meaning                                                                                                                                 |
+| -------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `status` | `state`, plus the fields below                   | The guest session's state. Sent on every transition and to each connection when it attaches.                                            |
+| `output` | `data: string`, `offset: number`, `reset?: true` | Terminal output of the admitted session. On (re)attach after admission the whole buffer is sent once with `reset: true`; deltas follow. |
+
+Every `status` frame carries `serverTime` (ISO 8601, the server's clock when
+the frame was built). The guest device's clock may be off, so the page counts
+`admissionDeadline` / `lifetimeDeadline` down against the offset between
+`serverTime` and its own clock, not against local time alone.
+
+`status` fields by `state` — none ever names the endpoint (label, address,
+user) or carries a server error text; `message` is one of a few fixed texts:
+
+| `state`   | Fields                                                                                                           | Meaning                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pending` | `code`, `admissionDeadline?`                                                                                     | Waiting for the owner's approval. `code` is the confirmation code also shown on the approval prompt.                                                                                                                                                                                                                                                                    |
+| `refused` | `code`, `admissionDeadline`, `remainingSeconds`, `retryAt`, `attemptsLeft`, `message: "Access was not granted."` | The attempt ended without admission (every key skipped or expired, or the connect failed). The guest may send `retry` from `retryAt` (15 s after the refusal) until the deadline. A guest session has at most 3 attempts; when the last one is refused, or no retry could start before the admission deadline, it closes instead (`closed`, "Access was not granted."). |
+| `open`    | `lifetimeDeadline`                                                                                               | Admitted; `output` frames follow.                                                                                                                                                                                                                                                                                                                                       |
+| `closed`  | `message: "Access was not granted."` (never admitted) or `"The session has ended."`                              | Final. The server closes the connection after it.                                                                                                                                                                                                                                                                                                                       |
+
+## Lifecycle bounds
+
+| Bound            | Covers                                   | Value                    |
+| ---------------- | ---------------------------------------- | ------------------------ |
+| Redeem TTL       | minted → redeemed                        | per ticket, 1 min – 24 h |
+| Attach window    | redeemed → first `/ws/guest` attach      | 30 s                     |
+| Admission window | first attach → open, across all attempts | 5 min                    |
+| Session lifetime | starts at admission                      | per ticket, 1 min – 8 h  |
+| Reconnect grace  | after the last guest connection closes   | 60 s                     |
+
+The first attempt starts on the first attach, so the owner is never prompted
+for a guest that cannot see the code. A disconnect (reload, lost network) is
+not an end: within the reconnect grace a new connection with the cookie
+reattaches and catches up. End reasons (also the terminal session's close
+reason where one exists): `client.guest`, `guest-disconnected`,
+`ticket-lifetime`, `ticket-not-admitted`, `ticket-unattached`,
+`ticket-revoked`, `endpoint-removed`, `account-deleted`, `shutdown`, or the
+terminal session's own close reason after admission (`client.ui`,
+`idle-timeout`, `server-hangup`, …).
 
 ## Asymmetry notes
 

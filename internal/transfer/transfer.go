@@ -318,7 +318,7 @@ func New(p Params) *Service {
 		byID: map[string]*xfer{}, byToken: map[string]*xfer{}, sessions: map[string]*sessionFS{},
 	}
 	s.unsubStatus = p.Manager.SubscribeStatus(s.onSessionStatus)
-	s.unsubRemoved = p.Manager.SubscribeRemoved(s.dropSession)
+	s.unsubRemoved = p.Manager.SubscribeRemoved(func(ev terminal.RemovedEvent) { s.dropSession(ev.SessionID) })
 	return s
 }
 

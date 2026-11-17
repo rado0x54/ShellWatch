@@ -68,6 +68,8 @@ tags:
     description: Session-lifecycle + signing-request audit log + notification log + file-transfer log
   - name: transfers
     description: Out-of-band file transfer links minted by the MCP file tools (#263)
+  - name: tickets
+    description: One-time access tickets — single-endpoint guest sessions admitted from a trusted device (#306)
   - name: keys
     description: File-based SSH key listing (admin)
   - name: push
@@ -213,7 +215,10 @@ components:
       enum: [opening, open, closing, closed, error]
     TerminalSource:
       type: string
-      enum: [ui, mcp, ssh]
+      enum: [ui, mcp, ssh, ticket]
+      description: >-
+        `ticket` is a guest session admitted through a one-time access ticket
+        (#306).
 
     TerminalSession:
       type: object
@@ -240,6 +245,22 @@ components:
         mcpReason: { type: string }
         mcpClientName: { type: string }
         mcpClientVersion: { type: string }
+        ticketId:
+          type: string
+          description: Source `ticket` only (#306) — the ticket that admitted the guest.
+        ticketLabel:
+          type: string
+          description: Source `ticket` only (#306); may be empty.
+        reason:
+          type: string
+          description: >-
+            Source `ticket` only (#306) — the guest's self-reported reason for
+            access (unverified).
+        guestAttached:
+          type: boolean
+          description: >-
+            Source `ticket` only (#306) — whether the guest's browser currently
+            holds a guest WebSocket. Omitted once the guest session is over.
       # lastActivityAt is always emitted: types.ts TerminalSession declares it
       # non-optional and the manager sets it at create time.
       required: [sessionId, endpointId, accountId, status, createdAt, lastActivityAt, source]
@@ -357,8 +378,8 @@ components:
         sessionId: { type: string }
         accountId: { type: string }
         endpointId: { type: string }
-        # Enforced by DB CHECK constraints (src/db/schema.ts):
-        source: { type: string, enum: [ui, mcp, ssh] }
+        # Enforced by DB CHECK constraints (migration 00008 adds ticket):
+        source: { type: string, enum: [ui, mcp, ssh, ticket] }
         status: { type: string, enum: [open, closed, error] }
         createdAt: { type: string, format: date-time }
         closedAt: { type: string, format: date-time, nullable: true }
@@ -371,6 +392,17 @@ components:
         clientOs: { type: string, nullable: true }
         clientVersion: { type: string, nullable: true }
         closeReason: { type: string, nullable: true }
+        ticketId:
+          type: string
+          nullable: true
+          description: Source `ticket` only (#306).
+        ticketLabel: { type: string, nullable: true }
+        reason:
+          type: string
+          nullable: true
+          description: >-
+            The guest's self-reported reason (source `ticket`). MCP sessions keep
+            theirs in `mcpReason`.
 
     SigningRequestPage:
       type: object
@@ -455,6 +487,202 @@ components:
           description: Peer address resolved under the server's trustProxy policy.
         createdAt: { type: string }
       required: [id, clientId, origin, event, createdAt]
+
+    TicketView:
+      type: object
+      description: >-
+        The owner's view of a one-time access ticket and, once redeemed, its
+        guest session (#306). Tickets live in process memory: a restart
+        invalidates them. Listed while the ticket is unredeemed or its guest
+        session is live, then for 5 minutes as `closed` (at most 10 per
+        account); afterwards only the audit log has it.
+      properties:
+        id: { type: string }
+        endpointId: { type: string }
+        label: { type: string, description: May be empty. }
+        createdAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          description: End of the redeem TTL.
+        redeemTtlSeconds: { type: integer, minimum: 60, maximum: 86400 }
+        lifetimeSeconds:
+          type: integer
+          minimum: 60
+          maximum: 28800
+          description: Hard cap on the guest session, counted from admission.
+        reasonRequired: { type: boolean }
+        agentForward:
+          type: boolean
+          description: >-
+            When true the endpoint's own agentForward setting is honoured; when
+            false no forwarding channel is opened whatever the endpoint says.
+        state:
+          type: string
+          enum: [minted, redeemed, pending, refused, open, closed]
+          description: >-
+            `minted` — not redeemed yet; `redeemed` — redeemed, guest WebSocket
+            not attached yet; `pending` — an admission attempt is running (sign
+            prompts are open); `refused` — the last attempt was not approved,
+            the guest may ask again inside the admission window; `open` —
+            admitted; `closed` — the guest session ended (`endReason`). A
+            closed ticket stays listed for 5 minutes, at most 10 per account.
+        guest: { $ref: "#/components/schemas/TicketGuestView" }
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the guest session closed (state `closed` only).
+        endReason:
+          type: string
+          nullable: true
+          description: >-
+            Why the guest session closed (a terminal close reason, e.g.
+            `client.guest`, `ticket-revoked`, `ticket-lifetime`); state
+            `closed` only.
+      required:
+        [
+          id,
+          endpointId,
+          label,
+          createdAt,
+          expiresAt,
+          redeemTtlSeconds,
+          lifetimeSeconds,
+          reasonRequired,
+          agentForward,
+          state,
+          guest,
+          endedAt,
+          endReason,
+        ]
+
+    TicketGuestView:
+      type: object
+      nullable: true
+      description: Null until the ticket is redeemed.
+      properties:
+        state: { type: string, enum: [redeemed, pending, refused, open, closed] }
+        channel: { type: string, enum: [web], description: "`ssh` follows with #307." }
+        confirmationCode:
+          type: string
+          description: >-
+            4 characters, shown on the guest's waiting screen and on the
+            approval prompt.
+        reason: { type: string, description: Self-reported by the guest. }
+        sourceIp: { type: string }
+        userAgent: { type: string, description: Self-reported by the guest browser. }
+        redeemedAt: { type: string, format: date-time }
+        admissionDeadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set on the first guest attach (admission window).
+        lifetimeDeadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set on admission.
+        sessionId:
+          type: string
+          nullable: true
+          description: The admitted terminal session, or the running attempt's.
+        attempt: { type: integer, description: Number of admission attempts so far. }
+        attached: { type: boolean, description: At least one guest connection is open. }
+        connections: { type: integer }
+      required:
+        [
+          state,
+          channel,
+          confirmationCode,
+          reason,
+          sourceIp,
+          userAgent,
+          redeemedAt,
+          admissionDeadline,
+          lifetimeDeadline,
+          sessionId,
+          attempt,
+          attached,
+          connections,
+        ]
+
+    TicketEventPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/TicketEventRow" }
+        nextCursor: { type: string, nullable: true }
+      required: [rows, nextCursor]
+
+    TicketEventRow:
+      type: object
+      description: >-
+        One event of a ticket's life (#306). The ticket's options are
+        snapshotted on every row. The ticket token and the guest cookie are
+        never recorded.
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        ticketId: { type: string }
+        event:
+          type: string
+          description: >-
+            minted | redeemed | attached | attempt-failed | retried | admitted |
+            detached | reattached | ended | revoked | expired | invalidated.
+            Not enum-constrained.
+          example: minted
+        createdAt: { type: string, format: date-time }
+        endpointId: { type: string }
+        ticketLabel: { type: string, nullable: true }
+        channel: { type: string, nullable: true, description: "`web` once redeemed." }
+        redeemTtlSeconds: { type: integer }
+        lifetimeSeconds: { type: integer }
+        reasonRequired: { type: boolean }
+        agentForward: { type: boolean }
+        reason: { type: string, nullable: true, description: Self-reported by the guest. }
+        sourceIp: { type: string, nullable: true }
+        userAgent: { type: string, nullable: true, description: Self-reported. }
+        confirmationCode: { type: string, nullable: true }
+        sessionId: { type: string, nullable: true }
+        attempt: { type: integer, nullable: true }
+        endReason:
+          type: string
+          nullable: true
+          description: >-
+            `ended`: the end reason (client.guest, guest-disconnected,
+            ticket-lifetime, ticket-not-admitted, ticket-unattached,
+            ticket-revoked, endpoint-removed, account-deleted, shutdown, or a
+            terminal close reason such as client.ui / idle-timeout /
+            server-hangup). `attempt-failed` / `invalidated`: why.
+        durationMs:
+          type: integer
+          nullable: true
+          description: "`ended` after admission: admission to end."
+      required:
+        [
+          id,
+          accountId,
+          ticketId,
+          event,
+          createdAt,
+          endpointId,
+          ticketLabel,
+          channel,
+          redeemTtlSeconds,
+          lifetimeSeconds,
+          reasonRequired,
+          agentForward,
+          reason,
+          sourceIp,
+          userAgent,
+          confirmationCode,
+          sessionId,
+          attempt,
+          endReason,
+          durationMs,
+        ]
 
     FileTransferPage:
       type: object
@@ -1625,7 +1853,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
-          description: Endpoint has active sessions
+          description: >-
+            Endpoint has active sessions — opening or open sessions of any
+            source (UI, MCP, one-time access guest), or a guest session still
+            waiting for approval or allowed to ask again. Ended (closed or
+            errored) sessions do not count. A successful delete revokes the
+            endpoint's outstanding tickets.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1697,6 +1930,292 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/StepUpRequired" }
+
+  # --------------------------------------------------------------- tickets
+  /api/endpoints/{id}/tickets:
+    post:
+      operationId: mintTicket
+      tags: [tickets]
+      summary: Mint a one-time access ticket for an endpoint
+      description: >-
+        Creates a single-use ticket granting one guest session on this
+        endpoint, admitted only by the normal endpoint-auth approval on the
+        owner's devices (#306). The `token` is returned exactly once, with
+        `shareLink` = `<externalUrl>/t#<token>`: built from
+        `server.externalUrl`, the only origin the guest routes accept, never
+        from the address the owner happens to use (the token travels in the
+        URL fragment and never reaches a server log). Every option defaults to the
+        most restrictive value. At most 20 unredeemed tickets per account.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, maxLength: 100, default: "" }
+                redeemTtlSeconds: { type: integer, minimum: 60, maximum: 86400, default: 300 }
+                lifetimeSeconds: { type: integer, minimum: 60, maximum: 28800, default: 900 }
+                reasonRequired: { type: boolean, default: true }
+                agentForward: { type: boolean, default: false }
+      responses:
+        "201":
+          description: "Minted. `Cache-Control: no-store`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket: { $ref: "#/components/schemas/TicketView" }
+                  token:
+                    type: string
+                    description: 32 random bytes, base64url. Stored only as a hash.
+                  shareLink:
+                    type: string
+                    description: The link to hand the guest — `<externalUrl>/t#<token>`.
+                required: [ticket, token, shareLink]
+        "400":
+          description: An option of the wrong type or outside its bounds
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Endpoint not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The account already has 20 unredeemed tickets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/tickets:
+    get:
+      operationId: listTickets
+      tags: [tickets]
+      summary: List the account's tickets and guest sessions (live and recently closed)
+      parameters:
+        - name: endpointId
+          in: query
+          description: Only tickets for this endpoint.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tickets, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketView" }
+                required: [tickets]
+  /api/tickets/{id}:
+    delete:
+      operationId: revokeTicket
+      tags: [tickets]
+      summary: Revoke a ticket in any state
+      description: >-
+        An unredeemed ticket is deleted. A redeemed one ends its guest session
+        through the one close path (reason `ticket-revoked`): the terminal
+        session is closed or its setup cancelled, open sign prompts are
+        cancelled, the guest cookie stops working and the guest's WebSocket
+        receives the final `closed` status. A ticket whose guest session
+        already ended (`closed`) answers 409 and stays listed until it
+        expires (5 minutes).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [revoked] } }
+                required: [status]
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The ticket's guest session already ended; nothing changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/tickets/check:
+    post:
+      operationId: checkTicket
+      tags: [tickets]
+      summary: Check a ticket without redeeming it (guest)
+      security: []
+      description: >-
+        Lets the guest page show an invalid link at once, before asking for a
+        reason (#306). It applies exactly redeem's checks (unknown, used,
+        revoked or expired ticket, or one whose endpoint or account is gone)
+        and consumes nothing; an expired or ineligible ticket is spent here
+        just as redeem would spend it. No bearer token, no cookie. Same
+        `security.allowedNetworks` gate (403), `Origin` check (403
+        `Forbidden`) as redeem, and a per-IP rate limit of its own (60 per
+        15 minutes; redeem's is 20). Every response carries
+        `Cache-Control: no-store`. Nothing in
+        any response names the endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+              required: [token]
+      responses:
+        "200":
+          description: The ticket can be redeemed now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reasonRequired:
+                    type: boolean
+                    description: Whether redeem will require a non-empty reason.
+                required: [reasonRequired]
+        "403":
+          description: Origin is not the configured external origin, or the peer is outside allowedNetworks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Uniform failure, exactly as for redeemTicket. The real reason is only logged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: The per-IP rate limit (60 per 15 minutes, separate from redeemTicket's).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The account or endpoint could not be checked; try again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/tickets/redeem:
+    post:
+      operationId: redeemTicket
+      tags: [tickets]
+      summary: Redeem a ticket (guest)
+      security: []
+      description: >-
+        The guest page's call that spends the ticket (#306); `checkTicket`
+        may precede it. No bearer token: the ticket in
+        the body is the credential, and the route behaves identically with no,
+        a valid or an invalid `Authorization` header. It sits behind
+        `security.allowedNetworks` (403) and a per-IP rate limit (429 with the
+        rate-limit body), and refuses any `Origin` other than
+        `server.externalUrl`'s origin (403 `Forbidden`) — it sets a cookie, so
+        a foreign page must not be able to call it.
+
+
+        Redemption consumes the ticket and answers at once: nothing is
+        connected and no prompt is raised until the guest's `/ws/guest`
+        connection attaches (docs/api/websocket-protocol.md). The response
+        sets the guest cookie `__Host-sw_guest` (`Secure; HttpOnly;
+        SameSite=Strict; Path=/`), valid only on `/ws/guest`. Every response
+        carries `Cache-Control: no-store`. Nothing in any response names the
+        endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                reason:
+                  type: string
+                  description: >-
+                    Why the guest wants access. Control characters are stripped
+                    and it is capped at 200 characters. Required (non-empty) when the
+                    ticket says so.
+                replaceCurrent:
+                  type: boolean
+                  default: false
+                  description: >-
+                    End this browser's current guest session (named by its
+                    guest cookie) in the same step that consumes the ticket,
+                    instead of answering 409. The old session is not attached
+                    for it, so it raises no owner prompt.
+              required: [token]
+      responses:
+        "202":
+          description: Redeemed; the guest cookie is set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  confirmationCode:
+                    type: string
+                    description: 4 characters from an alphabet without look-alikes.
+                  attachDeadline:
+                    type: string
+                    format: date-time
+                    description: The guest WebSocket must attach by then (30 s).
+                  admissionWindowSeconds:
+                    type: integer
+                    description: How long, from the first attach, the guest may wait to be admitted.
+                  lifetimeSeconds: { type: integer }
+                  agentForward: { type: boolean }
+                required:
+                  [
+                    confirmationCode,
+                    attachDeadline,
+                    admissionWindowSeconds,
+                    lifetimeSeconds,
+                    agentForward,
+                  ]
+        "400":
+          description: The ticket requires a reason and none was given (not consumed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Origin is not the configured external origin, or the peer is outside allowedNetworks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: >-
+            Uniform failure: unknown, used, expired or revoked ticket, or one
+            whose endpoint or account is gone or disabled. The real reason is
+            only logged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >-
+            This browser already holds a live guest session and
+            `replaceCurrent` is not set (the ticket is not consumed).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: >-
+            The account is at its cap of 3 live guest sessions (`Retry-After`
+            set; the ticket is not consumed), or the per-IP rate limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >-
+            The account or endpoint could not be checked (a database error or
+            an aborted request). The ticket is not consumed; try again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # -------------------------------------------------------------- sessions
   /api/sessions:
@@ -2089,6 +2608,42 @@ paths:
               schema: { $ref: "#/components/schemas/FileTransferPage" }
         "400":
           description: Invalid direction, tier or status filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/audit/tickets:
+    get:
+      operationId: listAuditTickets
+      tags: [audit]
+      summary: Ticket event log
+      description: >-
+        The sixth audit surface (#306): every event of the account's one-time
+        access tickets and guest sessions, keyset-paginated, newest first.
+      parameters:
+        - name: ticketId
+          in: query
+          description: Only events of this ticket.
+          schema: { type: string }
+        - name: event
+          in: query
+          description: A TicketEventRow event; any other value is a 400.
+          schema: { type: string }
+        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          description: >-
+            Page size. Clamped server-side: non-finite or ≤0 → 50; values
+            above 500 → 500. Default 50, max 500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Page of ticket events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketEventPage" }
+        "400":
+          description: Invalid event filter
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

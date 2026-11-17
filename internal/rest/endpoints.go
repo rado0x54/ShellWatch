@@ -26,13 +26,6 @@ import (
 	"github.com/rado0x54/shellwatch/internal/webauthn"
 )
 
-// SessionLister reports the endpoint ids an account currently has open
-// sessions against (satisfied by terminal.Manager; nil until Phase 3 slice 2
-// wires it, so delete skips the active-session guard).
-type SessionLister interface {
-	EndpointIDsForAccount(accountID string) []string
-}
-
 // HostKeyAuditor records host-key audit events (satisfied by *audit.Writer;
 // nil skips auditing — tests). The returned audit id is unused here.
 type HostKeyAuditor interface {
@@ -41,8 +34,7 @@ type HostKeyAuditor interface {
 
 // Endpoints wires the endpoint CRUD routes.
 type Endpoints struct {
-	Svc      *endpointsvc.Service
-	Sessions SessionLister
+	Svc *endpointsvc.Service
 	// NewID generates endpoint ids (UUID); injected for testability.
 	NewID func() string
 	// StepUp gates the host-key routes (#241).
@@ -215,19 +207,15 @@ func (e *Endpoints) update(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if demo.IsID(id) {
+	_, err := e.Svc.Delete(r.Context(), id, accountID(r))
+	switch {
+	case errors.Is(err, endpointsvc.ErrDemoReadOnly):
 		writeErr(w, 400, "Demo endpoints are read-only — toggle visibility instead")
 		return
-	}
-	if e.Sessions != nil {
-		for _, epID := range e.Sessions.EndpointIDsForAccount(accountID(r)) {
-			if epID == id {
-				writeErr(w, 409, "Cannot delete endpoint with active sessions")
-				return
-			}
-		}
-	}
-	if _, err := e.Svc.Endpoints.Delete(r.Context(), id, accountID(r)); err != nil {
+	case errors.Is(err, endpointsvc.ErrActiveSessions):
+		writeErr(w, 409, err.Error())
+		return
+	case err != nil:
 		writeErr(w, 400, err.Error())
 		return
 	}

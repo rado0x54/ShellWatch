@@ -27,6 +27,9 @@ type Sessions struct {
 	Svc     *endpointsvc.Service
 	// MaxSessions resolves an account's concurrent-session cap.
 	MaxSessions func(ctx context.Context, accountID string) (int, bool)
+	// GuestAttached reports whether a ticket guest is attached to a session
+	// (#306; ok=false for any other session). nil-able.
+	GuestAttached func(sessionID string) (attached, ok bool)
 }
 
 func (s *Sessions) Mount(r chi.Router) {
@@ -38,6 +41,21 @@ func (s *Sessions) Mount(r chi.Router) {
 
 // toSessionDTO builds the bare TerminalSession wire shape. Optional fields
 // omit when empty (matching the conditional spread in terminal-manager.ts).
+// Guest sessions (source ticket) add the ticket fields and guestAttached.
+func (h *Sessions) toSessionDTO(s terminal.Session) api.TerminalSession {
+	dto := toSessionDTO(s)
+	if s.Source == terminal.SourceTicket {
+		label := s.TicketLabel
+		dto.TicketId, dto.TicketLabel, dto.Reason = strPtrIf(s.TicketID), &label, strPtrIf(s.Reason)
+		if h.GuestAttached != nil {
+			if attached, ok := h.GuestAttached(s.SessionID); ok {
+				dto.GuestAttached = &attached
+			}
+		}
+	}
+	return dto
+}
+
 func toSessionDTO(s terminal.Session) api.TerminalSession {
 	return api.TerminalSession{
 		SessionId: s.SessionID, EndpointId: s.EndpointID, AccountId: s.AccountID,
@@ -96,7 +114,7 @@ func (s *Sessions) list(w http.ResponseWriter, r *http.Request) {
 	sessions := s.Manager.ListForAccount(accountID(r))
 	out := make([]api.TerminalSession, 0, len(sessions))
 	for _, sess := range sessions {
-		out = append(out, toSessionDTO(sess))
+		out = append(out, s.toSessionDTO(sess))
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
 }

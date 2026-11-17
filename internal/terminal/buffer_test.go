@@ -70,3 +70,18 @@ func TestBufferTailAdvancesToEscape(t *testing.T) {
 	}
 	_ = strings.Count
 }
+
+// One oversized append must not leave a backing array far beyond the cap.
+func TestBufferOversizedAppendReleasesMemory(t *testing.T) {
+	b := NewOutputBuffer(1024)
+	b.Append(make([]byte, 64*1024))
+	b.mu.Lock()
+	n, c := len(b.buf), cap(b.buf)
+	b.mu.Unlock()
+	if n != 1024 || c > 2*1024 {
+		t.Errorf("len %d cap %d after an oversized append; want len 1024, cap <= 2048", n, c)
+	}
+	if got := b.CurrentOffset(); got != 64*1024 {
+		t.Errorf("offset %d, want %d", got, 64*1024)
+	}
+}

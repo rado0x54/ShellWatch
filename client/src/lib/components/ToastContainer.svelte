@@ -56,6 +56,9 @@
   }
 
   async function handleAction(action: SignRequestAction, toastId: string) {
+    // A guest admission (#306) is approved on /sign only, where the owner
+    // compares the confirmation code; the toast never approves one.
+    if (action.ticket) return handleDetails(action.actionId, toastId);
     activeActionId = action.actionId;
     let response: ResolveResponse;
     try {
@@ -126,12 +129,49 @@
         {#if toast.variant === "sign-request" && toast.action}
           {@const isProcessing = activeActionId === toast.action.actionId}
           {@const isKeyApprove = toast.action.actionType === "key-approve"}
+          {@const ticket = toast.action.ticket}
           <div class="toast-header">
-            <span class="toast-icon">{isKeyApprove ? "🔐" : "🔑"}</span>
+            <span class="toast-icon">{ticket ? "🎟️" : isKeyApprove ? "🔐" : "🔑"}</span>
             <span class="toast-title">
-              {isKeyApprove ? "SSH Key Approval Request" : "Passkey Signature Request"}
+              {ticket
+                ? "Guest Access Request"
+                : isKeyApprove
+                  ? "SSH Key Approval Request"
+                  : "Passkey Signature Request"}
             </span>
           </div>
+          {#if ticket}
+            <div class="toast-hostkey-banner">
+              Approving gives a <strong>one-time access guest</strong> a shell on this endpoint. Review
+              it and compare the code with the guest before you approve.
+            </div>
+            <div class="toast-body">
+              <div class="toast-field">
+                <span class="toast-label">Code</span>
+                <span class="toast-value toast-mono toast-code">{ticket.confirmationCode}</span>
+              </div>
+              {#if ticket.ticketLabel}
+                <div class="toast-field">
+                  <span class="toast-label">Ticket</span>
+                  <span class="toast-value">{ticket.ticketLabel}</span>
+                </div>
+              {/if}
+              {#if ticket.reason}
+                <div class="toast-field">
+                  <span class="toast-label">Reason</span>
+                  <span class="toast-value"
+                    >“{ticket.reason}” <span class="toast-muted">(stated by the guest)</span></span
+                  >
+                </div>
+              {/if}
+              {#if ticket.sourceIp}
+                <div class="toast-field">
+                  <span class="toast-label">From</span>
+                  <span class="toast-value toast-mono">{ticket.sourceIp}</span>
+                </div>
+              {/if}
+            </div>
+          {/if}
           {#if toast.action.hostKey?.status === "new"}
             <div class="toast-hostkey-banner">
               First connection to this host — approving will <strong>pin</strong> its key
@@ -188,14 +228,16 @@
             {/if}
           </div>
           <div class="toast-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              onclick={() => handleDetails(toast.action!.actionId, toast.id)}
-              disabled={isProcessing}
-            >
-              Details
-            </button>
+            {#if !ticket}
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onclick={() => handleDetails(toast.action!.actionId, toast.id)}
+                disabled={isProcessing}
+              >
+                Details
+              </button>
+            {/if}
             <button
               type="button"
               class="btn btn-secondary"
@@ -205,18 +247,29 @@
             >
               Skip
             </button>
-            <button
-              type="button"
-              class="btn btn-primary"
-              onclick={() => handleAction(toast.action!, toast.id)}
-              disabled={isProcessing}
-            >
-              {#if isProcessing}
-                {isKeyApprove ? "Approving..." : "Signing..."}
-              {:else}
-                {isKeyApprove ? "Approve" : "Sign"}
-              {/if}
-            </button>
+            {#if ticket}
+              <button
+                type="button"
+                class="btn btn-primary"
+                onclick={() => handleDetails(toast.action!.actionId, toast.id)}
+                disabled={isProcessing}
+              >
+                Review
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="btn btn-primary"
+                onclick={() => handleAction(toast.action!, toast.id)}
+                disabled={isProcessing}
+              >
+                {#if isProcessing}
+                  {isKeyApprove ? "Approving..." : "Signing..."}
+                {:else}
+                  {isKeyApprove ? "Approve" : "Sign"}
+                {/if}
+              </button>
+            {/if}
           </div>
         {:else}
           <div class="toast-simple">
@@ -386,6 +439,12 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+
+  .toast-code {
+    font-size: 1.1rem;
+    letter-spacing: 0.2em;
+    color: var(--primary);
   }
 
   .toast-hostkey-banner {

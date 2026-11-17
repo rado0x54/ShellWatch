@@ -1,0 +1,36 @@
+{
+  "status": 200,
+  "body": {
+    "tickets": [
+      {
+        "agentForward": false,
+        "createdAt": "<TS>",
+        "endReason": null,
+        "endedAt": null,
+        "endpointId": "ep-a",
+        "expiresAt": "<TS>",
+        "guest": {
+          "admissionDeadline": null,
+          "attached": false,
+          "attempt": 0,
+          "channel": "web",
+          "confirmationCode": "<REDACTED>",
+          "connections": 0,
+          "lifetimeDeadline": null,
+          "reason": "fix the printer",
+          "redeemedAt": "<TS>",
+          "sessionId": null,
+          "sourceIp": "127.0.0.1",
+          "state": "redeemed",
+          "userAgent": "GuestBrowser/1.0"
+        },
+        "id": "<UUID>",
+        "label": "Printer fix",
+        "lifetimeSeconds": 900,
+        "reasonRequired": true,
+        "redeemTtlSeconds": 300,
+        "state": "redeemed"
+      }
+    ]
+  }
+}
